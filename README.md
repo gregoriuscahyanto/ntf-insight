@@ -68,6 +68,9 @@ flowchart LR
     K[Component profiles] --> D
     K --> F
     K --> G
+    L[SMR-D trigger catalog] --> G
+    M[HW/SW change catalog] --> F
+    M --> G
 ```
 
 ## Component extensibility
@@ -105,7 +108,10 @@ The first domain model is expected to revolve around:
 
 - `Vehicle`
 - `NTFCase`
-- `DiagnosticSession`\n- `DiagnosticEvent`
+- `DiagnosticSession`
+- `DiagnosticEvent`
+- `DTCTriggerDefinition`
+- `ECUChangeRecord`
 - `RepairEvent`
 - `PartReplacement`
 - `SoftwareEvent`
@@ -248,7 +254,7 @@ Use synthetic or irreversibly anonymised data for examples and automated tests.
 
 ## Input data
 
-See [docs/data-requirements.md](docs/data-requirements.md) for the minimum and recommended source files. A known diagnostic session with zero relevant DTCs is preserved explicitly so missing data is never confused with a clean post-replacement test.
+See [docs/data-requirements.md](docs/data-requirements.md) for the minimum and recommended source files. In addition to per-vehicle events, NTF Insight treats SMR-D DTC trigger definitions and HW/SW release changes as versioned engineering reference knowledge. A known diagnostic session with zero relevant DTCs is preserved explicitly so missing data is never confused with a clean post-replacement test.
 
 ## Roadmap
 
