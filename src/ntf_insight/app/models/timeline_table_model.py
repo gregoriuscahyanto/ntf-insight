@@ -52,6 +52,7 @@ class TimelineTableModel(QAbstractTableModel):
         labels = {
             "diagnostic_session": "Diagnosesitzung",
             "diagnostic": "DTC",
+            "ecu_state": "ECU-Stand",
             "replacement": "Tausch",
             "repair": "Werkstatt",
             "software": "Software",
