@@ -12,9 +12,10 @@ The order is deliberate: **first create trustworthy, traceable case data; then a
 - [x] Add project README
 - [x] Add initial source and test structure
 - [ ] Define coding conventions and contribution workflow
-- [ ] Add CI for linting and tests
+- [x] Add CI for pytest
 - [ ] Add dependency locking
-- [ ] Add structured logging\n- [x] Add initial PySide6 desktop application scaffold
+- [ ] Add structured logging
+- [x] Add initial PySide6 desktop application scaffold
 - [ ] Define configuration approach for local / enterprise environments
 
 **Exit criterion:** a clean Python package installs locally and the test suite runs.
@@ -27,26 +28,28 @@ The order is deliberate: **first create trustworthy, traceable case data; then a
 
 Implement core entities:
 
-- [ ] Vehicle
-- [ ] NTFCase
-- [ ] DiagnosticEvent
-- [ ] RepairEvent
-- [ ] PartReplacement
-- [ ] SoftwareEvent
-- [ ] SupplierFinding
-- [ ] Evidence
-- [ ] Assessment
+- [x] DiagnosticSession (preserves known short tests even with zero relevant DTCs)
+
+- [x] Vehicle
+- [x] NTFCase
+- [x] DiagnosticEvent
+- [x] RepairEvent
+- [x] PartReplacement
+- [x] SoftwareEvent
+- [x] SupplierFinding
+- [x] Evidence
+- [x] Assessment
 
 Define stable identifiers and relationships between them.
 
 Create synthetic fixtures for:
 
-- [ ] clear component fault
-- [ ] same DTC before and after replacement
-- [ ] voltage / supply issue
-- [ ] wiring / connector issue
-- [ ] software-related case
-- [ ] insufficient-data case
+- [x] clear component fault
+- [x] same DTC before and after replacement
+- [x] voltage / supply issue
+- [x] wiring / connector issue
+- [x] software-related case
+- [x] insufficient-data case
 
 **Exit criterion:** a synthetic case can be loaded and rendered as a chronological vehicle timeline.
 
@@ -113,11 +116,11 @@ Implement configurable windows such as:
 
 Derive features including:
 
-- [ ] same_fault_before_after
-- [ ] new_fault_after_replacement
-- [ ] fault_disappeared_after_replacement
-- [ ] time_to_recurrence
-- [ ] distance_to_recurrence
+- [x] same_fault_before_after
+- [x] new_fault_after_replacement
+- [x] fault_disappeared_after_replacement
+- [x] time_to_recurrence
+- [x] distance_to_recurrence
 - [ ] DTC frequency before / after replacement
 - [ ] affected ECU count
 - [ ] concurrent voltage / communication faults
@@ -218,9 +221,9 @@ Examples:
 
 Initial views:
 
-- [ ] Overview
-- [ ] Vehicle / FIN explorer
-- [ ] Case timeline
+- [x] Overview
+- [x] Vehicle / FIN explorer
+- [x] Case timeline
 - [ ] DTC explorer
 - [ ] Root-cause evidence view
 - [ ] Similar-case explorer
@@ -228,13 +231,14 @@ Initial views:
 - [ ] Supplier / population analytics
 - [ ] Data-quality view
 
-Recommended first-stack candidates:
+Primary desktop stack:
 
-- Streamlit for fastest engineering prototype
-- Plotly for interactive visuals
+- PySide6 / Qt for the native GUI
+- Qt Model/View for scalable vehicle and case tables
 - DuckDB + Parquet for local analytical storage
+- PyQtGraph or Plotly where interactive engineering visualisations are useful
 
-A later production architecture may move to FastAPI + PostgreSQL and a separate frontend if required.
+The analysis core remains UI-independent. A web/API frontend may be added later, but it is not the primary target.
 
 **Exit criterion:** an engineer can go from a vehicle list to an explainable NTF case assessment without manually combining multiple spreadsheets.
 
@@ -288,11 +292,13 @@ The application should support expert confirmation, correction and annotation of
 
 The recommended first practical milestone is:
 
-1. define the domain model,
-2. create 10–20 synthetic or anonymised coolant-pump cases,
-3. represent CPC3 DTCs and pump replacement events,
-4. render a chronological case timeline,
-5. detect same / new / disappeared faults after replacement,
-6. only then connect the first real source system.
+Completed foundation:
 
-This gives a testable foundation before UI and ML complexity are introduced.
+1. domain model including explicit diagnostic sessions,
+2. six synthetic coolant-pump cases covering key patterns,
+3. CPC3/cross-ECU DTC and replacement events,
+4. chronological case timeline in the PySide6 UI,
+5. same / new / disappeared fault analysis,
+6. parser contracts and automated tests.
+
+**Next milestone:** implement the concrete short-test parser from representative original files, then import real replacement events and replace the demo repository with persisted normalized cases.
