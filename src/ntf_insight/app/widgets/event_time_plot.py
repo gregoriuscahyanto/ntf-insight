@@ -60,12 +60,20 @@ class EventTimePlot(QWidget):
         lanes = [("diagnostic", title) for title in dtc_titles]
         labels = {
             "diagnostic_session": "Kurztest",
+            "ecu_state": "ECU-Stand",
             "replacement": "Tausch",
             "repair": "Werkstatt",
             "software": "Software",
             "supplier": "Lieferant",
         }
-        for kind in ("diagnostic_session", "replacement", "software", "repair", "supplier"):
+        for kind in (
+            "diagnostic_session",
+            "ecu_state",
+            "replacement",
+            "software",
+            "repair",
+            "supplier",
+        ):
             if any(entry.kind == kind for entry in self._entries):
                 lanes.append((kind, labels[kind]))
         return lanes
@@ -146,6 +154,7 @@ class EventTimePlot(QWidget):
                 if entry.kind == "diagnostic"
                 else (entry.kind, {
                     "diagnostic_session": "Kurztest",
+                    "ecu_state": "ECU-Stand",
                     "replacement": "Tausch",
                     "repair": "Werkstatt",
                     "software": "Software",
