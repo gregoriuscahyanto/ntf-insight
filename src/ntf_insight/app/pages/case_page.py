@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from PySide6.QtCore import QSortFilterProxyModel, Qt
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QComboBox,
@@ -12,6 +13,7 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QHeaderView,
     QLabel,
+    QLineEdit,
     QPushButton,
     QTableView,
     QVBoxLayout,
@@ -21,8 +23,10 @@ from PySide6.QtWidgets import (
 from ntf_insight.analysis.evidence_engine import generate_case_evidence
 from ntf_insight.analysis.recurrence import analyze_recurrence, format_faults
 from ntf_insight.analysis.timeline import build_timeline
+from ntf_insight.app.models.case_table_model import CaseRow, CaseTableModel
 from ntf_insight.app.models.simple_table_model import SimpleTableModel
 from ntf_insight.app.models.timeline_table_model import TimelineTableModel
+from ntf_insight.app.widgets.event_time_plot import EventTimePlot
 from ntf_insight.reporting.markdown import save_case_report
 from ntf_insight.storage.reference_repositories import ReferenceRepository
 from ntf_insight.storage.repositories import CaseRepository
@@ -40,26 +44,77 @@ class CasePage(QWidget):
         layout.setContentsMargins(32, 28, 32, 28)
         layout.setSpacing(12)
 
-        layout.addWidget(QLabel("Fälle", objectName="PageTitle"))
+        layout.addWidget(QLabel("Fälle / FIN", objectName="PageTitle"))
         intro = QLabel(
-            "Es werden synthetische Beispiele angezeigt, bis echte Kurztest-, SMR-D-, Tausch- und "
-            "HW-/SW-Historien-Dateien angebunden sind.",
+            "Die Analyseeinheit ist die Kombination aus FIN/VIN und Fall. "
+            "Eine FIN kann mehrere Fälle oder Austausche enthalten.",
             objectName="PageSubtitle",
         )
         intro.setWordWrap(True)
         layout.addWidget(intro)
 
-        selector_row = QHBoxLayout()
         self.selector = QComboBox()
+        self.selector.setVisible(False)
         for case in repository.list_cases():
             self.selector.addItem(f"{case.case_id} · {case.vin}", case.case_id)
         self.selector.currentIndexChanged.connect(self._refresh)
-        selector_row.addWidget(self.selector, 1)
+
+        selector_row = QHBoxLayout()
+        search = QLineEdit()
+        search.setPlaceholderText("Fall, FIN / VIN, Bauteil oder Bewertung suchen …")
+        search.setClearButtonEnabled(True)
+        selector_row.addWidget(search, 1)
 
         export_button = QPushButton("Markdown-Bericht exportieren…")
         export_button.clicked.connect(self._export_report)
         selector_row.addWidget(export_button)
         layout.addLayout(selector_row)
+
+        case_rows: list[CaseRow] = []
+        for case in repository.list_cases():
+            replacement = case.investigated_replacement()
+            recurrence = analyze_recurrence(case)
+            if recurrence.assessable:
+                recurrence_text = "Ja" if recurrence.has_recurrence else "Nein"
+            else:
+                recurrence_text = "Unbekannt"
+            case_rows.append(
+                CaseRow(
+                    case_id=case.case_id,
+                    vin=case.vin,
+                    component=case.component_type,
+                    dtc_count=len(case.diagnostics),
+                    replacement=(
+                        replacement.occurred_at.strftime("%Y-%m-%d")
+                        if replacement is not None
+                        else None
+                    ),
+                    recurrence=recurrence_text,
+                    assessment=(
+                        str(case.assessment.root_cause) if case.assessment is not None else None
+                    ),
+                )
+            )
+
+        self.case_model = CaseTableModel(case_rows)
+        self.case_proxy = QSortFilterProxyModel(self)
+        self.case_proxy.setSourceModel(self.case_model)
+        self.case_proxy.setFilterCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
+        self.case_proxy.setFilterKeyColumn(-1)
+        search.textChanged.connect(self.case_proxy.setFilterFixedString)
+
+        self.case_table = QTableView()
+        self.case_table.setModel(self.case_proxy)
+        self.case_table.setMaximumHeight(190)
+        self.case_table.setAlternatingRowColors(True)
+        self.case_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        self.case_table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
+        self.case_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        self.case_table.setSortingEnabled(True)
+        self.case_table.verticalHeader().setVisible(False)
+        self.case_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        self.case_table.clicked.connect(self._case_clicked)
+        layout.addWidget(self.case_table)
 
         summary = QGridLayout()
         summary.setHorizontalSpacing(24)
@@ -95,6 +150,16 @@ class CasePage(QWidget):
         self.recurrence_text.setWordWrap(True)
         layout.addWidget(self.recurrence_text)
 
+        layout.addWidget(QLabel("Zeitliches Auftreten", objectName="CardTitle"))
+        time_hint = QLabel(
+            "DTCs und relevante Ereignisse über die Zeit; die gestrichelte Linie markiert den Bauteiltausch.",
+            objectName="PageSubtitle",
+        )
+        time_hint.setWordWrap(True)
+        layout.addWidget(time_hint)
+        self.time_plot = EventTimePlot()
+        layout.addWidget(self.time_plot)
+
         layout.addWidget(QLabel("Generierte Evidenz", objectName="CardTitle"))
         self.evidence_model = SimpleTableModel(
             ("Signal", "Kategoriehinweis", "Richtung", "Vorläufiges Gewicht", "Beschreibung")
@@ -129,7 +194,17 @@ class CasePage(QWidget):
         layout.addWidget(self.timeline, 1)
 
         if self.selector.count():
+            self.case_table.selectRow(0)
             self._refresh()
+
+    def _case_clicked(self, index) -> None:
+        source_index = self.case_proxy.mapToSource(self.case_proxy.index(index.row(), 0))
+        case_id = self.case_model.case_id_at(source_index.row())
+        if case_id is None:
+            return
+        selector_index = self.selector.findData(case_id)
+        if selector_index >= 0:
+            self.selector.setCurrentIndex(selector_index)
 
     def _refresh(self) -> None:
         case_id = self.selector.currentData()
@@ -141,6 +216,7 @@ class CasePage(QWidget):
         recurrence = analyze_recurrence(case)
         assessment = case.assessment
         generated = generate_case_evidence(case, self.references)
+        timeline_entries = build_timeline(case)
 
         self.component_value.setText(case.component_type)
         self.replacement_value.setText(
@@ -218,7 +294,8 @@ class CasePage(QWidget):
             self.evidence_balance.setText(
                 "Noch keine bewertete generische Evidenz; weitere Quelldaten oder bauteilspezifische Regeln sind erforderlich."
             )
-        self.timeline_model.set_entries(build_timeline(case))
+        self.time_plot.set_entries(timeline_entries)
+        self.timeline_model.set_entries(timeline_entries)
 
 
     def _export_report(self) -> None:
