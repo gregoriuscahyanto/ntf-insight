@@ -21,3 +21,17 @@ def test_event_time_plot_accepts_case_timeline() -> None:
     plot.show()
     app.processEvents()
     plot.close()
+
+
+def test_event_time_plot_filters_specific_dtc() -> None:
+    app = QApplication.instance() or QApplication([])
+    case = build_demo_cases()[0]
+    plot = EventTimePlot()
+    plot.set_entries(build_timeline(case))
+
+    plot.set_filter_text("P26F100")
+    visible = plot._visible_entries()
+
+    assert visible
+    assert all("P26F100" in entry.title for entry in visible)
+    app.processEvents()
