@@ -58,6 +58,7 @@ def main() -> int:
 
     window = MainWindow()
     window.navigation.set_theme(theme)
+    window.navigation.set_font_status(fonts.body_family, fonts.heading_family)
 
     def apply_theme(selected: str) -> None:
         settings.setValue("appearance/theme", selected)
