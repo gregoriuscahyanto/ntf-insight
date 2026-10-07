@@ -19,7 +19,7 @@ class EventTimePlot(QWidget):
         self._entries: list[TimelineEntry] = []
         self._filter_text = ""
         self.setMinimumHeight(270)
-        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
 
     def set_entries(self, entries: list[TimelineEntry]) -> None:
         self._entries = sorted(entries, key=lambda item: item.occurred_at)
