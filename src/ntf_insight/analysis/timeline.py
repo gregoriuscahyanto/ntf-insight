@@ -10,6 +10,7 @@ from ntf_insight.domain.case import NTFCase
 from ntf_insight.domain.events import (
     DiagnosticEvent,
     DiagnosticSession,
+    ECUStateObservation,
     PartReplacement,
     RepairEvent,
     SoftwareEvent,
@@ -17,11 +18,18 @@ from ntf_insight.domain.events import (
 )
 
 TimelineKind = Literal[
-    "diagnostic_session", "diagnostic", "replacement", "repair", "software", "supplier"
+    "diagnostic_session",
+    "diagnostic",
+    "ecu_state",
+    "replacement",
+    "repair",
+    "software",
+    "supplier",
 ]
 TimelineEvent = (
     DiagnosticSession
     | DiagnosticEvent
+    | ECUStateObservation
     | PartReplacement
     | RepairEvent
     | SoftwareEvent
@@ -71,6 +79,29 @@ def build_timeline(case: NTFCase) -> list[TimelineEntry]:
                 kind="diagnostic",
                 title=f"{event.ecu} · {event.dtc_code}",
                 detail=" · ".join(detail_parts),
+                source_ref=event.source_ref,
+                event=event,
+            )
+        )
+
+
+    for event in case.ecu_states:
+        state_parts = [
+            value
+            for value in (
+                f"SW {event.software_version}" if event.software_version else None,
+                f"HW {event.hardware_version}" if event.hardware_version else None,
+                f"Coding {event.coding}" if event.coding else None,
+            )
+            if value
+        ]
+        entries.append(
+            TimelineEntry(
+                occurred_at=event.occurred_at,
+                mileage_km=event.mileage_km,
+                kind="ecu_state",
+                title=f"ECU state · {event.ecu}",
+                detail=" · ".join(state_parts),
                 source_ref=event.source_ref,
                 event=event,
             )
