@@ -7,6 +7,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from ntf_insight.domain.assessment import Assessment
 from ntf_insight.domain.events import (
     DiagnosticEvent,
+    DiagnosticSession,
     PartReplacement,
     RepairEvent,
     SoftwareEvent,
@@ -23,6 +24,7 @@ class NTFCase(BaseModel):
     case_id: str
     vehicle: Vehicle
     component_type: str
+    diagnostic_sessions: list[DiagnosticSession] = Field(default_factory=list)
     diagnostics: list[DiagnosticEvent] = Field(default_factory=list)
     repairs: list[RepairEvent] = Field(default_factory=list)
     replacements: list[PartReplacement] = Field(default_factory=list)
