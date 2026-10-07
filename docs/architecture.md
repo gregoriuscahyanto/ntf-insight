@@ -52,3 +52,23 @@ app/
 ```
 
 Qt's Model/View architecture should be preferred for large vehicle, DTC and case tables instead of embedding data directly in widgets.
+
+## Engineering reference knowledge
+
+NTF Insight keeps two different kinds of data separate:
+
+- **Vehicle/case events** describe what happened on a specific FIN/VIN: short tests, DTC observations, replacements, workshop actions and actual software states.
+- **Engineering reference knowledge** describes how the system is designed: DTC trigger definitions from SMR-D sources and documented HW/SW/calibration changes between ECU releases.
+
+This separation is important for causal reasoning. A release note that changes a DTC monitor does not prove that a specific vehicle had that software; the vehicle timeline must still provide the actual software state. Likewise, a DTC trigger definition explains the monitor logic but does not by itself prove the physical root cause.
+
+Conceptually:
+
+```text
+SMR-D trigger definitions ─────────┐
+                                  ├──> evidence / root-cause analysis
+HW/SW change catalog ─────────────┤
+                                  │
+vehicle short tests + SW state ───┤
+replacement / workshop events ────┘
+```
