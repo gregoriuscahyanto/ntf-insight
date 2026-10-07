@@ -16,10 +16,10 @@ class SupplierPage(QWidget):
         layout.setContentsMargins(32, 28, 32, 28)
         layout.setSpacing(14)
 
-        layout.addWidget(QLabel("Suppliers", objectName="PageTitle"))
+        layout.addWidget(QLabel("Lieferanten", objectName="PageTitle"))
         subtitle = QLabel(
-            "Raw case counts are shown separately from normalized rates. A supplier rate remains "
-            "blank until installed-population denominator data is available.",
+            "Rohfallzahlen werden getrennt von normalisierten Raten dargestellt. Eine Lieferantenrate bleibt "
+            "leer, bis ein gültiger Nenner aus der verbauten Population vorliegt.",
             objectName="PageSubtitle",
         )
         subtitle.setWordWrap(True)
@@ -46,13 +46,13 @@ class SupplierPage(QWidget):
 
         model = SimpleTableModel(
             (
-                "Component",
-                "Supplier",
-                "Cases",
-                "Return NTF",
-                "Fault found",
-                "Recurrences",
-                "Installed units",
+                "Bauteil",
+                "Lieferant",
+                "Fälle",
+                "Rückläufer NTF",
+                "Fehler gefunden",
+                "Wiederholungen",
+                "Verbaute Einheiten",
                 "NTF / 1000",
             ),
             rows,
