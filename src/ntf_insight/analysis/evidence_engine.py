@@ -120,8 +120,8 @@ def generate_case_evidence(
         semantic_ecus: dict[str, set[str]] = defaultdict(set)
         related_changes = {}
         for event in case.diagnostics:
-            trigger = references.find_trigger(event.ecu, event.dtc_code)
-            if trigger is not None:
+            triggers = references.find_triggers(event.ecu, event.dtc_code)
+            for trigger in triggers:
                 for tag in trigger.semantic_tags:
                     semantic_ecus[tag].add(event.ecu.strip().upper())
             for change in references.find_changes_for_dtc(event.ecu, event.dtc_code):
