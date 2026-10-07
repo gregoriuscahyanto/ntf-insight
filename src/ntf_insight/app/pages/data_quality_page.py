@@ -18,10 +18,10 @@ class DataQualityPage(QWidget):
         layout.setContentsMargins(32, 28, 32, 28)
         layout.setSpacing(14)
 
-        layout.addWidget(QLabel("Data Quality", objectName="PageTitle"))
+        layout.addWidget(QLabel("Datenqualität", objectName="PageTitle"))
         subtitle = QLabel(
-            "Analysis readiness is checked explicitly so missing data is never silently interpreted "
-            "as a negative finding.",
+            "Die Analysebereitschaft wird explizit geprüft, damit fehlende Daten niemals stillschweigend "
+            "als negativer Befund interpretiert werden.",
             objectName="PageSubtitle",
         )
         subtitle.setWordWrap(True)
@@ -49,16 +49,16 @@ class DataQualityPage(QWidget):
 
         model = SimpleTableModel(
             (
-                "Case",
+                "Fall",
                 "FIN / VIN",
-                "Replacement",
-                "Pre test",
-                "Post test",
-                "Supplier finding",
-                "SW history",
-                "Trigger coverage",
-                "Integrity errors",
-                "Completeness issues",
+                "Tausch",
+                "Vorher-Test",
+                "Nachher-Test",
+                "Lieferantenbefund",
+                "SW-Historie",
+                "Trigger-Abdeckung",
+                "Integritätsfehler",
+                "Vollständigkeitsprobleme",
             ),
             rows,
         )
