@@ -5,6 +5,7 @@ from __future__ import annotations
 from PySide6.QtWidgets import QAbstractItemView, QHeaderView, QLabel, QTableView, QVBoxLayout, QWidget
 
 from ntf_insight.analysis.data_quality import assess_data_quality
+from ntf_insight.analysis.integrity import validate_case_integrity
 from ntf_insight.app.models.simple_table_model import SimpleTableModel
 from ntf_insight.storage.reference_repositories import ReferenceRepository
 from ntf_insight.storage.repositories import CaseRepository
@@ -29,6 +30,7 @@ class DataQualityPage(QWidget):
         rows: list[tuple[object, ...]] = []
         for case in cases.list_cases():
             report = assess_data_quality(case, references)
+            integrity = validate_case_integrity(case)
             ratio = report.trigger_coverage_ratio
             rows.append(
                 (
@@ -40,6 +42,7 @@ class DataQualityPage(QWidget):
                     report.status_for("supplier_finding"),
                     report.status_for("software_history"),
                     f"{ratio:.0%}" if ratio is not None else None,
+                    integrity.error_count,
                     report.issue_count,
                 )
             )
@@ -54,7 +57,8 @@ class DataQualityPage(QWidget):
                 "Supplier finding",
                 "SW history",
                 "Trigger coverage",
-                "Issues",
+                "Integrity errors",
+                "Completeness issues",
             ),
             rows,
         )
