@@ -10,7 +10,6 @@ from ntf_insight.app.pages.case_page import CasePage
 from ntf_insight.app.pages.dashboard_page import DashboardPage
 from ntf_insight.app.pages.data_quality_page import DataQualityPage
 from ntf_insight.app.pages.dtc_page import DTCExplorerPage
-from ntf_insight.app.pages.generic_page import GenericPage
 from ntf_insight.app.pages.similarity_page import SimilarityPage
 from ntf_insight.app.pages.sources_page import SourcesPage
 from ntf_insight.app.pages.supplier_page import SupplierPage
