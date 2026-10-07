@@ -281,3 +281,10 @@ See [docs/data-requirements.md](docs/data-requirements.md) for the minimum and r
 See [ROADMAP.md](ROADMAP.md) for the implementation plan.
 
 The source-independent foundation is now in place. The next source-dependent step is implementing the concrete short-test parser, followed by SMR-D and HW/SW change-history parsers, once representative original files are available.
+
+## Weitere Dokumentation
+
+- [Mercedes-Benz Corporate Design](docs/mercedes-design.md)
+- [Managed Windows Environment](docs/windows-managed-environment.md)
+- [Enterprise CI/CD Pipeline](docs/enterprise-pipeline.md)
+- [Canonical Source Contracts](docs/source-contracts.md)
