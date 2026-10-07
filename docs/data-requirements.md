@@ -35,6 +35,8 @@ Prefer the **complete vehicle short test across all ECUs**, not only the control
 
 For the coolant-pump use case, CPC3 is especially relevant, but cross-ECU DTCs are important for detecting supply, communication or system-level problems.
 
+**Do not discard a short test just because it contains zero relevant DTCs.** NTF Insight stores the diagnostic session itself separately from its DTC entries. This lets the analysis distinguish a known post-replacement test with no matching fault from a case where no post-replacement diagnostic data exists at all.
+
 ### 3. Component replacement event
 
 This is the analytical anchor for pre/post comparison and is **required** for recurrence analysis.
