@@ -1,4 +1,4 @@
-"""Case detail and timeline page."""
+"""Case detail, evidence and timeline page."""
 
 from __future__ import annotations
 
@@ -13,30 +13,35 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from ntf_insight.analysis.evidence_engine import generate_case_evidence
 from ntf_insight.analysis.recurrence import analyze_recurrence, format_faults
 from ntf_insight.analysis.timeline import build_timeline
+from ntf_insight.app.models.simple_table_model import SimpleTableModel
 from ntf_insight.app.models.timeline_table_model import TimelineTableModel
+from ntf_insight.storage.reference_repositories import ReferenceRepository
 from ntf_insight.storage.repositories import CaseRepository
 
 
 class CasePage(QWidget):
-    """Inspect one case, its assessment and the pre/post replacement timeline."""
+    """Inspect one case, its evidence and the pre/post replacement timeline."""
 
-    def __init__(self, repository: CaseRepository) -> None:
+    def __init__(self, repository: CaseRepository, references: ReferenceRepository) -> None:
         super().__init__()
         self.repository = repository
+        self.references = references
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(32, 28, 32, 28)
-        layout.setSpacing(14)
+        layout.setSpacing(12)
 
         layout.addWidget(QLabel("Cases", objectName="PageTitle"))
-        layout.addWidget(
-            QLabel(
-                "Synthetic examples are shown until the real short-test and replacement files are connected.",
-                objectName="PageSubtitle",
-            )
+        intro = QLabel(
+            "Synthetic examples are shown until real short-test, SMR-D, replacement and "
+            "HW/SW history files are connected.",
+            objectName="PageSubtitle",
         )
+        intro.setWordWrap(True)
+        layout.addWidget(intro)
 
         self.selector = QComboBox()
         for case in repository.list_cases():
@@ -58,7 +63,7 @@ class CasePage(QWidget):
         fields = (
             ("Component", self.component_value),
             ("Replacement", self.replacement_value),
-            ("Root cause", self.root_cause_value),
+            ("Current assessment", self.root_cause_value),
             ("Supplier involvement", self.supplier_value),
             ("Confidence", self.confidence_value),
             ("Same fault after swap", self.recurrence_value),
@@ -77,6 +82,22 @@ class CasePage(QWidget):
         self.recurrence_text = QLabel("—", objectName="PageSubtitle")
         self.recurrence_text.setWordWrap(True)
         layout.addWidget(self.recurrence_text)
+
+        layout.addWidget(QLabel("Generated evidence", objectName="CardTitle"))
+        self.evidence_model = SimpleTableModel(
+            ("Signal", "Category hint", "Direction", "Weight", "Description")
+        )
+        self.evidence_table = QTableView()
+        self.evidence_table.setModel(self.evidence_model)
+        self.evidence_table.setMaximumHeight(190)
+        self.evidence_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        self.evidence_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        self.evidence_table.setAlternatingRowColors(True)
+        self.evidence_table.verticalHeader().setVisible(False)
+        evidence_header = self.evidence_table.horizontalHeader()
+        evidence_header.setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
+        evidence_header.setStretchLastSection(True)
+        layout.addWidget(self.evidence_table)
 
         layout.addWidget(QLabel("Timeline", objectName="CardTitle"))
         self.timeline_model = TimelineTableModel()
@@ -103,6 +124,7 @@ class CasePage(QWidget):
         replacement = case.investigated_replacement()
         recurrence = analyze_recurrence(case)
         assessment = case.assessment
+        generated = generate_case_evidence(case, self.references)
 
         self.component_value.setText(case.component_type)
         self.replacement_value.setText(
@@ -132,7 +154,9 @@ class CasePage(QWidget):
                 missing.append("pre-replacement short test")
             if not recurrence.has_post_test:
                 missing.append("post-replacement short test")
-            recurrence_summary = "Recurrence cannot be assessed reliably; missing " + " and ".join(missing) + "."
+            recurrence_summary = (
+                "Recurrence cannot be assessed reliably; missing " + " and ".join(missing) + "."
+            )
         else:
             elapsed = (
                 f"{recurrence.first_recurrence_after.days} d"
@@ -151,4 +175,16 @@ class CasePage(QWidget):
                 f"First recurrence: {elapsed} / {distance}"
             )
         self.recurrence_text.setText(recurrence_summary)
+
+        evidence_rows = [
+            (
+                item.code,
+                str(item.category_hint) if item.category_hint else None,
+                str(item.direction),
+                f"{item.weight:.2f}",
+                item.description,
+            )
+            for item in generated.evidence
+        ]
+        self.evidence_model.set_rows(evidence_rows)
         self.timeline_model.set_entries(build_timeline(case))
