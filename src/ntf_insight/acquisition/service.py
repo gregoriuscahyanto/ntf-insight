@@ -26,8 +26,9 @@ class BatchAcquisitionService:
                         artifact = self.importer.import_raw(
                             item.path,
                             source_type=item.source_type,
-                            parser_name=None,
-                            parser_version=None,
+                            source_system=self.provider.name,
+                            vin_hint=vin,
+                            remote_ref=item.remote_ref,
                         )
                         result.artifacts.append(artifact)
                 except Exception as exc:
