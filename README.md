@@ -6,7 +6,7 @@ NTF Insight is a Python project for reconstructing and analysing vehicle field c
 
 The architecture is intentionally **not tied to one component**. Coolant pumps, HV batteries and future component families should use the same generic case, timeline, evidence, similarity and reporting engines, with component-specific profiles and rules layered on top.
 
-> **Status:** pre-alpha desktop prototype. Domain models, synthetic cases, timeline reconstruction and pre/post replacement recurrence analysis are implemented; production source parsers are still pending.
+> **Status:** pre-alpha desktop prototype. Domain models, immutable raw-source archiving, DuckDB persistence, synthetic cases, timeline/re-currence analysis, data-quality checks, reference-knowledge linking, explainable evidence, baseline similarity and supplier-rate foundations are implemented. Concrete production source parsers are intentionally pending representative original files.
 
 ## Questions the project should answer
 
@@ -54,7 +54,7 @@ For every vehicle / case, NTF Insight should eventually help answer questions su
 
 ```mermaid
 flowchart LR
-    A[Reports / diagnostic exports / field data] --> B[Ingestion adapters]
+    Z[External report systems] --> A[Acquisition providers]\n    A --> B[Immutable raw archive]\n    B --> C[Ingestion adapters]
     B --> C[Raw archive]
     B --> D[Normalization]
     D --> E[Case & vehicle timeline]
@@ -63,7 +63,7 @@ flowchart LR
     F --> H[Similarity & clustering]
     G --> I[Root-cause assessment]
     H --> I
-    I --> J[PySide6 desktop app / reports / exports]
+    D --> P[DuckDB local store]\n    P --> E\n    I --> J[PySide6 desktop app / reports / exports]
 
     K[Component profiles] --> D
     K --> F
@@ -137,11 +137,11 @@ ntf-insight/
 ├── docs/                       # Architecture and engineering documentation
 ├── data/                       # Documentation only; no real field data in Git
 ├── src/ntf_insight/
-│   ├── app/                    # PySide6 desktop UI / application layer
+│   ├── acquisition/            # Provider contracts for automated report download\n│   ├── app/                    # PySide6 desktop UI / application layer
 │   ├── domain/                 # Generic entities and value objects
 │   ├── ingestion/              # Source adapters and parsers
 │   ├── storage/                # Persistence abstractions
-│   ├── analysis/               # Timeline, recurrence, rules, features, clustering
+│   ├── analysis/               # Timeline, recurrence, evidence, quality, similarity\n│   ├── demo/                   # Synthetic development/reference fixtures
 │   └── components/
 │       ├── coolant_pump/       # First component profile
 │       └── hv_battery/         # Future / reference component profile
@@ -225,7 +225,23 @@ ntf-insight
 
 The GUI is a native **PySide6 / Qt desktop application**. The analysis core remains independent of the GUI so that other frontends can be added later without rewriting the engineering logic.
 
-The test suite covers package import, synthetic case loading, chronological timeline reconstruction and pre/post replacement recurrence behaviour.
+The test suite covers domain models, synthetic cases, GUI startup, raw-file archiving, DuckDB round-trips, case assembly, recurrence, reference knowledge, evidence generation, data quality, similarity, supplier denominators and acquisition orchestration.
+
+## Local data directory
+
+The desktop app stores local working data outside the Git repository by default:
+
+```text
+~/.ntf-insight/
+├── ntf-insight.duckdb
+└── raw/
+```
+
+Set `NTF_INSIGHT_DATA_DIR` to override that location. If the database contains no imported cases, the app starts in clearly labelled **demo mode** with fictional data. The Data Sources page can already archive arbitrary original files with SHA-256 provenance before a concrete parser exists.
+
+## Desktop views
+
+The current prototype includes Overview, Data Sources, Vehicles, Cases/Evidence, DTC Explorer, Similarity/Clusters baseline, Suppliers and Data Quality.
 
 ## Development conventions
 
@@ -233,7 +249,7 @@ The test suite covers package import, synthetic case loading, chronological time
 - Put source-system specifics behind ingestion adapters.
 - Put component-specific engineering knowledge under `components/`.
 - Prefer small, testable transformations over large notebooks or scripts.
-- Store derived datasets in reproducible formats such as Parquet / DuckDB later, but keep raw source files unchanged.
+- Store normalized data locally in DuckDB / Parquet-compatible structures and keep raw source files unchanged.
 - Every automated assessment should be reproducible from stored input evidence.
 - Use synthetic or anonymised fixtures in tests.
 
@@ -254,10 +270,10 @@ Use synthetic or irreversibly anonymised data for examples and automated tests.
 
 ## Input data
 
-See [docs/data-requirements.md](docs/data-requirements.md) for the minimum and recommended source files. In addition to per-vehicle events, NTF Insight treats SMR-D DTC trigger definitions and HW/SW release changes as versioned engineering reference knowledge. A known diagnostic session with zero relevant DTCs is preserved explicitly so missing data is never confused with a clean post-replacement test.
+See [docs/data-requirements.md](docs/data-requirements.md) for the minimum and recommended source files and [docs/source-contracts.md](docs/source-contracts.md) for canonical parser outputs. In addition to per-vehicle events, NTF Insight treats SMR-D DTC trigger definitions and HW/SW release changes as versioned engineering reference knowledge. A known diagnostic session with zero relevant DTCs is preserved explicitly so missing data is never confused with a clean post-replacement test.
 
 ## Roadmap
 
 See [ROADMAP.md](ROADMAP.md) for the implementation plan.
 
-The first implementation milestone is now in place with synthetic cases. The next source-dependent step is implementing the concrete short-test parser once representative original files are available.
+The source-independent foundation is now in place. The next source-dependent step is implementing the concrete short-test parser, followed by SMR-D and HW/SW change-history parsers, once representative original files are available.
