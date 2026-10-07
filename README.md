@@ -245,7 +245,7 @@ Set `NTF_INSIGHT_DATA_DIR` to override that location. If the database contains n
 
 ## Desktop views
 
-The current prototype includes Overview, Data Sources, Vehicles, Cases/Evidence, DTC Explorer, Similarity/Clusters baseline, Suppliers and Data Quality.
+The current prototype includes Overview, Data Sources, Vehicles, Cases/Evidence, DTC Explorer, Similarity/Clusters baseline, Suppliers and Data Quality. The Case view can export a deterministic Markdown analysis report.
 
 ## Development conventions
 
