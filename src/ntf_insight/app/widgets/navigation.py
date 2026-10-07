@@ -24,7 +24,7 @@ class NavigationPanel(QFrame):
         ("vehicles", "Fahrzeuge"),
         ("cases", "Fälle"),
         ("dtcs", "DTC-Explorer"),
-        ("clusters", "Cluster"),
+        ("clusters", "DTC-Cluster"),
         ("suppliers", "Lieferanten"),
         ("quality", "Datenqualität"),
     )
