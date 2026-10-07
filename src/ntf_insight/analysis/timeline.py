@@ -9,14 +9,24 @@ from typing import Literal
 from ntf_insight.domain.case import NTFCase
 from ntf_insight.domain.events import (
     DiagnosticEvent,
+    DiagnosticSession,
     PartReplacement,
     RepairEvent,
     SoftwareEvent,
     SupplierFinding,
 )
 
-TimelineKind = Literal["diagnostic", "replacement", "repair", "software", "supplier"]
-TimelineEvent = DiagnosticEvent | PartReplacement | RepairEvent | SoftwareEvent | SupplierFinding
+TimelineKind = Literal[
+    "diagnostic_session", "diagnostic", "replacement", "repair", "software", "supplier"
+]
+TimelineEvent = (
+    DiagnosticSession
+    | DiagnosticEvent
+    | PartReplacement
+    | RepairEvent
+    | SoftwareEvent
+    | SupplierFinding
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -33,6 +43,24 @@ class TimelineEntry:
 def build_timeline(case: NTFCase) -> list[TimelineEntry]:
     """Return all case events in chronological order."""
     entries: list[TimelineEntry] = []
+
+    for event in case.diagnostic_sessions:
+        details = []
+        if event.ecu_count is not None:
+            details.append(f"{event.ecu_count} ECUs")
+        if event.dtc_count is not None:
+            details.append(f"{event.dtc_count} DTCs")
+        entries.append(
+            TimelineEntry(
+                occurred_at=event.occurred_at,
+                mileage_km=event.mileage_km,
+                kind="diagnostic_session",
+                title=event.label,
+                detail=" · ".join(details),
+                source_ref=event.source_ref,
+                event=event,
+            )
+        )
 
     for event in case.diagnostics:
         detail_parts = [part for part in (event.dtc_text, event.status) if part]
