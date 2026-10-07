@@ -13,7 +13,7 @@ from ntf_insight.storage.repositories import CaseRepository
 class DashboardPage(QWidget):
     """Overview page backed by the current case repository."""
 
-    def __init__(self, repository: CaseRepository) -> None:
+    def __init__(self, repository: CaseRepository, mode: str = "demo") -> None:
         super().__init__()
 
         cases = repository.list_cases()
@@ -32,8 +32,13 @@ class DashboardPage(QWidget):
         layout.setSpacing(18)
 
         title = QLabel("Overview", objectName="PageTitle")
+        subtitle_text = (
+            "Current values come from fictional demo cases until real source files are imported."
+            if mode == "demo"
+            else "Current values are loaded from the local NTF Insight data store."
+        )
         subtitle = QLabel(
-            "Current values come from fictional demo cases until real source files are imported.",
+            subtitle_text,
             objectName="PageSubtitle",
         )
         layout.addWidget(title)
