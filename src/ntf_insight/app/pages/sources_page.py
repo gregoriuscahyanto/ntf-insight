@@ -14,6 +14,7 @@ from PySide6.QtWidgets import (
     QLabel,
     QLineEdit,
     QPushButton,
+    QSizePolicy,
     QTableView,
     QVBoxLayout,
     QWidget,
@@ -92,25 +93,42 @@ class SourcesPage(QWidget):
         layout.addWidget(QLabel("Rohdatenarchiv", objectName="CardTitle"))
         controls = QHBoxLayout()
         self.source_type = QComboBox()
+        self.source_type.setMinimumWidth(300)
+        self.source_type.setSizePolicy(
+            QSizePolicy.Policy.Expanding,
+            QSizePolicy.Policy.Fixed,
+        )
         for source_type, label in self.SOURCE_LABELS.items():
             self.source_type.addItem(label, source_type)
-        controls.addWidget(self.source_type)
+        controls.addWidget(self.source_type, 3)
 
         self.source_system = QLineEdit()
         self.source_system.setPlaceholderText("Quellsystem (optional)")
-        self.source_system.setMaximumWidth(190)
-        controls.addWidget(self.source_system)
+        self.source_system.setMinimumWidth(240)
+        self.source_system.setSizePolicy(
+            QSizePolicy.Policy.Expanding,
+            QSizePolicy.Policy.Fixed,
+        )
+        controls.addWidget(self.source_system, 2)
 
         self.vin_hint = QLineEdit()
         self.vin_hint.setPlaceholderText("FIN-/VIN-Hinweis (optional)")
-        self.vin_hint.setMaximumWidth(210)
-        controls.addWidget(self.vin_hint)
+        self.vin_hint.setMinimumWidth(260)
+        self.vin_hint.setSizePolicy(
+            QSizePolicy.Policy.Expanding,
+            QSizePolicy.Policy.Fixed,
+        )
+        controls.addWidget(self.vin_hint, 2)
 
         self.archive_button = QPushButton("Dateien auswählen…")
+        self.archive_button.setMinimumWidth(210)
+        self.archive_button.setSizePolicy(
+            QSizePolicy.Policy.Fixed,
+            QSizePolicy.Policy.Fixed,
+        )
         self.archive_button.setEnabled(self.import_service is not None)
         self.archive_button.clicked.connect(self._archive_file)
         controls.addWidget(self.archive_button)
-        controls.addStretch(1)
         layout.addLayout(controls)
 
         self.drop_zone = FileDropZone()
