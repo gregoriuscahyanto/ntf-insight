@@ -46,6 +46,8 @@ class MainWindow(QMainWindow):
                 self.reference_repository,
                 self.application_data.mode,
                 str(self.application_data.paths.data_dir),
+                str(self.application_data.paths.raw_dir),
+                str(self.application_data.paths.database_path),
             ),
             "vehicles": VehiclesPage(self.repository),
             "cases": CasePage(self.repository, self.reference_repository),
