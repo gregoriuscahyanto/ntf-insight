@@ -44,8 +44,9 @@ NTF Insight now resolves Mercedes-Benz corporate typography at runtime without r
 
 Preferred mapping:
 
-- **Corporate S** for UI text, tables, controls and body copy.
-- **Corporate A** for major headings and prominent values.
+- **Corpo S Title/Text** for UI text, tables, controls, buttons and body copy.
+- **Corpo A Title/Text Condensed** for major headings.
+- Historical/system family names such as **Corporate S** and **Corporate A** are also detected for compatibility.
 - Segoe UI / Arial remain safe fallbacks when the corporate fonts are unavailable.
 
 The app checks installed system font families automatically. It also supports an approved internal font directory through:
@@ -63,7 +64,7 @@ $env:NTF_INSIGHT_HEADING_FONT_FAMILY = "Approved Heading Family"
 python -m ntf_insight
 ```
 
-Font binaries are intentionally not committed to Git. The current Mercedes-Benz Brand Design System and its licensing/asset distribution rules remain authoritative.
+Font binaries are intentionally not committed to Git. Current public brand guidance states that the Mercedes-Benz brand fonts are obtained through the Brand & Design Navigator and require administrator approval; the internal/current Brand Design System and its licensing/asset distribution rules remain authoritative.
 
 ## Accessibility / readability
 
