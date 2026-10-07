@@ -65,7 +65,7 @@ class CasePage(QWidget):
         intro.setWordWrap(True)
         layout.addWidget(intro)
 
-        self.selector = QComboBox()
+        self.selector = QComboBox(self)
         self.selector.setVisible(False)
         for case in repository.list_cases():
             self.selector.addItem(f"{case.case_id} · {case.vin}", case.case_id)
@@ -126,6 +126,9 @@ class CasePage(QWidget):
         self.case_table.verticalHeader().setVisible(False)
         self.case_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
         self.case_table.clicked.connect(self._case_clicked)
+        self.case_table.selectionModel().currentRowChanged.connect(
+            lambda current, _previous: self._case_clicked(current)
+        )
         layout.addWidget(self.case_table)
 
         summary = QGridLayout()
