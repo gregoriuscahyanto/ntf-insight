@@ -45,7 +45,7 @@ class EventTimePlot(QWidget):
             "supplier": "lieferant befunde supplier",
         }
         visible = []
-        for entry in entries:
+        for entry in self._entries:
             haystack = " ".join(
                 (
                     aliases.get(entry.kind, entry.kind),
@@ -192,7 +192,7 @@ class EventTimePlot(QWidget):
             x = x_for(moment)
             painter.drawLine(QPointF(x, top), QPointF(x, top + plot_height))
 
-        for entry in self._entries:
+        for entry in entries:
             lane_key = (
                 ("diagnostic", entry.title)
                 if entry.kind == "diagnostic"
