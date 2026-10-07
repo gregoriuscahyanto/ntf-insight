@@ -1,24 +1,61 @@
 """Source-specific import adapters and canonical ingestion results."""
 
-from ntf_insight.ingestion.base import DTCTriggerParser, ECUChangeHistoryParser, ShortTestParser
+from ntf_insight.ingestion.artifacts import RawArchive, SourceArtifact, SourceType, sha256_file
+from ntf_insight.ingestion.base import (
+    DTCTriggerParser,
+    ECUChangeHistoryParser,
+    PopulationExposureParser,
+    ReplacementParser,
+    ShortTestParser,
+    SupplierFindingParser,
+    VehicleListParser,
+    VehicleSoftwareHistoryParser,
+    WorkshopHistoryParser,
+)
 from ntf_insight.ingestion.models import (
     ImportIssue,
+    ImportResult,
     ImportSeverity,
     ParsedDTCTriggerCatalog,
     ParsedECUChangeCatalog,
+    ParsedPopulationData,
+    ParsedReplacementData,
     ParsedShortTest,
+    ParsedSupplierFindingData,
+    ParsedVehicleList,
+    ParsedVehicleSoftwareData,
+    ParsedWorkshopData,
 )
 from ntf_insight.ingestion.registry import NoParserAvailableError, ShortTestParserRegistry
+from ntf_insight.ingestion.service import SourceImportService
 
 __all__ = [
     "DTCTriggerParser",
     "ECUChangeHistoryParser",
     "ImportIssue",
+    "ImportResult",
     "ImportSeverity",
     "NoParserAvailableError",
     "ParsedDTCTriggerCatalog",
     "ParsedECUChangeCatalog",
+    "ParsedPopulationData",
+    "ParsedReplacementData",
     "ParsedShortTest",
+    "ParsedSupplierFindingData",
+    "ParsedVehicleList",
+    "ParsedVehicleSoftwareData",
+    "ParsedWorkshopData",
+    "PopulationExposureParser",
+    "RawArchive",
+    "ReplacementParser",
     "ShortTestParser",
     "ShortTestParserRegistry",
+    "SourceArtifact",
+    "SourceImportService",
+    "SourceType",
+    "SupplierFindingParser",
+    "VehicleListParser",
+    "VehicleSoftwareHistoryParser",
+    "WorkshopHistoryParser",
+    "sha256_file",
 ]
