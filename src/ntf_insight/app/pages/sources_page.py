@@ -10,16 +10,24 @@ from ntf_insight.storage.repositories import CaseRepository
 
 
 class SourcesPage(QWidget):
-    def __init__(self, cases: CaseRepository, references: ReferenceRepository) -> None:
+    def __init__(
+        self,
+        cases: CaseRepository,
+        references: ReferenceRepository,
+        mode: str = "demo",
+        data_dir: str | None = None,
+    ) -> None:
         super().__init__()
         layout = QVBoxLayout(self)
         layout.setContentsMargins(32, 28, 32, 28)
         layout.setSpacing(14)
 
         layout.addWidget(QLabel("Data Sources", objectName="PageTitle"))
+        location = f" Local data directory: {data_dir}." if data_dir else ""
         subtitle = QLabel(
             "The ingestion contracts and raw-file archive are prepared. Concrete parsers stay "
-            "format-neutral until representative original files are available.",
+            "format-neutral until representative original files are available. "
+            f"Mode: {mode}.{location}",
             objectName="PageSubtitle",
         )
         subtitle.setWordWrap(True)
