@@ -11,13 +11,25 @@ from ntf_insight.ingestion.service import SourceImportService
 
 
 class BatchAcquisitionService:
-    def __init__(self, provider: ReportProvider, importer: SourceImportService) -> None:
+    def __init__(
+        self,
+        provider: ReportProvider,
+        importer: SourceImportService,
+        work_root: Path | None = None,
+    ) -> None:
         self.provider = provider
         self.importer = importer
+        # Avoid the system TEMP directory on managed Windows clients where enterprise
+        # policies may deny pytest/app access. Keep acquisition work beside the app data.
+        self.work_root = work_root or (self.importer.archive.root.parent / "work")
+        self.work_root.mkdir(parents=True, exist_ok=True)
 
     def acquire(self, vins: list[str]) -> AcquisitionResult:
         result = AcquisitionResult()
-        with tempfile.TemporaryDirectory(prefix="ntf-insight-download-") as temp:
+        with tempfile.TemporaryDirectory(
+            prefix="ntf-insight-download-",
+            dir=self.work_root,
+        ) as temp:
             work_dir = Path(temp)
             for vin in vins:
                 try:
