@@ -29,6 +29,7 @@ class SupplierPage(QWidget):
         for item in build_supplier_summaries(repository.list_cases()):
             rows.append(
                 (
+                    item.component_type,
                     item.supplier,
                     item.case_count,
                     item.return_ntf_count,
@@ -45,6 +46,7 @@ class SupplierPage(QWidget):
 
         model = SimpleTableModel(
             (
+                "Component",
                 "Supplier",
                 "Cases",
                 "Return NTF",
