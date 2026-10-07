@@ -226,6 +226,64 @@ QToolTip {{
     border: 1px solid {p["border"]};
 }}
 
+
+QFrame#DropZone {{
+    background-color: {p["surface"]};
+    border: 2px dashed {p["border"]};
+    border-radius: 12px;
+}}
+
+QFrame#DropZone[dragActive="true"] {{
+    background-color: {p["surface_alt"]};
+    border: 2px solid #73777c;
+}}
+
+QLabel#DropZoneTitle {{
+    color: {p["text"]};
+    font-size: 16px;
+    font-weight: 600;
+}}
+
+QLabel#DropZoneHint {{
+    color: {p["muted"]};
+    font-size: 12px;
+}}
+
+QLabel#EmptyState {{
+    background-color: {p["surface"]};
+    color: {p["muted"]};
+    border: 1px solid {p["border"]};
+    border-radius: 10px;
+    padding: 24px;
+}}
+
+QTabWidget::pane {{
+    background-color: {p["surface"]};
+    border: 1px solid {p["border"]};
+    border-radius: 10px;
+}}
+
+QTabBar::tab {{
+    background-color: {p["surface_alt"]};
+    color: {p["muted"]};
+    border: 1px solid {p["border"]};
+    border-bottom: none;
+    padding: 9px 16px;
+}}
+
+QTabBar::tab:selected {{
+    background-color: {p["surface"]};
+    color: {p["text"]};
+}}
+
+QGraphicsView#ClusterGraph {{
+    background-color: {p["surface"]};
+    color: {p["text"]};
+    border: 1px solid {p["border"]};
+    border-radius: 10px;
+}}
+
+
 QScrollBar:vertical, QScrollBar:horizontal {{
     background: {p["bg"]};
     border: none;
