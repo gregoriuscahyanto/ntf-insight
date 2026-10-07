@@ -20,7 +20,7 @@ class VersionedParser(Protocol):
 
 def _count_emitted_records(result: BaseModel) -> int:
     count = 0
-    for field_name in result.model_fields:
+    for field_name in type(result).model_fields:
         if field_name == "issues":
             continue
         value: Any = getattr(result, field_name)
