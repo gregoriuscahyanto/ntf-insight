@@ -2,19 +2,22 @@
 
 from __future__ import annotations
 
+from PySide6.QtCore import QSortFilterProxyModel, Qt
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QHeaderView,
     QLabel,
     QLineEdit,
-    QTableWidget,
+    QTableView,
     QVBoxLayout,
     QWidget,
 )
 
+from ntf_insight.app.models.vehicle_table_model import VehicleTableModel
+
 
 class VehiclesPage(QWidget):
-    """Placeholder vehicle/FIN explorer ready for a real table model."""
+    """Vehicle/FIN explorer backed by Qt's model/view architecture."""
 
     def __init__(self) -> None:
         super().__init__()
@@ -36,14 +39,20 @@ class VehiclesPage(QWidget):
         search.setClearButtonEnabled(True)
         layout.addWidget(search)
 
-        self.table = QTableWidget(0, 6)
-        self.table.setHorizontalHeaderLabels(
-            ["FIN / VIN", "Component", "DTCs", "Replacement", "Recurrence", "Assessment"]
-        )
+        self.model = VehicleTableModel()
+        self.proxy = QSortFilterProxyModel(self)
+        self.proxy.setSourceModel(self.model)
+        self.proxy.setFilterCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
+        self.proxy.setFilterKeyColumn(-1)
+        search.textChanged.connect(self.proxy.setFilterFixedString)
+
+        self.table = QTableView()
+        self.table.setModel(self.proxy)
         self.table.setAlternatingRowColors(True)
         self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        self.table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
         self.table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        self.table.setSortingEnabled(True)
         self.table.verticalHeader().setVisible(False)
-        header = self.table.horizontalHeader()
-        header.setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        self.table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
         layout.addWidget(self.table, 1)
