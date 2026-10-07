@@ -16,10 +16,10 @@ class SimilarityPage(QWidget):
         layout.setContentsMargins(32, 28, 32, 28)
         layout.setSpacing(14)
 
-        layout.addWidget(QLabel("Similarity / Clusters", objectName="PageTitle"))
+        layout.addWidget(QLabel("Ähnlichkeit / Cluster", objectName="PageTitle"))
         subtitle = QLabel(
-            "This is an explainable baseline similarity, not yet HDBSCAN clustering. "
-            "It is useful for validating feature behaviour before real data and ML are added.",
+            "Dies ist eine erklärbare Basis-Ähnlichkeit und noch kein HDBSCAN-Clustering. "
+            "Damit lässt sich das Feature-Verhalten prüfen, bevor reale Daten und ML ergänzt werden.",
             objectName="PageSubtitle",
         )
         subtitle.setWordWrap(True)
@@ -35,12 +35,12 @@ class SimilarityPage(QWidget):
                     f"{result.score:.0%}",
                     shared_faults or None,
                     ", ".join(result.shared_ecus) or None,
-                    "Yes" if result.same_recurrence_pattern else "No",
+                    "Ja" if result.same_recurrence_pattern else "Nein",
                 )
             )
 
         model = SimpleTableModel(
-            ("Case A", "Case B", "Similarity", "Shared DTCs", "Shared ECUs", "Same recurrence"),
+            ("Fall A", "Fall B", "Ähnlichkeit", "Gemeinsame DTCs", "Gemeinsame Steuergeräte", "Gleiches Wiederholungsmuster"),
             rows,
         )
         table = QTableView()
