@@ -194,18 +194,56 @@ def generate_case_evidence(
                 == software_event.software_version.strip().upper()
             ]
             if matching_changes:
+                affected_codes = {
+                    code.strip().upper()
+                    for change in matching_changes
+                    for code in change.affected_dtcs
+                }
+                ecu_key = software_event.ecu.strip().upper()
+                had_affected_fault_before = any(
+                    event.ecu.strip().upper() == ecu_key
+                    and event.dtc_code.strip().upper() in affected_codes
+                    and event.occurred_at < software_event.occurred_at
+                    for event in case.diagnostics
+                )
+                has_post_update_test = any(
+                    session.occurred_at > software_event.occurred_at
+                    for session in case.diagnostic_sessions
+                )
+                affected_fault_after = any(
+                    event.ecu.strip().upper() == ecu_key
+                    and event.dtc_code.strip().upper() in affected_codes
+                    and event.occurred_at > software_event.occurred_at
+                    for event in case.diagnostics
+                )
+
+                if had_affected_fault_before and has_post_update_test and not affected_fault_after:
+                    direction = EvidenceDirection.SUPPORTS
+                    weight = 1.5
+                    code = "RELEVANT_SW_CHANGE_THEN_FAULT_NOT_OBSERVED"
+                    description = (
+                        f"{software_event.ecu} was updated to {software_event.software_version}; "
+                        "a documented change affects the earlier DTC and the fault is not observed "
+                        "in known post-update diagnostic data."
+                    )
+                else:
+                    direction = EvidenceDirection.NEUTRAL
+                    weight = 0.5
+                    code = "VEHICLE_RECEIVED_RELEVANT_SW_CHANGE"
+                    description = (
+                        f"Vehicle software event reaches {software_event.ecu} "
+                        f"{software_event.software_version}, matching a documented change "
+                        "that affects an observed DTC; outcome is not yet conclusive."
+                    )
+
                 items.append(
                     Evidence(
-                        code="VEHICLE_RECEIVED_RELEVANT_SW_CHANGE",
-                        description=(
-                            f"Vehicle software event reaches {software_event.ecu} "
-                            f"{software_event.software_version}, matching a documented "
-                            "change that affects an observed DTC."
-                        ),
-                        direction=EvidenceDirection.SUPPORTS,
+                        code=code,
+                        description=description,
+                        direction=direction,
                         category_hint=RootCauseCategory.ECU_SOFTWARE,
                         source_ref=software_event.source_ref,
-                        weight=1.5,
+                        weight=weight,
                     )
                 )
 
