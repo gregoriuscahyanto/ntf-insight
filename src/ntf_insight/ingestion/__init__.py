@@ -1,7 +1,19 @@
-"""Source-specific import adapters and canonical ingestion results."""
+"""Source-format contracts and canonical ingestion models.
+
+Storage-dependent services are intentionally not imported here. Keeping this package
+initializer lightweight prevents circular imports when the storage layer references
+ingestion artifact models.
+"""
 
 from ntf_insight.ingestion.assembly import AssemblyResult, CaseAssembler
-from ntf_insight.ingestion.artifacts import ParseRun, ParseStatus, RawArchive, SourceArtifact, SourceType, sha256_file
+from ntf_insight.ingestion.artifacts import (
+    ParseRun,
+    ParseStatus,
+    RawArchive,
+    SourceArtifact,
+    SourceType,
+    sha256_file,
+)
 from ntf_insight.ingestion.base import (
     DTCTriggerParser,
     ECUChangeHistoryParser,
@@ -27,9 +39,7 @@ from ntf_insight.ingestion.models import (
     ParsedVehicleSoftwareData,
     ParsedWorkshopData,
 )
-from ntf_insight.ingestion.parser_execution import ParserExecutionService
 from ntf_insight.ingestion.registry import NoParserAvailableError, ShortTestParserRegistry
-from ntf_insight.ingestion.service import SourceImportService
 
 __all__ = [
     "AssemblyResult",
@@ -51,14 +61,12 @@ __all__ = [
     "ParsedWorkshopData",
     "ParseRun",
     "ParseStatus",
-    "ParserExecutionService",
     "PopulationExposureParser",
     "RawArchive",
     "ReplacementParser",
     "ShortTestParser",
     "ShortTestParserRegistry",
     "SourceArtifact",
-    "SourceImportService",
     "SourceType",
     "SupplierFindingParser",
     "VehicleListParser",
