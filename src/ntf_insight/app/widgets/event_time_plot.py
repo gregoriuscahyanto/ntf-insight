@@ -17,14 +17,49 @@ class EventTimePlot(QWidget):
     def __init__(self) -> None:
         super().__init__(objectName="EventTimePlot")
         self._entries: list[TimelineEntry] = []
+        self._filter_text = ""
         self.setMinimumHeight(270)
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
 
     def set_entries(self, entries: list[TimelineEntry]) -> None:
         self._entries = sorted(entries, key=lambda item: item.occurred_at)
-        lane_count = len(self._lanes())
-        self.setMinimumHeight(max(270, min(620, 90 + lane_count * 34)))
+        self._update_height()
         self.update()
+
+    def set_filter_text(self, text: str) -> None:
+        self._filter_text = text.strip().casefold()
+        self._update_height()
+        self.update()
+
+    def _visible_entries(self) -> list[TimelineEntry]:
+        if not self._filter_text:
+            return list(self._entries)
+
+        aliases = {
+            "diagnostic_session": "kurztest diagnose",
+            "diagnostic": "dtc fehler",
+            "ecu_state": "ecu stand steuergerät software hardware",
+            "replacement": "tausch austausch replacement bauteil",
+            "repair": "werkstatt reparatur",
+            "software": "software update flash",
+            "supplier": "lieferant befunde supplier",
+        }
+        visible = []
+        for entry in entries:
+            haystack = " ".join(
+                (
+                    aliases.get(entry.kind, entry.kind),
+                    entry.title,
+                    entry.detail or "",
+                )
+            ).casefold()
+            if self._filter_text in haystack:
+                visible.append(entry)
+        return visible
+
+    def _update_height(self) -> None:
+        lane_count = len(self._lanes(self._visible_entries()))
+        self.setMinimumHeight(max(270, min(620, 90 + lane_count * 34)))
 
     @staticmethod
     def _theme() -> str:
@@ -57,8 +92,9 @@ class EventTimePlot(QWidget):
             "event": QColor("#6b7280"),
         }
 
-    def _lanes(self) -> list[tuple[str, str]]:
-        dtc_titles = sorted({entry.title for entry in self._entries if entry.kind == "diagnostic"})
+    def _lanes(self, entries: list[TimelineEntry] | None = None) -> list[tuple[str, str]]:
+        entries = self._entries if entries is None else entries
+        dtc_titles = sorted({entry.title for entry in entries if entry.kind == "diagnostic"})
         lanes = [("diagnostic", title) for title in dtc_titles]
         labels = {
             "diagnostic_session": "Kurztest",
@@ -76,7 +112,7 @@ class EventTimePlot(QWidget):
             "repair",
             "supplier",
         ):
-            if any(entry.kind == kind for entry in self._entries):
+            if any(entry.kind == kind for entry in entries):
                 lanes.append((kind, labels[kind]))
         return lanes
 
@@ -87,12 +123,18 @@ class EventTimePlot(QWidget):
         colors = self._colors()
         painter.fillRect(self.rect(), colors["bg"])
 
-        if not self._entries:
+        entries = self._visible_entries()
+        if not entries:
             painter.setPen(colors["muted"])
-            painter.drawText(self.rect(), Qt.AlignmentFlag.AlignCenter, "Keine zeitlichen Ereignisse verfügbar.")
+            message = (
+                "Keine Ereignisse für den aktuellen Filter."
+                if self._filter_text
+                else "Keine zeitlichen Ereignisse verfügbar."
+            )
+            painter.drawText(self.rect(), Qt.AlignmentFlag.AlignCenter, message)
             return
 
-        lanes = self._lanes()
+        lanes = self._lanes(entries)
         if not lanes:
             return
 
@@ -104,8 +146,8 @@ class EventTimePlot(QWidget):
         plot_height = max(80.0, self.height() - top - bottom)
         lane_height = plot_height / max(1, len(lanes))
 
-        start = min(entry.occurred_at for entry in self._entries)
-        end = max(entry.occurred_at for entry in self._entries)
+        start = min(entry.occurred_at for entry in entries)
+        end = max(entry.occurred_at for entry in entries)
         if start == end:
             start -= timedelta(hours=12)
             end += timedelta(hours=12)
@@ -143,7 +185,7 @@ class EventTimePlot(QWidget):
             )
 
         replacement_times = [
-            entry.occurred_at for entry in self._entries if entry.kind == "replacement"
+            entry.occurred_at for entry in entries if entry.kind == "replacement"
         ]
         painter.setPen(QPen(colors["replacement"], 2, Qt.PenStyle.DashLine))
         for moment in replacement_times:
