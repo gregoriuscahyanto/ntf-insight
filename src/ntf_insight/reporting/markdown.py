@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from ntf_insight.analysis.case_analysis import CaseAnalysis, analyze_case
+from ntf_insight.analysis.case_analysis import analyze_case
 from ntf_insight.analysis.recurrence import format_faults
 from ntf_insight.domain.case import NTFCase
 from ntf_insight.storage.reference_repositories import ReferenceRepository
