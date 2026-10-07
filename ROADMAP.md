@@ -1,310 +1,235 @@
 # Roadmap
 
-This roadmap turns NTF Insight from a project scaffold into a reusable analytics platform for No Trouble Found (NTF) field cases.
+NTF Insight is being built as a reusable, component-agnostic platform for No-Trouble-Found field analysis.
 
-The order is deliberate: **first create trustworthy, traceable case data; then add engineering logic; then add similarity / clustering; finally build a polished application.**
+The implementation order is deliberate: trustworthy source data and traceability first, deterministic engineering analysis second, clustering/ML only after the underlying case model is reliable.
 
 ## Phase 0 — Project foundation
 
-**Goal:** establish a maintainable, component-agnostic Python project.
+**Goal:** maintainable native Python desktop application.
 
-- [x] Create repository
-- [x] Add project README
-- [x] Add initial source and test structure
-- [ ] Define coding conventions and contribution workflow
-- [x] Add CI for pytest
-- [ ] Add dependency locking
-- [ ] Add structured logging
-- [x] Add initial PySide6 desktop application scaffold
-- [x] Define local data-directory configuration and demo/local bootstrap\n- [ ] Define enterprise deployment / credential configuration
+- [x] Repository, README and project structure
+- [x] PySide6 desktop scaffold
+- [x] pytest CI including offscreen GUI smoke test
+- [x] Local data-directory configuration with demo/local bootstrap
+- [x] DuckDB dependency and local persistence foundation
+- [ ] Dependency lock strategy
+- [ ] Structured logging
+- [ ] Coding/linting conventions
+- [ ] Enterprise deployment and credential configuration
 
-**Exit criterion:** a clean Python package installs locally and the test suite runs.
+## Phase 1 — Generic domain model
 
----
+**Goal:** describe an NTF case independently of a particular component or source system.
 
-## Phase 1 — Domain model and synthetic cases
-
-**Goal:** represent an NTF case independently from any concrete source system.
-
-Implement core entities:
-
-- [x] DiagnosticSession (preserves known short tests even with zero relevant DTCs)
+Implemented:
 
 - [x] Vehicle
 - [x] NTFCase
+- [x] DiagnosticSession
 - [x] DiagnosticEvent
+- [x] ECUStateObservation
 - [x] RepairEvent
 - [x] PartReplacement
 - [x] SoftwareEvent
 - [x] SupplierFinding
-- [x] Evidence
-- [x] Assessment
+- [x] Evidence / Assessment
+- [x] DTCTriggerDefinition
+- [x] ECUChangeRecord
+- [x] PopulationExposure
+- [x] component_profile_id and explicit replacement anchor support
+- [x] synthetic cases for recurrence, component fault, supply issue, software issue, new post-swap fault and insufficient data
 
-Define stable identifiers and relationships between them.
+## Phase 2 — Acquisition, ingestion and provenance
 
-Create synthetic fixtures for:
+**Goal:** every imported result remains traceable to its original source.
 
-- [x] clear component fault
-- [x] same DTC before and after replacement
-- [x] voltage / supply issue
-- [x] wiring / connector issue
-- [x] software-related case
-- [x] insufficient-data case
+Implemented source-independent foundation:
 
-**Exit criterion:** a synthetic case can be loaded and rendered as a chronological vehicle timeline.
+- [x] SHA-256 content-addressed raw archive
+- [x] source-artifact provenance persisted in DuckDB
+- [x] desktop raw-file archive/import view
+- [x] parser contracts for vehicle lists, short tests, replacements, supplier findings, workshop history, vehicle SW history, SMR-D, HW/SW changes and population data
+- [x] canonical parser result models
+- [x] ambiguity-safe case assembly by FIN / explicit case ID
+- [x] report-provider interface for future API/browser download
+- [x] batch acquisition orchestration with per-FIN failures
+- [x] canonical source-contract documentation
 
----
+Pending real files/systems:
 
-## Phase 2 — Data ingestion and raw archive
+- [ ] vehicle / FIN list parser
+- [ ] short-test parser
+- [ ] replacement-list parser
+- [ ] SMR-D parser
+- [ ] HW/SW release/change parser
+- [ ] vehicle-specific HW/SW extraction
+- [ ] supplier finding parser
+- [ ] workshop/claim parser
+- [ ] installed-population parser
+- [ ] concrete automated report provider(s)
 
-**Goal:** automate acquisition and parsing while preserving source evidence.
+## Phase 3 — Coolant-pump profile
 
-Build ingestion interfaces for:
+**Goal:** add coolant-pump engineering knowledge without contaminating the generic core.
 
-- [ ] vehicle / FIN lists
-- [ ] diagnostic exports
-- [ ] workshop / field reports
-- [ ] part replacement history
-- [ ] vehicle-specific software history
-- [ ] SMR-D DTC trigger definitions
-- [ ] HW/SW release and change history
-- [ ] supplier findings
-- [ ] generic file imports such as CSV, XLSX, PDF and JSON where required
+Implemented:
 
-For every source artifact store metadata such as:
+- [x] generic ComponentProfile API and registry
+- [x] coolant_pump profile
+- [x] CPC3 recorded as primary ECU
+- [x] HV-battery placeholder profile proving multi-component structure
 
-- source system
-- vehicle / case reference
-- retrieval time
-- report date
-- file hash
-- parser version
-- parse status
+Pending source-grounded knowledge:
 
-Raw files should remain immutable.
-
-**Exit criterion:** a FIN list can be processed reproducibly into normalized case data.
-
----
-
-## Phase 3 — Coolant pump profile
-
-**Goal:** implement the first real component profile without contaminating the generic core.
-
-Define for the coolant pump:
-
-- [x] Coolant-pump component profile and CPC3 as primary ECU
-- [ ] relevant CPC3 DTC families
-- [ ] known DTC-to-symptom mappings
-- [ ] CPC3 DTC trigger/enable logic from SMR-D
+- [ ] actual CPC3 DTC families
+- [ ] DTC-to-symptom/failure-mode mappings
+- [ ] SMR-D trigger/enable/healing logic
 - [ ] applicable CPC3 HW/SW change records
-- [ ] replacement event detection
-- [ ] component-specific part metadata
-- [ ] recurrence windows
-- [ ] initial root-cause categories
-- [ ] known confounders such as supply, wiring, connector, ECU and cooling-system faults
-
-**Exit criterion:** a coolant-pump case can be analysed using only generic core services plus the coolant-pump profile.
-
----
+- [ ] part/supplier metadata mappings
+- [ ] validated recurrence windows
+- [ ] component-specific root-cause rules
 
 ## Phase 4 — Timeline and pre/post replacement analysis
 
-**Goal:** make the replacement event analytically useful.
+**Goal:** use the replacement as a diagnostic experiment.
 
-Implement configurable windows such as:
+Implemented:
 
-- PRE
-- POST_SHORT
-- POST_LONG
+- [x] chronological multi-source timeline
+- [x] explicit diagnostic sessions, including zero-DTC tests
+- [x] same-fault recurrence
+- [x] disappeared faults only when a real post-test exists
+- [x] new post-replacement faults
+- [x] time to first recurrence
+- [x] distance to first recurrence
+- [x] unique DTC / ECU counts in feature extraction
+- [x] actual ECU HW/SW state observations
+- [x] reference linkage to DTC triggers and HW/SW changes
 
-Derive features including:
+Pending calibration:
 
-- [x] same_fault_before_after
-- [x] new_fault_after_replacement
-- [x] fault_disappeared_after_replacement
-- [x] time_to_recurrence
-- [x] distance_to_recurrence
-- [ ] DTC frequency before / after replacement
-- [x] affected ECU count
-- [ ] concurrent voltage / communication faults
-- [ ] software changes around the event
-- [ ] relevant DTC trigger logic / monitor conditions
-- [ ] HW/SW release changes affecting the observed DTC or function
+- [ ] PRE / POST_SHORT / POST_LONG windows validated on field data
+- [ ] component-specific recurrence equivalence rules
+- [ ] richer temporal co-occurrence features
 
-**Exit criterion:** the system automatically describes what changed before and after replacement.
+## Phase 5 — Explainable evidence and root cause
 
----
+**Goal:** engineering evidence before opaque classification.
 
-## Phase 5 — Evidence and root-cause engine
+Implemented:
 
-**Goal:** produce explainable engineering assessments rather than opaque labels.
+- [x] generic Evidence model with category hints and support/contradiction direction
+- [x] same fault after replacement weakens component hypothesis
+- [x] known post-test disappearance supports component hypothesis
+- [x] returned-part NTF / fault-found evidence
+- [x] semantic multi-ECU supply-voltage signal
+- [x] documented HW/SW changes linked to observed DTCs
+- [x] actual vehicle software state linked separately from release knowledge
+- [x] unified analyze_case service
+- [x] evidence shown in desktop case view
 
-Initial root-cause categories:
+Pending real-case validation:
 
-- component / supplier
-- electrical supply
-- wiring / connector
-- controlling ECU / software
-- surrounding vehicle system
-- workshop / process
-- unknown / insufficient evidence
-
-Each rule should produce:
-
-- supporting evidence
-- contradicting evidence
-- source references
-- confidence / strength
-- human-readable explanation
-
-Supplier involvement must remain an **evidence-based assessment**, not an automatic conclusion from a single DTC or return status.
-
-**Exit criterion:** every automated assessment can explain why it reached its result.
-
----
+- [ ] calibrate rule strengths
+- [ ] connector/wiring-specific rules
+- [ ] cooling-system/system-level rules
+- [ ] workshop-process rules
+- [ ] final root-cause proposal policy and confidence model
+- [ ] expert confirmation/correction workflow
 
 ## Phase 6 — Similarity and clustering
 
-**Goal:** discover recurring NTF patterns across vehicles.
+**Goal:** discover recurring diagnostic patterns without using supplier identity as the clustering shortcut.
 
-Start with interpretable feature engineering:
+Implemented:
 
-- DTC sets and frequencies
-- ECU participation
-- voltage / communication indicators
-- recurrence behaviour
-- repair actions
-- software state
-- timing / mileage context
-- structured findings from reports
+- [x] interpretable case feature extraction
+- [x] Polars feature frame
+- [x] transparent weighted/Jaccard similarity baseline
+- [x] similarity view in desktop app
 
-Evaluate approaches such as:
+Pending real sample size:
 
-- weighted similarity
-- Jaccard / cosine distances
-- HDBSCAN
-- UMAP for visualization
+- [ ] feature validation / scaling
+- [ ] HDBSCAN
+- [ ] UMAP visualization
+- [ ] cluster explanations
+- [ ] text embeddings for complaint/workshop text if they add value
 
-Later evaluate text embeddings for workshop and supplier notes.
+## Phase 7 — Supplier and population analytics
 
-Important: supplier, batch and part identity should normally be analysed **after diagnostic clustering** to avoid trivial clusters.
+**Goal:** distinguish raw sample counts from statistically meaningful field rates.
 
-**Exit criterion:** engineers can inspect coherent groups of diagnostically similar NTF cases and understand the features that connect them.
+Implemented:
 
----
+- [x] supplier summaries use only the investigated replacement
+- [x] summaries are separated by component type
+- [x] returned NTF / fault-found / recurrence counts
+- [x] PopulationExposure model
+- [x] normalized NTF-per-1000 calculation only when denominator exists
+- [x] desktop supplier view leaves rates blank when population data is absent
 
-## Phase 7 — Supplier and population analysis
+Pending:
 
-**Goal:** move from case-level evidence to statistically useful field patterns.
-
-Analyse by:
-
-- supplier
-- part number
-- batch / lot
-- production period
-- vehicle variant
-- software version
-- plant / market where appropriate
-
-Where population data is available, calculate rates using meaningful denominators instead of comparing raw case counts only. The denominator-aware calculation and UI are implemented; real population data is still pending.
-
-Examples:
-
-- NTF cases per installed population
-- recurrence rate after replacement
-- supplier-related finding rate
-- unresolved-case rate
-
-**Exit criterion:** dashboards distinguish absolute counts from normalized field rates.
-
----
+- [ ] real installed-population data
+- [ ] part number / revision / batch views
+- [ ] production-period and vehicle-variant stratification
+- [ ] uncertainty/statistical comparison once sample sizes justify it
 
 ## Phase 8 — Desktop application
 
-**Goal:** create a modern engineering interface.
-
-Initial views:
+Current PySide6 views:
 
 - [x] Overview
+- [x] Data Sources + raw archive
 - [x] Vehicle / FIN explorer
 - [x] Case timeline
-- [x] DTC explorer
-- [x] Root-cause evidence view
-- [x] Similar-case explorer (transparent baseline)
-- [ ] Cluster explorer
-- [x] Supplier / population analytics foundation
-- [x] Data-quality view
-
-Primary desktop stack:
-
-- PySide6 / Qt for the native GUI
-- Qt Model/View for scalable vehicle and case tables
-- DuckDB + Parquet for local analytical storage
-- PyQtGraph or Plotly where interactive engineering visualisations are useful
-
-The analysis core remains UI-independent. A web/API frontend may be added later, but it is not the primary target.
-
-**Exit criterion:** an engineer can go from a vehicle list to an explainable NTF case assessment without manually combining multiple spreadsheets.
-
----
+- [x] Generated evidence
+- [x] DTC Explorer with trigger/change linkage
+- [x] Similarity / clustering baseline
+- [x] Supplier analytics foundation
+- [x] Data Quality
+- [ ] real import workflow after concrete parsers exist
+- [ ] interactive source-to-evidence drill-down
+- [ ] cluster visualization
+- [ ] finished case report/export
+- [ ] packaging as distributable Windows executable
 
 ## Phase 9 — Additional component families
 
-**Goal:** prove that the architecture is genuinely reusable.
+**Goal:** prove that new components are profiles, not forks.
 
-Candidate next profiles:
-
-- [ ] HV battery
-- [ ] other pumps / actuators
+- [x] HV-battery placeholder
+- [ ] reintroduce HV-battery source/rule profile
+- [ ] additional pumps/actuators
 - [ ] sensors
 - [ ] ECUs
-- [ ] additional returned supplier components
+- [ ] other returned supplier components
 
-Each new component should add profile-specific knowledge, not fork the analysis pipeline.
+## Cross-cutting rules
 
-**Exit criterion:** a second substantially different component works without redesigning the core domain model.
+**Missing data is explicit.** No post-test is not the same as a clean post-test.
 
----
+**Traceability is mandatory.** Derived evidence must retain a route back to the source artifact and parser/rule version.
 
-## Cross-cutting workstreams
+**Supplier blame is never inferred from one DTC.** Supplier involvement is an evidence-based conclusion.
 
-These apply throughout all phases.
+**Reference knowledge and vehicle state remain separate.** A release note does not prove that a FIN had that release.
 
-### Data quality
+**Raw counts are not failure rates.** Supplier rates require installed-population denominators.
 
-Track missing and contradictory information explicitly. A missing value must not silently become a negative finding.
+**ML does not assign causality by itself.** Clustering discovers patterns; root-cause assessment remains explainable.
 
-### Traceability
+## Next source-dependent milestone
 
-Every derived result should be traceable to its source record and parser / rule version.
+Once representative original files are available:
 
-### Testing
-
-Use synthetic and anonymised fixtures. Add regression tests whenever a real engineering edge case is discovered.
-
-### Security and confidentiality
-
-Never commit real VINs, reports, credentials or confidential supplier material. Production connectors must support secure credential handling and controlled local / enterprise storage.
-
-### Human-in-the-loop
-
-The application should support expert confirmation, correction and annotation of automated findings. These decisions can later become high-quality labels for supervised models.
-
----
-
-## Near-term milestone
-
-The recommended first practical milestone is:
-
-Completed foundation:
-
-1. domain model including explicit diagnostic sessions,
-2. six synthetic coolant-pump cases covering key patterns,
-3. CPC3/cross-ECU DTC and replacement events,
-4. chronological case timeline in the PySide6 UI,
-5. same / new / disappeared fault analysis,
-6. parser contracts and automated tests.
-
-**Next milestone:** once representative files are available, implement and regression-test the concrete short-test parser first, then the replacement, SMR-D and HW/SW change-history parsers. Persist normalized real cases into the already prepared DuckDB store and replace demo data incrementally.
+1. inspect and freeze anonymized fixtures for 1–3 real short tests,
+2. implement the short-test parser including ECU HW/SW states,
+3. import the pump replacement anchor,
+4. replace selected DEMO cases with real normalized cases,
+5. implement the SMR-D trigger parser,
+6. implement the CPC3 HW/SW change-history parser,
+7. validate recurrence/evidence rules against manually reviewed cases,
+8. only then tune clustering and automated root-cause proposals.
