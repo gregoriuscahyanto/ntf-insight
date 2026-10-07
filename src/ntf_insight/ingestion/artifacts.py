@@ -12,6 +12,7 @@ from pydantic import BaseModel, ConfigDict
 
 
 class SourceType(StrEnum):
+    VEHICLE_CASE_LIST = "vehicle_case_list"
     SHORT_TEST = "short_test"
     REPLACEMENT_LIST = "replacement_list"
     SUPPLIER_FINDING = "supplier_finding"
@@ -19,6 +20,8 @@ class SourceType(StrEnum):
     SMR_D = "smr_d"
     HW_SW_CHANGE_HISTORY = "hw_sw_change_history"
     VEHICLE_SOFTWARE_HISTORY = "vehicle_software_history"
+    INSTALLED_POPULATION = "installed_population"
+    COMPONENT_MASTER_DATA = "component_master_data"
     OTHER = "other"
 
 
