@@ -17,12 +17,12 @@ def stylesheet_for(theme: str) -> str:
             "subtle": "#94a3b8",
             "border": "#374151",
             "input_bg": "#0f172a",
-            "selection": "#334155",
+            "selection": "#3a3f45",
             "selection_text": "#ffffff",
-            "hover": "#273449",
+            "hover": "#2b2f33",
             "sidebar": "#090f1a",
-            "sidebar_hover": "#172033",
-            "sidebar_checked": "#243147",
+            "sidebar_hover": "#1f2327",
+            "sidebar_checked": "#34393f",
         }
     else:
         p = {
@@ -34,12 +34,12 @@ def stylesheet_for(theme: str) -> str:
             "subtle": "#6b7280",
             "border": "#d1d5db",
             "input_bg": "#ffffff",
-            "selection": "#dbeafe",
+            "selection": "#e5e7eb",
             "selection_text": "#111827",
-            "hover": "#f3f4f6",
+            "hover": "#eef0f2",
             "sidebar": "#111827",
-            "sidebar_hover": "#1f2937",
-            "sidebar_checked": "#263449",
+            "sidebar_hover": "#202428",
+            "sidebar_checked": "#33383d",
         }
 
     return f"""
@@ -63,6 +63,7 @@ QLabel {{
 QFrame#Sidebar {{
     background-color: {p["sidebar"]};
     border: none;
+    border-right: 1px solid #4b5055;
 }}
 
 QLabel#BrandTitle {{
