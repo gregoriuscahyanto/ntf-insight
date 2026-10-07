@@ -11,6 +11,7 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QHeaderView,
     QLabel,
+    QLineEdit,
     QPushButton,
     QTableView,
     QVBoxLayout,
@@ -105,6 +106,16 @@ class SourcesPage(QWidget):
             self.source_type.addItem(label, source_type)
         controls.addWidget(self.source_type)
 
+        self.source_system = QLineEdit()
+        self.source_system.setPlaceholderText("Source system (optional)")
+        self.source_system.setMaximumWidth(190)
+        controls.addWidget(self.source_system)
+
+        self.vin_hint = QLineEdit()
+        self.vin_hint.setPlaceholderText("FIN / VIN hint (optional)")
+        self.vin_hint.setMaximumWidth(210)
+        controls.addWidget(self.vin_hint)
+
         self.archive_button = QPushButton("Archive source file…")
         self.archive_button.setEnabled(self.import_service is not None)
         self.archive_button.clicked.connect(self._archive_file)
@@ -120,7 +131,7 @@ class SourcesPage(QWidget):
         layout.addWidget(self.import_status)
 
         self.artifact_model = SimpleTableModel(
-            ("File", "Source type", "Size", "SHA-256", "Imported")
+            ("File", "Source type", "System", "FIN / VIN hint", "Size", "SHA-256", "Parse status", "Imported")
         )
         artifact_table = QTableView()
         artifact_table.setModel(self.artifact_model)
@@ -140,7 +151,12 @@ class SourcesPage(QWidget):
             return
         source_type = self.source_type.currentData()
         try:
-            artifact = self.import_service.import_raw(Path(filename), source_type)
+            artifact = self.import_service.import_raw(
+                Path(filename),
+                source_type,
+                source_system=self.source_system.text().strip() or None,
+                vin_hint=self.vin_hint.text().strip() or None,
+            )
         except Exception as exc:  # GUI boundary: keep the app alive and surface the error.
             self.import_status.setText(f"Import failed: {exc}")
             return
@@ -154,14 +170,25 @@ class SourcesPage(QWidget):
         if self.import_service is None:
             self.artifact_model.set_rows([])
             return
-        rows = [
-            (
-                artifact.original_name,
-                str(artifact.source_type),
-                f"{artifact.size_bytes:,} B",
-                artifact.sha256,
-                artifact.imported_at.astimezone().strftime("%Y-%m-%d %H:%M"),
+        rows = []
+        for artifact in self.import_service.list_artifacts():
+            runs = self.import_service.store.load_parse_runs(artifact.sha256)
+            latest = runs[-1] if runs else None
+            parse_status = (
+                f"{latest.status} · {latest.parser_name} {latest.parser_version}"
+                if latest is not None
+                else "Not parsed"
             )
-            for artifact in self.import_service.list_artifacts()
-        ]
+            rows.append(
+                (
+                    artifact.original_name,
+                    str(artifact.source_type),
+                    artifact.source_system,
+                    artifact.vin_hint,
+                    f"{artifact.size_bytes:,} B",
+                    artifact.sha256,
+                    parse_status,
+                    artifact.imported_at.astimezone().strftime("%Y-%m-%d %H:%M"),
+                )
+            )
         self.artifact_model.set_rows(rows)
