@@ -50,6 +50,7 @@ Implemented source-independent foundation:
 - [x] source-artifact provenance persisted in DuckDB
 - [x] versioned parser-run provenance (success/partial/failure, output count, errors)
 - [x] desktop raw-file archive/import view
+- [x] multi-file Drag & Drop with explicit empty state
 - [x] parser contracts for vehicle lists, short tests, replacements, supplier findings, workshop history, vehicle SW history, SMR-D, HW/SW changes and population data
 - [x] canonical parser result models
 - [x] ambiguity-safe case assembly by FIN / explicit case ID
@@ -150,6 +151,7 @@ Implemented:
 - [x] Polars feature frame
 - [x] transparent weighted/Jaccard similarity baseline
 - [x] similarity view in desktop app
+- [x] interactive DTC co-occurrence network visualization
 
 Pending real sample size:
 
