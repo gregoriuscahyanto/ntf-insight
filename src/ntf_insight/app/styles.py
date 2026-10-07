@@ -89,7 +89,7 @@ QLineEdit:focus {
     border: 1px solid #64748b;
 }
 
-QTableWidget {
+QTableView, QTableWidget {
     background: #ffffff;
     alternate-background-color: #f8fafc;
     border: 1px solid #e5e7eb;
