@@ -54,8 +54,10 @@ class DTCExplorerPage(QWidget):
 
         rows: list[tuple[object, ...]] = []
         for (ecu, dtc), data in sorted(groups.items()):
-            trigger = references.find_trigger(ecu, dtc)
+            triggers = references.find_triggers(ecu, dtc)
+            trigger = triggers[0] if triggers else None
             changes = references.find_changes_for_dtc(ecu, dtc)
+            tags = sorted({tag for item in triggers for tag in item.semantic_tags})
             rows.append(
                 (
                     ecu,
@@ -63,8 +65,8 @@ class DTCExplorerPage(QWidget):
                     data["text"],
                     len(data["vehicles"]),
                     data["events"],
-                    "Yes" if trigger else "No",
-                    ", ".join(trigger.semantic_tags) if trigger else None,
+                    len(triggers),
+                    ", ".join(tags) if tags else None,
                     trigger.trigger_text if trigger else None,
                     len(changes),
                 )
@@ -77,7 +79,7 @@ class DTCExplorerPage(QWidget):
                 "DTC text",
                 "Vehicles",
                 "Events",
-                "Trigger",
+                "Trigger defs",
                 "Tags",
                 "Trigger summary",
                 "HW/SW changes",
