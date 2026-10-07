@@ -85,7 +85,7 @@ class CasePage(QWidget):
 
         layout.addWidget(QLabel("Generated evidence", objectName="CardTitle"))
         self.evidence_model = SimpleTableModel(
-            ("Signal", "Category hint", "Direction", "Weight", "Description")
+            ("Signal", "Category hint", "Direction", "Provisional weight", "Description")
         )
         self.evidence_table = QTableView()
         self.evidence_table.setModel(self.evidence_model)
@@ -98,6 +98,10 @@ class CasePage(QWidget):
         evidence_header.setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
         evidence_header.setStretchLastSection(True)
         layout.addWidget(self.evidence_table)
+
+        self.evidence_balance = QLabel("—", objectName="PageSubtitle")
+        self.evidence_balance.setWordWrap(True)
+        layout.addWidget(self.evidence_balance)
 
         layout.addWidget(QLabel("Timeline", objectName="CardTitle"))
         self.timeline_model = TimelineTableModel()
@@ -187,4 +191,19 @@ class CasePage(QWidget):
             for item in generated.evidence
         ]
         self.evidence_model.set_rows(evidence_rows)
+        balances = generated.balance_by_category()
+        if balances:
+            balance_text = ", ".join(
+                f"{category}: {score:+.2f}"
+                for category, score in sorted(
+                    balances.items(), key=lambda item: abs(item[1]), reverse=True
+                )
+            )
+            self.evidence_balance.setText(
+                "Provisional evidence balance (not a final root-cause verdict): " + balance_text
+            )
+        else:
+            self.evidence_balance.setText(
+                "No scored generic evidence yet; more source data or component-specific rules are needed."
+            )
         self.timeline_model.set_entries(build_timeline(case))
