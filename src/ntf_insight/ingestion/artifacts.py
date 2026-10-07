@@ -1,4 +1,4 @@
-"""Immutable source-artifact metadata and raw-file archiving."""
+"""Immutable source-artifact metadata, parsing provenance and raw-file archiving."""
 
 from __future__ import annotations
 
@@ -7,8 +7,9 @@ import shutil
 from datetime import datetime, timezone
 from enum import StrEnum
 from pathlib import Path
+from uuid import uuid4
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class SourceType(StrEnum):
@@ -25,7 +26,16 @@ class SourceType(StrEnum):
     OTHER = "other"
 
 
+class ParseStatus(StrEnum):
+    RUNNING = "running"
+    SUCCESS = "success"
+    PARTIAL = "partial"
+    FAILED = "failed"
+
+
 class SourceArtifact(BaseModel):
+    """Immutable identity/provenance of one original source file."""
+
     model_config = ConfigDict(frozen=True)
 
     sha256: str
@@ -34,8 +44,28 @@ class SourceArtifact(BaseModel):
     archived_path: str
     size_bytes: int
     imported_at: datetime
-    parser_name: str | None = None
-    parser_version: str | None = None
+    source_system: str | None = None
+    vin_hint: str | None = None
+    case_id_hint: str | None = None
+    remote_ref: str | None = None
+    report_date: datetime | None = None
+
+
+class ParseRun(BaseModel):
+    """Versioned record of one parser execution against an immutable artifact."""
+
+    model_config = ConfigDict(frozen=True)
+
+    run_id: str = Field(default_factory=lambda: uuid4().hex)
+    artifact_sha256: str
+    parser_name: str
+    parser_version: str
+    status: ParseStatus
+    started_at: datetime
+    completed_at: datetime | None = None
+    records_emitted: int = Field(default=0, ge=0)
+    issue_count: int = Field(default=0, ge=0)
+    error_message: str | None = None
 
 
 def sha256_file(path: Path) -> str:
@@ -56,8 +86,12 @@ class RawArchive:
         self,
         source: Path,
         source_type: SourceType,
-        parser_name: str | None = None,
-        parser_version: str | None = None,
+        *,
+        source_system: str | None = None,
+        vin_hint: str | None = None,
+        case_id_hint: str | None = None,
+        remote_ref: str | None = None,
+        report_date: datetime | None = None,
     ) -> SourceArtifact:
         source = source.expanduser().resolve()
         if not source.is_file():
@@ -78,6 +112,9 @@ class RawArchive:
             archived_path=str(target),
             size_bytes=source.stat().st_size,
             imported_at=datetime.now(timezone.utc),
-            parser_name=parser_name,
-            parser_version=parser_version,
+            source_system=source_system,
+            vin_hint=vin_hint,
+            case_id_hint=case_id_hint,
+            remote_ref=remote_ref,
+            report_date=report_date,
         )
