@@ -15,12 +15,18 @@ from PySide6.QtGui import QFontDatabase
 
 
 CORPORATE_S_CANDIDATES = (
+    "Corpo S Title/Text",
+    "Corpo S Title Text",
+    "Corpo S",
     "Corporate S Pro",
     "Corporate S Std",
     "Corporate S",
 )
 
 CORPORATE_A_CANDIDATES = (
+    "Corpo A Title/Text Condensed",
+    "Corpo A Title Text Condensed",
+    "Corpo A",
     "Corporate A Pro",
     "Corporate A Std",
     "Corporate A",
