@@ -2,12 +2,17 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QComboBox,
+    QFileDialog,
     QGridLayout,
+    QHBoxLayout,
     QHeaderView,
     QLabel,
+    QPushButton,
     QTableView,
     QVBoxLayout,
     QWidget,
@@ -18,6 +23,7 @@ from ntf_insight.analysis.recurrence import analyze_recurrence, format_faults
 from ntf_insight.analysis.timeline import build_timeline
 from ntf_insight.app.models.simple_table_model import SimpleTableModel
 from ntf_insight.app.models.timeline_table_model import TimelineTableModel
+from ntf_insight.reporting.markdown import save_case_report
 from ntf_insight.storage.reference_repositories import ReferenceRepository
 from ntf_insight.storage.repositories import CaseRepository
 
@@ -43,11 +49,17 @@ class CasePage(QWidget):
         intro.setWordWrap(True)
         layout.addWidget(intro)
 
+        selector_row = QHBoxLayout()
         self.selector = QComboBox()
         for case in repository.list_cases():
             self.selector.addItem(f"{case.case_id} · {case.vin}", case.case_id)
         self.selector.currentIndexChanged.connect(self._refresh)
-        layout.addWidget(self.selector)
+        selector_row.addWidget(self.selector, 1)
+
+        export_button = QPushButton("Export Markdown report…")
+        export_button.clicked.connect(self._export_report)
+        selector_row.addWidget(export_button)
+        layout.addLayout(selector_row)
 
         summary = QGridLayout()
         summary.setHorizontalSpacing(24)
@@ -207,3 +219,21 @@ class CasePage(QWidget):
                 "No scored generic evidence yet; more source data or component-specific rules are needed."
             )
         self.timeline_model.set_entries(build_timeline(case))
+
+
+    def _export_report(self) -> None:
+        case_id = self.selector.currentData()
+        case = self.repository.get_case(case_id) if case_id else None
+        if case is None:
+            return
+        suggested = f"{case.case_id}.md"
+        filename, _ = QFileDialog.getSaveFileName(
+            self,
+            "Export NTF case report",
+            suggested,
+            "Markdown (*.md)",
+        )
+        if not filename:
+            return
+        path = filename if filename.lower().endswith(".md") else filename + ".md"
+        save_case_report(Path(path), case, self.references)
