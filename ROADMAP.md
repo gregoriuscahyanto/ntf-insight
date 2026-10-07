@@ -14,7 +14,7 @@ The implementation order is deliberate: trustworthy source data and traceability
 - [x] Local data-directory configuration with demo/local bootstrap
 - [x] DuckDB dependency and local persistence foundation
 - [ ] Dependency lock strategy
-- [ ] Structured logging
+- [x] Rotating local structured logging
 - [ ] Coding/linting conventions
 - [ ] Enterprise deployment and credential configuration
 
@@ -48,6 +48,7 @@ Implemented source-independent foundation:
 
 - [x] SHA-256 content-addressed raw archive
 - [x] source-artifact provenance persisted in DuckDB
+- [x] versioned parser-run provenance (success/partial/failure, output count, errors)
 - [x] desktop raw-file archive/import view
 - [x] parser contracts for vehicle lists, short tests, replacements, supplier findings, workshop history, vehicle SW history, SMR-D, HW/SW changes and population data
 - [x] canonical parser result models
@@ -128,6 +129,7 @@ Implemented:
 - [x] actual vehicle software state linked separately from release knowledge
 - [x] unified analyze_case service
 - [x] evidence shown in desktop case view
+- [x] structural case-integrity validation
 
 Pending real-case validation:
 
@@ -193,7 +195,8 @@ Current PySide6 views:
 - [ ] real import workflow after concrete parsers exist
 - [ ] interactive source-to-evidence drill-down
 - [ ] cluster visualization
-- [ ] finished case report/export
+- [x] deterministic Markdown case report/export
+- [ ] PDF/HTML report rendering
 - [ ] packaging as distributable Windows executable
 
 ## Phase 9 — Additional component families
