@@ -18,13 +18,17 @@ from ntf_insight.domain.events import (
     SoftwareEvent,
     SupplierFinding,
 )
+from ntf_insight.domain.reference import ChangeKind, DTCTriggerDefinition, ECUChangeRecord
 from ntf_insight.domain.vehicle import Vehicle
 
 __all__ = [
     "Assessment",
+    "ChangeKind",
     "Confidence",
     "DiagnosticEvent",
     "DiagnosticSession",
+    "DTCTriggerDefinition",
+    "ECUChangeRecord",
     "Evidence",
     "EvidenceDirection",
     "NTFCase",
