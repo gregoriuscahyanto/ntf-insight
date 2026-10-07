@@ -7,10 +7,14 @@ from PySide6.QtWidgets import QHBoxLayout, QMainWindow, QStackedWidget, QWidget
 
 from ntf_insight.app.pages.case_page import CasePage
 from ntf_insight.app.pages.dashboard_page import DashboardPage
+from ntf_insight.app.pages.data_quality_page import DataQualityPage
+from ntf_insight.app.pages.dtc_page import DTCExplorerPage
 from ntf_insight.app.pages.generic_page import GenericPage
+from ntf_insight.app.pages.similarity_page import SimilarityPage
 from ntf_insight.app.pages.vehicles_page import VehiclesPage
 from ntf_insight.app.widgets.navigation import NavigationPanel
 from ntf_insight.demo.synthetic_cases import build_demo_repository
+from ntf_insight.demo.synthetic_reference import build_demo_reference_repository
 
 
 class MainWindow(QMainWindow):
@@ -19,10 +23,11 @@ class MainWindow(QMainWindow):
     def __init__(self) -> None:
         super().__init__()
         self.setWindowTitle("NTF Insight")
-        self.resize(1280, 800)
-        self.setMinimumSize(1040, 680)
+        self.resize(1320, 820)
+        self.setMinimumSize(1080, 700)
 
         self.repository = build_demo_repository()
+        self.reference_repository = build_demo_reference_repository()
 
         root = QWidget(objectName="AppRoot")
         layout = QHBoxLayout(root)
@@ -35,11 +40,15 @@ class MainWindow(QMainWindow):
         self.pages = {
             "dashboard": DashboardPage(self.repository),
             "vehicles": VehiclesPage(self.repository),
-            "cases": CasePage(self.repository),
-            "dtcs": GenericPage("DTC Explorer", "Explore DTCs across ECUs, vehicles and time."),
-            "clusters": GenericPage("Clusters", "Similarity analysis and NTF clusters will live here."),
-            "suppliers": GenericPage("Suppliers", "Supplier and population analytics will live here."),
-            "quality": GenericPage("Data Quality", "Missing, contradictory and incomplete source data will be tracked here."),
+            "cases": CasePage(self.repository, self.reference_repository),
+            "dtcs": DTCExplorerPage(self.repository, self.reference_repository),
+            "clusters": SimilarityPage(self.repository),
+            "suppliers": GenericPage(
+                "Suppliers",
+                "Supplier and population analytics will be activated once real part/supplier "
+                "master data and installed-population denominators are available.",
+            ),
+            "quality": DataQualityPage(self.repository, self.reference_repository),
         }
 
         for page in self.pages.values():
