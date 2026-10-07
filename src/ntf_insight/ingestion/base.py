@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Protocol, TypeVar
+from typing import Protocol
 
 from ntf_insight.ingestion.models import (
     ParsedDTCTriggerCatalog,
