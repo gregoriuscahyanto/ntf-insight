@@ -109,11 +109,11 @@ def assess_data_quality(
         QualityCheck(
             code="software_history",
             label="Vehicle software history",
-            status=QualityStatus.OK if case.software_events else QualityStatus.WARNING,
+            status=QualityStatus.OK if (case.software_events or case.ecu_states) else QualityStatus.WARNING,
             detail=(
-                f"{len(case.software_events)} software event(s) available."
-                if case.software_events
-                else "No vehicle-specific ECU software/update event available."
+                f"{len(case.ecu_states)} observed ECU state(s), {len(case.software_events)} software event(s) available."
+                if (case.software_events or case.ecu_states)
+                else "No vehicle-specific ECU HW/SW state or update event available."
             ),
         )
     )
