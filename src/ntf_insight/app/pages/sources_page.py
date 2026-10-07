@@ -46,12 +46,12 @@ class SourcesPage(QWidget):
         layout.setContentsMargins(32, 28, 32, 28)
         layout.setSpacing(14)
 
-        layout.addWidget(QLabel("Data Sources", objectName="PageTitle"))
-        location = f" Local data directory: {data_dir}." if data_dir else ""
+        layout.addWidget(QLabel("Datenquellen", objectName="PageTitle"))
+        location = f" Lokales Datenverzeichnis: {data_dir}." if data_dir else ""
         subtitle = QLabel(
-            "Original files are archived unchanged with SHA-256 provenance before parsing. "
-            "Concrete parsers stay format-neutral until representative source files are available. "
-            f"Mode: {mode}.{location}",
+            "Originaldateien werden vor dem Parsen unverändert mit SHA-256-Provenienz archiviert. "
+            "Konkrete Parser bleiben formatneutral, bis repräsentative Quelldateien vorliegen. "
+            f"Modus: {mode}.{location}",
             objectName="PageSubtitle",
         )
         subtitle.setWordWrap(True)
@@ -61,19 +61,19 @@ class SourcesPage(QWidget):
         trigger_count = len(references.list_triggers())
         change_count = len(references.list_changes())
         readiness_rows = [
-            ("Case / FIN list", "Case scope and vehicle identity", "Canonical model ready", f"{case_count} loaded cases"),
-            ("Short tests", "Diagnostic sessions, DTCs, ECU states", "Contract ready; concrete format pending", "Awaiting original sample"),
-            ("Replacement list", "Pre/post anchor, part metadata", "Contract ready; concrete format pending", "Awaiting original sample"),
-            ("Supplier findings", "Returned-part result / NTF evidence", "Contract ready; concrete format pending", "Awaiting original sample"),
-            ("SMR-D", "DTC trigger / enable / healing logic", "Contract ready; concrete format pending", f"{trigger_count} loaded definitions"),
-            ("HW/SW change history", "Release changes and affected DTCs/functions", "Contract ready; concrete format pending", f"{change_count} loaded changes"),
-            ("Vehicle HW/SW state", "Actual ECU state per VIN / short test", "Canonical model ready", "Awaiting original sample"),
-            ("Workshop / claim history", "Complaint, diagnosis and actions", "Contract ready; concrete format pending", "Awaiting original sample"),
-            ("Installed population", "Denominators for supplier/part rates", "Canonical model ready", "Awaiting original sample"),
+            ("Fall-/FIN-Liste", "Fallumfang und Fahrzeugidentität", "Kanonisches Modell bereit", f"{case_count} geladene Fälle"),
+            ("Kurztests", "Diagnosesitzungen, DTCs, Steuergeräte-Stände", "Schnittstelle bereit; konkretes Format ausstehend", "Originalbeispiel ausstehend"),
+            ("Tauschliste", "Vorher-/Nachher-Anker, Bauteilmetadaten", "Schnittstelle bereit; konkretes Format ausstehend", "Originalbeispiel ausstehend"),
+            ("Lieferantenbefunde", "Rückläuferbefund / NTF-Evidenz", "Schnittstelle bereit; konkretes Format ausstehend", "Originalbeispiel ausstehend"),
+            ("SMR-D", "DTC-Trigger-, Freigabe- und Healing-Logik", "Schnittstelle bereit; konkretes Format ausstehend", f"{trigger_count} geladene Definitionen"),
+            ("HW-/SW-Änderungshistorie", "Release-Änderungen und betroffene DTCs/Funktionen", "Schnittstelle bereit; konkretes Format ausstehend", f"{change_count} geladene Änderungen"),
+            ("Fahrzeug-HW-/SW-Stand", "Tatsächlicher Steuergeräte-Stand je FIN/Kurztest", "Kanonisches Modell bereit", "Originalbeispiel ausstehend"),
+            ("Werkstatt-/Claim-Historie", "Beanstandung, Diagnose und Maßnahmen", "Schnittstelle bereit; konkretes Format ausstehend", "Originalbeispiel ausstehend"),
+            ("Verbaute Population", "Nenner für Lieferanten-/Bauteilraten", "Kanonisches Modell bereit", "Originalbeispiel ausstehend"),
         ]
 
         readiness_model = SimpleTableModel(
-            ("Source", "Purpose", "Implementation", "Current data"), readiness_rows
+            ("Quelle", "Zweck", "Implementierung", "Aktuelle Daten"), readiness_rows
         )
         readiness_table = QTableView()
         readiness_table.setModel(readiness_model)
@@ -86,37 +86,37 @@ class SourcesPage(QWidget):
         layout.addWidget(readiness_table)
         self.readiness_model = readiness_model
 
-        layout.addWidget(QLabel("Raw source archive", objectName="CardTitle"))
+        layout.addWidget(QLabel("Rohdatenarchiv", objectName="CardTitle"))
         controls = QHBoxLayout()
         self.source_type = QComboBox()
         labels = {
-            SourceType.VEHICLE_CASE_LIST: "Case / FIN list",
-            SourceType.SHORT_TEST: "Short test",
-            SourceType.REPLACEMENT_LIST: "Replacement list",
-            SourceType.SUPPLIER_FINDING: "Supplier finding",
-            SourceType.WORKSHOP_HISTORY: "Workshop / claim history",
+            SourceType.VEHICLE_CASE_LIST: "Fall-/FIN-Liste",
+            SourceType.SHORT_TEST: "Kurztest",
+            SourceType.REPLACEMENT_LIST: "Tauschliste",
+            SourceType.SUPPLIER_FINDING: "Lieferantenbefund",
+            SourceType.WORKSHOP_HISTORY: "Werkstatt-/Claim-Historie",
             SourceType.SMR_D: "SMR-D",
-            SourceType.HW_SW_CHANGE_HISTORY: "HW/SW change history",
-            SourceType.VEHICLE_SOFTWARE_HISTORY: "Vehicle software history",
-            SourceType.INSTALLED_POPULATION: "Installed population",
-            SourceType.COMPONENT_MASTER_DATA: "Component / supplier master data",
-            SourceType.OTHER: "Other",
+            SourceType.HW_SW_CHANGE_HISTORY: "HW-/SW-Änderungshistorie",
+            SourceType.VEHICLE_SOFTWARE_HISTORY: "Fahrzeug-SW-Historie",
+            SourceType.INSTALLED_POPULATION: "Verbaute Population",
+            SourceType.COMPONENT_MASTER_DATA: "Bauteil-/Lieferantenstammdaten",
+            SourceType.OTHER: "Sonstiges",
         }
         for source_type, label in labels.items():
             self.source_type.addItem(label, source_type)
         controls.addWidget(self.source_type)
 
         self.source_system = QLineEdit()
-        self.source_system.setPlaceholderText("Source system (optional)")
+        self.source_system.setPlaceholderText("Quellsystem (optional)")
         self.source_system.setMaximumWidth(190)
         controls.addWidget(self.source_system)
 
         self.vin_hint = QLineEdit()
-        self.vin_hint.setPlaceholderText("FIN / VIN hint (optional)")
+        self.vin_hint.setPlaceholderText("FIN-/VIN-Hinweis (optional)")
         self.vin_hint.setMaximumWidth(210)
         controls.addWidget(self.vin_hint)
 
-        self.archive_button = QPushButton("Archive source file…")
+        self.archive_button = QPushButton("Quelldatei archivieren…")
         self.archive_button.setEnabled(self.import_service is not None)
         self.archive_button.clicked.connect(self._archive_file)
         controls.addWidget(self.archive_button)
@@ -124,14 +124,14 @@ class SourcesPage(QWidget):
         layout.addLayout(controls)
 
         self.import_status = QLabel(
-            "Files can already be archived safely even before a parser exists.",
+            "Dateien können bereits sicher archiviert werden, auch wenn noch kein Parser existiert.",
             objectName="PageSubtitle",
         )
         self.import_status.setWordWrap(True)
         layout.addWidget(self.import_status)
 
         self.artifact_model = SimpleTableModel(
-            ("File", "Source type", "System", "FIN / VIN hint", "Size", "SHA-256", "Parse status", "Imported")
+            ("Datei", "Quelltyp", "System", "FIN-/VIN-Hinweis", "Größe", "SHA-256", "Parse-Status", "Importiert")
         )
         artifact_table = QTableView()
         artifact_table.setModel(self.artifact_model)
@@ -146,7 +146,7 @@ class SourcesPage(QWidget):
     def _archive_file(self) -> None:
         if self.import_service is None:
             return
-        filename, _ = QFileDialog.getOpenFileName(self, "Archive source file")
+        filename, _ = QFileDialog.getOpenFileName(self, "Quelldatei archivieren")
         if not filename:
             return
         source_type = self.source_type.currentData()
@@ -158,10 +158,10 @@ class SourcesPage(QWidget):
                 vin_hint=self.vin_hint.text().strip() or None,
             )
         except Exception as exc:  # GUI boundary: keep the app alive and surface the error.
-            self.import_status.setText(f"Import failed: {exc}")
+            self.import_status.setText(f"Import fehlgeschlagen: {exc}")
             return
         self.import_status.setText(
-            f"Archived {artifact.original_name} · {artifact.sha256[:12]}… · "
+            f"Archiviert: {artifact.original_name} · {artifact.sha256[:12]}… · "
             f"{artifact.size_bytes:,} bytes"
         )
         self._refresh_artifacts()
@@ -177,7 +177,7 @@ class SourcesPage(QWidget):
             parse_status = (
                 f"{latest.status} · {latest.parser_name} {latest.parser_version}"
                 if latest is not None
-                else "Not parsed"
+                else "Nicht geparst"
             )
             rows.append(
                 (
