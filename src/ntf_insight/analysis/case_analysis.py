@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from ntf_insight.analysis.data_quality import DataQualityReport, assess_data_quality
 from ntf_insight.analysis.evidence_engine import EvidenceBundle, generate_case_evidence
 from ntf_insight.analysis.features import CaseFeatures, extract_case_features
+from ntf_insight.analysis.integrity import CaseIntegrityReport, validate_case_integrity
 from ntf_insight.analysis.recurrence import RecurrenceResult, analyze_recurrence
 from ntf_insight.analysis.timeline import TimelineEntry, build_timeline
 from ntf_insight.domain.case import NTFCase
@@ -19,6 +20,7 @@ class CaseAnalysis:
     recurrence: RecurrenceResult
     quality: DataQualityReport
     features: CaseFeatures
+    integrity: CaseIntegrityReport
     evidence: EvidenceBundle
     timeline: tuple[TimelineEntry, ...]
 
@@ -33,6 +35,7 @@ def analyze_case(
         recurrence=analyze_recurrence(case),
         quality=assess_data_quality(case, references),
         features=extract_case_features(case, references),
+        integrity=validate_case_integrity(case),
         evidence=generate_case_evidence(case, references),
         timeline=tuple(build_timeline(case)),
     )
