@@ -159,7 +159,7 @@ ntf-insight/
 
 ### 1. Timeline reconstruction
 
-Bring all evidence for one vehicle into a chronological view:
+Bring all evidence for one FIN/case combination into a chronological table and time plot:
 
 ```text
 DTCs -> workshop visit -> replacement -> DTCs after replacement -> supplier finding
@@ -245,7 +245,7 @@ Set `NTF_INSIGHT_DATA_DIR` to override that location. If the database contains n
 
 ## Desktop views
 
-The current prototype includes Overview, Data Sources, Vehicles, Cases/Evidence, DTC Explorer, DTC-Cluster visualization, Suppliers and Data Quality. Data Sources supports multi-file selection and local Drag & Drop into the immutable raw archive. The Case view can export a deterministic Markdown analysis report.
+The current prototype includes Overview, Data Sources, a combined FIN/Case workspace, DTC Explorer, DTC-Cluster visualization, Suppliers and Data Quality. The FIN/Case workspace treats the FIN + case combination as the analysis unit and includes a chronological time plot for DTCs, diagnostic sessions, ECU states, replacements, software, workshop and supplier events. Data Sources supports multi-file selection and local Drag & Drop into the immutable raw archive. The Case view can export a deterministic Markdown analysis report.
 
 ## Development conventions
 
