@@ -53,6 +53,16 @@ class DiagnosticEvent(CaseEvent):
         return self.ecu.strip().upper(), self.dtc_code.strip().upper()
 
 
+class ECUStateObservation(CaseEvent):
+    """Observed ECU HW/SW/coding state at a point in time, often from a short test."""
+
+    session_id: str | None = None
+    ecu: str
+    software_version: str | None = None
+    hardware_version: str | None = None
+    coding: str | None = None
+
+
 class RepairEvent(CaseEvent):
     """Workshop/customer event relevant to the NTF investigation."""
 
