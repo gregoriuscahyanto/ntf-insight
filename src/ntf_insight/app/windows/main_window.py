@@ -11,6 +11,7 @@ from ntf_insight.app.pages.data_quality_page import DataQualityPage
 from ntf_insight.app.pages.dtc_page import DTCExplorerPage
 from ntf_insight.app.pages.generic_page import GenericPage
 from ntf_insight.app.pages.similarity_page import SimilarityPage
+from ntf_insight.app.pages.sources_page import SourcesPage
 from ntf_insight.app.pages.vehicles_page import VehiclesPage
 from ntf_insight.app.widgets.navigation import NavigationPanel
 from ntf_insight.demo.synthetic_cases import build_demo_repository
@@ -39,6 +40,7 @@ class MainWindow(QMainWindow):
 
         self.pages = {
             "dashboard": DashboardPage(self.repository),
+            "sources": SourcesPage(self.repository, self.reference_repository),
             "vehicles": VehiclesPage(self.repository),
             "cases": CasePage(self.repository, self.reference_repository),
             "dtcs": DTCExplorerPage(self.repository, self.reference_repository),
