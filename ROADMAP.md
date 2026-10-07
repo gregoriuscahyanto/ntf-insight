@@ -65,7 +65,9 @@ Build ingestion interfaces for:
 - [ ] diagnostic exports
 - [ ] workshop / field reports
 - [ ] part replacement history
-- [ ] software history
+- [ ] vehicle-specific software history
+- [ ] SMR-D DTC trigger definitions
+- [ ] HW/SW release and change history
 - [ ] supplier findings
 - [ ] generic file imports such as CSV, XLSX, PDF and JSON where required
 
@@ -94,6 +96,8 @@ Define for the coolant pump:
 - [ ] relevant ECUs
 - [ ] relevant CPC3 DTC families
 - [ ] known DTC-to-symptom mappings
+- [ ] CPC3 DTC trigger/enable logic from SMR-D
+- [ ] applicable CPC3 HW/SW change records
 - [ ] replacement event detection
 - [ ] component-specific part metadata
 - [ ] recurrence windows
@@ -125,6 +129,8 @@ Derive features including:
 - [ ] affected ECU count
 - [ ] concurrent voltage / communication faults
 - [ ] software changes around the event
+- [ ] relevant DTC trigger logic / monitor conditions
+- [ ] HW/SW release changes affecting the observed DTC or function
 
 **Exit criterion:** the system automatically describes what changed before and after replacement.
 
@@ -301,4 +307,4 @@ Completed foundation:
 5. same / new / disappeared fault analysis,
 6. parser contracts and automated tests.
 
-**Next milestone:** implement the concrete short-test parser from representative original files, then import real replacement events and replace the demo repository with persisted normalized cases.
+**Next milestone:** implement the concrete short-test parser from representative original files, then add the SMR-D trigger parser and HW/SW change-history parser. After that, import real replacement events and replace the demo repository with persisted normalized cases.
