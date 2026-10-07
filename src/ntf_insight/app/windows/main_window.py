@@ -13,7 +13,6 @@ from ntf_insight.app.pages.dtc_page import DTCExplorerPage
 from ntf_insight.app.pages.similarity_page import SimilarityPage
 from ntf_insight.app.pages.sources_page import SourcesPage
 from ntf_insight.app.pages.supplier_page import SupplierPage
-from ntf_insight.app.pages.vehicles_page import VehiclesPage
 from ntf_insight.app.widgets.navigation import NavigationPanel
 
 
@@ -48,7 +47,6 @@ class MainWindow(QMainWindow):
                 str(self.application_data.paths.raw_dir),
                 str(self.application_data.paths.database_path),
             ),
-            "vehicles": VehiclesPage(self.repository),
             "cases": CasePage(self.repository, self.reference_repository),
             "dtcs": DTCExplorerPage(self.repository, self.reference_repository),
             "clusters": SimilarityPage(self.repository),
