@@ -18,7 +18,7 @@ class VehicleRow:
 
 
 class VehicleTableModel(QAbstractTableModel):
-    HEADERS = ("FIN / VIN", "Component", "DTCs", "Replacement", "Recurrence", "Assessment")
+    HEADERS = ("FIN / VIN", "Bauteil", "DTCs", "Tausch", "Wiederauftreten", "Bewertung")
 
     def __init__(self, rows: list[VehicleRow] | None = None) -> None:
         super().__init__()
