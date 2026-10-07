@@ -12,6 +12,7 @@ from ntf_insight.domain.population import PopulationExposure
 
 @dataclass(frozen=True, slots=True)
 class SupplierSummary:
+    component_type: str
     supplier: str
     case_count: int
     return_ntf_count: int
@@ -21,26 +22,26 @@ class SupplierSummary:
     ntf_per_1000_installed: float | None
 
 
+def _supplier_key(case: NTFCase) -> tuple[str, str] | None:
+    replacement = case.investigated_replacement()
+    if replacement is None or not replacement.supplier:
+        return None
+    return case.component_type, replacement.supplier
+
+
 def build_supplier_summaries(
     cases: list[NTFCase],
     exposures: list[PopulationExposure] | None = None,
 ) -> list[SupplierSummary]:
     exposures = exposures or []
-    suppliers = sorted(
-        {
-            replacement.supplier
-            for case in cases
-            for replacement in case.replacements
-            if replacement.supplier
-        }
-    )
+    keys = sorted({key for case in cases if (key := _supplier_key(case)) is not None})
 
     summaries: list[SupplierSummary] = []
-    for supplier in suppliers:
+    for component_type, supplier in keys:
         supplier_cases = [
             case
             for case in cases
-            if any(replacement.supplier == supplier for replacement in case.replacements)
+            if _supplier_key(case) == (component_type, supplier)
         ]
         return_ntf = sum(
             any(finding.result == SupplierFindingResult.NTF for finding in case.supplier_findings)
@@ -58,7 +59,12 @@ def build_supplier_summaries(
             for case in supplier_cases
         )
 
-        matching_exposures = [item for item in exposures if item.supplier == supplier]
+        matching_exposures = [
+            item
+            for item in exposures
+            if item.supplier == supplier
+            and item.component_type.casefold() == component_type.casefold()
+        ]
         installed_units = (
             sum(item.installed_units for item in matching_exposures)
             if matching_exposures
@@ -71,6 +77,7 @@ def build_supplier_summaries(
         )
         summaries.append(
             SupplierSummary(
+                component_type=component_type,
                 supplier=supplier,
                 case_count=len(supplier_cases),
                 return_ntf_count=return_ntf,
