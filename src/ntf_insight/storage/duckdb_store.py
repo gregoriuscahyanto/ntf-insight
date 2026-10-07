@@ -8,6 +8,7 @@ import duckdb
 
 from ntf_insight.domain.case import NTFCase
 from ntf_insight.domain.reference import DTCTriggerDefinition, ECUChangeRecord
+from ntf_insight.ingestion.artifacts import SourceArtifact
 
 
 class DuckDBStore:
@@ -27,6 +28,16 @@ class DuckDBStore:
 
     def initialize(self) -> None:
         with self.connect() as con:
+            con.execute(
+                """
+                CREATE TABLE IF NOT EXISTS source_artifacts (
+                    sha256 VARCHAR PRIMARY KEY,
+                    source_type VARCHAR NOT NULL,
+                    original_name VARCHAR NOT NULL,
+                    payload_json VARCHAR NOT NULL
+                )
+                """
+            )
             con.execute(
                 """
                 CREATE TABLE IF NOT EXISTS case_snapshots (
@@ -56,6 +67,31 @@ class DuckDBStore:
                 )
                 """
             )
+
+    def save_artifact(self, artifact: SourceArtifact) -> None:
+        with self.connect() as con:
+            con.execute(
+                """
+                INSERT INTO source_artifacts VALUES (?, ?, ?, ?)
+                ON CONFLICT(sha256) DO UPDATE SET
+                    source_type = excluded.source_type,
+                    original_name = excluded.original_name,
+                    payload_json = excluded.payload_json
+                """,
+                [
+                    artifact.sha256,
+                    str(artifact.source_type),
+                    artifact.original_name,
+                    artifact.model_dump_json(),
+                ],
+            )
+
+    def load_artifacts(self) -> list[SourceArtifact]:
+        with self.connect() as con:
+            rows = con.execute(
+                "SELECT payload_json FROM source_artifacts ORDER BY original_name"
+            ).fetchall()
+        return [SourceArtifact.model_validate_json(row[0]) for row in rows]
 
     def save_case(self, case: NTFCase) -> None:
         with self.connect() as con:
