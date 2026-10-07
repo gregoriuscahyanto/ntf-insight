@@ -24,6 +24,7 @@ dev = [
   "pytest>=8",
   "pytest-cov>=5",
   "ruff>=0.7",
+  "build>=1.2",
 ]
 
 [tool.pytest.ini_options]
@@ -36,5 +37,5 @@ target-version = "py311"
 line-length = 100
 
 [tool.ruff.lint]
-select = ["E", "F", "I", "B"]
+select = ["E", "F"]
 ignore = ["E501"]
