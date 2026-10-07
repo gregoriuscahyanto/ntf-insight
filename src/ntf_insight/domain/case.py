@@ -25,6 +25,8 @@ class NTFCase(BaseModel):
     case_id: str
     vehicle: Vehicle
     component_type: str
+    component_profile_id: str | None = None
+    investigated_replacement_id: str | None = None
     diagnostic_sessions: list[DiagnosticSession] = Field(default_factory=list)
     diagnostics: list[DiagnosticEvent] = Field(default_factory=list)
     ecu_states: list[ECUStateObservation] = Field(default_factory=list)
@@ -39,6 +41,21 @@ class NTFCase(BaseModel):
         return self.vehicle.vin
 
     def investigated_replacement(self) -> PartReplacement | None:
+        """Return the explicit replacement anchor, or a deterministic fallback.
+
+        Real imported cases should set investigated_replacement_id when multiple relevant
+        replacements exist. The fallback keeps early/demo data usable.
+        """
+        if self.investigated_replacement_id:
+            return next(
+                (
+                    event
+                    for event in self.replacements
+                    if event.event_id == self.investigated_replacement_id
+                ),
+                None,
+            )
+
         matches = [
             event
             for event in self.replacements
