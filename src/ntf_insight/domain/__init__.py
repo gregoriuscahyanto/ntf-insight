@@ -12,6 +12,7 @@ from ntf_insight.domain.enums import (
 from ntf_insight.domain.evidence import Evidence
 from ntf_insight.domain.events import (
     DiagnosticEvent,
+    DiagnosticSession,
     PartReplacement,
     RepairEvent,
     SoftwareEvent,
@@ -23,6 +24,7 @@ __all__ = [
     "Assessment",
     "Confidence",
     "DiagnosticEvent",
+    "DiagnosticSession",
     "Evidence",
     "EvidenceDirection",
     "NTFCase",
