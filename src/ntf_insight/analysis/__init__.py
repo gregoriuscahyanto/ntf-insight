@@ -1,5 +1,6 @@
 """Component-agnostic analysis services."""
 
+from ntf_insight.analysis.case_analysis import CaseAnalysis, analyze_case
 from ntf_insight.analysis.dataset import build_case_feature_frame
 from ntf_insight.analysis.data_quality import DataQualityReport, QualityCheck, QualityStatus, assess_data_quality
 from ntf_insight.analysis.evidence_engine import EvidenceBundle, generate_case_evidence
@@ -11,6 +12,7 @@ from ntf_insight.analysis.supplier_metrics import SupplierSummary, build_supplie
 from ntf_insight.analysis.timeline import TimelineEntry, build_timeline
 
 __all__ = [
+    "CaseAnalysis",
     "CaseFeatures",
     "DataQualityReport",
     "DiagnosticKnowledge",
@@ -22,6 +24,7 @@ __all__ = [
     "SupplierSummary",
     "TimelineEntry",
     "all_pairwise_similarities",
+    "analyze_case",
     "analyze_recurrence",
     "assess_data_quality",
     "build_case_feature_frame",
