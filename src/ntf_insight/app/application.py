@@ -19,6 +19,7 @@ LOGGER = logging.getLogger("ntf_insight.app")
 
 
 def _apply_appearance(app: QApplication, theme: str, fonts: FontSelection) -> None:
+    app.setProperty("ntfTheme", theme)
     app.setFont(QFont(fonts.body_family, 10))
     app.setStyleSheet(
         stylesheet_for(
