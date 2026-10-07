@@ -13,6 +13,7 @@ from ntf_insight.domain.evidence import Evidence
 from ntf_insight.domain.events import (
     DiagnosticEvent,
     DiagnosticSession,
+    ECUStateObservation,
     PartReplacement,
     RepairEvent,
     SoftwareEvent,
@@ -28,6 +29,7 @@ __all__ = [
     "DiagnosticEvent",
     "DiagnosticSession",
     "DTCTriggerDefinition",
+    "ECUStateObservation",
     "ECUChangeRecord",
     "Evidence",
     "EvidenceDirection",
