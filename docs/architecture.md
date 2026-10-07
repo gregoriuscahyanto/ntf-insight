@@ -4,12 +4,12 @@ NTF Insight separates generic NTF analytics from component-specific engineering 
 
 ## Layers
 
-1. **Ingestion** — adapters and parsers for external source systems.
+1. **Acquisition** — provider contracts for API/browser-based report retrieval by FIN.\n2. **Ingestion** — immutable raw archive, provenance, adapters, parsers and case assembly.
 2. **Domain** — generic vehicle, case, event, evidence and assessment models.
 3. **Storage** — persistence abstractions for raw metadata and normalized data.
 4. **Analysis** — timeline reconstruction, recurrence, feature extraction, evidence rules and clustering.
 5. **Components** — coolant-pump, HV-battery and future component-specific profiles.
-6. **Desktop app** — PySide6 pages, widgets and Qt models for engineering workflows and visualisation.
+7. **Desktop app** — PySide6 pages, widgets and Qt models for engineering workflows and visualisation.
 
 A component profile should extend the generic pipeline through configuration and dedicated rules rather than duplicating the pipeline.
 
@@ -72,3 +72,20 @@ HW/SW change catalog ─────────────┤
 vehicle short tests + SW state ───┤
 replacement / workshop events ────┘
 ```
+
+
+## Local persistence
+
+The desktop prototype uses a local DuckDB database outside the repository. Canonical Pydantic objects are currently stored as JSON snapshots with indexed identity columns, allowing lossless round-trips while the real source schemas are still unknown. Analytical/materialized tables can be added later without changing the domain API.
+
+Original source files are archived separately in a content-addressed raw archive using SHA-256. The database stores provenance metadata; raw source bytes are never committed to Git.
+
+The default location is `~/.ntf-insight`, configurable with `NTF_INSIGHT_DATA_DIR`.
+
+## Case assembly
+
+Parsers do not mutate the UI directly. They emit canonical records, which are assembled into cases. A FIN that maps to multiple cases is treated as ambiguous unless an explicit case ID is supplied. The system records an import error instead of guessing.
+
+## Acquisition boundary
+
+Automated report download is represented by a `ReportProvider` interface plus batch orchestration. Concrete provider implementations are deferred until the actual target systems, authentication constraints and report formats are known. Downloaded files flow immediately into the immutable raw archive before parsing.
