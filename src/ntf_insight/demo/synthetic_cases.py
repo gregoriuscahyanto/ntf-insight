@@ -19,6 +19,7 @@ from ntf_insight.domain.enums import (
 from ntf_insight.domain.evidence import Evidence
 from ntf_insight.domain.events import (
     DiagnosticEvent,
+    DiagnosticSession,
     PartReplacement,
     RepairEvent,
     SoftwareEvent,
@@ -32,6 +33,18 @@ def _dt(day: int, hour: int = 9) -> datetime:
     return datetime(2026, 1, day, hour, 0)
 
 
+def _session(vin: str, day: int, mileage: int, dtc_count: int, hour: int = 8) -> DiagnosticSession:
+    return DiagnosticSession(
+        vin=vin,
+        occurred_at=_dt(day, hour),
+        mileage_km=mileage,
+        label="Short test",
+        ecu_count=28,
+        dtc_count=dtc_count,
+        source_ref=f"synthetic:{vin}:{day}",
+    )
+
+
 def build_demo_cases() -> list[NTFCase]:
     """Return a small set of fictional cases covering key NTF patterns."""
     component = "Coolant Pump"
@@ -40,6 +53,11 @@ def build_demo_cases() -> list[NTFCase]:
         case_id="DEMO-001",
         vehicle=Vehicle(vin="DEMO-VIN-000001", model_series="BR-D1", variant="A"),
         component_type=component,
+        diagnostic_sessions=[
+            _session("DEMO-VIN-000001", 2, 24100, 1),
+            _session("DEMO-VIN-000001", 5, 24220, 1),
+            _session("DEMO-VIN-000001", 10, 24330, 1),
+        ],
         diagnostics=[
             DiagnosticEvent(vin="DEMO-VIN-000001", occurred_at=_dt(2), mileage_km=24100, ecu="CPC3", dtc_code="P26F100", dtc_text="Coolant pump performance", status="stored"),
             DiagnosticEvent(vin="DEMO-VIN-000001", occurred_at=_dt(5), mileage_km=24220, ecu="CPC3", dtc_code="P26F100", dtc_text="Coolant pump performance", status="current"),
@@ -60,6 +78,11 @@ def build_demo_cases() -> list[NTFCase]:
         case_id="DEMO-002",
         vehicle=Vehicle(vin="DEMO-VIN-000002", model_series="BR-D1", variant="B"),
         component_type=component,
+        diagnostic_sessions=[
+            _session("DEMO-VIN-000002", 3, 18100, 1),
+            _session("DEMO-VIN-000002", 4, 18120, 1),
+            _session("DEMO-VIN-000002", 9, 18220, 0),
+        ],
         diagnostics=[
             DiagnosticEvent(vin="DEMO-VIN-000002", occurred_at=_dt(3), mileage_km=18100, ecu="CPC3", dtc_code="P260000", dtc_text="Coolant pump control circuit", status="current"),
             DiagnosticEvent(vin="DEMO-VIN-000002", occurred_at=_dt(4), mileage_km=18120, ecu="CPC3", dtc_code="P260000", dtc_text="Coolant pump control circuit", status="current"),
@@ -79,6 +102,10 @@ def build_demo_cases() -> list[NTFCase]:
         case_id="DEMO-003",
         vehicle=Vehicle(vin="DEMO-VIN-000003", model_series="BR-D2", variant="A"),
         component_type=component,
+        diagnostic_sessions=[
+            _session("DEMO-VIN-000003", 2, 40500, 3),
+            _session("DEMO-VIN-000003", 9, 40620, 2),
+        ],
         diagnostics=[
             DiagnosticEvent(vin="DEMO-VIN-000003", occurred_at=_dt(2), mileage_km=40500, ecu="CPC3", dtc_code="P26F100", dtc_text="Coolant pump performance", status="stored"),
             DiagnosticEvent(vin="DEMO-VIN-000003", occurred_at=_dt(2, 10), mileage_km=40500, ecu="MCM", dtc_code="U300316", dtc_text="Supply voltage too low", status="stored"),
@@ -101,6 +128,10 @@ def build_demo_cases() -> list[NTFCase]:
         case_id="DEMO-004",
         vehicle=Vehicle(vin="DEMO-VIN-000004", model_series="BR-D2", variant="C"),
         component_type=component,
+        diagnostic_sessions=[
+            _session("DEMO-VIN-000004", 3, 11200, 1),
+            _session("DEMO-VIN-000004", 9, 11310, 0),
+        ],
         diagnostics=[
             DiagnosticEvent(vin="DEMO-VIN-000004", occurred_at=_dt(3), mileage_km=11200, ecu="CPC3", dtc_code="P26F100", dtc_text="Coolant pump performance", status="sporadic"),
         ],
@@ -118,6 +149,7 @@ def build_demo_cases() -> list[NTFCase]:
         case_id="DEMO-005",
         vehicle=Vehicle(vin="DEMO-VIN-000005", model_series="BR-D3", variant="A"),
         component_type=component,
+        diagnostic_sessions=[_session("DEMO-VIN-000005", 3, 7300, 1)],
         diagnostics=[DiagnosticEvent(vin="DEMO-VIN-000005", occurred_at=_dt(3), mileage_km=7300, ecu="CPC3", dtc_code="P26F100", status="stored")],
         replacements=[PartReplacement(vin="DEMO-VIN-000005", occurred_at=_dt(5), mileage_km=7350, component_type=component)],
         assessment=Assessment(
@@ -132,6 +164,10 @@ def build_demo_cases() -> list[NTFCase]:
         case_id="DEMO-006",
         vehicle=Vehicle(vin="DEMO-VIN-000006", model_series="BR-D3", variant="B"),
         component_type=component,
+        diagnostic_sessions=[
+            _session("DEMO-VIN-000006", 2, 52600, 1),
+            _session("DEMO-VIN-000006", 8, 52670, 1),
+        ],
         diagnostics=[
             DiagnosticEvent(vin="DEMO-VIN-000006", occurred_at=_dt(2), mileage_km=52600, ecu="CPC3", dtc_code="P260000", dtc_text="Coolant pump control circuit", status="stored"),
             DiagnosticEvent(vin="DEMO-VIN-000006", occurred_at=_dt(8), mileage_km=52670, ecu="CPC3", dtc_code="P260100", dtc_text="Coolant pump control circuit low", status="current"),
