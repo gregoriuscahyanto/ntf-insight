@@ -8,7 +8,7 @@ from ntf_insight.analysis.timeline import TimelineEntry
 
 
 class TimelineTableModel(QAbstractTableModel):
-    HEADERS = ("Time", "Mileage", "Type", "Event", "Details", "Source")
+    HEADERS = ("Zeit", "Kilometerstand", "Typ", "Ereignis", "Details", "Quelle")
 
     def __init__(self, entries: list[TimelineEntry] | None = None) -> None:
         super().__init__()
@@ -28,7 +28,7 @@ class TimelineTableModel(QAbstractTableModel):
         values = (
             entry.occurred_at.strftime("%Y-%m-%d %H:%M"),
             f"{entry.mileage_km:,} km" if entry.mileage_km is not None else "—",
-            entry.kind.replace("_", " ").title(),
+            self._kind_label(entry.kind),
             entry.title,
             entry.detail or "—",
             entry.source_ref or "—",
@@ -46,6 +46,18 @@ class TimelineTableModel(QAbstractTableModel):
         if orientation == Qt.Orientation.Horizontal:
             return self.HEADERS[section]
         return section + 1
+
+    @staticmethod
+    def _kind_label(kind: str) -> str:
+        labels = {
+            "diagnostic_session": "Diagnosesitzung",
+            "diagnostic": "DTC",
+            "replacement": "Tausch",
+            "repair": "Werkstatt",
+            "software": "Software",
+            "supplier": "Lieferant",
+        }
+        return labels.get(kind, kind.replace("_", " ").title())
 
     def set_entries(self, entries: list[TimelineEntry]) -> None:
         self.beginResetModel()
