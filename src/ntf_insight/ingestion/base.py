@@ -20,53 +20,62 @@ from ntf_insight.ingestion.models import (
 
 class ShortTestParser(Protocol):
     name: str
+    version: str
     def can_parse(self, path: Path) -> bool: ...
     def parse(self, path: Path) -> ParsedShortTest: ...
 
 
 class VehicleListParser(Protocol):
     name: str
+    version: str
     def can_parse(self, path: Path) -> bool: ...
     def parse(self, path: Path) -> ParsedVehicleList: ...
 
 
 class ReplacementParser(Protocol):
     name: str
+    version: str
     def can_parse(self, path: Path) -> bool: ...
     def parse(self, path: Path) -> ParsedReplacementData: ...
 
 
 class SupplierFindingParser(Protocol):
     name: str
+    version: str
     def can_parse(self, path: Path) -> bool: ...
     def parse(self, path: Path) -> ParsedSupplierFindingData: ...
 
 
 class WorkshopHistoryParser(Protocol):
     name: str
+    version: str
     def can_parse(self, path: Path) -> bool: ...
     def parse(self, path: Path) -> ParsedWorkshopData: ...
 
 
 class VehicleSoftwareHistoryParser(Protocol):
     name: str
+    version: str
     def can_parse(self, path: Path) -> bool: ...
     def parse(self, path: Path) -> ParsedVehicleSoftwareData: ...
 
 
 class DTCTriggerParser(Protocol):
     name: str
+    version: str
     def can_parse(self, path: Path) -> bool: ...
     def parse(self, path: Path) -> ParsedDTCTriggerCatalog: ...
 
 
 class ECUChangeHistoryParser(Protocol):
     name: str
+    version: str
     def can_parse(self, path: Path) -> bool: ...
     def parse(self, path: Path) -> ParsedECUChangeCatalog: ...
 
 
 class PopulationExposureParser(Protocol):
     name: str
+    version: str
     def can_parse(self, path: Path) -> bool: ...
     def parse(self, path: Path) -> ParsedPopulationData: ...
