@@ -131,7 +131,7 @@ ntf-insight/
 ├── docs/                       # Architecture and engineering documentation
 ├── data/                       # Documentation only; no real field data in Git
 ├── src/ntf_insight/
-│   ├── app/                    # Future UI / application layer
+│   ├── app/                    # PySide6 desktop UI / application layer
 │   ├── domain/                 # Generic entities and value objects
 │   ├── ingestion/              # Source adapters and parsers
 │   ├── storage/                # Persistence abstractions
@@ -208,6 +208,16 @@ Activate the environment and install the project in development mode:
 python -m pip install -e ".[dev]"
 pytest
 ```
+
+Start the desktop application:
+
+```bash
+python -m ntf_insight
+# or, after installation:
+ntf-insight
+```
+
+The GUI is a native **PySide6 / Qt desktop application**. The analysis core remains independent of the GUI so that other frontends can be added later without rewriting the engineering logic.
 
 The current test suite contains only a scaffold smoke test.
 
