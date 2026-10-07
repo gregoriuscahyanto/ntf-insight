@@ -6,7 +6,7 @@ NTF Insight is a Python project for reconstructing and analysing vehicle field c
 
 The architecture is intentionally **not tied to one component**. Coolant pumps, HV batteries and future component families should use the same generic case, timeline, evidence, similarity and reporting engines, with component-specific profiles and rules layered on top.
 
-> **Status:** project scaffold / pre-alpha. No production data connectors or decision logic are implemented yet.
+> **Status:** pre-alpha desktop prototype. Domain models, synthetic cases, timeline reconstruction and pre/post replacement recurrence analysis are implemented; production source parsers are still pending.
 
 ## Questions the project should answer
 
@@ -63,7 +63,7 @@ flowchart LR
     F --> H[Similarity & clustering]
     G --> I[Root-cause assessment]
     H --> I
-    I --> J[Web app / reports / exports]
+    I --> J[PySide6 desktop app / reports / exports]
 
     K[Component profiles] --> D
     K --> F
@@ -105,7 +105,7 @@ The first domain model is expected to revolve around:
 
 - `Vehicle`
 - `NTFCase`
-- `DiagnosticEvent`
+- `DiagnosticSession`\n- `DiagnosticEvent`
 - `RepairEvent`
 - `PartReplacement`
 - `SoftwareEvent`
@@ -219,7 +219,7 @@ ntf-insight
 
 The GUI is a native **PySide6 / Qt desktop application**. The analysis core remains independent of the GUI so that other frontends can be added later without rewriting the engineering logic.
 
-The current test suite contains only a scaffold smoke test.
+The test suite covers package import, synthetic case loading, chronological timeline reconstruction and pre/post replacement recurrence behaviour.
 
 ## Development conventions
 
@@ -246,8 +246,12 @@ Do **not** commit:
 
 Use synthetic or irreversibly anonymised data for examples and automated tests.
 
+## Input data
+
+See [docs/data-requirements.md](docs/data-requirements.md) for the minimum and recommended source files. A known diagnostic session with zero relevant DTCs is preserved explicitly so missing data is never confused with a clean post-replacement test.
+
 ## Roadmap
 
 See [ROADMAP.md](ROADMAP.md) for the implementation plan.
 
-The first implementation milestone is deliberately small: create a reliable case model, import a small set of synthetic cases and reproduce a vehicle timeline around a component replacement before adding clustering or a polished UI.
+The first implementation milestone is now in place with synthetic cases. The next source-dependent step is implementing the concrete short-test parser once representative original files are available.
