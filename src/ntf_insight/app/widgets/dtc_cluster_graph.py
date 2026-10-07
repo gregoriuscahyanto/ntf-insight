@@ -86,7 +86,10 @@ class DTCClusterGraph(QGraphicsView):
             header.setToolTip("Deskriptiver Cluster aus DTC-Koauftreten im selben Fall")
             header_text = self._scene.addText(f"Cluster {cluster_id}")
             header_text.setDefaultTextColor(QColor("#111827"))
-            header_text.setFont(QFont("Arial", 9, QFont.Weight.DemiBold))
+            header_font = QFont(self.font())
+            header_font.setPointSize(9)
+            header_font.setWeight(QFont.Weight.DemiBold)
+            header_text.setFont(header_font)
             header_text.setPos(origin_x + 24, origin_y + 16)
 
             if len(nodes) == 1:
@@ -140,7 +143,10 @@ class DTCClusterGraph(QGraphicsView):
 
             text = self._scene.addText(f"{node.ecu}\n{node.dtc_code}")
             text.setDefaultTextColor(QColor("#111827"))
-            text.setFont(QFont("Arial", 8, QFont.Weight.DemiBold))
+            node_font = QFont(self.font())
+            node_font.setPointSize(8)
+            node_font.setWeight(QFont.Weight.DemiBold)
+            text.setFont(node_font)
             bounds = text.boundingRect()
             text.setPos(x - bounds.width() / 2, y - bounds.height() / 2)
             text.setZValue(2)
