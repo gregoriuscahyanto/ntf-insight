@@ -89,6 +89,7 @@ class SourcesPage(QWidget):
         controls = QHBoxLayout()
         self.source_type = QComboBox()
         labels = {
+            SourceType.VEHICLE_CASE_LIST: "Case / FIN list",
             SourceType.SHORT_TEST: "Short test",
             SourceType.REPLACEMENT_LIST: "Replacement list",
             SourceType.SUPPLIER_FINDING: "Supplier finding",
@@ -96,6 +97,8 @@ class SourcesPage(QWidget):
             SourceType.SMR_D: "SMR-D",
             SourceType.HW_SW_CHANGE_HISTORY: "HW/SW change history",
             SourceType.VEHICLE_SOFTWARE_HISTORY: "Vehicle software history",
+            SourceType.INSTALLED_POPULATION: "Installed population",
+            SourceType.COMPONENT_MASTER_DATA: "Component / supplier master data",
             SourceType.OTHER: "Other",
         }
         for source_type, label in labels.items():
