@@ -28,16 +28,16 @@ class VehiclesPage(QWidget):
         layout.setContentsMargins(32, 28, 32, 28)
         layout.setSpacing(14)
 
-        layout.addWidget(QLabel("Vehicles", objectName="PageTitle"))
+        layout.addWidget(QLabel("Fahrzeuge", objectName="PageTitle"))
         layout.addWidget(
             QLabel(
-                "Currently showing fictional demo vehicles; the same model will receive imported FINs later.",
+                "Aktuell werden fiktive Demo-Fahrzeuge angezeigt; später verwendet dieselbe Ansicht importierte FINs.",
                 objectName="PageSubtitle",
             )
         )
 
         search = QLineEdit()
-        search.setPlaceholderText("Search FIN / VIN …")
+        search.setPlaceholderText("FIN / VIN suchen …")
         search.setClearButtonEnabled(True)
         layout.addWidget(search)
 
@@ -46,9 +46,9 @@ class VehiclesPage(QWidget):
             replacement = case.investigated_replacement()
             recurrence = analyze_recurrence(case)
             if recurrence.assessable:
-                recurrence_text = "Yes" if recurrence.has_recurrence else "No"
+                recurrence_text = "Ja" if recurrence.has_recurrence else "Nein"
             else:
-                recurrence_text = "Unknown"
+                recurrence_text = "Unbekannt"
             rows.append(
                 VehicleRow(
                     vin=case.vin,
