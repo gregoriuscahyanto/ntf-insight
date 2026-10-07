@@ -96,7 +96,53 @@ Especially for the ECU that monitors or controls the component:
 
 This allows the analysis to test whether a fault pattern correlates with software state or disappears after a software change.
 
-### 7. Component / supplier master data
+### 7. DTC trigger definitions / SMR-D files
+
+This is a **reference knowledge source**, not a vehicle event source. It explains why a diagnostic monitor can set a DTC and therefore helps interpret an observed short-test entry.
+
+Parse, where the source actually provides it:
+
+- ECU / control unit
+- DTC code and text
+- trigger / set condition
+- enable conditions
+- debounce / time / counter logic
+- reset or healing conditions
+- variant / applicability information
+- HW/SW scope when available
+- source file / version
+
+For the coolant-pump use case this is particularly valuable for CPC3: instead of treating a pump-related DTC as proof of a defective pump, the analysis can inspect the diagnostic trigger conditions and look for matching vehicle-side evidence.
+
+SMR-D content must remain traceable to the exact source/version because diagnostic logic can change with ECU software.
+
+### 8. HW/SW update and change history
+
+This is a second **reference knowledge source**. It describes what changed between ECU hardware/software/calibration states.
+
+Useful fields include:
+
+- ECU
+- change type: hardware / software / calibration
+- previous and new version
+- release/effective date
+- change title and description
+- affected DTCs or diagnostic monitors, if documented
+- affected functions / components
+- source reference
+
+Keep this separate from a **vehicle-specific SoftwareEvent**. The release list tells us *what a version changed*; a short test, flash history or other vehicle source is still needed to know *which version a specific FIN actually had at a given time*.
+
+This enables analyses such as:
+
+- DTC appears mainly on an older CPC3 software state
+- DTC trigger logic changed in a later release
+- fault stops after a documented software update
+- cluster of NTF cases shares the same HW/SW state
+
+These are evidence signals, not automatic proof of software causality.
+
+### 9. Component / supplier master data
 
 For supplier and field-pattern analysis:
 
@@ -108,7 +154,7 @@ For supplier and field-pattern analysis:
 
 ## Later, for statistically valid supplier comparisons
 
-### 8. Installed population / denominator data
+### 10. Installed population / denominator data
 
 Raw NTF counts are not enough to compare suppliers or part variants. Ideally obtain installed population by:
 
@@ -126,7 +172,9 @@ To build the first real coolant-pump pipeline, provide an anonymised package con
 1. 1–3 representative short-test files in their original export format,
 2. a small table with FIN / case ID and pump replacement date + mileage,
 3. if available, the corresponding return / supplier finding for those same cases,
-4. optionally the workshop complaint / repair text for those cases.
+4. optionally the workshop complaint / repair text for those cases,
+5. representative SMR-D file(s) containing the relevant DTC trigger definitions,
+6. the HW/SW update/change list for CPC3 (and later other relevant ECUs).
 
 From these files we can define the parser schema before scaling to hundreds of vehicles.
 
@@ -139,7 +187,9 @@ The initial pipeline should be built in this order:
 3. join both by FIN / case ID,
 4. build the chronological vehicle timeline,
 5. calculate pre/post replacement recurrence features,
-6. add workshop and supplier findings as evidence,
-7. implement explainable root-cause rules,
-8. add similarity / clustering,
-9. add population-normalised supplier analytics.
+6. parse and link SMR-D trigger definitions,
+7. import HW/SW release/change history and link it to vehicle software states,
+8. add workshop and supplier findings as evidence,
+9. implement explainable root-cause rules,
+10. add similarity / clustering,
+11. add population-normalised supplier analytics.
