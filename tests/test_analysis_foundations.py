@@ -46,3 +46,15 @@ def test_similarity_exposes_shared_diagnostic_pattern() -> None:
 
     assert ("CPC3", "P26F100") in result.shared_faults
     assert 0.0 <= result.score <= 1.0
+
+
+def test_relevant_software_update_requires_post_update_outcome() -> None:
+    bundle = generate_case_evidence(_case("DEMO-004"), build_demo_reference_repository())
+
+    matching = [
+        item
+        for item in bundle.evidence
+        if item.code == "RELEVANT_SW_CHANGE_THEN_FAULT_NOT_OBSERVED"
+    ]
+    assert matching
+    assert matching[0].category_hint == RootCauseCategory.ECU_SOFTWARE
