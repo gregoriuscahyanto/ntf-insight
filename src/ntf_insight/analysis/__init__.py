@@ -2,6 +2,7 @@
 
 from ntf_insight.analysis.case_analysis import CaseAnalysis, analyze_case
 from ntf_insight.analysis.dataset import build_case_feature_frame
+from ntf_insight.analysis.dtc_clusters import DTCCluster, DTCEdge, DTCNetwork, DTCNode, build_dtc_network
 from ntf_insight.analysis.data_quality import DataQualityReport, QualityCheck, QualityStatus, assess_data_quality
 from ntf_insight.analysis.evidence_engine import EvidenceBundle, generate_case_evidence
 from ntf_insight.analysis.features import CaseFeatures, extract_case_features
@@ -14,6 +15,10 @@ from ntf_insight.analysis.timeline import TimelineEntry, build_timeline
 __all__ = [
     "CaseAnalysis",
     "CaseFeatures",
+    "DTCCluster",
+    "DTCEdge",
+    "DTCNetwork",
+    "DTCNode",
     "DataQualityReport",
     "DiagnosticKnowledge",
     "EvidenceBundle",
@@ -28,6 +33,7 @@ __all__ = [
     "analyze_recurrence",
     "assess_data_quality",
     "build_case_feature_frame",
+    "build_dtc_network",
     "build_supplier_summaries",
     "build_timeline",
     "compare_cases",
