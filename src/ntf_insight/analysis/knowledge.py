@@ -12,12 +12,16 @@ from ntf_insight.storage.reference_repositories import ReferenceRepository
 @dataclass(frozen=True, slots=True)
 class DiagnosticKnowledge:
     event: DiagnosticEvent
-    trigger: DTCTriggerDefinition | None
+    triggers: tuple[DTCTriggerDefinition, ...]
     related_changes: tuple[ECUChangeRecord, ...]
 
     @property
     def has_trigger_definition(self) -> bool:
-        return self.trigger is not None
+        return bool(self.triggers)
+
+    @property
+    def primary_trigger(self) -> DTCTriggerDefinition | None:
+        return self.triggers[0] if self.triggers else None
 
     @property
     def has_related_release_change(self) -> bool:
@@ -28,9 +32,9 @@ def enrich_diagnostic(
     event: DiagnosticEvent,
     references: ReferenceRepository,
 ) -> DiagnosticKnowledge:
-    """Return reference knowledge applicable to one observed DTC."""
+    """Return all reference knowledge currently matching one observed DTC."""
     return DiagnosticKnowledge(
         event=event,
-        trigger=references.find_trigger(event.ecu, event.dtc_code),
+        triggers=tuple(references.find_triggers(event.ecu, event.dtc_code)),
         related_changes=tuple(references.find_changes_for_dtc(event.ecu, event.dtc_code)),
     )
