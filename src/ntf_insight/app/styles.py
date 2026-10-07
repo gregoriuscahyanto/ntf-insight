@@ -3,8 +3,13 @@
 from __future__ import annotations
 
 
-def stylesheet_for(theme: str) -> str:
+def stylesheet_for(
+    theme: str,
+    body_font: str = "Segoe UI",
+    heading_font: str | None = None,
+) -> str:
     """Return a fully explicit high-contrast stylesheet for light or dark mode."""
+    heading_font = heading_font or body_font
     dark = theme.casefold() == "dark"
 
     if dark:
@@ -46,7 +51,7 @@ def stylesheet_for(theme: str) -> str:
 QMainWindow, QWidget {{
     background-color: {p["bg"]};
     color: {p["text"]};
-    font-family: "Segoe UI", "Inter", "Arial";
+    font-family: "{body_font}";
     font-size: 14px;
 }}
 
@@ -68,6 +73,7 @@ QFrame#Sidebar {{
 
 QLabel#BrandTitle {{
     color: #ffffff;
+    font-family: "{heading_font}";
     font-size: 20px;
     font-weight: 700;
 }}
@@ -99,6 +105,7 @@ QPushButton#NavButton:checked {{
 
 QLabel#PageTitle {{
     color: {p["text"]};
+    font-family: "{heading_font}";
     font-size: 28px;
     font-weight: 700;
 }}
@@ -122,6 +129,7 @@ QLabel#CardTitle {{
 
 QLabel#CardValue {{
     color: {p["text"]};
+    font-family: "{heading_font}";
     font-size: 26px;
     font-weight: 700;
 }}
