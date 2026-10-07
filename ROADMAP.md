@@ -14,7 +14,7 @@ The order is deliberate: **first create trustworthy, traceable case data; then a
 - [ ] Define coding conventions and contribution workflow
 - [ ] Add CI for linting and tests
 - [ ] Add dependency locking
-- [ ] Add structured logging
+- [ ] Add structured logging\n- [x] Add initial PySide6 desktop application scaffold
 - [ ] Define configuration approach for local / enterprise environments
 
 **Exit criterion:** a clean Python package installs locally and the test suite runs.
@@ -212,7 +212,7 @@ Examples:
 
 ---
 
-## Phase 8 — Web application
+## Phase 8 — Desktop application
 
 **Goal:** create a modern engineering interface.
 
