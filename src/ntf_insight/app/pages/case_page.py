@@ -172,7 +172,16 @@ class CasePage(QWidget):
         )
         time_hint.setWordWrap(True)
         layout.addWidget(time_hint)
+
+        time_filter = QLineEdit()
+        time_filter.setPlaceholderText(
+            "Zeitplot filtern, z. B. P26F100, CPC3, Tausch, Software oder Werkstatt …"
+        )
+        time_filter.setClearButtonEnabled(True)
+        layout.addWidget(time_filter)
+
         self.time_plot = EventTimePlot()
+        time_filter.textChanged.connect(self.time_plot.set_filter_text)
         layout.addWidget(self.time_plot)
 
         layout.addWidget(QLabel("Generierte Evidenz", objectName="CardTitle"))
