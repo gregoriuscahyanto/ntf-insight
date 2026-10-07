@@ -54,23 +54,25 @@ For every vehicle / case, NTF Insight should eventually help answer questions su
 
 ```mermaid
 flowchart LR
-    Z[External report systems] --> A[Acquisition providers]\n    A --> B[Immutable raw archive]\n    B --> C[Ingestion adapters]
-    B --> C[Raw archive]
-    B --> D[Normalization]
-    D --> E[Case & vehicle timeline]
-    E --> F[Feature extraction]
-    E --> G[Evidence / rule engine]
-    F --> H[Similarity & clustering]
-    G --> I[Root-cause assessment]
-    H --> I
-    D --> P[DuckDB local store]\n    P --> E\n    I --> J[PySide6 desktop app / reports / exports]
+    A[External report systems] --> B[Acquisition providers]
+    B --> C[Immutable raw archive]
+    C --> D[Ingestion adapters]
+    D --> E[Normalization and case assembly]
+    E --> F[DuckDB local store]
+    F --> G[Case and vehicle timeline]
+    G --> H[Feature extraction]
+    G --> I[Evidence / rule engine]
+    H --> J[Similarity and clustering]
+    I --> K[Root-cause assessment]
+    J --> K
+    K --> L[PySide6 desktop app / reports / exports]
 
-    K[Component profiles] --> D
-    K --> F
-    K --> G
-    L[SMR-D trigger catalog] --> G
-    M[HW/SW change catalog] --> F
-    M --> G
+    M[Component profiles] --> E
+    M --> H
+    M --> I
+    N[SMR-D trigger catalog] --> I
+    O[HW/SW change catalog] --> H
+    O --> I
 ```
 
 ## Component extensibility
@@ -137,11 +139,13 @@ ntf-insight/
 ├── docs/                       # Architecture and engineering documentation
 ├── data/                       # Documentation only; no real field data in Git
 ├── src/ntf_insight/
-│   ├── acquisition/            # Provider contracts for automated report download\n│   ├── app/                    # PySide6 desktop UI / application layer
+│   ├── acquisition/            # Provider contracts for automated report download
+│   ├── app/                    # PySide6 desktop UI / application layer
 │   ├── domain/                 # Generic entities and value objects
 │   ├── ingestion/              # Source adapters and parsers
 │   ├── storage/                # Persistence abstractions
-│   ├── analysis/               # Timeline, recurrence, evidence, quality, similarity\n│   ├── demo/                   # Synthetic development/reference fixtures
+│   ├── analysis/               # Timeline, recurrence, evidence, quality, similarity
+│   ├── demo/                   # Synthetic development/reference fixtures
 │   └── components/
 │       ├── coolant_pump/       # First component profile
 │       └── hv_battery/         # Future / reference component profile
