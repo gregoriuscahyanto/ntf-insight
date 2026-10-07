@@ -80,6 +80,13 @@ def render_case_report(
         ):
             lines.append(f"- {category}: {score:+.2f}")
 
+    lines.extend(["", "## Integrity", ""])
+    if analysis.integrity.is_valid:
+        lines.append("- No structural integrity errors detected.")
+    else:
+        for issue in analysis.integrity.issues:
+            lines.append(f"- **{issue.code}** — {issue.severity}: {issue.message}")
+
     lines.extend(["", "## Data quality", ""])
     for check in analysis.quality.checks:
         lines.append(f"- **{check.label}** — {check.status}: {check.detail}")
