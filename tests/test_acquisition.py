@@ -24,6 +24,8 @@ def test_batch_acquisition_archives_successes_and_collects_failures(tmp_path) ->
     result = service.acquire(["VIN1", "FAIL", "VIN2"])
 
     assert len(result.artifacts) == 2
+    assert result.artifacts[0].source_system == "fake"
+    assert result.artifacts[0].vin_hint == "VIN1"
     assert len(result.issues) == 1
     assert result.issues[0].vin == "FAIL"
     assert len(importer.list_artifacts()) == 2
