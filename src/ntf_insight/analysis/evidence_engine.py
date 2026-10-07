@@ -159,6 +159,30 @@ def generate_case_evidence(
                 )
             )
 
+        for state in case.ecu_states:
+            matching_changes = [
+                change
+                for change in related_changes.values()
+                if change.ecu.strip().upper() == state.ecu.strip().upper()
+                and change.to_version
+                and state.software_version
+                and change.to_version.strip().upper() == state.software_version.strip().upper()
+            ]
+            if matching_changes:
+                items.append(
+                    Evidence(
+                        code="VEHICLE_HAS_RELEVANT_SW_STATE",
+                        description=(
+                            f"Observed vehicle state contains {state.ecu} {state.software_version}, "
+                            "matching a documented release that affects an observed DTC."
+                        ),
+                        direction=EvidenceDirection.NEUTRAL,
+                        category_hint=RootCauseCategory.ECU_SOFTWARE,
+                        source_ref=state.source_ref,
+                        weight=0.75,
+                    )
+                )
+
         for software_event in case.software_events:
             matching_changes = [
                 change
