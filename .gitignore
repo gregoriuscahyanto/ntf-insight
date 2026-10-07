@@ -26,3 +26,10 @@ data/processed/*
 .idea/
 .DS_Store
 Thumbs.db
+
+# Licensed corporate font binaries must stay outside Git
+*.ttf
+*.otf
+*.ttc
+*.woff
+*.woff2
