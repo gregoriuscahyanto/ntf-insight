@@ -28,6 +28,8 @@ def _apply_appearance(app: QApplication, theme: str, fonts: FontSelection) -> No
             heading_font=fonts.heading_family,
         )
     )
+    for widget in app.allWidgets():
+        widget.update()
 
 
 def main() -> int:
