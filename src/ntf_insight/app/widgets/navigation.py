@@ -64,6 +64,9 @@ class NavigationPanel(QFrame):
         self.theme_combo.currentIndexChanged.connect(self._emit_theme)
         layout.addWidget(self.theme_combo)
         layout.addSpacing(8)
+        self.font_status = QLabel("Schrift: System", objectName="BrandSubtitle")
+        self.font_status.setWordWrap(True)
+        layout.addWidget(self.font_status)
         layout.addWidget(QLabel("Pre-alpha", objectName="BrandSubtitle"))
 
     def _emit_theme(self) -> None:
@@ -75,6 +78,16 @@ class NavigationPanel(QFrame):
         index = self.theme_combo.findData(theme)
         if index >= 0:
             self.theme_combo.setCurrentIndex(index)
+
+    def set_font_status(self, body_family: str, heading_family: str) -> None:
+        if body_family == heading_family:
+            label = body_family
+        else:
+            label = f"{body_family} / {heading_family}"
+        self.font_status.setText(f"Schrift: {label}")
+        self.font_status.setToolTip(
+            f"UI/Text: {body_family}\nÜberschriften: {heading_family}"
+        )
 
     def select_page(self, key: str) -> None:
         button = self.buttons.get(key)
