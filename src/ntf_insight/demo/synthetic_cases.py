@@ -20,6 +20,7 @@ from ntf_insight.domain.evidence import Evidence
 from ntf_insight.domain.events import (
     DiagnosticEvent,
     DiagnosticSession,
+    ECUStateObservation,
     PartReplacement,
     RepairEvent,
     SoftwareEvent,
@@ -135,8 +136,12 @@ def build_demo_cases() -> list[NTFCase]:
         diagnostics=[
             DiagnosticEvent(vin="DEMO-VIN-000004", occurred_at=_dt(3), mileage_km=11200, ecu="CPC3", dtc_code="P26F100", dtc_text="Coolant pump performance", status="sporadic"),
         ],
+        ecu_states=[
+            ECUStateObservation(vin="DEMO-VIN-000004", occurred_at=_dt(3, 8), mileage_km=11200, ecu="CPC3", software_version="DEMO-1.0", hardware_version="DEMO-HW-A", source_ref="synthetic:short-test:pre"),
+            ECUStateObservation(vin="DEMO-VIN-000004", occurred_at=_dt(9, 8), mileage_km=11310, ecu="CPC3", software_version="DEMO-2.0", hardware_version="DEMO-HW-A", source_ref="synthetic:short-test:post"),
+        ],
         replacements=[PartReplacement(vin="DEMO-VIN-000004", occurred_at=_dt(5), mileage_km=11250, component_type=component, supplier="Supplier C")],
-        software_events=[SoftwareEvent(vin="DEMO-VIN-000004", occurred_at=_dt(7), mileage_km=11270, ecu="CPC3", software_version="DEMO-2.0", action="CPC3 software update")],
+        software_events=[SoftwareEvent(vin="DEMO-VIN-000004", occurred_at=_dt(7), mileage_km=11270, ecu="CPC3", software_version="DEMO-2.0", action="CPC3 software update", source_ref="synthetic:flash-history")],
         assessment=Assessment(
             root_cause=RootCauseCategory.ECU_SOFTWARE,
             supplier_involvement=SupplierInvolvement.UNLIKELY,
