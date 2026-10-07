@@ -1,4 +1,4 @@
-name: tests
+name: quality-gate
 
 on:
   push:
@@ -6,19 +6,49 @@ on:
   pull_request:
 
 jobs:
-  pytest:
-    runs-on: ubuntu-latest
+  quality:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    env:
+      QT_QPA_PLATFORM: offscreen
+
     steps:
       - uses: actions/checkout@v4
+
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
           cache: pip
+
       - name: Install Qt runtime libraries
+        if: runner.os == 'Linux'
         run: |
           sudo apt-get update
           sudo apt-get install -y libegl1 libgl1
+
       - name: Install project
         run: python -m pip install -e ".[dev]"
-      - name: Run tests
-        run: pytest -q
+
+      - name: Run portable quality gate
+        run: python ci/quality_gate.py
+
+      - name: Build wheel
+        run: python -m build --wheel
+
+      - name: Upload CI reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: reports-${{ runner.os }}
+          path: reports/
+          if-no-files-found: ignore
+
+      - name: Upload wheel
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ntf-insight-wheel-${{ runner.os }}
+          path: dist/*.whl
