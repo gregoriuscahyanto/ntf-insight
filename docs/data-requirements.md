@@ -193,3 +193,8 @@ The initial pipeline should be built in this order:
 9. implement explainable root-cause rules,
 10. add similarity / clustering,
 11. add population-normalised supplier analytics.
+
+
+## Canonical contracts
+
+See [source-contracts.md](source-contracts.md) for the normalized object expected from each parser, linkage rules, provenance requirements and the no-silent-join policy.
