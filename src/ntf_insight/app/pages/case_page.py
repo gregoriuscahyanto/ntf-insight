@@ -40,10 +40,10 @@ class CasePage(QWidget):
         layout.setContentsMargins(32, 28, 32, 28)
         layout.setSpacing(12)
 
-        layout.addWidget(QLabel("Cases", objectName="PageTitle"))
+        layout.addWidget(QLabel("Fälle", objectName="PageTitle"))
         intro = QLabel(
-            "Synthetic examples are shown until real short-test, SMR-D, replacement and "
-            "HW/SW history files are connected.",
+            "Es werden synthetische Beispiele angezeigt, bis echte Kurztest-, SMR-D-, Tausch- und "
+            "HW-/SW-Historien-Dateien angebunden sind.",
             objectName="PageSubtitle",
         )
         intro.setWordWrap(True)
@@ -56,7 +56,7 @@ class CasePage(QWidget):
         self.selector.currentIndexChanged.connect(self._refresh)
         selector_row.addWidget(self.selector, 1)
 
-        export_button = QPushButton("Export Markdown report…")
+        export_button = QPushButton("Markdown-Bericht exportieren…")
         export_button.clicked.connect(self._export_report)
         selector_row.addWidget(export_button)
         layout.addLayout(selector_row)
@@ -73,12 +73,12 @@ class CasePage(QWidget):
         self.recurrence_value = QLabel("—")
 
         fields = (
-            ("Component", self.component_value),
-            ("Replacement", self.replacement_value),
-            ("Current assessment", self.root_cause_value),
-            ("Supplier involvement", self.supplier_value),
-            ("Confidence", self.confidence_value),
-            ("Same fault after swap", self.recurrence_value),
+            ("Bauteil", self.component_value),
+            ("Tausch", self.replacement_value),
+            ("Aktuelle Bewertung", self.root_cause_value),
+            ("Lieferantenbeteiligung", self.supplier_value),
+            ("Konfidenz", self.confidence_value),
+            ("Gleicher Fehler nach Tausch", self.recurrence_value),
         )
         for index, (title, value) in enumerate(fields):
             label = QLabel(title, objectName="CardTitle")
@@ -95,9 +95,9 @@ class CasePage(QWidget):
         self.recurrence_text.setWordWrap(True)
         layout.addWidget(self.recurrence_text)
 
-        layout.addWidget(QLabel("Generated evidence", objectName="CardTitle"))
+        layout.addWidget(QLabel("Generierte Evidenz", objectName="CardTitle"))
         self.evidence_model = SimpleTableModel(
-            ("Signal", "Category hint", "Direction", "Provisional weight", "Description")
+            ("Signal", "Kategoriehinweis", "Richtung", "Vorläufiges Gewicht", "Beschreibung")
         )
         self.evidence_table = QTableView()
         self.evidence_table.setModel(self.evidence_model)
@@ -144,34 +144,34 @@ class CasePage(QWidget):
 
         self.component_value.setText(case.component_type)
         self.replacement_value.setText(
-            replacement.occurred_at.strftime("%Y-%m-%d") if replacement else "Missing"
+            replacement.occurred_at.strftime("%Y-%m-%d") if replacement else "Fehlt"
         )
-        self.root_cause_value.setText(str(assessment.root_cause) if assessment else "Not assessed")
+        self.root_cause_value.setText(str(assessment.root_cause) if assessment else "Nicht bewertet")
         self.supplier_value.setText(
-            str(assessment.supplier_involvement) if assessment else "Unknown"
+            str(assessment.supplier_involvement) if assessment else "Unbekannt"
         )
         self.confidence_value.setText(str(assessment.confidence) if assessment else "—")
 
         if not recurrence.assessable:
-            recurrence_label = "Insufficient data"
+            recurrence_label = "Unzureichende Daten"
         else:
-            recurrence_label = "Yes" if recurrence.has_recurrence else "No"
+            recurrence_label = "Ja" if recurrence.has_recurrence else "Nein"
         self.recurrence_value.setText(recurrence_label)
 
         self.assessment_text.setText(
-            assessment.summary if assessment and assessment.summary else "No assessment available."
+            assessment.summary if assessment and assessment.summary else "Keine Bewertung verfügbar."
         )
 
         if recurrence.replacement is None:
-            recurrence_summary = "No investigated component replacement is available."
+            recurrence_summary = "Kein untersuchter Bauteiltausch verfügbar."
         elif not recurrence.assessable:
             missing = []
             if not recurrence.has_pre_test:
-                missing.append("pre-replacement short test")
+                missing.append("Kurztest vor dem Tausch")
             if not recurrence.has_post_test:
-                missing.append("post-replacement short test")
+                missing.append("Kurztest nach dem Tausch")
             recurrence_summary = (
-                "Recurrence cannot be assessed reliably; missing " + " and ".join(missing) + "."
+                "Wiederauftreten kann nicht zuverlässig bewertet werden; es fehlt: " + " und ".join(missing) + "."
             )
         else:
             elapsed = (
@@ -185,10 +185,10 @@ class CasePage(QWidget):
                 else "—"
             )
             recurrence_summary = (
-                f"Same: {format_faults(recurrence.same_faults)}  |  "
-                f"Disappeared: {format_faults(recurrence.disappeared_faults)}  |  "
-                f"New: {format_faults(recurrence.new_faults)}  |  "
-                f"First recurrence: {elapsed} / {distance}"
+                f"Gleich: {format_faults(recurrence.same_faults)}  |  "
+                f"Verschwunden: {format_faults(recurrence.disappeared_faults)}  |  "
+                f"Neu: {format_faults(recurrence.new_faults)}  |  "
+                f"Erstes Wiederauftreten: {elapsed} / {distance}"
             )
         self.recurrence_text.setText(recurrence_summary)
 
@@ -212,11 +212,11 @@ class CasePage(QWidget):
                 )
             )
             self.evidence_balance.setText(
-                "Provisional evidence balance (not a final root-cause verdict): " + balance_text
+                "Vorläufige Evidenzbilanz (kein finales Root-Cause-Urteil): " + balance_text
             )
         else:
             self.evidence_balance.setText(
-                "No scored generic evidence yet; more source data or component-specific rules are needed."
+                "Noch keine bewertete generische Evidenz; weitere Quelldaten oder bauteilspezifische Regeln sind erforderlich."
             )
         self.timeline_model.set_entries(build_timeline(case))
 
@@ -229,7 +229,7 @@ class CasePage(QWidget):
         suggested = f"{case.case_id}.md"
         filename, _ = QFileDialog.getSaveFileName(
             self,
-            "Export NTF case report",
+            "NTF-Fallbericht exportieren",
             suggested,
             "Markdown (*.md)",
         )
