@@ -39,6 +39,7 @@ class DTCTriggerDefinition(BaseModel):
     debounce_text: str | None = None
     variant_or_scope: str | None = None
     software_scope: str | None = None
+    semantic_tags: list[str] = Field(default_factory=list)
     source_ref: str | None = None
     metadata: dict[str, Any] = Field(default_factory=dict)
 
