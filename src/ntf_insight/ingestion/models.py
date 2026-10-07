@@ -6,7 +6,7 @@ from enum import StrEnum
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from ntf_insight.domain.events import DiagnosticEvent, DiagnosticSession
+from ntf_insight.domain.events import DiagnosticEvent, DiagnosticSession, ECUStateObservation
 from ntf_insight.domain.reference import DTCTriggerDefinition, ECUChangeRecord
 
 
@@ -30,6 +30,7 @@ class ParsedShortTest(BaseModel):
 
     session: DiagnosticSession
     diagnostics: list[DiagnosticEvent] = Field(default_factory=list)
+    ecu_states: list[ECUStateObservation] = Field(default_factory=list)
     issues: list[ImportIssue] = Field(default_factory=list)
 
     @property
