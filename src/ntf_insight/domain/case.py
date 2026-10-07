@@ -8,6 +8,7 @@ from ntf_insight.domain.assessment import Assessment
 from ntf_insight.domain.events import (
     DiagnosticEvent,
     DiagnosticSession,
+    ECUStateObservation,
     PartReplacement,
     RepairEvent,
     SoftwareEvent,
@@ -26,6 +27,7 @@ class NTFCase(BaseModel):
     component_type: str
     diagnostic_sessions: list[DiagnosticSession] = Field(default_factory=list)
     diagnostics: list[DiagnosticEvent] = Field(default_factory=list)
+    ecu_states: list[ECUStateObservation] = Field(default_factory=list)
     repairs: list[RepairEvent] = Field(default_factory=list)
     replacements: list[PartReplacement] = Field(default_factory=list)
     software_events: list[SoftwareEvent] = Field(default_factory=list)
