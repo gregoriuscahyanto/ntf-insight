@@ -10,6 +10,9 @@ def stylesheet_for(
 ) -> str:
     """Return a fully explicit high-contrast stylesheet for light or dark mode."""
     heading_font = heading_font or body_font
+    heading_key = heading_font.casefold()
+    corporate_a_heading = "corpo a" in heading_key or "corporate a" in heading_key
+    heading_weight = 400 if corporate_a_heading else 700
     dark = theme.casefold() == "dark"
 
     if dark:
@@ -75,7 +78,7 @@ QLabel#BrandTitle {{
     color: #ffffff;
     font-family: "{heading_font}";
     font-size: 20px;
-    font-weight: 700;
+    font-weight: {heading_weight};
 }}
 
 QLabel#BrandSubtitle {{
@@ -107,7 +110,7 @@ QLabel#PageTitle {{
     color: {p["text"]};
     font-family: "{heading_font}";
     font-size: 28px;
-    font-weight: 700;
+    font-weight: {heading_weight};
 }}
 
 QLabel#PageSubtitle {{
@@ -129,7 +132,6 @@ QLabel#CardTitle {{
 
 QLabel#CardValue {{
     color: {p["text"]};
-    font-family: "{heading_font}";
     font-size: 26px;
     font-weight: 700;
 }}
