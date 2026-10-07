@@ -18,6 +18,7 @@ def build_demo_reference_repository() -> InMemoryReferenceRepository:
             trigger_text="Synthetic example: monitored pump response is outside the expected range.",
             enable_conditions=["Synthetic engine/thermal enable condition"],
             reset_or_healing_conditions=["Synthetic monitor passes for a defined period"],
+            semantic_tags=["component_performance"],
             source_ref="synthetic:smr-d:cpc3",
         ),
         DTCTriggerDefinition(
@@ -26,6 +27,7 @@ def build_demo_reference_repository() -> InMemoryReferenceRepository:
             dtc_code="P260000",
             dtc_text="Coolant pump control circuit",
             trigger_text="Synthetic example: electrical control-circuit monitor detects an implausible state.",
+            semantic_tags=["component_circuit"],
             source_ref="synthetic:smr-d:cpc3",
         ),
         DTCTriggerDefinition(
@@ -34,6 +36,7 @@ def build_demo_reference_repository() -> InMemoryReferenceRepository:
             dtc_code="P260100",
             dtc_text="Coolant pump control circuit low",
             trigger_text="Synthetic example: control-circuit level is below the expected range.",
+            semantic_tags=["component_circuit"],
             source_ref="synthetic:smr-d:cpc3",
         ),
         DTCTriggerDefinition(
@@ -42,6 +45,7 @@ def build_demo_reference_repository() -> InMemoryReferenceRepository:
             dtc_code="U300316",
             dtc_text="Supply voltage too low",
             trigger_text="Synthetic example: ECU supply voltage falls below its diagnostic threshold.",
+            semantic_tags=["supply_voltage"],
             source_ref="synthetic:smr-d:mcm",
         ),
         DTCTriggerDefinition(
@@ -50,6 +54,7 @@ def build_demo_reference_repository() -> InMemoryReferenceRepository:
             dtc_code="U300316",
             dtc_text="Supply voltage too low",
             trigger_text="Synthetic example: ECU supply voltage falls below its diagnostic threshold.",
+            semantic_tags=["supply_voltage"],
             source_ref="synthetic:smr-d:acm",
         ),
     ]
