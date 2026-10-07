@@ -22,6 +22,8 @@ class EventTimePlot(QWidget):
 
     def set_entries(self, entries: list[TimelineEntry]) -> None:
         self._entries = sorted(entries, key=lambda item: item.occurred_at)
+        lane_count = len(self._lanes())
+        self.setMinimumHeight(max(270, min(620, 90 + lane_count * 34)))
         self.update()
 
     @staticmethod
