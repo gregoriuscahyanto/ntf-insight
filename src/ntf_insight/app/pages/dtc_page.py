@@ -27,17 +27,17 @@ class DTCExplorerPage(QWidget):
         layout.setContentsMargins(32, 28, 32, 28)
         layout.setSpacing(14)
 
-        layout.addWidget(QLabel("DTC Explorer", objectName="PageTitle"))
+        layout.addWidget(QLabel("DTC-Explorer", objectName="PageTitle"))
         subtitle = QLabel(
-            "Observed DTCs linked to synthetic trigger definitions and HW/SW change history. "
-            "Real SMR-D content will replace the demo catalog later.",
+            "Beobachtete DTCs werden mit Triggerdefinitionen und der HW-/SW-Änderungshistorie verknüpft. "
+            "Später ersetzt echter SMR-D-Inhalt den Demo-Katalog.",
             objectName="PageSubtitle",
         )
         subtitle.setWordWrap(True)
         layout.addWidget(subtitle)
 
         search = QLineEdit()
-        search.setPlaceholderText("Search ECU, DTC, text, trigger, tag …")
+        search.setPlaceholderText("Steuergerät, DTC, Text, Trigger oder Tag suchen …")
         search.setClearButtonEnabled(True)
         layout.addWidget(search)
 
@@ -76,13 +76,13 @@ class DTCExplorerPage(QWidget):
             (
                 "ECU",
                 "DTC",
-                "DTC text",
-                "Vehicles",
-                "Events",
-                "Trigger defs",
+                "DTC-Text",
+                "Fahrzeuge",
+                "Ereignisse",
+                "Triggerdefinitionen",
                 "Tags",
-                "Trigger summary",
-                "HW/SW changes",
+                "Trigger-Zusammenfassung",
+                "HW-/SW-Änderungen",
             ),
             rows,
         )
