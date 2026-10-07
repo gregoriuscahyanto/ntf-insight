@@ -40,7 +40,30 @@ The app currently uses a brand-compatible neutral fallback, not a claim of exact
 
 ## Typography
 
-The repository uses system fallbacks such as Segoe UI / Arial / Inter where available. Proprietary Mercedes-Benz corporate typefaces must not be committed to Git. If the approved font is installed in the managed environment, the UI can reference it by family name without bundling the font file.
+NTF Insight now resolves Mercedes-Benz corporate typography at runtime without redistributing font binaries.
+
+Preferred mapping:
+
+- **Corporate S** for UI text, tables, controls and body copy.
+- **Corporate A** for major headings and prominent values.
+- Segoe UI / Arial remain safe fallbacks when the corporate fonts are unavailable.
+
+The app checks installed system font families automatically. It also supports an approved internal font directory through:
+
+```powershell
+$env:NTF_INSIGHT_FONT_DIR = "C:\approved\mercedes-fonts"
+python -m ntf_insight
+```
+
+If the internally approved family names differ from the historical Corporate A/S names, they can be selected explicitly:
+
+```powershell
+$env:NTF_INSIGHT_BODY_FONT_FAMILY = "Approved Body Family"
+$env:NTF_INSIGHT_HEADING_FONT_FAMILY = "Approved Heading Family"
+python -m ntf_insight
+```
+
+Font binaries are intentionally not committed to Git. The current Mercedes-Benz Brand Design System and its licensing/asset distribution rules remain authoritative.
 
 ## Accessibility / readability
 
