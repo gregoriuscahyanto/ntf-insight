@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from PySide6.QtCore import Signal
+from PySide6.QtCore import Qt, Signal
+from PySide6.QtGui import QCursor
 from PySide6.QtWidgets import (
     QButtonGroup,
     QFrame,
@@ -44,8 +45,10 @@ class NavigationPanel(QFrame):
         for key, label in self.ITEMS:
             button = QPushButton(label, objectName="NavButton")
             button.setCheckable(True)
-            button.setCursor(__import__("PySide6.QtGui", fromlist=["QCursor"]).QCursor(__import__("PySide6.QtCore", fromlist=["Qt"]).Qt.CursorShape.PointingHandCursor))
-            button.clicked.connect(lambda _checked=False, page=key: self.page_selected.emit(page))
+            button.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
+            button.clicked.connect(
+                lambda _checked=False, page=key: self.page_selected.emit(page)
+            )
             self.group.addButton(button)
             self.buttons[key] = button
             layout.addWidget(button)
