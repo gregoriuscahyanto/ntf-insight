@@ -8,7 +8,7 @@ import duckdb
 
 from ntf_insight.domain.case import NTFCase
 from ntf_insight.domain.reference import DTCTriggerDefinition, ECUChangeRecord
-from ntf_insight.ingestion.artifacts import SourceArtifact
+from ntf_insight.ingestion.artifacts import ParseRun, SourceArtifact
 
 
 class DuckDBStore:
@@ -34,6 +34,17 @@ class DuckDBStore:
                     sha256 VARCHAR PRIMARY KEY,
                     source_type VARCHAR NOT NULL,
                     original_name VARCHAR NOT NULL,
+                    payload_json VARCHAR NOT NULL
+                )
+                """
+            )
+            con.execute(
+                """
+                CREATE TABLE IF NOT EXISTS parse_runs (
+                    run_id VARCHAR PRIMARY KEY,
+                    artifact_sha256 VARCHAR NOT NULL,
+                    parser_name VARCHAR NOT NULL,
+                    status VARCHAR NOT NULL,
                     payload_json VARCHAR NOT NULL
                 )
                 """
@@ -92,6 +103,43 @@ class DuckDBStore:
                 "SELECT payload_json FROM source_artifacts ORDER BY original_name"
             ).fetchall()
         return [SourceArtifact.model_validate_json(row[0]) for row in rows]
+
+    def save_parse_run(self, run: ParseRun) -> None:
+        with self.connect() as con:
+            con.execute(
+                """
+                INSERT INTO parse_runs VALUES (?, ?, ?, ?, ?)
+                ON CONFLICT(run_id) DO UPDATE SET
+                    artifact_sha256 = excluded.artifact_sha256,
+                    parser_name = excluded.parser_name,
+                    status = excluded.status,
+                    payload_json = excluded.payload_json
+                """,
+                [
+                    run.run_id,
+                    run.artifact_sha256,
+                    run.parser_name,
+                    str(run.status),
+                    run.model_dump_json(),
+                ],
+            )
+
+    def load_parse_runs(self, artifact_sha256: str | None = None) -> list[ParseRun]:
+        with self.connect() as con:
+            if artifact_sha256 is None:
+                rows = con.execute(
+                    "SELECT payload_json FROM parse_runs ORDER BY run_id"
+                ).fetchall()
+            else:
+                rows = con.execute(
+                    """
+                    SELECT payload_json FROM parse_runs
+                    WHERE artifact_sha256 = ?
+                    ORDER BY run_id
+                    """,
+                    [artifact_sha256],
+                ).fetchall()
+        return [ParseRun.model_validate_json(row[0]) for row in rows]
 
     def save_case(self, case: NTFCase) -> None:
         with self.connect() as con:
