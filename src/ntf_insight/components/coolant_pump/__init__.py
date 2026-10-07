@@ -1,0 +1,1 @@
+"""Coolant pump component profile."""
