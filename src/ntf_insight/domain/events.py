@@ -23,9 +23,24 @@ class CaseEvent(BaseModel):
     source_ref: str | None = None
 
 
+class DiagnosticSession(CaseEvent):
+    """Metadata for one complete diagnostic/short-test run.
+
+    A session is stored even when it contains zero relevant DTCs. This distinction is
+    important for post-replacement analysis: "no DTC in a known post-test" is very
+    different from "no post-test data available".
+    """
+
+    session_id: str = Field(default_factory=lambda: uuid4().hex)
+    label: str = "Short test"
+    ecu_count: int | None = Field(default=None, ge=0)
+    dtc_count: int | None = Field(default=None, ge=0)
+
+
 class DiagnosticEvent(CaseEvent):
     """A DTC observation from a short test or another diagnostic source."""
 
+    session_id: str | None = None
     ecu: str
     dtc_code: str
     dtc_text: str | None = None
