@@ -13,6 +13,7 @@ from ntf_insight.app.pages.dtc_page import DTCExplorerPage
 from ntf_insight.app.pages.generic_page import GenericPage
 from ntf_insight.app.pages.similarity_page import SimilarityPage
 from ntf_insight.app.pages.sources_page import SourcesPage
+from ntf_insight.app.pages.supplier_page import SupplierPage
 from ntf_insight.app.pages.vehicles_page import VehiclesPage
 from ntf_insight.app.widgets.navigation import NavigationPanel
 
@@ -50,11 +51,7 @@ class MainWindow(QMainWindow):
             "cases": CasePage(self.repository, self.reference_repository),
             "dtcs": DTCExplorerPage(self.repository, self.reference_repository),
             "clusters": SimilarityPage(self.repository),
-            "suppliers": GenericPage(
-                "Suppliers",
-                "Supplier and population analytics will be activated once real part/supplier "
-                "master data and installed-population denominators are available.",
-            ),
+            "suppliers": SupplierPage(self.repository),
             "quality": DataQualityPage(self.repository, self.reference_repository),
         }
 
