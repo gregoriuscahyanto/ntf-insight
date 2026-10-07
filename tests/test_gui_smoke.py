@@ -14,8 +14,9 @@ def test_main_window_can_be_constructed(tmp_path, monkeypatch) -> None:
 
     assert "dashboard" in window.pages
     assert "sources" in window.pages
-    assert "vehicles" in window.pages
     assert "cases" in window.pages
+    assert hasattr(window.pages["cases"], "case_table")
+    assert hasattr(window.pages["cases"], "time_plot")
     assert "dtcs" in window.pages
     assert "clusters" in window.pages
     assert "suppliers" in window.pages
