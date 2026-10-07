@@ -31,11 +31,11 @@ class DashboardPage(QWidget):
         layout.setContentsMargins(32, 28, 32, 28)
         layout.setSpacing(18)
 
-        title = QLabel("Overview", objectName="PageTitle")
+        title = QLabel("Übersicht", objectName="PageTitle")
         subtitle_text = (
-            "Current values come from fictional demo cases until real source files are imported."
+            "Aktuell werden fiktive Demo-Fälle angezeigt, bis echte Quelldateien importiert wurden."
             if mode == "demo"
-            else "Current values are loaded from the local NTF Insight data store."
+            else "Aktuelle Werte werden aus dem lokalen NTF-Insight-Datenspeicher geladen."
         )
         subtitle = QLabel(
             subtitle_text,
@@ -47,20 +47,20 @@ class DashboardPage(QWidget):
         cards = QGridLayout()
         cards.setHorizontalSpacing(14)
         cards.setVerticalSpacing(14)
-        cards.addWidget(StatusCard("Vehicles", str(len({case.vin for case in cases})), "Loaded vehicles"), 0, 0)
-        cards.addWidget(StatusCard("NTF cases", str(len(cases)), "Current analysis scope"), 0, 1)
-        cards.addWidget(StatusCard("Recurrences", str(recurrence_count), "Same DTC after replacement"), 0, 2)
-        cards.addWidget(StatusCard("Unresolved", str(unresolved_count), "Needs more evidence"), 0, 3)
+        cards.addWidget(StatusCard("Fahrzeuge", str(len({case.vin for case in cases})), "Geladene Fahrzeuge"), 0, 0)
+        cards.addWidget(StatusCard("NTF-Fälle", str(len(cases)), "Aktueller Analyseumfang"), 0, 1)
+        cards.addWidget(StatusCard("Wiederholungen", str(recurrence_count), "Gleicher DTC nach Tausch"), 0, 2)
+        cards.addWidget(StatusCard("Ungeklärt", str(unresolved_count), "Weitere Evidenz erforderlich"), 0, 3)
         layout.addLayout(cards)
 
-        next_title = QLabel("Pipeline status", objectName="PageTitle")
+        next_title = QLabel("Pipeline-Status", objectName="PageTitle")
         next_title.setStyleSheet("font-size: 18px;")
         layout.addWidget(next_title)
 
         next_steps = QLabel(
-            "The domain model, case timeline and pre/post replacement analysis are now wired into "
-            "the desktop app. The next source-dependent step is the short-test parser. When real "
-            "files arrive, the synthetic repository will be replaced by normalized imported cases.",
+            "Domänenmodell, Fall-Timeline und Vorher-/Nachher-Analyse sind in die Desktop-App integriert. "
+            "Der nächste quellenabhängige Schritt ist der Kurztest-Parser. Sobald echte Dateien "
+            "vorliegen, werden die Demo-Fälle schrittweise durch normalisierte reale Fälle ersetzt.",
             objectName="PageSubtitle",
         )
         next_steps.setWordWrap(True)
