@@ -6,6 +6,7 @@ from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QCursor
 from PySide6.QtWidgets import (
     QButtonGroup,
+    QComboBox,
     QFrame,
     QLabel,
     QPushButton,
@@ -15,16 +16,17 @@ from PySide6.QtWidgets import (
 
 class NavigationPanel(QFrame):
     page_selected = Signal(str)
+    theme_selected = Signal(str)
 
     ITEMS = (
-        ("dashboard", "Overview"),
-        ("sources", "Data Sources"),
-        ("vehicles", "Vehicles"),
-        ("cases", "Cases"),
-        ("dtcs", "DTC Explorer"),
-        ("clusters", "Clusters"),
-        ("suppliers", "Suppliers"),
-        ("quality", "Data Quality"),
+        ("dashboard", "Übersicht"),
+        ("sources", "Datenquellen"),
+        ("vehicles", "Fahrzeuge"),
+        ("cases", "Fälle"),
+        ("dtcs", "DTC-Explorer"),
+        ("clusters", "Cluster"),
+        ("suppliers", "Lieferanten"),
+        ("quality", "Datenqualität"),
     )
 
     def __init__(self) -> None:
@@ -55,7 +57,24 @@ class NavigationPanel(QFrame):
             layout.addWidget(button)
 
         layout.addStretch(1)
+        layout.addWidget(QLabel("Darstellung", objectName="BrandSubtitle"))
+        self.theme_combo = QComboBox()
+        self.theme_combo.addItem("Hell", "light")
+        self.theme_combo.addItem("Dunkel", "dark")
+        self.theme_combo.currentIndexChanged.connect(self._emit_theme)
+        layout.addWidget(self.theme_combo)
+        layout.addSpacing(8)
         layout.addWidget(QLabel("Pre-alpha", objectName="BrandSubtitle"))
+
+    def _emit_theme(self) -> None:
+        theme = self.theme_combo.currentData()
+        if theme:
+            self.theme_selected.emit(str(theme))
+
+    def set_theme(self, theme: str) -> None:
+        index = self.theme_combo.findData(theme)
+        if index >= 0:
+            self.theme_combo.setCurrentIndex(index)
 
     def select_page(self, key: str) -> None:
         button = self.buttons.get(key)
