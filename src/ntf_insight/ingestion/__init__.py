@@ -1,5 +1,6 @@
 """Source-specific import adapters and canonical ingestion results."""
 
+from ntf_insight.ingestion.assembly import AssemblyResult, CaseAssembler
 from ntf_insight.ingestion.artifacts import RawArchive, SourceArtifact, SourceType, sha256_file
 from ntf_insight.ingestion.base import (
     DTCTriggerParser,
@@ -30,6 +31,8 @@ from ntf_insight.ingestion.registry import NoParserAvailableError, ShortTestPars
 from ntf_insight.ingestion.service import SourceImportService
 
 __all__ = [
+    "AssemblyResult",
+    "CaseAssembler",
     "DTCTriggerParser",
     "ECUChangeHistoryParser",
     "ImportIssue",
