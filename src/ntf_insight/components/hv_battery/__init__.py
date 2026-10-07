@@ -1,0 +1,1 @@
+"""HV battery component profile."""
