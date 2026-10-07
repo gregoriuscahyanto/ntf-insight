@@ -15,6 +15,8 @@ FaultKey = tuple[str, str]
 class RecurrenceResult:
     assessable: bool
     replacement: PartReplacement | None
+    has_pre_test: bool
+    has_post_test: bool
     pre_faults: frozenset[FaultKey]
     post_faults: frozenset[FaultKey]
     same_faults: frozenset[FaultKey]
@@ -33,12 +35,19 @@ def _faults(events: list[DiagnosticEvent]) -> frozenset[FaultKey]:
 
 
 def analyze_recurrence(case: NTFCase) -> RecurrenceResult:
-    """Compare DTCs before and after the investigated component replacement."""
+    """Compare DTCs before and after the investigated component replacement.
+
+    A result is only considered assessable when at least one known diagnostic session exists
+    on both sides of the replacement. This prevents missing data from being interpreted as
+    fault disappearance.
+    """
     replacement = case.investigated_replacement()
     if replacement is None:
         return RecurrenceResult(
             assessable=False,
             replacement=None,
+            has_pre_test=False,
+            has_post_test=False,
             pre_faults=frozenset(),
             post_faults=frozenset(),
             same_faults=frozenset(),
@@ -47,6 +56,13 @@ def analyze_recurrence(case: NTFCase) -> RecurrenceResult:
             first_recurrence_after=None,
             distance_to_recurrence_km=None,
         )
+
+    has_pre_test = any(
+        session.occurred_at < replacement.occurred_at for session in case.diagnostic_sessions
+    )
+    has_post_test = any(
+        session.occurred_at > replacement.occurred_at for session in case.diagnostic_sessions
+    )
 
     pre_events = [
         event for event in case.diagnostics if event.occurred_at < replacement.occurred_at
@@ -58,8 +74,8 @@ def analyze_recurrence(case: NTFCase) -> RecurrenceResult:
     pre_faults = _faults(pre_events)
     post_faults = _faults(post_events)
     same_faults = pre_faults & post_faults
-    disappeared_faults = pre_faults - post_faults
-    new_faults = post_faults - pre_faults
+    disappeared_faults = pre_faults - post_faults if has_post_test else frozenset()
+    new_faults = post_faults - pre_faults if has_pre_test else frozenset()
 
     recurrence_events = sorted(
         (event for event in post_events if event.fault_key in same_faults),
@@ -74,8 +90,10 @@ def analyze_recurrence(case: NTFCase) -> RecurrenceResult:
             distance = None
 
     return RecurrenceResult(
-        assessable=True,
+        assessable=has_pre_test and has_post_test,
         replacement=replacement,
+        has_pre_test=has_pre_test,
+        has_post_test=has_post_test,
         pre_faults=pre_faults,
         post_faults=post_faults,
         same_faults=same_faults,
