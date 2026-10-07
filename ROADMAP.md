@@ -16,7 +16,7 @@ The order is deliberate: **first create trustworthy, traceable case data; then a
 - [ ] Add dependency locking
 - [ ] Add structured logging
 - [x] Add initial PySide6 desktop application scaffold
-- [ ] Define configuration approach for local / enterprise environments
+- [x] Define local data-directory configuration and demo/local bootstrap\n- [ ] Define enterprise deployment / credential configuration
 
 **Exit criterion:** a clean Python package installs locally and the test suite runs.
 
@@ -93,7 +93,7 @@ Raw files should remain immutable.
 
 Define for the coolant pump:
 
-- [ ] relevant ECUs
+- [x] Coolant-pump component profile and CPC3 as primary ECU
 - [ ] relevant CPC3 DTC families
 - [ ] known DTC-to-symptom mappings
 - [ ] CPC3 DTC trigger/enable logic from SMR-D
@@ -126,7 +126,7 @@ Derive features including:
 - [x] time_to_recurrence
 - [x] distance_to_recurrence
 - [ ] DTC frequency before / after replacement
-- [ ] affected ECU count
+- [x] affected ECU count
 - [ ] concurrent voltage / communication faults
 - [ ] software changes around the event
 - [ ] relevant DTC trigger logic / monitor conditions
@@ -208,7 +208,7 @@ Analyse by:
 - software version
 - plant / market where appropriate
 
-Where population data is available, calculate rates using meaningful denominators instead of comparing raw case counts only.
+Where population data is available, calculate rates using meaningful denominators instead of comparing raw case counts only. The denominator-aware calculation and UI are implemented; real population data is still pending.
 
 Examples:
 
@@ -230,12 +230,12 @@ Initial views:
 - [x] Overview
 - [x] Vehicle / FIN explorer
 - [x] Case timeline
-- [ ] DTC explorer
-- [ ] Root-cause evidence view
-- [ ] Similar-case explorer
+- [x] DTC explorer
+- [x] Root-cause evidence view
+- [x] Similar-case explorer (transparent baseline)
 - [ ] Cluster explorer
-- [ ] Supplier / population analytics
-- [ ] Data-quality view
+- [x] Supplier / population analytics foundation
+- [x] Data-quality view
 
 Primary desktop stack:
 
@@ -307,4 +307,4 @@ Completed foundation:
 5. same / new / disappeared fault analysis,
 6. parser contracts and automated tests.
 
-**Next milestone:** implement the concrete short-test parser from representative original files, then add the SMR-D trigger parser and HW/SW change-history parser. After that, import real replacement events and replace the demo repository with persisted normalized cases.
+**Next milestone:** once representative files are available, implement and regression-test the concrete short-test parser first, then the replacement, SMR-D and HW/SW change-history parsers. Persist normalized real cases into the already prepared DuckDB store and replace demo data incrementally.
