@@ -99,6 +99,7 @@ Pending source-grounded knowledge:
 Implemented:
 
 - [x] chronological multi-source timeline
+- [x] per-case temporal plot for DTCs and engineering events
 - [x] explicit diagnostic sessions, including zero-DTC tests
 - [x] same-fault recurrence
 - [x] disappeared faults only when a real post-test exists
@@ -114,6 +115,7 @@ Pending calibration:
 - [ ] PRE / POST_SHORT / POST_LONG windows validated on field data
 - [ ] component-specific recurrence equivalence rules
 - [ ] richer temporal co-occurrence features
+- [ ] cross-case / fleet temporal trend plots with DTC and event filters
 
 ## Phase 5 — Explainable evidence and root cause
 
@@ -187,8 +189,8 @@ Current PySide6 views:
 
 - [x] Overview
 - [x] Data Sources + raw archive
-- [x] Vehicle / FIN explorer
-- [x] Case timeline
+- [x] Combined FIN + case explorer
+- [x] Case timeline table and temporal plot
 - [x] Generated evidence
 - [x] DTC Explorer with trigger/change linkage
 - [x] Similarity / clustering baseline
