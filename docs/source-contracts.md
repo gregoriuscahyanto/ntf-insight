@@ -2,7 +2,7 @@
 
 NTF Insight deliberately separates **source formats** from the **canonical domain model**.
 
-A CSV, XLSX, PDF export, XML file, SMR-D package or proprietary report may look completely different, but each parser must emit the same normalized objects. The concrete mappings below remain provisional until representative original files are available.
+A CSV, XLSX, PDF export, XML file, SMR-D package or proprietary report may look completely different, but each parser must emit the same normalized objects. The QEC Excel, AutoExport diagnosis/workshop CSV and QuickTest PDF mappings now have initial concrete parsers and synthetic structural regression tests. Other mappings remain provisional until their respective source formats and engineering semantics are validated.
 
 ## Linking strategy
 
@@ -54,6 +54,10 @@ Important fields:
 - source reference
 
 The full vehicle short test should be retained whenever possible. Restricting input to CPC3 too early would hide multi-ECU supply, communication or system-level evidence.
+
+**QuickTest PDF:** A report is parsed as a complete `DiagnosticSession` (including a known zero-DTC report), linked ECU states and DTC observations. The report time is the **time of the diagnostic observation**, not the exact original fault occurrence; original/last fault kilometre counters remain attached as freeze-frame metadata.
+
+**AutoExport DTC CSV:** This may be a filtered DTC-only export with date-level precision. Emit diagnostic observations and ECU software/hardware snapshots, but do **not** infer a full clean short test or an exact original occurrence time from such a file.
 
 ## Component replacement data
 
@@ -200,6 +204,17 @@ Examples:
 - no trigger definition != DTC has no trigger conditions
 
 This rule is enforced throughout recurrence and data-quality analysis.
+
+## First implemented local source adapters
+
+- `real_source_parsers.py`: QEC Excel, AutoExport CSV, QuickTest PDF
+- `source_detection.py`: content-based source format classification
+- `batch_import.py`: bounded safe ZIP extraction, idempotent attachment to FIN/QEC cases and parser-run records
+- `cli.py`: offline `ntf-insight-import` command
+
+**CDD files:** Candela diagnostic descriptions are recognized and archived as a distinct source type. They are **not** assumed to be SMR-D files or to contain validated diagnostic trigger/enable/healing semantics.
+
+See [real-data-import.md](real-data-import.md) for the current source and linking limits.
 
 ## Parser implementation order once files are available
 
