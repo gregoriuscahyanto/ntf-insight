@@ -22,6 +22,7 @@ dependencies = [
 
 [project.scripts]
 ntf-insight = "ntf_insight.app.application:main"
+ntf-insight-import = "ntf_insight.ingestion.cli:main"
 
 [project.optional-dependencies]
 dev = [
