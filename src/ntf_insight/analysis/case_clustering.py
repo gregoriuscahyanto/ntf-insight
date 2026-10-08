@@ -368,28 +368,24 @@ def resolution_observation(case: NTFCase) -> ResolutionObservation:
         if action:
             measures.append(f"Software {update.ecu}: {action.strip()}")
 
-    last_measure_at = max(
-        (
-            event.occurred_at
-            for event in (*case.replacements, *case.repairs, *case.software_events)
-            if isinstance(event, (type(case.replacements[0]) if case.replacements else type(event),))
-            and (
-                not hasattr(event, "action")
-                or bool(getattr(event, "action", None))
-            )
-        ),
-        default=None,
+    interventions = [
+        *case.replacements,
+        *(repair for repair in case.repairs if repair.action),
+        *case.software_events,
+    ]
+    latest_intervention = max(
+        interventions, key=lambda item: item.occurred_at, default=None
     )
     post_measure_test = (
-        last_measure_at is not None
+        latest_intervention is not None
         and any(
-            session.occurred_at > last_measure_at
+            relative_to_replacement(session, latest_intervention) == "post"
             for session in case.diagnostic_sessions
         )
     )
     if not result.assessable or not result.pre_faults:
         outcome = "Wirksamkeit nicht überprüfbar (Vor-/Nachtest oder Ausgangs-DTC fehlt)"
-    elif last_measure_at is not None and not post_measure_test:
+    elif latest_intervention is not None and not post_measure_test:
         outcome = (
             "Kein Kurztest nach der letzten dokumentierten Maßnahme; "
             "deren Wirkung ist noch nicht beurteilt"
