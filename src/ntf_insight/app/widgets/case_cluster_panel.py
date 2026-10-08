@@ -241,6 +241,15 @@ class CaseClusterPanel(QWidget):
             for match in neighbours
         ]
         displayed = [case_id, *closest[:23]]
+        # Fill the remaining space with incomparable cases as well. A visible
+        # "k. A." is more honest than quietly omitting cases without data.
+        if len(displayed) < 24:
+            displayed.extend(
+                other_id
+                for other_id in sorted(self.by_id)
+                if other_id not in displayed
+            )
+        displayed = displayed[:24]
         self.matrix_model = CaseSimilarityMatrixModel(
             displayed, self.result.matches
         )
