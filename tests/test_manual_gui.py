@@ -97,3 +97,22 @@ def test_main_window_reloads_real_case_and_manual_events(tmp_path, monkeypatch) 
     assert window.repository.get_case("FIELD-001").replacements
     window.close()
     app.processEvents()
+
+
+def test_case_search_never_edits_a_filtered_out_case(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("NTF_INSIGHT_DATA_DIR", str(tmp_path / "app-data"))
+    app = QApplication.instance() or QApplication([])
+    window = MainWindow()
+    page = window.pages["cases"]
+
+    page.case_search.setText("NO-SUCH-CASE")
+    assert page.selector.currentIndex() == -1
+    assert page._selected_case() is None
+    assert not page.add_event_button.isEnabled()
+    assert not page.correct_button.isEnabled()
+
+    page.case_search.clear()
+    assert page.selector.currentIndex() >= 0
+    assert page.case_proxy.rowCount() == len(window.repository.list_cases())
+    window.close()
+    app.processEvents()
