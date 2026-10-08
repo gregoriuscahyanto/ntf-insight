@@ -71,7 +71,7 @@ class CaseSimilarityMatrixModel(QAbstractTableModel):
                 return QColor("#4b5563" if not dark else "#e5e7eb")
             if pair is None or pair.score is None:
                 return QColor("#6b7280" if not dark else "#cbd5e1")
-            return QColor("#ffffff" if (not dark and pair.score >= 0.50) else
+            return QColor("#ffffff" if (not dark and pair.score >= 0.70) else
                           "#ffffff" if (dark and pair.score >= 0.65) else
                           "#111827" if not dark else "#f9fafb")
 
