@@ -163,7 +163,7 @@ def test_resolution_observation_is_not_claimed_proven_success() -> None:
 
     assert "erneut beobachtet" in recurred.outcome
     assert "nicht erneut beobachtet" in no_recurrence.outcome
-    assert "nicht überprüfbar" in unknown.outcome
+    assert "Kein Kurztest nach der letzten" in unknown.outcome
     assert any("Bauteiltausch" in measure for measure in no_recurrence.measures)
 
 
@@ -204,3 +204,35 @@ def test_nearest_neighbours_rank_substantive_diagnostic_evidence_first() -> None
 
     assert nearest[0].right_case_id == "B"
     assert nearest[0].coverage > nearest[1].coverage
+
+
+def test_last_repair_outcome_uses_followup_after_that_repair() -> None:
+    case = _case("AFTER-REPAIR", ("P1",))
+    case.diagnostic_sessions.append(
+        DiagnosticSession(
+            vin=case.vin, occurred_at=datetime(2026, 1, 6, 10), dtc_count=1
+        )
+    )
+    case.diagnostics.append(
+        DiagnosticEvent(
+            vin=case.vin, occurred_at=datetime(2026, 1, 6, 10),
+            ecu="CPC3", dtc_code="P1",
+        )
+    )
+    case.repairs.append(
+        RepairEvent(
+            vin=case.vin, occurred_at=datetime(2026, 1, 7, 11),
+            action="Leitung repariert",
+        )
+    )
+    case.diagnostic_sessions.append(
+        DiagnosticSession(
+            vin=case.vin, occurred_at=datetime(2026, 1, 9, 10), dtc_count=0
+        )
+    )
+
+    result = resolution_observation(case)
+
+    assert "nicht erneut beobachtet" in result.outcome
+    assert result.has_post_test
+    assert "Leitung repariert" in " ".join(result.measures)
