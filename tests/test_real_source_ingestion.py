@@ -250,3 +250,13 @@ def test_zip_rejects_symlinks(tmp_path) -> None:
     source = SourceImportService(tmp_path / "raw", tmp_path / "cases.duckdb")
     with pytest.raises(ValueError, match="symbolische Links"):
         LocalBatchImporter(source).import_paths([path])
+
+
+@pytest.mark.parametrize("member_name", ["bundle/file:stream.csv", "bundle/CON.csv"])
+def test_zip_rejects_windows_unsafe_member_names(tmp_path, member_name) -> None:
+    path = tmp_path / "unsafe-name.zip"
+    with ZipFile(path, "w") as z:
+        z.writestr(member_name, b"synthetic")
+    source = SourceImportService(tmp_path / "raw", tmp_path / "cases.duckdb")
+    with pytest.raises(ValueError, match="ZIP"):
+        LocalBatchImporter(source).import_paths([path])
