@@ -121,6 +121,11 @@ def _bundle(path: Path) -> None:
         z.writestr("bundle/report_pre.pdf", before)
         z.writestr("bundle/report_post.pdf", after)
         z.writestr("bundle/report_post_copy.pdf", after)
+        # Same visible PDF content, different bytes/source hash.
+        z.writestr(
+            "bundle/report_post_metadata_variant.pdf",
+            after + b"\n% synthetic producer metadata only\n",
+        )
         z.writestr(
             "bundle/CPC3.cdd",
             "<?xml version='1.0'?><!DOCTYPE CANDELA SYSTEM 'candela.dtd'>"
@@ -214,8 +219,8 @@ def test_zip_import_is_local_linked_and_idempotent(tmp_path) -> None:
     saved = source.store.load_cases()
     assert first.cases_created == 1
     assert len(saved) == 1
-    assert first.files_parsed == 5
-    assert first.duplicates == 1
+    assert first.files_parsed == 6
+    assert first.duplicates == 2
     assert len(saved[0].diagnostic_sessions) == 2
     assert len(saved[0].diagnostics) == 4
     assert len(saved[0].replacements) == 1
