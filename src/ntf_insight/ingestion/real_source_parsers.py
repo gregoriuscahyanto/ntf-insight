@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import csv
 import re
+from itertools import chain
 from collections import defaultdict
 from datetime import date, datetime
 from pathlib import Path
@@ -112,7 +113,7 @@ def _csv_rows(path: Path):
             # Header and body are semicolon-delimited; quoted free text may
             # contain newlines. Do not split the data on newlines manually.
             reader = csv.DictReader(
-                iter([line] + list(handle)), delimiter=";", quotechar='"'
+                chain([line], handle), delimiter=";", quotechar='"'
             )
             for index, row in enumerate(reader, start=2):
                 yield index, row
@@ -240,6 +241,7 @@ class AutoExportParser:
         output = ParsedSource()
         seen_ecu_states: set[tuple] = set()
         total = 0
+        invalid = 0
         for row_number, row in _csv_rows(path):
             total += 1
             if "C1" in row and "Fin" not in row and "EcuFaultNm" not in row:
@@ -249,6 +251,7 @@ class AutoExportParser:
             fin = canonical_fin(row.get("Fin"))
             if not fin:
                 output.skipped_rows += 1
+                invalid += 1
                 continue
             if self.allowed_fins is not None and fin not in self.allowed_fins:
                 output.skipped_rows += 1
@@ -257,6 +260,7 @@ class AutoExportParser:
             when = _date_event(row.get("DiagStartDt" if self.source_type == SourceType.SHORT_TEST else "RepairDt"))
             if not when:
                 output.skipped_rows += 1
+                invalid += 1
                 continue
 
             source_ref = _ref(self.source_sha, f"csv:{row_number}")
@@ -265,6 +269,7 @@ class AutoExportParser:
                 dtc = _str(row.get("EcuFaultNm"))
                 if not ecu or not dtc:
                     output.skipped_rows += 1
+                    invalid += 1
                     continue
                 km = _int(row.get("KmReadingNum"))
                 output.diagnostics.append(
@@ -319,9 +324,10 @@ class AutoExportParser:
                         **when,
                     )
                 )
-        if output.skipped_rows:
+        if invalid:
             output.issues.append(
-                f"AutoExport: {output.skipped_rows} unmatched/invalid/skipped rows of {total}."
+                f"AutoExport: {invalid} invalid rows of {total}; "
+                f"{output.skipped_rows - invalid} rows excluded by FIN filter."
             )
         return output
 
