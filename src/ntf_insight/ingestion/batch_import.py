@@ -9,13 +9,11 @@ Security and provenance:
 """
 from __future__ import annotations
 
-import hashlib
 import shutil
 import stat
 import tempfile
 from collections import defaultdict
 from dataclasses import dataclass, field
-from datetime import datetime
 from pathlib import Path, PurePosixPath
 from typing import Callable, Iterable
 from zipfile import ZipFile, is_zipfile
@@ -260,10 +258,19 @@ class LocalBatchImporter:
         attr: str,
     ) -> NTFCase | None:
         candidates = cases_by_fin.get(event.vin, [])
-        if len(candidates) == 1:
-            return candidates[0]
         if not candidates:
             return None
+
+        # Even a FIN with only one QEC case can have many years of history.
+        # Keep temporal context bounded to avoid unrelated fault episodes.
+        if len(candidates) == 1:
+            case = candidates[0]
+            replacement = case.investigated_replacement()
+            if replacement is None:
+                return case
+            days = (event.occurred_at - replacement.occurred_at).total_seconds() / 86400
+            before, after = (365, 180) if attr != "repairs" else (30, 30)
+            return case if -before <= days <= after else None
 
         # Match events on multi-case FINs only with a unique nearest replacement.
         # If equally near, do not silently attach to every unrelated claim.
