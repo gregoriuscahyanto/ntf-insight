@@ -345,8 +345,6 @@ class SourcesPage(QWidget):
             if self.import_service is not None
             else {"reports": 0, "ecus": 0, "dtcs": 0, "parameters": 0}
         )
-        test_count = sum(len(case.diagnostic_sessions) for case in all_cases)
-        dtc_count = sum(len(case.diagnostics) for case in all_cases)
         repair_count = sum(len(case.repairs) for case in all_cases)
         trigger_count = len(self.references.list_triggers())
         change_count = len(self.references.list_changes())
