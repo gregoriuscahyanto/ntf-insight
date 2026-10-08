@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections import Counter
 from pathlib import Path
 
+from PySide6.QtCore import QThread, Signal
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QComboBox,
@@ -23,12 +24,44 @@ from PySide6.QtWidgets import (
 from ntf_insight.app.models.simple_table_model import SimpleTableModel
 from ntf_insight.app.widgets.file_drop_zone import FileDropZone
 from ntf_insight.ingestion.artifacts import SourceType
+from ntf_insight.ingestion.batch_import import ImportSummary, LocalBatchImporter
+from ntf_insight.ingestion.source_detection import detect_source_type
 from ntf_insight.ingestion.service import SourceImportService
 from ntf_insight.storage.reference_repositories import ReferenceRepository
 from ntf_insight.storage.repositories import CaseRepository
 
 
+class _SourceImportWorker(QThread):
+    imported = Signal(object)
+    failed = Signal(str)
+    progress = Signal(str)
+
+    def __init__(
+        self,
+        sources: SourceImportService,
+        paths: list[Path],
+        forced_type: SourceType | None,
+    ) -> None:
+        super().__init__()
+        self.sources = sources
+        self.paths = paths
+        self.forced_type = forced_type
+
+    def run(self) -> None:
+        try:
+            summary = LocalBatchImporter(self.sources).import_paths(
+                self.paths,
+                on_progress=self.progress.emit,
+                forced_source_type=self.forced_type,
+            )
+        except Exception as exc:
+            self.failed.emit(f"{type(exc).__name__}: {exc}")
+            return
+        self.imported.emit(summary)
+
+
 class SourcesPage(QWidget):
+    sources_updated = Signal()
     SOURCE_LABELS = {
         SourceType.VEHICLE_CASE_LIST: "Fall-/FIN-Liste",
         SourceType.SHORT_TEST: "Kurztest",
@@ -36,6 +69,7 @@ class SourcesPage(QWidget):
         SourceType.SUPPLIER_FINDING: "Lieferantenbefund",
         SourceType.WORKSHOP_HISTORY: "Werkstatt-/Claim-Historie",
         SourceType.SMR_D: "SMR-D",
+        SourceType.DIAGNOSTIC_DESCRIPTION: "CDD-Diagnosebeschreibung",
         SourceType.HW_SW_CHANGE_HISTORY: "HW-/SW-Änderungshistorie",
         SourceType.VEHICLE_SOFTWARE_HISTORY: "Fahrzeug-SW-Historie",
         SourceType.INSTALLED_POPULATION: "Verbaute Population",
@@ -56,6 +90,8 @@ class SourcesPage(QWidget):
         self.cases = cases
         self.references = references
         self.mode = mode
+        self._worker: _SourceImportWorker | None = None
+        self._pending_reload = False
         self.import_service = (
             SourceImportService(Path(raw_dir), Path(database_path))
             if raw_dir and database_path
@@ -70,7 +106,8 @@ class SourcesPage(QWidget):
         location = f" Lokales Datenverzeichnis: {data_dir}." if data_dir else ""
         subtitle = QLabel(
             "Originaldateien werden vor dem Parsen unverändert mit SHA-256-Provenienz archiviert. "
-            "Drag & Drop und Mehrfachauswahl sind möglich. "
+            "Dateien und ZIP-Pakete können per Drag & Drop importiert werden. "
+            "Bekannte QEC-, AutoExport- und QuickTest-Formate werden lokal geparst. "
             f"Modus: {mode}.{location}",
             objectName="PageSubtitle",
         )
@@ -98,6 +135,7 @@ class SourcesPage(QWidget):
             QSizePolicy.Policy.Expanding,
             QSizePolicy.Policy.Fixed,
         )
+        self.source_type.addItem("Automatisch erkennen (empfohlen)", None)
         for source_type, label in self.SOURCE_LABELS.items():
             self.source_type.addItem(label, source_type)
         controls.addWidget(self.source_type, 3)
@@ -137,8 +175,9 @@ class SourcesPage(QWidget):
         layout.addWidget(self.drop_zone)
 
         self.import_status = QLabel(
-            "Die Datei wird zunächst nur unverändert archiviert; Parsen und Fallzuordnung folgen "
-            "sobald ein passender Parser verfügbar ist.",
+            "ZIP oder Dateien hineinziehen. Unterstützte Formate werden archiviert, "
+            "geparst und bei eindeutiger FIN/Fall-Zuordnung übernommen. "
+            "CDD, SMR-D und unbekannte PDFs bleiben vorerst im Rohdatenarchiv.",
             objectName="PageSubtitle",
         )
         self.import_status.setWordWrap(True)
@@ -183,46 +222,65 @@ class SourcesPage(QWidget):
             self._archive_paths([Path(filename) for filename in filenames])
 
     def _source_type_for_path(self, path: Path) -> SourceType:
-        if path.name.casefold().endswith(".smr-d"):
-            return SourceType.SMR_D
         selected = self.source_type.currentData()
-        return selected if isinstance(selected, SourceType) else SourceType.OTHER
+        if isinstance(selected, SourceType):
+            return selected
+        return detect_source_type(path)
 
     def _archive_paths(self, paths: list[Path]) -> None:
-        if self.import_service is None or not paths:
+        if self.import_service is None or not paths or self._worker is not None:
             return
 
-        archived = []
-        errors: list[str] = []
-        source_system = self.source_system.text().strip() or None
-        vin_hint = self.vin_hint.text().strip() or None
+        forced = self.source_type.currentData()
+        forced_type = forced if isinstance(forced, SourceType) else None
+        self.archive_button.setEnabled(False)
+        self.drop_zone.setEnabled(False)
+        self.import_status.setText(
+            f"{len(paths)} Datei(en)/ZIP-Paket(e) werden lokal geprüft und importiert …"
+        )
+        self._pending_reload = False
+        self._worker = _SourceImportWorker(
+            self.import_service, [Path(path) for path in paths], forced_type
+        )
+        self._worker.progress.connect(self.import_status.setText)
+        self._worker.imported.connect(self._import_completed)
+        self._worker.failed.connect(self._import_failed)
+        self._worker.finished.connect(self._import_worker_finished)
+        self._worker.start()
 
-        for path in paths:
-            try:
-                artifact = self.import_service.import_raw(
-                    Path(path),
-                    self._source_type_for_path(Path(path)),
-                    source_system=source_system,
-                    vin_hint=vin_hint,
-                )
-                archived.append(artifact)
-            except Exception as exc:  # GUI boundary: collect errors and keep importing.
-                errors.append(f"{Path(path).name}: {exc}")
-
-        if archived and not errors:
-            total_bytes = sum(item.size_bytes for item in archived)
-            self.import_status.setText(
-                f"{len(archived)} Datei(en) archiviert · {total_bytes:,} B · Parse-Status: nicht geparst."
+    def _import_completed(self, summary: ImportSummary) -> None:
+        text = (
+            f"Import: {summary.files_archived} neue Originaldateien, "
+            f"{summary.files_parsed} geparst, {summary.files_pending} noch ohne Parser · "
+            f"{summary.cases_created} neue Fälle, "
+            f"{summary.events_linked} zugeordnete Ereignisse"
+        )
+        if summary.issues:
+            text += (
+                f" · {len(summary.issues)} Hinweise (z. B. "
+                + "; ".join(summary.issues[:2])
+                + ")"
             )
-        elif archived:
-            self.import_status.setText(
-                f"{len(archived)} Datei(en) archiviert, {len(errors)} Fehler: "
-                + " | ".join(errors[:3])
-            )
-        else:
-            self.import_status.setText("Import fehlgeschlagen: " + " | ".join(errors[:3]))
-
+        self.import_status.setText(text)
+        self._pending_reload = bool(summary.cases_created or summary.events_linked)
         self._refresh_all()
+
+    def _import_failed(self, message: str) -> None:
+        self.import_status.setText(
+            "Import abgebrochen: " + message
+            + " · Bereits archivierte Originaldateien bleiben erhalten."
+        )
+        self._refresh_all()
+
+    def _import_worker_finished(self) -> None:
+        self.archive_button.setEnabled(self.import_service is not None)
+        self.drop_zone.setEnabled(self.import_service is not None)
+        worker = self._worker
+        self._worker = None
+        if worker is not None:
+            worker.deleteLater()
+        if self._pending_reload:
+            self.sources_updated.emit()
 
     def _artifacts(self):
         if self.import_service is None:
@@ -288,15 +346,21 @@ class SourcesPage(QWidget):
 
         rows = [
             (
+                "CDD-Diagnosebeschreibung",
+                "Candela-Steuergerätebeschreibung, keine SMR-D-Triggerlogik",
+                "Sichere Archivierung; Semantikparser ausstehend",
+                current(SourceType.DIAGNOSTIC_DESCRIPTION, "Keine Originaldatei"),
+            ),
+            (
                 "Fall-/FIN-Liste",
                 "Fallumfang und Fahrzeugidentität",
-                "Kanonisches Modell bereit",
+                "QEC-Excel-Parser bereit",
                 current(SourceType.VEHICLE_CASE_LIST, demo_case),
             ),
             (
                 "Kurztests",
                 "Diagnosesitzungen, DTCs, Steuergeräte-Stände",
-                "Schnittstelle bereit; konkretes Format ausstehend",
+                "PDF-QuickTest und AutoExport-CSV Parser bereit",
                 current(SourceType.SHORT_TEST, "Keine Originaldatei"),
             ),
             (
@@ -332,7 +396,7 @@ class SourcesPage(QWidget):
             (
                 "Werkstatt-/Claim-Historie",
                 "Beanstandung, Diagnose und Maßnahmen",
-                "Schnittstelle bereit; konkretes Format ausstehend",
+                "AutoExport-CSV Parser bereit",
                 current(SourceType.WORKSHOP_HISTORY, "Keine Originaldatei"),
             ),
             (
