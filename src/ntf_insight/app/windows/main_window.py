@@ -74,10 +74,22 @@ class MainWindow(QMainWindow):
             "quality": DataQualityPage(self.repository, self.reference_repository),
         }
         pages["cases"].case_saved.connect(self._reload_after_manual_change)
+        pages["sources"].sources_updated.connect(self._reload_after_source_import)
         return pages
+
+    def _reload_after_source_import(self) -> None:
+        """Refresh all views after an archived ZIP created or updated real cases."""
+        self._reload_data()
+        self.navigation.select_page("sources")
 
     def _reload_after_manual_change(self, case_id: str) -> None:
         """Reload persisted data and rebuild derived views after one successful edit."""
+        self._reload_data()
+        self.pages["cases"].select_case(case_id)
+        self.navigation.select_page("cases")
+
+    def _reload_data(self) -> None:
+        """Rebuild repositories and projections from durable local storage."""
         self.application_data = load_application_data(self.application_data.paths)
         self.repository = self.application_data.cases
         self.reference_repository = self.application_data.references
@@ -90,9 +102,6 @@ class MainWindow(QMainWindow):
         self.pages = self._create_pages()
         for page in self.pages.values():
             self.stack.addWidget(page)
-
-        self.pages["cases"].select_case(case_id)
-        self.navigation.select_page("cases")
 
     def show_page(self, key: str) -> None:
         page = self.pages.get(key)
