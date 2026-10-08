@@ -6,7 +6,7 @@ NTF Insight is a Python project for reconstructing and analysing vehicle field c
 
 The architecture is intentionally **not tied to one component**. Coolant pumps, HV batteries and future component families should use the same generic case, timeline, evidence, similarity and reporting engines, with component-specific profiles and rules layered on top.
 
-> **Status:** pre-alpha desktop prototype. Domain models, immutable raw-source archiving, DuckDB persistence, synthetic cases, timeline/re-currence analysis, data-quality checks, reference-knowledge linking, explainable evidence, baseline similarity and supplier-rate foundations are implemented. Concrete production source parsers are intentionally pending representative original files.
+> **Status:** pre-alpha desktop prototype. The native PySide6 app includes manual FIN/case entry with audited corrections, immutable raw-source archiving, local DuckDB persistence, timeline/recurrence analysis, quality checks, evidence generation and DTC clustering. Production source parsers remain dependent on representative original files.
 
 ## Questions the project should answer
 
@@ -247,6 +247,16 @@ Set `NTF_INSIGHT_DATA_DIR` to override that location. If the database contains n
 
 The current prototype includes Overview, Data Sources, a combined FIN/Case workspace, DTC Explorer, DTC-Cluster visualization, Suppliers and Data Quality. The FIN/Case workspace treats the FIN + case combination as the analysis unit and includes a chronological time plot for DTCs, diagnostic sessions, ECU states, replacements, software, workshop and supplier events. Data Sources supports multi-file selection and local Drag & Drop into the immutable raw archive. The Case view can export a deterministic Markdown analysis report.
 
+## Manuelle Fallerfassung
+
+Unter **Fälle / FIN** sind **+ Neuer Fall** und **+ Ereignis** verfügbar. Kurztests (auch mit **0 DTCs**), DTCs, Tausche, Werkstattmaßnahmen, ECU-HW/SW-Stände, Software-Updates, Lieferantenbefunde und freie Notizen können ohne Parser erfasst werden.
+
+Ein Eintrag lässt sich über **Ereignistabelle → Markiertes Ereignis korrigieren** überarbeiten. **Änderungsverlauf** zeigt den Vorher-/Nachher-Zustand mit Zeitstempel und lokalem Benutzer. Manuelle Informationen werden in DuckDB gespeichert; Originaldateien bleiben unverändert.
+
+Demo-Fälle sind schreibgeschützt. Ein neu angelegter echter Fall wechselt automatisch in den lokalen Datenmodus, ohne die Demo-Daten zu übernehmen. Bei jeder Speicherung aktualisiert die App die anderen Ansichten.
+
+Anleitung und Grenzen: [docs/manual-entry.md](docs/manual-entry.md).
+
 ## Development conventions
 
 - Keep the generic domain model independent from a specific component.
@@ -288,3 +298,4 @@ The source-independent foundation is now in place. The next source-dependent ste
 - [Managed Windows Environment](docs/windows-managed-environment.md)
 - [Enterprise CI/CD Pipeline](docs/enterprise-pipeline.md)
 - [Canonical Source Contracts](docs/source-contracts.md)
+- [Manuelle Fallerfassung](docs/manual-entry.md)
