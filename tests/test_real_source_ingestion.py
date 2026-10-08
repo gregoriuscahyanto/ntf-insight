@@ -104,9 +104,9 @@ def _quicktest_bytes(when: str, code: str) -> bytes:
         "originalOdometerValue 12340 km -",
         "mostRecentOdometerValue 12345 km -",
     ]
-    for line in lines:
+    for index, line in enumerate(lines):
         # drawString preserves the simple line-wise extraction used by the parser
-        pdf.drawString(35, 790 - 19 * lines.index(line), line)
+        pdf.drawString(35, 790 - 19 * index, line)
     pdf.save()
     return target.getvalue()
 
