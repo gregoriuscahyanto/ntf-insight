@@ -274,7 +274,12 @@ def matches_for(case_id: str, matches: Iterable[CaseMatch]) -> list[CaseMatch]:
     return sorted(
         (m for m in matches if case_id in (m.left_case_id, m.right_case_id)
          and m.score is not None),
-        key=lambda m: (-m.score, m.left_case_id, m.right_case_id),
+        key=lambda m: (
+            -(m.score * m.coverage),
+            -m.score,
+            m.left_case_id,
+            m.right_case_id,
+        ),
     )
 
 
