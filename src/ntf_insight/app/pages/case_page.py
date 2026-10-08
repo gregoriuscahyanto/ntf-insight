@@ -88,6 +88,7 @@ class CasePage(QWidget):
 
         selector_row = QHBoxLayout()
         search = QLineEdit()
+        self.case_search = search
         search.setPlaceholderText("Fall, FIN / VIN, Bauteil oder Bewertung suchen …")
         search.setClearButtonEnabled(True)
         selector_row.addWidget(search, 1)
