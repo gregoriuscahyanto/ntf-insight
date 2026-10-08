@@ -28,7 +28,7 @@ from ntf_insight.app.models.simple_table_model import SimpleTableModel
 from ntf_insight.domain.case import NTFCase
 from ntf_insight.domain.enums import SupplierFindingResult
 from ntf_insight.domain.events import CaseEvent, DiagnosticSession
-from ntf_insight.domain.manual import ManualChange
+from ntf_insight.domain.manual import ManualAction, ManualChange
 from ntf_insight.domain.vehicle import Vehicle
 from ntf_insight.ingestion.manual_entry import EVENT_TYPES
 
@@ -421,8 +421,12 @@ class ManualHistoryDialog(QDialog):
         rows = [
             (
                 change.occurred_at.astimezone().strftime("%d.%m.%Y %H:%M"),
-                str(change.action),
-                change.entity_type,
+                {
+                    ManualAction.CREATE_CASE: "Fall angelegt",
+                    ManualAction.ADD_EVENT: "Ereignis ergänzt",
+                    ManualAction.CORRECT_EVENT: "Ereignis korrigiert",
+                }.get(change.action, str(change.action)),
+                EVENT_LABELS.get(change.entity_type, change.entity_type),
                 change.actor,
                 change.event_id or "—",
             )
