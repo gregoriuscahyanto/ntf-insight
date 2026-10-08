@@ -331,7 +331,11 @@ class SourcesPage(QWidget):
 
     def _refresh_readiness(self, artifacts) -> None:
         counts = Counter(artifact.source_type for artifact in artifacts)
-        case_count = len(self.cases.list_cases())
+        all_cases = self.cases.list_cases()
+        case_count = len(all_cases)
+        test_count = sum(len(case.diagnostic_sessions) for case in all_cases)
+        dtc_count = sum(len(case.diagnostics) for case in all_cases)
+        repair_count = sum(len(case.repairs) for case in all_cases)
         trigger_count = len(self.references.list_triggers())
         change_count = len(self.references.list_changes())
 
@@ -365,13 +369,22 @@ class SourcesPage(QWidget):
                 "Fall-/FIN-Liste",
                 "Fallumfang und Fahrzeugidentität",
                 "QEC-Excel-Parser bereit",
-                current(SourceType.VEHICLE_CASE_LIST, demo_case),
+                (
+                    f"{counts[SourceType.VEHICLE_CASE_LIST]} Datei(en) · {case_count} Fälle"
+                    if counts[SourceType.VEHICLE_CASE_LIST]
+                    else demo_case
+                ),
             ),
             (
                 "Kurztests",
                 "Diagnosesitzungen, DTCs, Steuergeräte-Stände",
                 "PDF-QuickTest und AutoExport-CSV Parser bereit",
-                current(SourceType.SHORT_TEST, "Keine Originaldatei"),
+                (
+                    f"{counts[SourceType.SHORT_TEST]} Datei(en) · "
+                    f"{test_count} Kurztests · {dtc_count} DTC-Ereignisse"
+                    if counts[SourceType.SHORT_TEST]
+                    else "Keine Originaldatei"
+                ),
             ),
             (
                 "Tauschliste",
@@ -407,7 +420,12 @@ class SourcesPage(QWidget):
                 "Werkstatt-/Claim-Historie",
                 "Beanstandung, Diagnose und Maßnahmen",
                 "AutoExport-CSV Parser bereit",
-                current(SourceType.WORKSHOP_HISTORY, "Keine Originaldatei"),
+                (
+                    f"{counts[SourceType.WORKSHOP_HISTORY]} Datei(en) · "
+                    f"{repair_count} Werkstatteinträge"
+                    if counts[SourceType.WORKSHOP_HISTORY]
+                    else "Keine Originaldatei"
+                ),
             ),
             (
                 "Verbaute Population",
