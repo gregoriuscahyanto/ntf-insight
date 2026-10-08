@@ -61,14 +61,19 @@ Implemented source-independent foundation:
 
 Pending real files/systems:
 
-- [ ] vehicle / FIN list parser
-- [ ] short-test parser
-- [ ] replacement-list parser
+- [x] QEC Excel vehicle/case and replacement anchor parser
+- [x] QuickTest PDF diagnostic sessions with all-ECU DTC and HW/SW states
+- [x] AutoExport DTC CSV parser (date-only observations, no invented clean sessions)
+- [x] AutoExport workshop/claim CSV parser
+- [x] safe ZIP expansion, automatic format recognition, SHA-256 archive
+- [x] idempotent FIN/fall attachment and asynchronous desktop import
+- [ ] additional replacement-list formats
 - [ ] SMR-D parser
 - [ ] HW/SW release/change parser
-- [ ] vehicle-specific HW/SW extraction
+- [x] vehicle-specific HW/SW state extraction from supported QuickTest/CSV
+- [ ] parse vehicle-specific SW flash/update history from separate sources
 - [ ] supplier finding parser
-- [ ] workshop/claim parser
+- [x] workshop/claim parser for supported AutoExport CSV
 - [ ] installed-population parser
 - [ ] concrete automated report provider(s)
 
@@ -210,7 +215,7 @@ Current PySide6 views:
 - [x] Data Quality
 - [ ] edit case master metadata with history
 - [ ] role-based permissions / centrally governed audit retention
-- [ ] real import workflow after concrete parsers exist
+- [x] real source ZIP drag & drop import with automatic classification
 - [ ] interactive source-to-evidence drill-down
 - [ ] cluster visualization
 - [x] deterministic Markdown case report/export
@@ -244,13 +249,12 @@ Current PySide6 views:
 
 ## Next source-dependent milestone
 
-Once representative original files are available:
+With representative QEC, AutoExport and QuickTest structures now available:
 
-1. inspect and freeze anonymized fixtures for 1–3 real short tests,
-2. implement the short-test parser including ECU HW/SW states,
-3. import the pump replacement anchor,
-4. replace selected DEMO cases with real normalized cases,
-5. implement the SMR-D trigger parser,
-6. implement the CPC3 HW/SW change-history parser,
-7. validate recurrence/evidence rules against manually reviewed cases,
-8. only then tune clustering and automated root-cause proposals.
+1. run the new local ZIP importer on an authorized machine and check case/FIN links,
+2. manually validate completeness and before/after evidence for selected cases,
+3. add structured supplier-return report parsing and part-history interpretation,
+4. obtain actual SMR-D triggers and implement the condition/healing parser,
+5. obtain CPC3 HW/SW release/change history and validate version applicability,
+6. validate recurrence/evidence rules against reviewed cases,
+7. calibrate clustering and only then automated root-cause proposals.
