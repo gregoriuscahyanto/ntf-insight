@@ -28,7 +28,15 @@ def main() -> int:
         help="Local app data root; defaults to NTF_INSIGHT_DATA_DIR or the app default",
     )
     args = parser.parse_args()
-    paths = AppPaths.from_data_dir(args.data_dir) if args.data_dir else AppPaths.default()
+    if args.data_dir:
+        data_dir = args.data_dir.expanduser()
+        paths = AppPaths(
+            data_dir=data_dir,
+            raw_dir=data_dir / "raw",
+            database_path=data_dir / "ntf-insight.duckdb",
+        )
+    else:
+        paths = AppPaths.default()
     paths.ensure()
     service = SourceImportService(paths.raw_dir, paths.database_path)
     summary = LocalBatchImporter(service).import_paths(
