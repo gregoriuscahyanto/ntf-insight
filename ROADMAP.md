@@ -49,6 +49,7 @@ Implemented source-independent foundation:
 - [x] SHA-256 content-addressed raw archive
 - [x] source-artifact provenance persisted in DuckDB
 - [x] versioned parser-run provenance (success/partial/failure, output count, errors)
+- [x] local manual revision log with actor, timestamp and before/after JSON
 - [x] desktop raw-file archive/import view
 - [x] multi-file Drag & Drop with explicit empty state
 - [x] parser contracts for vehicle lists, short tests, replacements, supplier findings, workshop history, vehicle SW history, SMR-D, HW/SW changes and population data
@@ -190,12 +191,18 @@ Current PySide6 views:
 - [x] Overview
 - [x] Data Sources + raw archive
 - [x] Combined FIN + case explorer
+- [x] Manually create FIN/case combinations in persistent DuckDB
+- [x] Manually add short tests, DTCs, replacements, repairs, software/ECU state, supplier findings and notes
+- [x] Correct individual case events with audit history; original raw reports stay intact
+- [x] Automatically refresh all analytical desktop views after manual changes
 - [x] Case timeline table and temporal plot
 - [x] Generated evidence
 - [x] DTC Explorer with trigger/change linkage
 - [x] Similarity / clustering baseline
 - [x] Supplier analytics foundation
 - [x] Data Quality
+- [ ] edit case master metadata with history
+- [ ] role-based permissions / centrally governed audit retention
 - [ ] real import workflow after concrete parsers exist
 - [ ] interactive source-to-evidence drill-down
 - [ ] cluster visualization
