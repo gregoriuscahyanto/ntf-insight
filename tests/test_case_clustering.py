@@ -141,7 +141,6 @@ def test_no_replacement_anchor_is_marked_unanchored() -> None:
 
 
 def test_date_only_same_day_post_fault_not_used_as_pre() -> None:
-    pre = _case("A", ("P1",))
     candidate = _case("B", ("P1",))
     anchor = candidate.replacements[0]
     candidate.diagnostics.append(
