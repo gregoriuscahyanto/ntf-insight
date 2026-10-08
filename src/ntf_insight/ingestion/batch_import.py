@@ -129,6 +129,7 @@ class LocalBatchImporter:
         paths = [Path(path) for path in paths]
         from_zip = set()
         summary = ImportSummary()
+        previously_archived = {artifact.sha256 for artifact in self.sources.list_artifacts()}
         with tempfile.TemporaryDirectory(prefix="ntf-source-import-") as temp:
             extracted = []
             zip_hashes = set()
@@ -142,13 +143,14 @@ class LocalBatchImporter:
                     path, SourceType.OTHER, source_system=source_system
                 )
                 zip_hashes.add(package_artifact.sha256)
-                summary.files_archived += 1
+                if package_artifact.sha256 not in previously_archived:
+                    summary.files_archived += 1
                 zip_members = self._extract_zip(path, Path(temp) / package_artifact.sha256)
                 extracted.extend(zip_members)
                 from_zip.update(zip_members)
 
             progress("Originaldateien archivieren …")
-            known = {a.sha256 for a in self.sources.list_artifacts()}
+            known = previously_archived | zip_hashes
             artifacts: list[SourceArtifact] = []
             processed = set()
             for path in extracted:
