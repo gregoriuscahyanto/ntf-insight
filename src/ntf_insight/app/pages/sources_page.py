@@ -29,6 +29,7 @@ from ntf_insight.ingestion.source_detection import detect_source_type
 from ntf_insight.ingestion.service import SourceImportService
 from ntf_insight.storage.reference_repositories import ReferenceRepository
 from ntf_insight.storage.repositories import CaseRepository
+from ntf_insight.storage.quicktest_store import QuickTestStore
 
 
 class _SourceImportWorker(QThread):
@@ -263,6 +264,7 @@ class SourcesPage(QWidget):
             f"Import: {summary.files_archived} neue Originaldateien, "
             f"{summary.files_parsed} geparst, {summary.files_pending} noch ohne Parser · "
             f"{summary.cases_created} neue Fälle, "
+            f"{summary.quicktests_saved} QuickTest(s) dauerhaft nach FIN gespeichert, "
             f"{summary.events_linked} zugeordnete Ereignisse"
         )
         if summary.issues:
@@ -272,7 +274,9 @@ class SourcesPage(QWidget):
                 + ")"
             )
         self.import_status.setText(text)
-        self._pending_reload = bool(summary.cases_created or summary.events_linked)
+        self._pending_reload = bool(
+            summary.cases_created or summary.events_linked or summary.quicktests_saved
+        )
         self._refresh_all()
 
     def _import_failed(self, message: str) -> None:
@@ -333,6 +337,11 @@ class SourcesPage(QWidget):
         counts = Counter(artifact.source_type for artifact in artifacts)
         all_cases = self.cases.list_cases()
         case_count = len(all_cases)
+        qt_statistics = (
+            QuickTestStore(self.import_service.store).statistics()
+            if self.import_service is not None
+            else {"reports": 0, "ecus": 0, "dtcs": 0, "parameters": 0}
+        )
         test_count = sum(len(case.diagnostic_sessions) for case in all_cases)
         dtc_count = sum(len(case.diagnostics) for case in all_cases)
         repair_count = sum(len(case.repairs) for case in all_cases)
@@ -381,7 +390,10 @@ class SourcesPage(QWidget):
                 "PDF-QuickTest und AutoExport-CSV Parser bereit",
                 (
                     f"{counts[SourceType.SHORT_TEST]} Datei(en) · "
-                    f"{test_count} Kurztests · {dtc_count} DTC-Ereignisse"
+                    f"{qt_statistics['reports']} FIN-QuickTests · "
+                    f"{qt_statistics['ecus']} ECU-Stände · "
+                    f"{qt_statistics['dtcs']} DTCs · "
+                    f"{qt_statistics['parameters']} Snapshot-Parameter"
                     if counts[SourceType.SHORT_TEST]
                     else "Keine Originaldatei"
                 ),
