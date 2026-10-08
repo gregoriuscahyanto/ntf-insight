@@ -19,6 +19,7 @@ from PySide6.QtWidgets import (
     QPushButton,
     QScrollArea,
     QTableView,
+    QTabWidget,
     QVBoxLayout,
     QWidget,
 )
@@ -35,10 +36,12 @@ from ntf_insight.app.models.case_table_model import CaseRow, CaseTableModel
 from ntf_insight.app.models.simple_table_model import SimpleTableModel
 from ntf_insight.app.models.timeline_table_model import TimelineTableModel
 from ntf_insight.app.widgets.event_time_plot import EventTimePlot
+from ntf_insight.app.widgets.quicktest_browser import QuickTestBrowser
 from ntf_insight.ingestion.manual_entry import ManualCaseService, ManualEntryError
 from ntf_insight.reporting.markdown import save_case_report
 from ntf_insight.storage.reference_repositories import ReferenceRepository
 from ntf_insight.storage.repositories import CaseRepository
+from ntf_insight.storage.quicktest_store import QuickTestStore
 
 
 class CasePage(QWidget):
@@ -60,12 +63,23 @@ class CasePage(QWidget):
         outer_layout = QVBoxLayout(self)
         outer_layout.setContentsMargins(0, 0, 0, 0)
 
+        self.detail_tabs = QTabWidget()
+        outer_layout.addWidget(self.detail_tabs)
+
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setFrameShape(QFrame.Shape.NoFrame)
         content = QWidget()
         scroll.setWidget(content)
-        outer_layout.addWidget(scroll)
+        self.detail_tabs.addTab(scroll, "FIN / Fallanalyse")
+
+        if manual_service is not None:
+            self.quicktest_browser = QuickTestBrowser(
+                QuickTestStore(manual_service.store)
+            )
+            self.detail_tabs.addTab(self.quicktest_browser, "QuickTests nach FIN")
+        else:
+            self.quicktest_browser = None
 
         layout = QVBoxLayout(content)
         layout.setContentsMargins(32, 28, 32, 28)
@@ -379,6 +393,14 @@ class CasePage(QWidget):
         self.time_plot.set_entries(timeline_entries)
         self.timeline_model.set_entries(timeline_entries)
 
+
+    def show_quicktests(self, fin: str | None = None) -> None:
+        """Open the FIN-scoped report browser, with or without a QEC case."""
+        if self.quicktest_browser is None:
+            return
+        self.detail_tabs.setCurrentWidget(self.quicktest_browser)
+        if fin:
+            self.quicktest_browser.select_fin(fin)
 
     def select_case(self, case_id: str) -> None:
         """Select a case after the shared application data is reloaded."""
