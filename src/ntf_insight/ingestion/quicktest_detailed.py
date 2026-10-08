@@ -112,7 +112,12 @@ def _fault_block(lines: list[tuple[str, int]]) -> dict:
     index = 1
     while index < len(lines):
         line = lines[index][0]
-        if PARAMETER_HEADER.match(line) or PARAMETER.match(line):
+        wrapped = WRAPPED_PARAMETER.match(line)
+        if (
+            PARAMETER_HEADER.match(line)
+            or PARAMETER.match(line)
+            or (wrapped and wrapped.group("name") in KNOWN_PARAMETERS)
+        ):
             break
         description_lines.append(line)
         index += 1
@@ -129,11 +134,13 @@ def _fault_block(lines: list[tuple[str, int]]) -> dict:
         if PARAMETER_HEADER.match(line):
             continue
         candidate = PARAMETER.match(line)
-        if candidate:
+        wrapped = WRAPPED_PARAMETER.match(line)
+        if candidate or (wrapped and wrapped.group("name") in KNOWN_PARAMETERS):
+            parameter = candidate or wrapped
             parameters.append({
-                "name": candidate.group("name"),
-                "first_value": candidate.group("first").strip(),
-                "last_value": "-",
+                "name": parameter.group("name"),
+                "first_value": parameter.group("first").strip(),
+                "last_value": "-" if candidate else None,
                 "page": page_number,
             })
         elif parameters and (
