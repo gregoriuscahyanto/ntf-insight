@@ -165,3 +165,42 @@ def test_resolution_observation_is_not_claimed_proven_success() -> None:
     assert "nicht erneut beobachtet" in no_recurrence.outcome
     assert "nicht überprüfbar" in unknown.outcome
     assert any("Bauteiltausch" in measure for measure in no_recurrence.measures)
+
+
+def test_component_aliases_match_same_profile() -> None:
+    pump = _case("PUMP", ("P1",), component="Coolant Pump")
+    german = _case("GERMAN", ("P1",), component="Kühlmittelpumpe")
+
+    result = compare_diagnostic_cases(pump, german)
+    assert result.score is not None and result.eligible_for_cluster
+    assert cluster_diagnostic_cases([german, pump]).clusters
+
+
+def test_repair_after_last_post_test_does_not_count_as_verified_resolution() -> None:
+    demo = next(case for case in build_demo_cases() if case.case_id == "DEMO-003")
+    observation = resolution_observation(demo)
+
+    assert "Kein Kurztest nach der letzten" in observation.outcome
+    assert any("ground connection" in text for text in observation.measures)
+
+
+def test_nearest_neighbours_rank_substantive_diagnostic_evidence_first() -> None:
+    left = _case("A", ("P1",))
+    strong = _case("B", ("P1",))
+    weak = _case("C", ())
+    left.repairs.append(
+        RepairEvent(
+            vin=left.vin, occurred_at=datetime(2026, 1, 2, 9),
+            complaint="electric coolant flow vibration unusual",
+        )
+    )
+    weak.repairs.append(
+        RepairEvent(
+            vin=weak.vin, occurred_at=datetime(2026, 1, 2, 9),
+            complaint="electric coolant flow vibration unusual",
+        )
+    )
+    nearest = matches_for("A", all_diagnostic_matches([left, strong, weak]))
+
+    assert nearest[0].right_case_id == "B"
+    assert nearest[0].coverage > nearest[1].coverage
