@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from PySide6.QtCore import QSortFilterProxyModel, Qt
+from PySide6.QtCore import QSortFilterProxyModel, Qt, Signal
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QComboBox,
@@ -15,6 +15,7 @@ from PySide6.QtWidgets import (
     QHeaderView,
     QLabel,
     QLineEdit,
+    QMessageBox,
     QPushButton,
     QScrollArea,
     QTableView,
@@ -25,22 +26,36 @@ from PySide6.QtWidgets import (
 from ntf_insight.analysis.evidence_engine import generate_case_evidence
 from ntf_insight.analysis.recurrence import analyze_recurrence, format_faults
 from ntf_insight.analysis.timeline import build_timeline
+from ntf_insight.app.dialogs.manual_entry_dialogs import (
+    ManualEventDialog,
+    ManualHistoryDialog,
+    NewCaseDialog,
+)
 from ntf_insight.app.models.case_table_model import CaseRow, CaseTableModel
 from ntf_insight.app.models.simple_table_model import SimpleTableModel
 from ntf_insight.app.models.timeline_table_model import TimelineTableModel
 from ntf_insight.app.widgets.event_time_plot import EventTimePlot
+from ntf_insight.ingestion.manual_entry import ManualCaseService, ManualEntryError
 from ntf_insight.reporting.markdown import save_case_report
 from ntf_insight.storage.reference_repositories import ReferenceRepository
 from ntf_insight.storage.repositories import CaseRepository
 
 
 class CasePage(QWidget):
-    """Inspect one case, its evidence and the pre/post replacement timeline."""
+    """Inspect FIN/case combinations and edit persistent manual information."""
 
-    def __init__(self, repository: CaseRepository, references: ReferenceRepository) -> None:
+    case_saved = Signal(str)
+
+    def __init__(
+        self,
+        repository: CaseRepository,
+        references: ReferenceRepository,
+        manual_service: ManualCaseService | None = None,
+    ) -> None:
         super().__init__()
         self.repository = repository
         self.references = references
+        self.manual_service = manual_service
 
         outer_layout = QVBoxLayout(self)
         outer_layout.setContentsMargins(0, 0, 0, 0)
@@ -76,6 +91,18 @@ class CasePage(QWidget):
         search.setPlaceholderText("Fall, FIN / VIN, Bauteil oder Bewertung suchen …")
         search.setClearButtonEnabled(True)
         selector_row.addWidget(search, 1)
+
+        create_button = QPushButton("+ Neuer Fall")
+        create_button.setToolTip("Neuen FIN/Fall manuell erfassen")
+        create_button.setEnabled(self.manual_service is not None)
+        create_button.clicked.connect(self._create_case)
+        selector_row.addWidget(create_button)
+
+        self.add_event_button = QPushButton("+ Ereignis")
+        self.add_event_button.setToolTip("Kurztest, DTC, Tausch oder weitere Information ergänzen")
+        self.add_event_button.setEnabled(self.manual_service is not None)
+        self.add_event_button.clicked.connect(self._add_event)
+        selector_row.addWidget(self.add_event_button)
 
         export_button = QPushButton("Markdown-Bericht exportieren…")
         export_button.clicked.connect(self._export_report)
@@ -204,7 +231,22 @@ class CasePage(QWidget):
         self.evidence_balance.setWordWrap(True)
         layout.addWidget(self.evidence_balance)
 
-        layout.addWidget(QLabel("Timeline", objectName="CardTitle"))
+        timeline_row = QHBoxLayout()
+        timeline_row.addWidget(QLabel("Timeline", objectName="CardTitle"))
+        timeline_row.addStretch()
+
+        self.correct_button = QPushButton("Markiertes Ereignis korrigieren")
+        self.correct_button.setToolTip("Originaldaten bleiben erhalten; Korrekturen erscheinen im Änderungsverlauf.")
+        self.correct_button.setEnabled(self.manual_service is not None)
+        self.correct_button.clicked.connect(self._correct_event)
+        timeline_row.addWidget(self.correct_button)
+
+        history_button = QPushButton("Änderungsverlauf")
+        history_button.setEnabled(self.manual_service is not None)
+        history_button.clicked.connect(self._show_history)
+        timeline_row.addWidget(history_button)
+        layout.addLayout(timeline_row)
+
         self.timeline_model = TimelineTableModel()
         self.timeline = QTableView()
         self.timeline.setModel(self.timeline_model)
@@ -321,6 +363,104 @@ class CasePage(QWidget):
         self.time_plot.set_entries(timeline_entries)
         self.timeline_model.set_entries(timeline_entries)
 
+
+    def select_case(self, case_id: str) -> None:
+        """Select a case after the shared application data is reloaded."""
+        for row in range(self.case_model.rowCount()):
+            if self.case_model.case_id_at(row) == case_id:
+                source = self.case_model.index(row, 0)
+                proxy = self.case_proxy.mapFromSource(source)
+                if proxy.isValid():
+                    self.case_table.selectRow(proxy.row())
+                    self._case_clicked(proxy)
+                return
+
+    def _selected_case(self):
+        case_id = self.selector.currentData()
+        return self.repository.get_case(case_id) if case_id else None
+
+    def _persistent_case(self):
+        case = self._selected_case()
+        if case is None or self.manual_service is None:
+            return None
+        if self.manual_service.store.get_case(case.case_id) is None:
+            QMessageBox.information(
+                self,
+                "Demo-Daten",
+                "Demo-Fälle werden nicht als echte Daten gespeichert. "
+                "Bitte zunächst über „+ Neuer Fall“ einen echten FIN/Fall anlegen.",
+            )
+            return None
+        return case
+
+    def _create_case(self) -> None:
+        if self.manual_service is None:
+            return
+        dialog = NewCaseDialog(self)
+        if dialog.exec() != dialog.DialogCode.Accepted:
+            return
+        try:
+            case = self.manual_service.create_case(dialog.build_case())
+        except Exception as exc:
+            QMessageBox.warning(self, "Fall konnte nicht angelegt werden", str(exc))
+            return
+        self.case_saved.emit(case.case_id)
+
+    def _add_event(self) -> None:
+        if self.manual_service is None:
+            return
+        case = self._persistent_case()
+        if case is None:
+            return
+        dialog = ManualEventDialog(case, self)
+        if dialog.exec() != dialog.DialogCode.Accepted:
+            return
+        try:
+            self.manual_service.add_event(
+                case.case_id,
+                dialog.selected_kind,
+                dialog.build_event(),
+                set_replacement_anchor=dialog.set_replacement_anchor,
+            )
+        except (ValueError, ManualEntryError, OSError) as exc:
+            QMessageBox.warning(self, "Ereignis konnte nicht gespeichert werden", str(exc))
+            return
+        self.case_saved.emit(case.case_id)
+
+    def _correct_event(self) -> None:
+        if self.manual_service is None:
+            return
+        case = self._persistent_case()
+        if case is None:
+            return
+        index = self.timeline.currentIndex()
+        entry = self.timeline_model.entry_at(index.row()) if index.isValid() else None
+        if entry is None:
+            QMessageBox.information(
+                self, "Ereignis wählen",
+                "Bitte zuerst eine Zeile in der Ereignistabelle markieren.",
+            )
+            return
+
+        dialog = ManualEventDialog(case, self, kind=entry.kind, existing=entry.event)
+        if dialog.exec() != dialog.DialogCode.Accepted:
+            return
+        try:
+            self.manual_service.correct_event(
+                case.case_id, entry.kind, entry.event.event_id, dialog.build_event()
+            )
+        except (ValueError, ManualEntryError, OSError) as exc:
+            QMessageBox.warning(self, "Korrektur nicht gespeichert", str(exc))
+            return
+        self.case_saved.emit(case.case_id)
+
+    def _show_history(self) -> None:
+        case = self._persistent_case()
+        if case is None or self.manual_service is None:
+            return
+        changes = self.manual_service.store.load_manual_changes(case.case_id)
+        dialog = ManualHistoryDialog(case.case_id, changes, self)
+        dialog.exec()
 
     def _export_report(self) -> None:
         case_id = self.selector.currentData()
