@@ -6,7 +6,7 @@ NTF Insight is a Python project for reconstructing and analysing vehicle field c
 
 The architecture is intentionally **not tied to one component**. Coolant pumps, HV batteries and future component families should use the same generic case, timeline, evidence, similarity and reporting engines, with component-specific profiles and rules layered on top.
 
-> **Status:** pre-alpha desktop prototype. The native PySide6 app includes manual FIN/case entry with audited corrections, immutable raw-source archiving, local DuckDB persistence, timeline/recurrence analysis, quality checks, evidence generation and DTC clustering. Production source parsers remain dependent on representative original files.
+> **Status:** pre-alpha native desktop prototype. Local parsers now cover QEC case spreadsheets, AutoExport diagnosis/workshop CSVs and QuickTest PDFs with bounded FIN/case linking and immutable raw archives. Supplier PDFs, Candela/CDD semantics, SMR-D triggers and HW/SW release-change sources still require format-specific validation.
 
 ## Questions the project should answer
 
@@ -241,11 +241,32 @@ The desktop app stores local working data outside the Git repository by default:
 └── raw/
 ```
 
-Set `NTF_INSIGHT_DATA_DIR` to override that location. If the database contains no imported cases, the app starts in clearly labelled **demo mode** with fictional data. The Data Sources page can already archive arbitrary original files with SHA-256 provenance before a concrete parser exists.
+Set `NTF_INSIGHT_DATA_DIR` to override that location. If the database contains no imported cases, the app starts in clearly labelled **demo mode** with fictional data. The Data Sources page archives arbitrary original files with SHA-256 provenance. Known QEC, AutoExport and QuickTest formats are now also parsed locally; unsupported sources remain archived with an explicit pending state.
 
 ## Desktop views
 
-The current prototype includes Overview, Data Sources, a combined FIN/Case workspace, DTC Explorer, **Case clusters & DTC-Cluster visualization**, Suppliers and Data Quality. The FIN/Case workspace treats the FIN + case combination as the analysis unit and includes a chronological time plot for DTCs, diagnostic sessions, ECU states, replacements, software, workshop and supplier events. Data Sources supports multi-file selection and local Drag & Drop into the immutable raw archive. The Case view can export a deterministic Markdown analysis report.
+The current prototype includes Overview, Data Sources, a combined FIN/Case workspace, DTC Explorer, **Case clusters & DTC-Cluster visualization**, Suppliers and Data Quality. The FIN/Case workspace treats the FIN + case combination as the analysis unit and includes a chronological time plot for DTCs, diagnostic sessions, ECU states, replacements, software, workshop and supplier events. Data Sources supports multiple files and ZIP packages with local Drag & Drop, automatic format detection and asynchronous ingestion into DuckDB. The Case view can export a deterministic Markdown analysis report.
+
+## Echte Quelldateien lokal laden
+
+Auf einem für Felddaten zugelassenen Rechner im Tab **Datenquellen** die
+**Quellenart „Automatisch erkennen“** wählen und ein ZIP oder mehrere
+Einzeldateien hineinziehen. QEC-Excel legt FIN/Fall-Anker an, AutoExport-CSV
+ergänzt Diagnose-/Werkstattinformationen, QuickTest-PDF ergänzt vollständige
+Diagnosesitzungen einschließlich ECU-HW/SW-Ständen.
+
+Alternativ für große ZIP-Pakete:
+
+```powershell
+ntf-insight-import "C:\\interner-pfad\\quellen.zip"
+python -m ntf_insight
+```
+
+Echte Fahrzeug-/Werkstattdaten werden **nicht nach GitHub hochgeladen**,
+sondern ausschließlich im konfigurierten lokalen Datenverzeichnis archiviert,
+verarbeitet und verknüpft. Unklare FIN/Fall-Zuordnungen werden nicht erzwungen.
+
+Details und aktuelle Grenzen: [docs/real-data-import.md](docs/real-data-import.md).
 
 ## Manuelle Fallerfassung
 
@@ -298,7 +319,7 @@ See [docs/data-requirements.md](docs/data-requirements.md) for the minimum and r
 
 See [ROADMAP.md](ROADMAP.md) for the implementation plan.
 
-The source-independent foundation is now in place. The next source-dependent step is implementing the concrete short-test parser, followed by SMR-D and HW/SW change-history parsers, once representative original files are available.
+Concrete QEC, AutoExport CSV and QuickTest PDF formats are now supported by synthetic regression-tested local ingestion. Next priorities are expert review of imported cases, Candela/SMR-D semantics, HW/SW change-history formats and supplier-report extraction.
 
 ## Weitere Dokumentation
 
@@ -306,5 +327,6 @@ The source-independent foundation is now in place. The next source-dependent ste
 - [Managed Windows Environment](docs/windows-managed-environment.md)
 - [Enterprise CI/CD Pipeline](docs/enterprise-pipeline.md)
 - [Canonical Source Contracts](docs/source-contracts.md)
+- [Lokaler ZIP- und Echtdatenimport](docs/real-data-import.md)
 - [Manuelle Fallerfassung](docs/manual-entry.md)
 - [Fall-Clustering und Ähnlichkeitsmethodik](docs/case-clustering.md)
