@@ -23,7 +23,7 @@ class NavigationPanel(QFrame):
         ("sources", "Datenquellen"),
         ("cases", "Fälle / FIN"),
         ("dtcs", "DTC-Explorer"),
-        ("clusters", "DTC-Cluster"),
+        ("clusters", "Cluster & Fälle"),
         ("suppliers", "Lieferanten"),
         ("quality", "Datenqualität"),
     )
