@@ -33,3 +33,15 @@ Thumbs.db
 *.ttc
 *.woff
 *.woff2
+
+# Source packages and field reports may contain confidential vehicle data.
+# Never commit raw inputs to this public repository.
+*.zip
+*.7z
+*.rar
+*.cdd
+*.smr-d
+*.xlsx
+*.xls
+*.csv
+*.pdf
