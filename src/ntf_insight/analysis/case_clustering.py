@@ -12,6 +12,7 @@ from dataclasses import dataclass
 from typing import Iterable
 
 from ntf_insight.analysis.recurrence import analyze_recurrence, relative_to_replacement
+from ntf_insight.components.registry import list_component_profiles
 from ntf_insight.domain.case import NTFCase
 
 FaultKey = tuple[str, str]
@@ -119,6 +120,18 @@ def _in_diagnostic_window(event, case: NTFCase) -> bool:
     return relative_to_replacement(event, replacement) == "pre"
 
 
+def _component_key(case: NTFCase) -> str:
+    if case.component_profile_id:
+        return case.component_profile_id.strip().casefold()
+    name = case.component_type.strip().casefold()
+    for profile in list_component_profiles():
+        known = {profile.profile_id.casefold(), profile.display_name.casefold()}
+        known.update(alias.casefold() for alias in profile.aliases)
+        if name in known:
+            return profile.profile_id.casefold()
+    return name
+
+
 def signature_for(case: NTFCase) -> DiagnosticSignature:
     events = [
         event for event in case.diagnostics
@@ -143,7 +156,7 @@ def signature_for(case: NTFCase) -> DiagnosticSignature:
         for value in (case.vehicle.model_series, case.vehicle.variant)
         if value and value.strip()
     )
-    component_key = (case.component_profile_id or case.component_type).strip().casefold()
+    component_key = _component_key(case)
     return DiagnosticSignature(
         case_id=case.case_id,
         component_key=component_key,
@@ -355,8 +368,32 @@ def resolution_observation(case: NTFCase) -> ResolutionObservation:
         if action:
             measures.append(f"Software {update.ecu}: {action.strip()}")
 
+    last_measure_at = max(
+        (
+            event.occurred_at
+            for event in (*case.replacements, *case.repairs, *case.software_events)
+            if isinstance(event, (type(case.replacements[0]) if case.replacements else type(event),))
+            and (
+                not hasattr(event, "action")
+                or bool(getattr(event, "action", None))
+            )
+        ),
+        default=None,
+    )
+    post_measure_test = (
+        last_measure_at is not None
+        and any(
+            session.occurred_at > last_measure_at
+            for session in case.diagnostic_sessions
+        )
+    )
     if not result.assessable or not result.pre_faults:
         outcome = "Wirksamkeit nicht überprüfbar (Vor-/Nachtest oder Ausgangs-DTC fehlt)"
+    elif last_measure_at is not None and not post_measure_test:
+        outcome = (
+            "Kein Kurztest nach der letzten dokumentierten Maßnahme; "
+            "deren Wirkung ist noch nicht beurteilt"
+        )
     elif result.has_recurrence:
         outcome = "Derselbe DTC im dokumentierten Nachtest erneut beobachtet"
     else:
