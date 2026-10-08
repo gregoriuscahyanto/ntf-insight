@@ -1,4 +1,4 @@
-"""Main desktop window."""
+"""Main PySide6 desktop window with live refresh after manual case revisions."""
 
 from __future__ import annotations
 
@@ -14,6 +14,8 @@ from ntf_insight.app.pages.similarity_page import SimilarityPage
 from ntf_insight.app.pages.sources_page import SourcesPage
 from ntf_insight.app.pages.supplier_page import SupplierPage
 from ntf_insight.app.widgets.navigation import NavigationPanel
+from ntf_insight.ingestion.manual_entry import ManualCaseService
+from ntf_insight.storage.duckdb_store import DuckDBStore
 
 
 class MainWindow(QMainWindow):
@@ -28,6 +30,9 @@ class MainWindow(QMainWindow):
         self.application_data = load_application_data()
         self.repository = self.application_data.cases
         self.reference_repository = self.application_data.references
+        self.manual_service = ManualCaseService(
+            DuckDBStore(self.application_data.paths.database_path)
+        )
 
         root = QWidget(objectName="AppRoot")
         layout = QHBoxLayout(root)
@@ -36,24 +41,7 @@ class MainWindow(QMainWindow):
 
         self.navigation = NavigationPanel()
         self.stack = QStackedWidget()
-
-        self.pages = {
-            "dashboard": DashboardPage(self.repository, self.application_data.mode),
-            "sources": SourcesPage(
-                self.repository,
-                self.reference_repository,
-                self.application_data.mode,
-                str(self.application_data.paths.data_dir),
-                str(self.application_data.paths.raw_dir),
-                str(self.application_data.paths.database_path),
-            ),
-            "cases": CasePage(self.repository, self.reference_repository),
-            "dtcs": DTCExplorerPage(self.repository, self.reference_repository),
-            "clusters": SimilarityPage(self.repository),
-            "suppliers": SupplierPage(self.repository),
-            "quality": DataQualityPage(self.repository, self.reference_repository),
-        }
-
+        self.pages = self._create_pages()
         for page in self.pages.values():
             self.stack.addWidget(page)
 
@@ -63,6 +51,46 @@ class MainWindow(QMainWindow):
 
         self.navigation.page_selected.connect(self.show_page)
         self.navigation.select_page("dashboard")
+
+    def _create_pages(self) -> dict[str, QWidget]:
+        pages = {
+            "dashboard": DashboardPage(self.repository, self.application_data.mode),
+            "sources": SourcesPage(
+                self.repository,
+                self.reference_repository,
+                self.application_data.mode,
+                str(self.application_data.paths.data_dir),
+                str(self.application_data.paths.raw_dir),
+                str(self.application_data.paths.database_path),
+            ),
+            "cases": CasePage(
+                self.repository, self.reference_repository, self.manual_service
+            ),
+            "dtcs": DTCExplorerPage(self.repository, self.reference_repository),
+            "clusters": SimilarityPage(self.repository),
+            "suppliers": SupplierPage(self.repository),
+            "quality": DataQualityPage(self.repository, self.reference_repository),
+        }
+        pages["cases"].case_saved.connect(self._reload_after_manual_change)
+        return pages
+
+    def _reload_after_manual_change(self, case_id: str) -> None:
+        """Reload persisted data and rebuild derived views after one successful edit."""
+        self.application_data = load_application_data(self.application_data.paths)
+        self.repository = self.application_data.cases
+        self.reference_repository = self.application_data.references
+
+        old_pages = list(self.pages.values())
+        for old in old_pages:
+            self.stack.removeWidget(old)
+            old.deleteLater()
+
+        self.pages = self._create_pages()
+        for page in self.pages.values():
+            self.stack.addWidget(page)
+
+        self.pages["cases"].select_case(case_id)
+        self.navigation.select_page("cases")
 
     def show_page(self, key: str) -> None:
         page = self.pages.get(key)
