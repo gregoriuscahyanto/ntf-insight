@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from enum import StrEnum
 
+from ntf_insight.analysis.recurrence import relative_to_replacement
 from ntf_insight.domain.case import NTFCase
 from ntf_insight.storage.reference_repositories import ReferenceRepository
 
@@ -54,8 +55,14 @@ def assess_data_quality(
     pre_sessions = []
     post_sessions = []
     if replacement is not None:
-        pre_sessions = [s for s in case.diagnostic_sessions if s.occurred_at < replacement.occurred_at]
-        post_sessions = [s for s in case.diagnostic_sessions if s.occurred_at > replacement.occurred_at]
+        pre_sessions = [
+            s for s in case.diagnostic_sessions
+            if relative_to_replacement(s, replacement) == "pre"
+        ]
+        post_sessions = [
+            s for s in case.diagnostic_sessions
+            if relative_to_replacement(s, replacement) == "post"
+        ]
 
     checks: list[QualityCheck] = []
     checks.append(
@@ -117,6 +124,32 @@ def assess_data_quality(
             ),
         )
     )
+
+    all_events = [
+        *case.diagnostic_sessions,
+        *case.diagnostics,
+        *case.replacements,
+        *case.repairs,
+        *case.software_events,
+        *case.ecu_states,
+        *case.supplier_findings,
+    ]
+    day_only = sum(
+        getattr(event, "time_precision", None) == "date"
+        for event in all_events
+    )
+    if day_only:
+        checks.append(
+            QualityCheck(
+                code="time_precision",
+                label="Zeitgenauigkeit",
+                status=QualityStatus.WARNING,
+                detail=(
+                    f"{day_only} Ereignis(se) haben nur Datumsgenauigkeit. "
+                    "Gleichentägige Vorher-/Nachher-Zuordnung wird nicht angenommen."
+                ),
+            )
+        )
 
     unique_faults = {event.fault_key for event in case.diagnostics}
     trigger_coverage = 0
