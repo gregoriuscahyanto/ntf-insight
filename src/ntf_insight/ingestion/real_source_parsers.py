@@ -105,6 +105,7 @@ class ParsedSource(BaseModel):
     issues: list[str] = Field(default_factory=list)
     skipped_rows: int = 0
     source_summary_count: int | None = None
+    quicktest_report: dict | None = None
 
 
 def _csv_rows(path: Path):
@@ -340,135 +341,15 @@ def _field(text: str, label: str) -> str | None:
 
 
 class QuickTestPdfParser:
+    """Complete QuickTest parser, including ECU and DTC snapshot details."""
+
     name = "quicktest_pdf"
-    version = "1.0.0"
+    version = "2.0.0"
 
     def __init__(self, source_sha: str) -> None:
         self.source_sha = source_sha
 
     def parse(self, path: Path) -> ParsedSource:
-        from pypdf import PdfReader
+        from ntf_insight.ingestion.quicktest_detailed import extract_quicktest
 
-        result = ParsedSource()
-        reader = PdfReader(path, strict=False)
-        if not 1 <= len(reader.pages) <= 150:
-            raise ValueError("QuickTest PDF has an unsupported page count.")
-        raw_pages = [page.extract_text() or "" for page in reader.pages]
-        first_page = raw_pages[0]
-        if "DIAG START" not in first_page or "QuickTest" not in first_page:
-            raise ValueError("Not a recognized QuickTest PDF.")
-
-        fin = canonical_fin(_field(first_page, "FIN"))
-        usa_vin = canonical_fin(_field(first_page, "VIN"))
-        when = _date_event(_field(first_page, "DIAG START"))
-        if not fin or not when:
-            raise ValueError("QuickTest PDF is missing FIN or diagnosis start.")
-        total_km = _int((_field(first_page, "DISTANCE") or "").split(" ", 1)[0])
-        ecu_count = _int(_field(first_page, "ECU Count"))
-
-        session_id = _key(self.source_sha, "quicktest:session")
-        all_lines = "\n".join(raw_pages).splitlines()
-        ecu_blocks: list[tuple[str, list[str]]] = []
-        current_ecu: str | None = None
-        current_lines: list[str] = []
-        for line in all_lines:
-            stripped = line.strip()
-            match = ECU_LINE.match(stripped)
-            if match and stripped.startswith(match.group(1)):
-                if current_ecu is not None:
-                    ecu_blocks.append((current_ecu, current_lines))
-                current_ecu = match.group(1)
-                current_lines = []
-            elif current_ecu is not None:
-                current_lines.append(stripped)
-        if current_ecu is not None:
-            ecu_blocks.append((current_ecu, current_lines))
-
-        for block_num, (ecu, lines) in enumerate(ecu_blocks, start=1):
-            block_text = "\n".join(lines)
-            hw_match = re.search(
-                r"Hardware\s+Partnumber\s+([\d ]{8,})\s+Hardware\s+Version\s+([^\n]+)",
-                block_text, flags=re.I,
-            )
-            sw_match = re.search(
-                r"Supplier\s+[^\n]*?\s+Software\s+Version\s+([^\n]+)",
-                block_text, flags=re.I,
-            )
-            if hw_match or sw_match:
-                result.ecu_states.append(
-                    ECUStateObservation(
-                        event_id=_key(self.source_sha, f"quicktest:ecu:{block_num}"),
-                        session_id=session_id, vin=fin, ecu=ecu,
-                        mileage_km=total_km,
-                        hardware_version=hw_match.group(2).strip() if hw_match else None,
-                        software_version=sw_match.group(1).strip() if sw_match else None,
-                        hardware_part_number=hw_match.group(1).strip() if hw_match else None,
-                        source_ref=_ref(self.source_sha, f"ecu:{block_num}"),
-                        **when,
-                    )
-                )
-            fault_indexes = [
-                (index, match)
-                for index, line in enumerate(lines)
-                if (match := FAULT_LINE.match(line))
-            ]
-            for pos, (index, fault) in enumerate(fault_indexes):
-                end = fault_indexes[pos + 1][0] if pos + 1 < len(fault_indexes) else len(lines)
-                chunk = lines[index:end]
-                description_lines: list[str] = [fault.group(2)]
-                for item in chunk[1:]:
-                    if item.startswith(("Name Value", "frequencyCounter", "originalOdometerValue",
-                                        "mostRecentOdometerValue", "ignitionCycleCounter",
-                                        "Operating_Time", "Alarmpoint")):
-                        break
-                    if item.startswith("FAULT CODES"):
-                        break
-                    description_lines.append(item)
-                description = " ".join(description_lines).strip()
-                status_match = re.search(r"(?:_|\s)\s*(AS|S)\s*$", description)
-                status = status_match.group(1) if status_match else None
-                if status_match:
-                    description = description[:status_match.start()].strip(" _")
-                detail = "\n".join(chunk)
-                freq = re.search(r"\bfrequencyCounter\s+(\d+)", detail)
-                original = re.search(r"\boriginalOdometerValue\s+(\d+)\s*km", detail)
-                recent = re.search(r"\bmostRecentOdometerValue\s+(\d+)\s*km", detail)
-                result.diagnostics.append(
-                    DiagnosticEvent(
-                        event_id=_key(self.source_sha, f"quicktest:ecu:{block_num}:fault:{pos}"),
-                        session_id=session_id, vin=fin, ecu=ecu,
-                        dtc_code=fault.group(1).upper(),
-                        dtc_text=description or None,
-                        status=status,
-                        occurrence_count=int(freq.group(1)) if freq else None,
-                        mileage_km=total_km,
-                        freeze_frame={
-                            **({"original_odometer_km": int(original.group(1))} if original else {}),
-                            **({"most_recent_odometer_km": int(recent.group(1))} if recent else {}),
-                            "observed_at_diagnostic_test": True,
-                        },
-                        source_ref=_ref(self.source_sha, f"ecu:{block_num}:fault:{pos}"),
-                        **when,
-                    )
-                )
-
-        if not ecu_blocks:
-            raise ValueError("QuickTest contains no recognizable ECU sections.")
-        if not result.diagnostics and "FAULT CODES (0)" not in "\n".join(raw_pages):
-            result.issues.append("No fault entries could be read from this QuickTest.")
-        result.sessions.append(
-            DiagnosticSession(
-                event_id=_key(self.source_sha, "quicktest:session:event"),
-                session_id=session_id,
-                vin=fin,
-                occurred_at=when["occurred_at"],
-                mileage_km=total_km,
-                label="QuickTest PDF",
-                ecu_count=ecu_count or len(ecu_blocks),
-                dtc_count=len(result.diagnostics),
-                source_ref=_ref(self.source_sha, "session"),
-                report_vin_usa=usa_vin,
-                source_is_complete_quicktest=True,
-            )
-        )
-        return result
+        return extract_quicktest(path, self.source_sha)
