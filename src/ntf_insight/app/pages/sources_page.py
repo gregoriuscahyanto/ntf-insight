@@ -41,11 +41,15 @@ class _SourceImportWorker(QThread):
         sources: SourceImportService,
         paths: list[Path],
         forced_type: SourceType | None,
+        source_system: str | None = None,
+        vin_hint: str | None = None,
     ) -> None:
         super().__init__()
         self.sources = sources
         self.paths = paths
         self.forced_type = forced_type
+        self.source_system = source_system
+        self.vin_hint = vin_hint
 
     def run(self) -> None:
         try:
@@ -53,6 +57,8 @@ class _SourceImportWorker(QThread):
                 self.paths,
                 on_progress=self.progress.emit,
                 forced_source_type=self.forced_type,
+                source_system=self.source_system,
+                vin_hint=self.vin_hint,
             )
         except Exception as exc:
             self.failed.emit(f"{type(exc).__name__}: {exc}")
@@ -240,7 +246,11 @@ class SourcesPage(QWidget):
         )
         self._pending_reload = False
         self._worker = _SourceImportWorker(
-            self.import_service, [Path(path) for path in paths], forced_type
+            self.import_service,
+            [Path(path) for path in paths],
+            forced_type,
+            self.source_system.text().strip() or None,
+            self.vin_hint.text().strip() or None,
         )
         self._worker.progress.connect(self.import_status.setText)
         self._worker.imported.connect(self._import_completed)
