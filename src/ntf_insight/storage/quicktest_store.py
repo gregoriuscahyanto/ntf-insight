@@ -307,6 +307,108 @@ class QuickTestStore:
             ).fetchone()
         return row[0] if row else None
 
+    def case_projection(self, report_id: str):
+        """Recreate canonical events after a QEC case arrives later.
+
+        The independently saved PDF remains the source of truth. A case only
+        receives a projection when FIN and repair time permit safe matching.
+        """
+        from ntf_insight.domain.events import (
+            DiagnosticEvent, DiagnosticSession, ECUStateObservation,
+        )
+        from ntf_insight.ingestion.quicktest_detailed import _identifier
+
+        with self.store.connect() as con:
+            report = con.execute(
+                """
+                SELECT fin, vin, diagnosed_at, mileage_km, ecu_count, dtc_count,
+                       first_source_sha256
+                FROM quicktest_reports WHERE report_id = ?
+                """,
+                [report_id],
+            ).fetchone()
+            if not report:
+                return [], [], []
+            ecu_rows = con.execute(
+                """
+                SELECT ecu_index, ecu_code, metadata_json
+                FROM quicktest_ecus WHERE report_id = ? ORDER BY ecu_index
+                """,
+                [report_id],
+            ).fetchall()
+            dtc_rows = con.execute(
+                """
+                SELECT ecu_index, dtc_index, ecu_code, kind, dtc_code,
+                       description, status, frequency_counter,
+                       original_odometer_km, most_recent_odometer_km,
+                       ignition_cycle_counter
+                FROM quicktest_dtcs WHERE report_id = ?
+                ORDER BY ecu_index, dtc_index
+                """,
+                [report_id],
+            ).fetchall()
+            parameter_rows = con.execute(
+                """
+                SELECT ecu_index, dtc_index, parameter_name, first_value,
+                       last_value, page_number
+                FROM quicktest_parameters WHERE report_id = ?
+                ORDER BY ecu_index, dtc_index, parameter_index
+                """,
+                [report_id],
+            ).fetchall()
+
+        fin, vehicle_vin, when, km, ecu_count, dtc_count, source_sha = report
+        session_id = _identifier(report_id, "session")
+        reference = f"raw:{source_sha}"
+        sessions = [DiagnosticSession(
+            event_id=_identifier(report_id, "session:event"),
+            session_id=session_id, vin=fin, occurred_at=when, mileage_km=km,
+            label="QuickTest PDF", ecu_count=ecu_count, dtc_count=dtc_count,
+            source_ref=f"{reference}#session", report_id=report_id,
+            report_vin_usa=vehicle_vin, source_is_complete_quicktest=True,
+        )]
+        states = []
+        for ecu_index, code, metadata_json in ecu_rows:
+            metadata = json.loads(metadata_json)
+            states.append(ECUStateObservation(
+                event_id=_identifier(report_id, f"ecu:{ecu_index}:state"),
+                vin=fin, occurred_at=when, mileage_km=km,
+                session_id=session_id, ecu=code,
+                software_version=metadata.get("software_version"),
+                hardware_version=metadata.get("hardware_version"),
+                source_ref=f"{reference}#ecu:{ecu_index}",
+                hardware_part_number=metadata.get("hardware_partnumber"),
+                supplier=metadata.get("supplier"),
+                ecu_variant=metadata.get("ecu_variant"),
+            ))
+        params: dict[tuple[int, int], list[dict]] = {}
+        for ecu_index, dtc_index, name, first, last, page in parameter_rows:
+            params.setdefault((ecu_index, dtc_index), []).append({
+                "name": name, "first_value": first,
+                "last_value": last, "page": page,
+            })
+        diagnostics = []
+        for (
+            ecu_index, dtc_index, code, kind, dtc_code, description,
+            status, frequency, original_km, recent_km, cycles,
+        ) in dtc_rows:
+            diagnostics.append(DiagnosticEvent(
+                event_id=_identifier(report_id, f"ecu:{ecu_index}:dtc:{dtc_index}"),
+                vin=fin, occurred_at=when, mileage_km=km,
+                session_id=session_id, ecu=code, dtc_code=dtc_code,
+                dtc_text=description, status=status,
+                occurrence_count=frequency,
+                freeze_frame={
+                    "kind": kind, "original_odometer_km": original_km,
+                    "most_recent_odometer_km": recent_km,
+                    "ignition_cycle_counter": cycles,
+                    "parameters": params.get((ecu_index, dtc_index), []),
+                    "observed_at_diagnostic_test": True,
+                },
+                source_ref=f"{reference}#ecu:{ecu_index}:dtc:{dtc_index}",
+            ))
+        return sessions, diagnostics, states
+
     def statistics(self) -> dict[str, int]:
         with self.store.connect() as con:
             return {
