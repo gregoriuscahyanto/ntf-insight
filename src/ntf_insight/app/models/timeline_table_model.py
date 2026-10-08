@@ -25,8 +25,13 @@ class TimelineTableModel(QAbstractTableModel):
             return None
 
         entry = self._entries[index.row()]
+        time_label = (
+            entry.occurred_at.strftime("%d.%m.%Y") + " (Uhrzeit unbekannt)"
+            if getattr(entry.event, "time_precision", None) == "date"
+            else entry.occurred_at.strftime("%d.%m.%Y %H:%M")
+        )
         values = (
-            entry.occurred_at.strftime("%Y-%m-%d %H:%M"),
+            time_label,
             f"{entry.mileage_km:,} km" if entry.mileage_km is not None else "—",
             self._kind_label(entry.kind),
             entry.title,
@@ -59,6 +64,11 @@ class TimelineTableModel(QAbstractTableModel):
             "supplier": "Lieferant",
         }
         return labels.get(kind, kind.replace("_", " ").title())
+
+    def entry_at(self, row: int) -> TimelineEntry | None:
+        if 0 <= row < len(self._entries):
+            return self._entries[row]
+        return None
 
     def set_entries(self, entries: list[TimelineEntry]) -> None:
         self.beginResetModel()
