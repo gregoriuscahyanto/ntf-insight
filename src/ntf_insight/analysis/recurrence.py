@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from datetime import timedelta
 
 from ntf_insight.domain.case import NTFCase
-from ntf_insight.domain.events import DiagnosticEvent, PartReplacement
+from ntf_insight.domain.events import CaseEvent, DiagnosticEvent, PartReplacement
 
 FaultKey = tuple[str, str]
 
@@ -34,6 +34,28 @@ def _faults(events: list[DiagnosticEvent]) -> frozenset[FaultKey]:
     return frozenset(event.fault_key for event in events)
 
 
+def relative_to_replacement(event: CaseEvent, replacement: PartReplacement) -> str:
+    """Return 'pre', 'post' or 'unknown' without inventing same-day order.
+
+    Manual entries with only a known date use noon as a plotting placeholder. If
+    either event has day-only precision and both share the same date, temporal
+    ordering is unknowable and must not drive recurrence or fault disappearance.
+    """
+    if (
+        event.occurred_at.date() == replacement.occurred_at.date()
+        and (
+            getattr(event, "time_precision", None) == "date"
+            or getattr(replacement, "time_precision", None) == "date"
+        )
+    ):
+        return "unknown"
+    if event.occurred_at < replacement.occurred_at:
+        return "pre"
+    if event.occurred_at > replacement.occurred_at:
+        return "post"
+    return "unknown"
+
+
 def analyze_recurrence(case: NTFCase) -> RecurrenceResult:
     """Compare DTCs before and after the investigated component replacement.
 
@@ -58,17 +80,21 @@ def analyze_recurrence(case: NTFCase) -> RecurrenceResult:
         )
 
     has_pre_test = any(
-        session.occurred_at < replacement.occurred_at for session in case.diagnostic_sessions
+        relative_to_replacement(session, replacement) == "pre"
+        for session in case.diagnostic_sessions
     )
     has_post_test = any(
-        session.occurred_at > replacement.occurred_at for session in case.diagnostic_sessions
+        relative_to_replacement(session, replacement) == "post"
+        for session in case.diagnostic_sessions
     )
 
     pre_events = [
-        event for event in case.diagnostics if event.occurred_at < replacement.occurred_at
+        event for event in case.diagnostics
+        if relative_to_replacement(event, replacement) == "pre"
     ]
     post_events = [
-        event for event in case.diagnostics if event.occurred_at > replacement.occurred_at
+        event for event in case.diagnostics
+        if relative_to_replacement(event, replacement) == "post"
     ]
 
     pre_faults = _faults(pre_events)
