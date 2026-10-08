@@ -119,7 +119,9 @@ def test_pdf_only_is_persisted_by_fin_without_qec_case(tmp_path) -> None:
     assert reports[0]["ecu_count"] == 2
     assert quicktests.statistics()["ecus"] == 2
     assert quicktests.statistics()["dtcs"] == 1
-    assert quicktests.statistics()["parameters"] == 4
+    assert quicktests.statistics()["parameters"] == 4, quicktests.list_parameters(
+        reports[0]["report_id"], 1, 1
+    )
     ecus = quicktests.list_ecus(reports[0]["report_id"])
     assert ecus[0]["metadata"]["software_version"] == "25/04 002"
     faults = quicktests.list_dtcs(reports[0]["report_id"])
