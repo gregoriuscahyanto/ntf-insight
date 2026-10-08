@@ -38,17 +38,21 @@ jobs:
       - name: Build wheel
         run: python -m build --wheel
 
-      - name: Upload CI reports
+      - name: Upload CI reports (optional)
         if: always()
+        continue-on-error: true
         uses: actions/upload-artifact@v4
         with:
           name: reports-${{ runner.os }}
           path: reports/
           if-no-files-found: ignore
+          retention-days: 1
 
-      - name: Upload wheel
+      - name: Upload wheel (optional)
         if: success()
+        continue-on-error: true
         uses: actions/upload-artifact@v4
         with:
           name: ntf-insight-wheel-${{ runner.os }}
           path: dist/*.whl
+          retention-days: 1
