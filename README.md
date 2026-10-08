@@ -268,6 +268,26 @@ verarbeitet und verknüpft. Unklare FIN/Fall-Zuordnungen werden nicht erzwungen.
 
 Details und aktuelle Grenzen: [docs/real-data-import.md](docs/real-data-import.md).
 
+## QuickTest-PDF mit automatischer FIN-Zuordnung
+
+In **Datenquellen** einen oder mehrere QuickTest-PDFs per Drag & Drop
+einfügen. NTF Insight erkennt das Format und liest automatisch FIN,
+Diagnosezeit, Kilometerstand, alle Steuergeräte-HW/SW-Metadaten,
+DTC-Code/-Status/-Häufigkeit sowie Snapshot-Parameter und den vollständigen
+auslesbaren PDF-Seitentext aus.
+
+Das Ergebnis wird **direkt FIN-bezogen in der lokalen DuckDB** gespeichert –
+**auch ohne vorhandenen QEC-Fall**. Die App zeigt die Daten unter
+**Fälle / FIN → QuickTests nach FIN**. Ein später importierter passender
+QEC-Fall kann die bereits gespeicherten Diagnoseereignisse als
+abgeleitete Falltimeline übernehmen.
+
+Der ältere einmalige SQLite-Export ist für diese App-Funktion **nicht**
+erforderlich. Die PDF-Originale und die Fahrzeugdaten werden nicht nach
+GitHub übertragen.
+
+[QuickTest-Import: Bedienung, Datenbanktabellen und Grenzen](docs/quicktest-fin-import.md)
+
 ## Manuelle Fallerfassung
 
 Unter **Fälle / FIN** sind **+ Neuer Fall** und **+ Ereignis** verfügbar. Kurztests (auch mit **0 DTCs**), DTCs, Tausche, Werkstattmaßnahmen, ECU-HW/SW-Stände, Software-Updates, Lieferantenbefunde und freie Notizen können ohne Parser erfasst werden.
@@ -328,5 +348,6 @@ Concrete QEC, AutoExport CSV and QuickTest PDF formats are now supported by synt
 - [Enterprise CI/CD Pipeline](docs/enterprise-pipeline.md)
 - [Canonical Source Contracts](docs/source-contracts.md)
 - [Lokaler ZIP- und Echtdatenimport](docs/real-data-import.md)
+- [Automatischer QuickTest-PDF-Import nach FIN](docs/quicktest-fin-import.md)
 - [Manuelle Fallerfassung](docs/manual-entry.md)
 - [Fall-Clustering und Ähnlichkeitsmethodik](docs/case-clustering.md)
