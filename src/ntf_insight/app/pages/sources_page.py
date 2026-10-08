@@ -68,7 +68,7 @@ class _SourceImportWorker(QThread):
 
 
 class SourcesPage(QWidget):
-    sources_updated = Signal(str)
+    sources_updated = Signal(str, int)
     SOURCE_LABELS = {
         SourceType.VEHICLE_CASE_LIST: "Fall-/FIN-Liste",
         SourceType.SHORT_TEST: "Kurztest",
@@ -99,6 +99,7 @@ class SourcesPage(QWidget):
         self.mode = mode
         self._worker: _SourceImportWorker | None = None
         self._pending_reload = False
+        self._quicktests_added = 0
         self.import_service = (
             SourceImportService(Path(raw_dir), Path(database_path))
             if raw_dir and database_path
@@ -246,6 +247,7 @@ class SourcesPage(QWidget):
             f"{len(paths)} Datei(en)/ZIP-Paket(e) werden lokal geprüft und importiert …"
         )
         self._pending_reload = False
+        self._quicktests_added = 0
         self._worker = _SourceImportWorker(
             self.import_service,
             [Path(path) for path in paths],
@@ -274,6 +276,7 @@ class SourcesPage(QWidget):
                 + ")"
             )
         self.import_status.setText(text)
+        self._quicktests_added = summary.quicktests_saved
         self._pending_reload = bool(
             summary.cases_created or summary.events_linked or summary.quicktests_saved
         )
@@ -294,7 +297,7 @@ class SourcesPage(QWidget):
         if worker is not None:
             worker.deleteLater()
         if self._pending_reload:
-            self.sources_updated.emit(self.import_status.text())
+            self.sources_updated.emit(self.import_status.text(), self._quicktests_added)
 
     def _artifacts(self):
         if self.import_service is None:
