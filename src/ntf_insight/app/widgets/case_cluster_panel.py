@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QComboBox,
@@ -145,7 +146,7 @@ class CaseClusterPanel(QWidget):
         self.detail.setWordWrap(True)
         self.detail.setTextInteractionFlags(
             self.detail.textInteractionFlags()
-            | self.detail.TextInteractionFlag.TextSelectableByMouse
+            | Qt.TextInteractionFlag.TextSelectableByMouse
         )
         layout.addWidget(self.detail)
         layout.addStretch(1)
