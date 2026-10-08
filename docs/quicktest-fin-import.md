@@ -1,0 +1,95 @@
+# QuickTest-PDF: automatische FIN-Zuordnung und vollständige lokale Extraktion
+
+NTF Insight liest einen QuickTest-PDF **direkt in der Desktop-App** ein. Die
+früher einmalig erzeugte SQLite-Datei wird dafür **nicht benötigt**: Die
+Anwendung speichert die neuen Diagnoseinformationen im bereits verwendeten
+lokalen **DuckDB-Datenspeicher**.
+
+## Bedienung
+
+1. **Datenquellen** öffnen.
+2. Quellenart **Automatisch erkennen (empfohlen)** belassen.
+3. QuickTest-PDF (oder mehrere PDFs/ein ZIP) per Drag & Drop hineinziehen oder
+   über **Dateien auswählen…** wählen.
+4. Hintergrundverarbeitung abwarten. Nach einem neuen PDF wechselt die App
+   automatisch auf **Fälle / FIN → QuickTests nach FIN**.
+5. FIN wählen, Diagnosezeitpunkt auswählen, alle Steuergeräte prüfen,
+   relevante DTCs anklicken und die Snapshot-Parameter ansehen.
+6. Unter **Original-PDF-Seitentext** lässt sich der ausgelesene Text jeder
+   Seite nachvollziehen.
+
+Das QuickTest enthält die FIN **selbst**. Du musst sie weder manuell
+eingeben noch vor dem Import einen QEC-Fall anlegen. Ein optionaler manueller
+FIN-Hinweis wird **niemals** verwendet, um die berichtete FIN zu überschreiben.
+
+## Was gespeichert wird?
+
+Die Daten liegen in separaten, relationalen FIN-Tabellen in
+`ntf-insight.duckdb`, nicht nur als Freitextfeld:
+
+| Tabelle | Inhalt |
+| --- | --- |
+| `quicktest_reports` | FIN, ggf. separate US-VIN, Diagnosezeit, Kilometerstand, ECU-/DTC-Anzahl, Kopfmetadaten |
+| `quicktest_sources` | Zu welcher Rohdatei (SHA-256) gehört der Bericht? |
+| `quicktest_pages` | Vollständiger maschinenlesbarer Text je PDF-Seite |
+| `quicktest_ecus` | Alle erkannten ECU-Blöcke mit Typ, Variante, HW-/SW-Daten, Lieferant, Seitenbereich, kompletten Rohtexten |
+| `quicktest_dtcs` | ECU-DTC, Code, FC/EV, Beschreibung, Status, Häufigkeit, KM-Werte, Ignition-Counter, PDF-Seiten, vollständiger DTC-Rohblock |
+| `quicktest_parameters` | Alle erkannten Freeze-Frame-/Snapshot-Parameter einschließlich erster und letzter Werte |
+| `source_artifacts` | Unveränderte Originaldatei mit SHA-256 und Dateinamen |
+| `parse_runs` | Parser-Version, Status und Fehler-/Warnprotokoll |
+
+Bei importierten QuickTests prüft der Parser die **im PDF deklarierte Anzahl
+der Steuergeräte und die DTC-Anzahl je ECU**. Bei Widersprüchen verwirft er
+die strukturierte Übernahme und protokolliert den Fehler, statt unbemerkt
+unvollständige Diagnosedaten als vollständig zu kennzeichnen.
+
+Dateien mit gleicher Textsubstanz, aber unterschiedlichen PDF-Metadaten,
+werden als **ein logischer QuickTest** behandelt. Beide Originaldateien können
+weiterhin im Roharchiv nachgewiesen werden.
+
+## FIN ≠ Fall
+
+Ein QuickTest gehört zunächst **zum Fahrzeug (FIN)**, auch wenn noch kein
+Gewährleistungsfall oder Pumpentausch bekannt ist. Er wird deshalb in den
+separaten QuickTest-Tabellen vollständig gespeichert und im Tab
+**QuickTests nach FIN** angezeigt.
+
+Wenn ein QEC-Fall vorhanden ist, übernimmt die Falltimeline die
+passenden Diagnoseinformationen als **abgeleitete Projektion**. Bei mehreren
+QEC-Fällen derselben FIN, fehlendem Tauschanker oder unklarer zeitlicher
+Zuordnung wird **nicht automatisch ein beliebiger Fall ausgewählt**.
+
+Trifft der QEC-Fall erst nach dem QuickTest-Import ein, kann NTF Insight
+die bereits gespeicherten QuickTests mit den Fällen verknüpfen, ohne die PDFs
+erneut importieren zu müssen.
+
+## Fachliche Grenzen
+
+- Der QuickTest-Diagnosezeitpunkt ist **Beobachtungszeitpunkt** des
+  gespeicherten Fehlercodes, kein gesicherter Zeitpunkt der ersten Fehlfunktion.
+- Ein ausgelesener Fehlerzähler oder historischer km-Wert ersetzt keine
+  gesicherte Fehlerentstehungszeit.
+- Ein QuickTest ohne DTCs ist ein echter, dokumentierter fehlerfreier
+  Diagnosebericht – **nicht** gleichbedeutend mit fehlender Diagnosedatenbasis.
+- Es wird nur die maschinenlesbare **Textebene** extrahiert. Bildbasierte
+  PDF-Scans benötigen künftig einen separaten, geprüften OCR-Workflow.
+- Bei nicht erkanntem oder widersprüchlichem Layout bleiben die
+  **Originaldatei und der Parserfehler** erhalten; Daten werden nicht
+  anhand von Dateinamen oder FIN-Hinweisen frei geraten.
+- Der Parser speichert alle auslesbaren Rohseiten und Blöcke. Bei künftigen
+  QuickTest-Layouts müssen neue unbekannte Elemente gegebenenfalls separat
+  als strukturierte Felder ergänzt werden.
+- Die Datenbank ist nicht selbst verschlüsselt; lege sie nur auf einer
+  für Fahrzeug- und Werkstattdaten freigegebenen Umgebung ab.
+
+## Lokaler Test
+
+```powershell
+git pull
+python -m pip install -e ".[dev]"
+pytest
+python -m ntf_insight
+```
+
+Echte Mercedes-Benz FINs, Diagnosen und Berichte gehören **nicht in das
+öffentliche GitHub-Repository**.
