@@ -30,6 +30,7 @@ DTC_START = re.compile(
     re.I,
 )
 FAULT_COUNT = re.compile(r"^FAULT CODES \((\d+)\)$")
+WRAPPED_PARAMETER = re.compile(r"^(?P<name>[a-zA-Z][\\w]*)\\s+(?P<first>.+)$")
 PARAMETER = re.compile(r"^(?P<name>[a-zA-Z][\w]*)\s+(?P<first>.*?)\s+-\s*$")
 STATUS = re.compile(r"(?:\s|_)(?P<status>AS|S|A)\s*$")
 PARAMETER_HEADER = re.compile(r"^Name\s+Value\s*\(", re.I)
