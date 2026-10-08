@@ -8,7 +8,6 @@ from __future__ import annotations
 import csv
 import re
 from itertools import chain
-from collections import defaultdict
 from datetime import date, datetime
 from pathlib import Path
 from uuid import NAMESPACE_URL, uuid5
