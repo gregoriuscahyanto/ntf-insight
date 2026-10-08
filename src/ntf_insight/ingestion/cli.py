@@ -45,6 +45,8 @@ def main() -> int:
     print(
         f"Archiviert: {summary.files_archived}; geparst: {summary.files_parsed}; "
         f"ausstehend: {summary.files_pending}; neue Fälle: {summary.cases_created}; "
+        f"FIN-QuickTests gespeichert: {summary.quicktests_saved}; "
+        f"QuickTests ohne QEC-Fall: {summary.quicktests_without_case}; "
         f"verknüpfte Ereignisse: {summary.events_linked}; "
         f"unzugeordnete Ereignisse: {summary.events_unassigned}"
     )
