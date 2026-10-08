@@ -140,7 +140,7 @@ class CasePage(QWidget):
         self.case_proxy.setSourceModel(self.case_model)
         self.case_proxy.setFilterCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
         self.case_proxy.setFilterKeyColumn(-1)
-        search.textChanged.connect(self.case_proxy.setFilterFixedString)
+        search.textChanged.connect(self._filter_cases)
 
         self.case_table = QTableView()
         self.case_table.setModel(self.case_proxy)
@@ -262,6 +262,21 @@ class CasePage(QWidget):
         if self.selector.count():
             self.case_table.selectRow(0)
             self._refresh()
+
+    def _filter_cases(self, text: str) -> None:
+        """Keep the editable case in sync with the visible filtered selection."""
+        self.case_proxy.setFilterFixedString(text)
+        if self.case_proxy.rowCount() == 0:
+            self.case_table.clearSelection()
+            self.selector.setCurrentIndex(-1)
+            self.add_event_button.setEnabled(False)
+            self.correct_button.setEnabled(False)
+            return
+
+        self.case_table.selectRow(0)
+        self._case_clicked(self.case_proxy.index(0, 0))
+        self.add_event_button.setEnabled(self.manual_service is not None)
+        self.correct_button.setEnabled(self.manual_service is not None)
 
     def _case_clicked(self, index) -> None:
         source_index = self.case_proxy.mapToSource(self.case_proxy.index(index.row(), 0))
