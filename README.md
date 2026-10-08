@@ -245,7 +245,7 @@ Set `NTF_INSIGHT_DATA_DIR` to override that location. If the database contains n
 
 ## Desktop views
 
-The current prototype includes Overview, Data Sources, a combined FIN/Case workspace, DTC Explorer, DTC-Cluster visualization, Suppliers and Data Quality. The FIN/Case workspace treats the FIN + case combination as the analysis unit and includes a chronological time plot for DTCs, diagnostic sessions, ECU states, replacements, software, workshop and supplier events. Data Sources supports multi-file selection and local Drag & Drop into the immutable raw archive. The Case view can export a deterministic Markdown analysis report.
+The current prototype includes Overview, Data Sources, a combined FIN/Case workspace, DTC Explorer, **Case clusters & DTC-Cluster visualization**, Suppliers and Data Quality. The FIN/Case workspace treats the FIN + case combination as the analysis unit and includes a chronological time plot for DTCs, diagnostic sessions, ECU states, replacements, software, workshop and supplier events. Data Sources supports multi-file selection and local Drag & Drop into the immutable raw archive. The Case view can export a deterministic Markdown analysis report.
 
 ## Manuelle Fallerfassung
 
@@ -256,6 +256,14 @@ Ein Eintrag lässt sich über **Ereignistabelle → Markiertes Ereignis korrigie
 Demo-Fälle sind schreibgeschützt. Ein neu angelegter echter Fall wechselt automatisch in den lokalen Datenmodus, ohne die Demo-Daten zu übernehmen. Bei jeder Speicherung aktualisiert die App die anderen Ansichten.
 
 Anleitung und Grenzen: [docs/manual-entry.md](docs/manual-entry.md).
+
+## Fallähnlichkeit und Clustering
+
+Unter **Cluster & Fälle → Fall-Cluster** vergleicht NTF Insight jetzt FIN/Fall-Kombinationen anhand ihrer **Diagnosesignatur vor dem Austausch**. Die native Desktop-App zeigt Complete-Link-Fallcluster, eine Ähnlichkeitsmatrix (Heatmap) mit Begründungen und je ausgewähltem Fall eine Rangliste vergleichbarer historischer Fälle einschließlich der dokumentierten Maßnahmen und Nachtestergebnisse.
+
+**PCA wird hierfür nicht als Clusteringverfahren verwendet.** Die aktuelle Grundlage sind nachvollziehbare, gewichtete Jaccard-Ähnlichkeiten für DTCs, ECUs und weitere verfügbare Vorher-Merkmale. Post-Tausch-Rekurrenz, Lieferant und Reparaturmaßnahme fließen nicht in den diagnostischen Score ein. Ein gleiches Fehlerbild garantiert keine gleiche Abhilfe.
+
+Methodik, aktuelle Gewichte, Grenzen und geplanter Ausbau zu HDBSCAN/UMAP: [docs/case-clustering.md](docs/case-clustering.md).
 
 ## Development conventions
 
@@ -299,3 +307,4 @@ The source-independent foundation is now in place. The next source-dependent ste
 - [Enterprise CI/CD Pipeline](docs/enterprise-pipeline.md)
 - [Canonical Source Contracts](docs/source-contracts.md)
 - [Manuelle Fallerfassung](docs/manual-entry.md)
+- [Fall-Clustering und Ähnlichkeitsmethodik](docs/case-clustering.md)
