@@ -77,9 +77,10 @@ class MainWindow(QMainWindow):
         pages["sources"].sources_updated.connect(self._reload_after_source_import)
         return pages
 
-    def _reload_after_source_import(self) -> None:
+    def _reload_after_source_import(self, summary: str) -> None:
         """Refresh all views after an archived ZIP created or updated real cases."""
         self._reload_data()
+        self.pages["sources"].import_status.setText(summary)
         self.navigation.select_page("sources")
 
     def _reload_after_manual_change(self, case_id: str) -> None:
