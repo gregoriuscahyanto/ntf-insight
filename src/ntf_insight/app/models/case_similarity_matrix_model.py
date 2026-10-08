@@ -63,7 +63,7 @@ class CaseSimilarityMatrixModel(QAbstractTableModel):
                 return QColor("#e2e5e9" if not dark else "#343a40")
             if pair is None or pair.score is None:
                 return QColor("#f5f6f8" if not dark else "#242930")
-            shade = int(246 - pair.score * 188) if not dark else int(42 + pair.score * 88)
+            shade = int(246 - pair.score * 188) if not dark else int(32 + pair.score * 58)
             return QColor(shade, shade, shade) if not dark else QColor(shade, shade, shade)
 
         if role == Qt.ItemDataRole.ForegroundRole:
