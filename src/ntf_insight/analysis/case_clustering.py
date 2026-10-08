@@ -289,38 +289,38 @@ def cluster_diagnostic_cases(
         frozenset((match.left_case_id, match.right_case_id)): match
         for match in matches
     }
-    groups: list[tuple[str, ...]] = [(case_id,) for case_id in ids]
-    while True:
-        candidates: list[tuple[float, tuple[str, ...], tuple[str, ...]]] = []
-        for index, left_group in enumerate(groups):
-            for right_group in groups[index + 1:]:
-                pair_scores = [
-                    lookup[frozenset((left, right))]
-                    for left in left_group
-                    for right in right_group
-                ]
-                if all(
-                    item.eligible_for_cluster
-                    and item.score is not None
-                    and item.score >= threshold
-                    for item in pair_scores
-                ):
-                    candidates.append((
-                        min(item.score for item in pair_scores if item.score is not None),
-                        left_group,
-                        right_group,
-                    ))
-        if not candidates:
-            break
-        candidates.sort(key=lambda item: (-item[0], item[1], item[2]))
-        _, left_group, right_group = candidates[0]
-        groups.remove(left_group)
-        groups.remove(right_group)
-        groups.append(tuple(sorted((*left_group, *right_group))))
-        groups.sort()
+    # Greedy complete-link agglomeration. Candidate pairs are visited once from
+    # strongest to weakest; a merge is allowed only when ALL cross-pairs meet
+    # the threshold and have explicit matching diagnostic evidence.
+    groups: dict[str, set[str]] = {case_id: {case_id} for case_id in ids}
+    membership: dict[str, str] = {case_id: case_id for case_id in ids}
+
+    for match in matches:
+        if not match.eligible_for_cluster or match.score is None or match.score < threshold:
+            continue
+        left_group = membership[match.left_case_id]
+        right_group = membership[match.right_case_id]
+        if left_group == right_group:
+            continue
+        left_members = groups[left_group]
+        right_members = groups[right_group]
+        can_merge = all(
+            (pair := lookup[frozenset((left, right))]).eligible_for_cluster
+            and pair.score is not None
+            and pair.score >= threshold
+            for left in left_members
+            for right in right_members
+        )
+        if not can_merge:
+            continue
+        keep, remove = sorted((left_group, right_group))
+        merged = groups[keep] | groups.pop(remove)
+        groups[keep] = merged
+        for case_id in merged:
+            membership[case_id] = keep
 
     multi = sorted(
-        (group for group in groups if len(group) >= 2),
+        (tuple(sorted(group)) for group in groups.values() if len(group) >= 2),
         key=lambda group: (-len(group), group),
     )
     clusters = []
@@ -334,7 +334,7 @@ def cluster_diagnostic_cases(
     return CaseClusterResult(
         clusters=tuple(clusters),
         unassigned=tuple(
-            sorted(group[0] for group in groups if len(group) == 1)
+            sorted(next(iter(group)) for group in groups.values() if len(group) == 1)
         ),
         matches=tuple(matches),
         threshold=threshold,
