@@ -44,7 +44,10 @@ def canonical_fin(raw: object) -> str | None:
 
 def _date(value: object) -> tuple[datetime | None, bool]:
     if isinstance(value, datetime):
-        return value.replace(tzinfo=None), True
+        # Excel midnight timestamps usually mean only the date is known.
+        # Preserve an explicitly non-midnight time when supplied.
+        is_midnight = (value.hour, value.minute, value.second, value.microsecond) == (0, 0, 0, 0)
+        return value.replace(tzinfo=None), is_midnight
     if isinstance(value, date):
         return datetime.combine(value, datetime.min.time()), True
     text = str(value or "").strip()
