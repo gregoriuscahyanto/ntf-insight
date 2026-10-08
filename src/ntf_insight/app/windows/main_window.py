@@ -11,6 +11,7 @@ from ntf_insight.app.pages.dashboard_page import DashboardPage
 from ntf_insight.app.pages.data_quality_page import DataQualityPage
 from ntf_insight.app.pages.dtc_page import DTCExplorerPage
 from ntf_insight.app.pages.similarity_page import SimilarityPage
+from ntf_insight.app.pages.prediction_page import PredictionPage
 from ntf_insight.app.pages.sources_page import SourcesPage
 from ntf_insight.app.pages.supplier_page import SupplierPage
 from ntf_insight.app.widgets.navigation import NavigationPanel
@@ -69,6 +70,7 @@ class MainWindow(QMainWindow):
             "dtcs": DTCExplorerPage(self.repository, self.reference_repository),
             "clusters": SimilarityPage(self.repository),
             "suppliers": SupplierPage(self.repository),
+            "prediction": PredictionPage(self.repository, str(self.application_data.paths.database_path), self.application_data.mode),
             "quality": DataQualityPage(self.repository, self.reference_repository),
         }
         pages["cases"].case_saved.connect(self._reload_after_manual_change)
