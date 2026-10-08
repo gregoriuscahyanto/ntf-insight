@@ -8,6 +8,7 @@ from ntf_insight.app.settings import AppPaths
 from ntf_insight.demo.synthetic_cases import build_demo_repository
 from ntf_insight.demo.synthetic_reference import build_demo_reference_repository
 from ntf_insight.storage.duckdb_store import DuckDBStore
+from ntf_insight.storage.quicktest_store import QuickTestStore
 from ntf_insight.storage.reference_repositories import InMemoryReferenceRepository
 from ntf_insight.storage.repositories import InMemoryCaseRepository
 
@@ -29,7 +30,10 @@ def load_application_data(paths: AppPaths | None = None) -> ApplicationData:
     persisted_triggers = store.load_triggers()
     persisted_changes = store.load_changes()
 
-    if persisted_cases:
+    # PDF-only import is real FIN-scoped data even before any NTF repair case
+    # exists. Do not mix fictional demo cases into that vehicle's analysis.
+    has_real_quicktests = bool(QuickTestStore(store).list_fins())
+    if persisted_cases or has_real_quicktests:
         return ApplicationData(
             cases=InMemoryCaseRepository(persisted_cases),
             references=InMemoryReferenceRepository(persisted_triggers, persisted_changes),
