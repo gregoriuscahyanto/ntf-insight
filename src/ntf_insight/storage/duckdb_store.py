@@ -7,6 +7,7 @@ from pathlib import Path
 import duckdb
 
 from ntf_insight.domain.case import NTFCase
+from ntf_insight.domain.manual import ManualAction, ManualChange
 from ntf_insight.domain.reference import DTCTriggerDefinition, ECUChangeRecord
 from ntf_insight.ingestion.artifacts import ParseRun, SourceArtifact
 
@@ -55,6 +56,17 @@ class DuckDBStore:
                     case_id VARCHAR PRIMARY KEY,
                     vin VARCHAR NOT NULL,
                     component_type VARCHAR NOT NULL,
+                    payload_json VARCHAR NOT NULL
+                )
+                """
+            )
+            con.execute(
+                """
+                CREATE TABLE IF NOT EXISTS manual_changes (
+                    change_id VARCHAR PRIMARY KEY,
+                    case_id VARCHAR NOT NULL,
+                    action VARCHAR NOT NULL,
+                    occurred_at TIMESTAMP NOT NULL,
                     payload_json VARCHAR NOT NULL
                 )
                 """
@@ -153,6 +165,80 @@ class DuckDBStore:
                 """,
                 [case.case_id, case.vin, case.component_type, case.model_dump_json()],
             )
+
+    def get_case(self, case_id: str) -> NTFCase | None:
+        with self.connect() as con:
+            row = con.execute(
+                "SELECT payload_json FROM case_snapshots WHERE case_id = ?",
+                [case_id],
+            ).fetchone()
+        return NTFCase.model_validate_json(row[0]) if row else None
+
+    def save_manual_revision(self, case: NTFCase, change: ManualChange) -> None:
+        """Atomically persist a manual change and its corresponding case snapshot."""
+        if change.case_id != case.case_id:
+            raise ValueError("Audit case ID does not match the case snapshot.")
+
+        with self.connect() as con:
+            con.execute("BEGIN TRANSACTION")
+            try:
+                if change.action == ManualAction.CREATE_CASE:
+                    con.execute(
+                        """
+                        INSERT INTO case_snapshots(case_id, vin, component_type, payload_json)
+                        VALUES (?, ?, ?, ?)
+                        """,
+                        [
+                            case.case_id, case.vin, case.component_type,
+                            case.model_dump_json(),
+                        ],
+                    )
+                else:
+                    con.execute(
+                        """
+                        UPDATE case_snapshots
+                        SET vin = ?, component_type = ?, payload_json = ?
+                        WHERE case_id = ?
+                        """,
+                        [
+                            case.vin, case.component_type, case.model_dump_json(),
+                            case.case_id,
+                        ],
+                    )
+
+                con.execute(
+                    """
+                    INSERT INTO manual_changes
+                        (change_id, case_id, action, occurred_at, payload_json)
+                    VALUES (?, ?, ?, ?, ?)
+                    """,
+                    [
+                        change.change_id, change.case_id, str(change.action),
+                        change.occurred_at.replace(tzinfo=None),
+                        change.model_dump_json(),
+                    ],
+                )
+                con.execute("COMMIT")
+            except Exception:
+                con.execute("ROLLBACK")
+                raise
+
+    def load_manual_changes(self, case_id: str | None = None) -> list[ManualChange]:
+        with self.connect() as con:
+            if case_id is None:
+                rows = con.execute(
+                    "SELECT payload_json FROM manual_changes ORDER BY occurred_at, change_id"
+                ).fetchall()
+            else:
+                rows = con.execute(
+                    """
+                    SELECT payload_json FROM manual_changes
+                    WHERE case_id = ?
+                    ORDER BY occurred_at, change_id
+                    """,
+                    [case_id],
+                ).fetchall()
+        return [ManualChange.model_validate_json(row[0]) for row in rows]
 
     def save_cases(self, cases: list[NTFCase]) -> None:
         for case in cases:
