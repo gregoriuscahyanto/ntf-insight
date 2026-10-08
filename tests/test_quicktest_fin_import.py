@@ -3,19 +3,14 @@
 from __future__ import annotations
 
 import io
-import os
-import time
 from datetime import datetime
-from zipfile import ZipFile
 
-import pytest
 from openpyxl import Workbook
 from reportlab.pdfgen import canvas
 
 from ntf_insight.app.bootstrap import load_application_data
 from ntf_insight.app.settings import AppPaths
 from ntf_insight.ingestion.batch_import import LocalBatchImporter
-from ntf_insight.ingestion.real_source_parsers import QuickTestPdfParser
 from ntf_insight.ingestion.service import SourceImportService
 from ntf_insight.storage.quicktest_store import QuickTestStore
 
