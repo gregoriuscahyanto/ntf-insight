@@ -67,7 +67,7 @@ class _SourceImportWorker(QThread):
 
 
 class SourcesPage(QWidget):
-    sources_updated = Signal()
+    sources_updated = Signal(str)
     SOURCE_LABELS = {
         SourceType.VEHICLE_CASE_LIST: "Fall-/FIN-Liste",
         SourceType.SHORT_TEST: "Kurztest",
@@ -290,7 +290,7 @@ class SourcesPage(QWidget):
         if worker is not None:
             worker.deleteLater()
         if self._pending_reload:
-            self.sources_updated.emit()
+            self.sources_updated.emit(self.import_status.text())
 
     def _artifacts(self):
         if self.import_service is None:
