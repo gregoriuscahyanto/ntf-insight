@@ -67,9 +67,9 @@ def _quicktest_fingerprint(
             (
                 event.ecu.strip().upper(),
                 event.dtc_code.strip().upper(),
-                event.status,
-                event.occurrence_count,
-                event.dtc_text,
+                event.status or "",
+                event.occurrence_count if event.occurrence_count is not None else -1,
+                event.dtc_text or "",
                 json.dumps(event.freeze_frame, sort_keys=True, ensure_ascii=False),
             )
             for event in diagnostics
@@ -77,8 +77,8 @@ def _quicktest_fingerprint(
         "ecu_states": sorted(
             (
                 event.ecu.strip().upper(),
-                event.hardware_version,
-                event.software_version,
+                event.hardware_version or "",
+                event.software_version or "",
             )
             for event in ecu_states
         ),
