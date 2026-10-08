@@ -25,6 +25,7 @@ class NavigationPanel(QFrame):
         ("dtcs", "DTC-Explorer"),
         ("clusters", "Cluster & Fälle"),
         ("suppliers", "Lieferanten"),
+        ("prediction", "KI-Prognose"),
         ("quality", "Datenqualität"),
     )
 
