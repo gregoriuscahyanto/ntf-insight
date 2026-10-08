@@ -11,7 +11,7 @@ import re
 from dataclasses import dataclass
 from typing import Iterable
 
-from ntf_insight.analysis.recurrence import analyze_recurrence, relative_to_replacement
+from ntf_insight.analysis.recurrence import relative_to_replacement
 from ntf_insight.components.registry import list_component_profiles
 from ntf_insight.domain.case import NTFCase
 
@@ -360,8 +360,12 @@ def cluster_diagnostic_cases(
 
 
 def resolution_observation(case: NTFCase) -> ResolutionObservation:
-    """Outcome and measures are deliberately *not* similarity inputs."""
-    result = analyze_recurrence(case)
+    """Describe DTC outcome relative to the LAST documented intervention.
+
+    Never equate an absent recurrence with a proven successful repair.
+    In particular, a post-swap test taken before a later wiring repair must not
+    be presented as evidence of that wiring repair's effectiveness.
+    """
     measures: list[str] = []
     for replacement in case.replacements:
         measures.append(f"Bauteiltausch: {replacement.component_type}")
@@ -378,31 +382,49 @@ def resolution_observation(case: NTFCase) -> ResolutionObservation:
         *(repair for repair in case.repairs if repair.action),
         *case.software_events,
     ]
-    latest_intervention = max(
-        interventions, key=lambda item: item.occurred_at, default=None
-    )
-    post_measure_test = (
-        latest_intervention is not None
-        and any(
-            relative_to_replacement(session, latest_intervention) == "post"
-            for session in case.diagnostic_sessions
+    latest = max(interventions, key=lambda item: item.occurred_at, default=None)
+    if latest is None:
+        return ResolutionObservation(
+            measures=tuple(dict.fromkeys(measures)),
+            outcome="Keine dokumentierte Maßnahme mit überprüfbarem Nachtest",
+            has_pre_test=False,
+            has_post_test=False,
         )
+
+    has_pre_test = any(
+        relative_to_replacement(session, latest) == "pre"
+        for session in case.diagnostic_sessions
     )
-    if not result.assessable or not result.pre_faults:
-        outcome = "Wirksamkeit nicht überprüfbar (Vor-/Nachtest oder Ausgangs-DTC fehlt)"
-    elif latest_intervention is not None and not post_measure_test:
+    has_post_test = any(
+        relative_to_replacement(session, latest) == "post"
+        for session in case.diagnostic_sessions
+    )
+    pre_faults = {
+        event.fault_key for event in case.diagnostics
+        if relative_to_replacement(event, latest) == "pre"
+    }
+    post_faults = {
+        event.fault_key for event in case.diagnostics
+        if relative_to_replacement(event, latest) == "post"
+    }
+
+    if not has_post_test:
+        outcome = "Kein Kurztest nach der letzten dokumentierten Maßnahme"
+    elif not has_pre_test or not pre_faults:
+        outcome = "Wirksamkeit nicht überprüfbar (Vorher-Test oder Ausgangs-DTC fehlt)"
+    elif pre_faults & post_faults:
+        outcome = "Derselbe DTC nach letzter Maßnahme erneut beobachtet"
+    elif post_faults - pre_faults:
         outcome = (
-            "Kein Kurztest nach der letzten dokumentierten Maßnahme; "
-            "deren Wirkung ist noch nicht beurteilt"
+            "Ausgangs-DTC nicht erneut beobachtet, aber neuer DTC nach "
+            "der Maßnahme; keine bestätigte Lösung"
         )
-    elif result.has_recurrence:
-        outcome = "Derselbe DTC im dokumentierten Nachtest erneut beobachtet"
     else:
         outcome = "Ausgangs-DTC im dokumentierten Nachtest nicht erneut beobachtet"
 
     return ResolutionObservation(
         measures=tuple(dict.fromkeys(measures)),
         outcome=outcome,
-        has_post_test=result.has_post_test,
-        has_pre_test=result.has_pre_test,
+        has_post_test=has_post_test,
+        has_pre_test=has_pre_test,
     )
