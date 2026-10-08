@@ -114,6 +114,8 @@ class LocalBatchImporter:
         paths: Iterable[Path],
         on_progress: Callable[[str], None] | None = None,
         forced_source_type: SourceType | None = None,
+        source_system: str | None = None,
+        vin_hint: str | None = None,
     ) -> ImportSummary:
         def progress(text: str) -> None:
             if on_progress is not None:
@@ -131,7 +133,9 @@ class LocalBatchImporter:
                     continue
                 progress("ZIP-Archiv prüfen …")
                 self._validate_zip(path)
-                package_artifact = self.sources.import_raw(path, SourceType.OTHER)
+                package_artifact = self.sources.import_raw(
+                    path, SourceType.OTHER, source_system=source_system
+                )
                 zip_hashes.add(package_artifact.sha256)
                 summary.files_archived += 1
                 zip_members = self._extract_zip(path, Path(temp) / package_artifact.sha256)
@@ -143,12 +147,24 @@ class LocalBatchImporter:
             artifacts: list[SourceArtifact] = []
             processed = set()
             for path in extracted:
-                source_type = (
-                    forced_source_type
-                    if forced_source_type is not None and path not in from_zip
-                    else detect_source_type(path)
+                try:
+                    source_type = (
+                        forced_source_type
+                        if forced_source_type is not None and path not in from_zip
+                        else detect_source_type(path)
+                    )
+                except Exception:
+                    source_type = SourceType.OTHER
+                    summary.issues.append(
+                        "Eine Quelldatei konnte nicht automatisch erkannt werden; "
+                        "sie wurde nur archiviert."
+                    )
+                artifact = self.sources.import_raw(
+                    path,
+                    source_type,
+                    source_system=source_system,
+                    vin_hint=vin_hint if path not in from_zip else None,
                 )
-                artifact = self.sources.import_raw(path, source_type)
                 if artifact.sha256 in processed:
                     summary.duplicates += 1
                     continue
