@@ -3,10 +3,9 @@
 from __future__ import annotations
 
 import json
-from datetime import datetime
 from typing import Any
 
-from PySide6.QtCore import QDate, QDateTime, QTime, Qt
+from PySide6.QtCore import QDate, QDateTime, QTime
 from PySide6.QtGui import QIntValidator
 from PySide6.QtWidgets import (
     QCheckBox,
@@ -15,7 +14,6 @@ from PySide6.QtWidgets import (
     QDialog,
     QDialogButtonBox,
     QFormLayout,
-    QHBoxLayout,
     QLabel,
     QLineEdit,
     QMessageBox,
@@ -29,16 +27,7 @@ from PySide6.QtWidgets import (
 from ntf_insight.app.models.simple_table_model import SimpleTableModel
 from ntf_insight.domain.case import NTFCase
 from ntf_insight.domain.enums import SupplierFindingResult
-from ntf_insight.domain.events import (
-    CaseEvent,
-    DiagnosticEvent,
-    DiagnosticSession,
-    ECUStateObservation,
-    PartReplacement,
-    RepairEvent,
-    SoftwareEvent,
-    SupplierFinding,
-)
+from ntf_insight.domain.events import CaseEvent, DiagnosticSession
 from ntf_insight.domain.manual import ManualChange
 from ntf_insight.domain.vehicle import Vehicle
 from ntf_insight.ingestion.manual_entry import EVENT_TYPES
