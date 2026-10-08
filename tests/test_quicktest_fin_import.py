@@ -221,3 +221,40 @@ def test_different_fins_remain_separate_without_a_fall(tmp_path) -> None:
     store = QuickTestStore(service.store)
     assert len(store.list_fins()) == 2
     assert all(len(store.list_reports(fin)) == 1 for fin in store.list_fins())
+
+
+def test_pdf_drag_drop_opens_fin_browser_without_qec_case(tmp_path, monkeypatch) -> None:
+    import time
+
+    monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
+    monkeypatch.setenv("NTF_INSIGHT_DATA_DIR", str(tmp_path / "gui-data"))
+    from PySide6.QtWidgets import QApplication
+
+    from ntf_insight.app.windows.main_window import MainWindow
+
+    pdf = tmp_path / "from-explorer.pdf"
+    pdf.write_bytes(_pdf())
+    app = QApplication.instance() or QApplication([])
+    window = MainWindow()
+    assert window.application_data.mode == "demo"
+
+    source_page = window.pages["sources"]
+    source_page._archive_paths([pdf])
+    deadline = time.monotonic() + 20
+    while window.application_data.mode != "local" and time.monotonic() < deadline:
+        app.processEvents()
+        time.sleep(0.025)
+    app.processEvents()
+
+    assert window.application_data.mode == "local"
+    assert not window.repository.list_cases()
+    case_page = window.pages["cases"]
+    assert case_page.quicktest_browser is not None
+    assert case_page.detail_tabs.currentWidget() is case_page.quicktest_browser
+    assert case_page.quicktest_browser.fin_selector.currentText() == FIN
+    assert case_page.quicktest_browser.report_model.rowCount() == 1
+    assert case_page.quicktest_browser.ecu_model.rowCount() == 2
+    assert case_page.quicktest_browser.dtc_model.rowCount() == 1
+
+    window.close()
+    app.processEvents()
