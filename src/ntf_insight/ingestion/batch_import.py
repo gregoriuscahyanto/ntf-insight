@@ -9,6 +9,8 @@ Security and provenance:
 """
 from __future__ import annotations
 
+import hashlib
+import json
 import shutil
 import stat
 import tempfile
@@ -49,6 +51,62 @@ class ImportSummary:
     duplicates: int = 0
     issues: list[str] = field(default_factory=list)
     source_counts: dict[str, int] = field(default_factory=dict)
+
+
+def _quicktest_fingerprint(
+    session,
+    diagnostics,
+    ecu_states,
+) -> str:
+    """Logical report identity, unaffected by PDF producer metadata/byte hashes."""
+    payload = {
+        "fin": session.vin,
+        "timestamp": session.occurred_at.isoformat(),
+        "mileage_km": session.mileage_km,
+        "diagnostics": sorted(
+            (
+                event.ecu.strip().upper(),
+                event.dtc_code.strip().upper(),
+                event.status,
+                event.occurrence_count,
+                event.dtc_text,
+                json.dumps(event.freeze_frame, sort_keys=True, ensure_ascii=False),
+            )
+            for event in diagnostics
+        ),
+        "ecu_states": sorted(
+            (
+                event.ecu.strip().upper(),
+                event.hardware_version,
+                event.software_version,
+            )
+            for event in ecu_states
+        ),
+    }
+    return hashlib.sha256(
+        json.dumps(payload, sort_keys=True, ensure_ascii=False).encode("utf-8")
+    ).hexdigest()
+
+
+def _existing_quicktests(cases: list[NTFCase]) -> set[str]:
+    signatures = set()
+    for case in cases:
+        for session in case.diagnostic_sessions:
+            if session.label != "QuickTest PDF":
+                continue
+            signature = _quicktest_fingerprint(
+                session,
+                [
+                    event for event in case.diagnostics
+                    if event.session_id == session.session_id
+                ],
+                [
+                    event for event in case.ecu_states
+                    if event.session_id == session.session_id
+                ],
+            )
+            signatures.add(signature)
+    return signatures
 
 
 class LocalBatchImporter:
@@ -229,6 +287,7 @@ class LocalBatchImporter:
                 case_fin[case.vin].append(case)
             allowed_fins = set(case_fin)
 
+            seen_quicktests = _existing_quicktests(list(existing.values()))
             for artifact in others:
                 suffix = Path(artifact.original_name).suffix.casefold()
                 parser = None
@@ -250,6 +309,17 @@ class LocalBatchImporter:
                     continue
                 summary.files_parsed += 1
                 summary.issues.extend(result.issues)
+                if isinstance(parser, QuickTestPdfParser) and len(result.sessions) == 1:
+                    fingerprint = _quicktest_fingerprint(
+                        result.sessions[0], result.diagnostics, result.ecu_states
+                    )
+                    if fingerprint in seen_quicktests:
+                        # Both original PDF artifacts remain archived. Identical
+                        # diagnostic observations are not counted twice even if
+                        # PDF producer metadata yields different byte-level hashes.
+                        summary.duplicates += 1
+                        continue
+                    seen_quicktests.add(fingerprint)
                 pending.append((artifact, result))
 
             for _, document in pending:
