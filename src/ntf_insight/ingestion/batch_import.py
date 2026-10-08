@@ -76,12 +76,17 @@ class LocalBatchImporter:
                 if (
                     not parts
                     or raw.startswith(("/", "\\"))
-                    or ":" in parts[0]
+                    or any(":" in part for part in parts)
                     or ".." in parts
                     or "\x00" in raw
                 ):
                     raise ValueError("Unsicherer ZIP-Pfad erkannt.")
                 mode = info.external_attr >> 16
+                stem = Path(parts[-1]).stem.upper().split(".")[0]
+                if stem in {"CON", "PRN", "AUX", "NUL"} or (
+                    len(stem) == 4 and stem[:3] in {"COM", "LPT"} and stem[3:].isdigit()
+                ):
+                    raise ValueError("ZIP enthält einen reservierten Dateinamen.")
                 if stat.S_IFMT(mode) == stat.S_IFLNK:
                     raise ValueError("ZIP enthält nicht unterstützte symbolische Links.")
                 if info.file_size > MAX_MEMBER_BYTES:
