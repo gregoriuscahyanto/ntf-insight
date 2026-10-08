@@ -18,6 +18,7 @@ from PySide6.QtWidgets import (
 from ntf_insight.analysis.dtc_clusters import build_dtc_network
 from ntf_insight.analysis.similarity import all_pairwise_similarities
 from ntf_insight.app.models.simple_table_model import SimpleTableModel
+from ntf_insight.app.widgets.case_cluster_panel import CaseClusterPanel
 from ntf_insight.app.widgets.dtc_cluster_graph import DTCClusterGraph
 from ntf_insight.storage.repositories import CaseRepository
 
@@ -32,18 +33,22 @@ class SimilarityPage(QWidget):
         layout.setContentsMargins(32, 28, 32, 28)
         layout.setSpacing(14)
 
-        layout.addWidget(QLabel("DTC-Cluster", objectName="PageTitle"))
+        layout.addWidget(QLabel("Cluster & Fallähnlichkeit", objectName="PageTitle"))
         subtitle = QLabel(
-            "Das Netzwerk visualisiert DTCs, die in denselben Fällen gemeinsam auftreten. "
-            "Die Cluster sind aktuell deskriptiv und erklärbar; sie sind noch kein HDBSCAN-/ML-Ergebnis.",
+            "Fall-Cluster vergleichen diagnostische Merkmale vor dem Tausch. "
+            "Maßnahmen und Nachtestergebnisse helfen anschließend, vergleichbare "
+            "Lösungswege zu untersuchen. Das DTC-Netzwerk visualisiert getrennt "
+            "das Koauftreten einzelner Fehlercodes.",
             objectName="PageSubtitle",
         )
         subtitle.setWordWrap(True)
         layout.addWidget(subtitle)
 
         tabs = QTabWidget()
+        self.case_cluster_panel = CaseClusterPanel(repository.list_cases())
+        tabs.addTab(self.case_cluster_panel, "Fall-Cluster")
         tabs.addTab(self._build_network_tab(), "DTC-Netzwerk")
-        tabs.addTab(self._build_similarity_tab(), "Fallähnlichkeit")
+        tabs.addTab(self._build_similarity_tab(), "Paarvergleich (Basis)")
         layout.addWidget(tabs, 1)
         self.tabs = tabs
 
@@ -109,8 +114,9 @@ class SimilarityPage(QWidget):
         layout.setSpacing(10)
 
         explanation = QLabel(
-            "Erklärbare Basis-Ähnlichkeit zwischen Fällen. Lieferant und Charge werden bewusst nicht als "
-            "Ähnlichkeitsmerkmale verwendet.",
+            "Diagnostischer Paarvergleich ohne Lieferant, Charge oder Reparaturergebnis "
+            "als Ähnlichkeitsmerkmale. Die Spalte Wiederholungsmuster zeigt nur den "
+            "nachträglich beobachteten Verlauf, nicht die Grundlage des Scores.",
             objectName="PageSubtitle",
         )
         explanation.setWordWrap(True)
