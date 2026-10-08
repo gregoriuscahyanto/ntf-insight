@@ -153,11 +153,17 @@ Implemented:
 - [x] interpretable case feature extraction
 - [x] Polars feature frame
 - [x] transparent weighted/Jaccard similarity baseline
+- [x] pre-intervention diagnostic signature (without supplier or repair-outcome leakage)
+- [x] conservative complete-link case clusters with adjustable similarity threshold
+- [x] case similarity heatmap and nearest-neighbour retrieval
+- [x] display historical interventions and post-intervention evidence separately
 - [x] similarity view in desktop app
 - [x] interactive DTC co-occurrence network visualization
 
 Pending real sample size:
 
+- [ ] evaluate whether diagnostically similar cases share expert-confirmed effective solutions
+- [ ] calibrate diagnostic weights and minimum evidence on reviewed field cases
 - [ ] feature validation / scaling
 - [ ] HDBSCAN
 - [ ] UMAP visualization
@@ -199,6 +205,7 @@ Current PySide6 views:
 - [x] Generated evidence
 - [x] DTC Explorer with trigger/change linkage
 - [x] Similarity / clustering baseline
+- [x] native desktop case-cluster/heatmap and comparable repair evidence
 - [x] Supplier analytics foundation
 - [x] Data Quality
 - [ ] edit case master metadata with history
