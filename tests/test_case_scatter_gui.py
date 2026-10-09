@@ -51,7 +51,7 @@ def test_scatter_empty_data_has_no_fabricated_points() -> None:
     panel = CaseScatterPanel([], None)
     assert panel.plot.items_by_case == {}
     assert not panel.open_button.isEnabled()
-    assert "0 projizierte" in panel.summary.text()
+    assert "0 projiziert" in panel.summary.text()
     panel.close()
     app.processEvents()
 
