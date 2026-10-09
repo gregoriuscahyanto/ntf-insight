@@ -329,6 +329,27 @@ werden, ohne dass die Originaldatei gelöscht wird.
 
 [Details zum lokalen Echtdatenimport](docs/real-data-import.md).
 
+## Reparaturdatum abgleichen und Zeitplot nach km / Datum
+
+Im Tab **Fälle / FIN → FIN / Fallanalyse** werden QEC-`Rep.-Datum` und
+ein **mit FIN und Teilenummer übereinstimmender** AutoExport-`RepairDt`
+getrennt angezeigt. Ein Reparaturdatum ist nur ein **möglicher
+Pumpentausch**, nicht automatisch ein bestätigter physischer Wechsel.
+
+Im Plot sind beide Quellen markiert. Die **X-Achse** lässt sich
+zwischen **Datum/Uhrzeit** und **tatsächlichem Kilometerstand** umstellen;
+fehlende km-Werte werden unter `km unbekannt` angezeigt, nicht erfunden.
+Der **DTC-Filter** blendet nur unpassende DTCs aus; Kurztests,
+Steuergeräte-HW-/SW-Stände, Tauschdaten und Lieferantenbefunde
+bleiben als Kontext sichtbar.
+
+Bei eindeutigem Kandidaten ist nach Werkstattprüfung eine
+**manuelle Tauschanker-Bestätigung mit Audit-Eintrag** möglich.
+Bis dahin bleibt die Wiederauftretensanalyse auf dem bisher
+dokumentierten Tauschanker.
+
+[Methodik, Bedienung und Bedeutung von ECU-Stand/Lieferantenbefund](docs/replacement-date-comparison.md).
+
 ## Manuelle Fallerfassung
 
 Unter **Fälle / FIN** sind **+ Neuer Fall** und **+ Ereignis** verfügbar. Kurztests (auch mit **0 DTCs**), DTCs, Tausche, Werkstattmaßnahmen, ECU-HW/SW-Stände, Software-Updates, Lieferantenbefunde und freie Notizen können ohne Parser erfasst werden.
