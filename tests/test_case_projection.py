@@ -10,7 +10,7 @@ from ntf_insight.analysis.case_clustering import (
 from ntf_insight.analysis.case_projection import project_diagnostic_cases
 from ntf_insight.demo.synthetic_cases import build_demo_cases
 from ntf_insight.domain.case import NTFCase
-from ntf_insight.domain.events import DiagnosticEvent, SupplierFinding
+from ntf_insight.domain.events import SupplierFinding
 from ntf_insight.domain.enums import SupplierFindingResult
 from ntf_insight.domain.vehicle import Vehicle
 
