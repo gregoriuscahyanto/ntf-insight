@@ -500,3 +500,25 @@ def test_large_archive_rows_can_exceed_original_250k_limit_in_import(tmp_path, m
     result = LocalBatchImporter(source).import_paths([raw])
     assert result.reference_rows == 2
     assert seen == [1_000_000]
+
+
+
+def test_failed_raw_history_write_is_not_reported_as_success(tmp_path, monkeypatch) -> None:
+    """Do not silently drop a large DTC CSV from indexed source knowledge."""
+    from ntf_insight.storage.source_knowledge_store import SourceKnowledgeStore
+
+    def fail(self, *args, **kwargs):
+        raise ValueError("Synthetische Kapazitätsgrenze")
+
+    monkeypatch.setattr(SourceKnowledgeStore, "save_records", fail)
+    diagnostic = tmp_path / "diagnostic.csv"
+    diagnostic.write_bytes(_autoexport_csv())
+    source = SourceImportService(tmp_path / "raw", tmp_path / "cases.duckdb")
+    summary = LocalBatchImporter(source).import_paths([diagnostic])
+
+    assert summary.files_pending == 1
+    assert summary.files_parsed == 0
+    assert summary.reference_rows == 0
+    assert summary.events_linked == 0
+    assert any("nicht vollstaendig" in issue for issue in summary.issues)
+    assert len(source.store.load_artifacts()) == 1
