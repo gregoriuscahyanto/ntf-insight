@@ -197,6 +197,30 @@ class SourceKnowledgeStore:
             for row in rows
         ]
 
+    def diagnostic_times_for_fins(
+        self, fins: set[str]
+    ) -> dict[str, list[tuple[str | None, str | None, int]]]:
+        """Read only timestamps of original AutoExport DTCs for scoped FINs.
+
+        Source rows are not deduplicated and are never directly attached
+        to QEC cases by this read-only audit.
+        """
+        if not fins:
+            return {}
+        result: dict[str, list[tuple[str | None, str | None, int]]] = {}
+        with self.store.connect() as con:
+            for fin in sorted(fins):
+                rows = con.execute(
+                    """SELECT json_extract_string(payload_json, '$.DiagStartTs'),
+                              json_extract_string(payload_json, '$.DiagStartDt'),
+                              COUNT(*)
+                       FROM source_knowledge_rows
+                       WHERE category = 'autoexport_dtc' AND fin = ?
+                       GROUP BY 1, 2""", [fin],
+                ).fetchall()
+                result[fin] = [(a, b, int(n)) for a, b, n in rows]
+        return result
+
     def autoexport_population(self) -> dict[str, int]:
         """Count rows and distinct FINs by source category, not QEC cases.
 
