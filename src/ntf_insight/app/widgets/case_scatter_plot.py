@@ -419,6 +419,10 @@ class CaseScatterPanel(QWidget):
         pattern_controls.addWidget(QLabel("Gemeinsames DTC-Muster hervorheben"))
         self.pattern_combo = QComboBox()
         self.pattern_combo.setMinimumWidth(330)
+        self.pattern_combo.setSizeAdjustPolicy(
+            QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon
+        )
+        self.pattern_combo.setMinimumContentsLength(24)
         self.pattern_combo.setToolTip(
             "Gemeinsame exakte ECU:DTC-Meldungen vor dem Tausch; "
             "überlappende Vergleichskandidaten, KEINE bestätigten Cluster."
@@ -775,7 +779,7 @@ class CaseScatterPanel(QWidget):
         else:
             chosen_note = "Es ist kein gemeinsames DTC-Muster hervorgehoben."
         self.pattern_note.setText(
-            f"**Explorative DTC-Mustersuche:** {len(self.patterns)} "
+            f"Explorative DTC-Mustersuche: {len(self.patterns)} "
             f"überlappende ECU:DTC-Muster in {len(pattern_cases)} QEC-Fällen "
             f"und {len(pattern_vehicles)} FINs. "
             "Die Muster sind KEINE Complete-Link-Cluster. "
