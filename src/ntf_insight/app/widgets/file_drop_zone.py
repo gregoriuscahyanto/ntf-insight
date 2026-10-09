@@ -22,8 +22,9 @@ class FileDropZone(QFrame):
 
         title = QLabel("Dateien hierher ziehen", objectName="DropZoneTitle")
         hint = QLabel(
-            "Mehrere Dateien sind möglich. Die ausgewählte Quellenart wird verwendet; "
-            ".smr-d wird automatisch als SMR-D erkannt.",
+            "PDFs, ZIP-Pakete und mehrere Dateien sind möglich. "
+            "Mit »Automatisch erkennen« wird jede Datei einzeln klassifiziert; "
+            "unbekannte Originale bleiben zur späteren Prüfung im Rohdatenarchiv.",
             objectName="DropZoneHint",
         )
         hint.setWordWrap(True)
