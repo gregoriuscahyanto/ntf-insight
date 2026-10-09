@@ -170,6 +170,8 @@ class QECWorkbookParser:
                     production_date=production.date() if production else None,
                     original_qec_fin=_str(record.get("FIN")),
                 )
+                finding = _str(record.get("SSL-Endbefund Benennung"))
+                end_dt = _date_event(record.get("Bef.abschl.datum"))
                 case = NTFCase(
                     case_id=f"QEC-{reference}",
                     vehicle=vehicle,
@@ -178,6 +180,10 @@ class QECWorkbookParser:
                     qec_reference=reference,
                     qec_status=_str(record.get("Status")),
                     qec_part_number=_str(record.get("Sachnr. Teil")),
+                    qec_ssl_end_finding=finding,
+                    qec_ssl_end_date=(
+                        end_dt["occurred_at"].date().isoformat() if end_dt else None
+                    ),
                     source_ref=_ref(self.source_sha, f"Schadteile QEC!{row_number}"),
                 )
 
@@ -195,11 +201,10 @@ class QECWorkbookParser:
                     )
                     case.replacements.append(replacement)
                     case.investigated_replacement_id = replacement.event_id
-                finding = _str(record.get("SSL-Endbefund Benennung"))
                 if finding:
-                    end_dt = _date_event(record.get("Bef.abschl.datum"))
-                    if not end_dt:
-                        end_dt = replacement_dt
+                    # An undated SSL result belongs to the case, but is NOT an
+                    # event at the replacement date. Keep original wording in
+                    # qec_ssl_end_finding without fabricating a timestamp.
                     if end_dt:
                         upper = finding.upper()
                         if "NTF" in upper or "OHNE FEHLER" in upper:
