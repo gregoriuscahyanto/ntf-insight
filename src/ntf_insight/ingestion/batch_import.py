@@ -294,7 +294,10 @@ class LocalBatchImporter:
             indexed_raw_shas = {
                 doc["source_sha256"]
                 for doc in self.knowledge.documents()
-                if doc["source_kind"] == "autoexport_rows"
+                if (
+                    doc["source_kind"] == "autoexport_rows"
+                    and doc["metadata"].get("raw_schema_version") == 2
+                )
             }
             if summary.cases_created:
                 current_shas = {artifact.sha256 for artifact in artifacts}
@@ -369,6 +372,7 @@ class LocalBatchImporter:
                                     "fin_independent": True,
                                     "raw_fields_preserved": True,
                                     "source_type": str(artifact.source_type),
+                                    "raw_schema_version": 2,
                                 },
                                 # Handle the actual 423k-row diagnosis export.
                                 maximum_rows=1_000_000,
