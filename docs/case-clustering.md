@@ -26,6 +26,9 @@ Die App bietet unter **Cluster & Fälle → Fall-Cluster**:
   repräsentativem realem Fall, gemeinsamem ECU:DTC-Muster,
   **schwächster Paarähnlichkeit**, Merkmalsabdeckung und
   Zahl dokumentierter Vorher-/Nachtests
+- Der Cluster-Steckbrief zeigt zusätzlich die Zahl der Fälle mit
+  dokumentiertem QEC-SSL-Endbefund; das ist eine **Auswertung nach** der
+  Clusterbildung und niemals Teil des Ähnlichkeits-Scores.
 - ein **Doppelklick oder „Vergleichsfall öffnen“** führt aus dem Vergleich
   direkt in die vollständige FIN-/Fallanalyse zurück
 - für jeden ausgewählten Vergleichsfall sowohl **gemeinsame als auch
@@ -137,7 +140,11 @@ in einem QuickTest-PDF als auch in einem AutoExport-CSV steht.
 QEC-SSL-Endbefunde sind **nachgelagerte Befunde** und werden weiterhin
 ausdrücklich **nicht** zur Ähnlichkeits- oder SVD-Berechnung verwendet.
 Die vorhandene grobe Einordnung NTF versus OTHER muss anhand der tatsächlichen
-SSL-Befundcodes fachlich geprüft werden.
+SSL-Befundcodes fachlich geprüft werden. Der Originalbefund bleibt auch ohne
+Befundabschlussdatum am Fall erhalten, wird dann aber **nicht auf den
+Bauteiltausch zurückdatiert**; ein datiertes Befundereignis entsteht nur mit
+wirklich vorhandenem Abschlussdatum. In der Cluster-Nachbarschafts-Tabelle
+und Fallansicht ist der Befund separat sichtbar.
 
 ### Cluster-Steckbrief und Auswahl
 
