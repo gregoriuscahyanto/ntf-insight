@@ -56,6 +56,11 @@ class ImportSummary:
     cases_created: int = 0
     events_linked: int = 0
     events_unassigned: int = 0
+    rows_scanned: int = 0
+    rows_skipped: int = 0
+    rows_invalid: int = 0
+    tips_linked: int = 0
+    tips_unassigned: int = 0
     duplicates: int = 0
     quicktests_saved: int = 0
     quicktests_without_case: int = 0
@@ -260,7 +265,8 @@ class LocalBatchImporter:
                     # manually corrected events take precedence.
                     for attr in (
                         "diagnostic_sessions", "diagnostics", "ecu_states",
-                        "repairs", "replacements", "software_events", "supplier_findings",
+                        "repairs", "tips_observations", "replacements",
+                        "software_events", "supplier_findings",
                     ):
                         ids = {event.event_id for event in getattr(prior, attr)}
                         for event in getattr(case, attr):
@@ -316,7 +322,8 @@ class LocalBatchImporter:
                     continue
 
                 if artifact.source_type in {
-                    SourceType.SHORT_TEST, SourceType.WORKSHOP_HISTORY
+                    SourceType.SHORT_TEST, SourceType.WORKSHOP_HISTORY,
+                    SourceType.TIPS_CASE,
                 } and suffix == ".csv":
                     # Store all export rows, including vehicles for which no
                     # QEC case exists yet. Duplicate source columns are kept.
@@ -329,7 +336,11 @@ class LocalBatchImporter:
                             metadata={
                                 "fin_independent": True,
                                 "raw_fields_preserved": True,
+                                "source_type": str(artifact.source_type),
                             },
+                            # Historical DTC exports exceed 423k rows. Stream
+                            # into DuckDB; do not truncate the source history.
+                            maximum_rows=1_000_000,
                         )
                         summary.reference_rows += total
                         summary.reference_sources += 1
@@ -338,7 +349,10 @@ class LocalBatchImporter:
                             f"AutoExport-Rohzeilen: {type(exc).__name__}"
                         )
                 parser = None
-                if artifact.source_type in {SourceType.SHORT_TEST, SourceType.WORKSHOP_HISTORY} and suffix == ".csv":
+                if artifact.source_type in {
+                    SourceType.SHORT_TEST, SourceType.WORKSHOP_HISTORY,
+                    SourceType.TIPS_CASE,
+                } and suffix == ".csv":
                     parser = AutoExportParser(
                         artifact.sha256, artifact.source_type, allowed_fins
                     )
@@ -356,6 +370,9 @@ class LocalBatchImporter:
                     continue
                 summary.files_parsed += 1
                 summary.issues.extend(result.issues)
+                summary.rows_scanned += result.processed_rows
+                summary.rows_skipped += result.skipped_rows
+                summary.rows_invalid += result.invalid_rows
                 if isinstance(parser, QuickTestPdfParser):
                     if result.quicktest_report is None:
                         summary.issues.append(
@@ -380,11 +397,14 @@ class LocalBatchImporter:
                     ("diagnostics", document.diagnostics),
                     ("ecu_states", document.ecu_states),
                     ("repairs", document.repairs),
+                    ("tips_observations", document.tips_observations),
                 ):
                     for event in events:
                         case = self._case_for_event(event, case_fin, attr)
                         if case is None:
                             summary.events_unassigned += 1
+                            if attr == "tips_observations":
+                                summary.tips_unassigned += 1
                             continue
                         existing_ids = {
                             current.event_id for current in getattr(case, attr)
@@ -393,6 +413,8 @@ class LocalBatchImporter:
                             continue
                         getattr(case, attr).append(event)
                         summary.events_linked += 1
+                        if attr == "tips_observations":
+                            summary.tips_linked += 1
 
             # Associate FIN-scoped QuickTests with suitable cases as a *derived
             # projection*. This also picks up PDFs uploaded before their QEC case.
