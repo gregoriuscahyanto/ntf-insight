@@ -237,6 +237,9 @@ class SourcesPage(QWidget):
         self.artifact_table = QTableView()
         self.artifact_table.setModel(self.artifact_model)
         self.artifact_table.clicked.connect(self._artifact_selected)
+        self.artifact_table.selectionModel().currentRowChanged.connect(
+            lambda current, _previous: self._artifact_selected(current)
+        )
         self.artifact_table.setAlternatingRowColors(True)
         self.artifact_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.artifact_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
