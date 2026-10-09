@@ -1,5 +1,6 @@
 """Synthetic-only checks for conservative medoid-to-member hypotheses."""
 from datetime import date
+from dataclasses import replace
 
 from ntf_insight.analysis.hdbscan_clustering import cluster_hdbscan_cases
 from ntf_insight.analysis.mechanism_review import ConfirmedMechanism
@@ -66,3 +67,53 @@ def test_same_fin_not_independent():
     plan = plan_representative_transfer(cases, result, labels)
     row = next(r for r in plan.rows if r.target_case_id == target)
     assert "Gleiche FIN" in row.status
+
+
+def test_strong_medoid_pair_in_mixed_cluster_is_warned_not_confirmed():
+    cases = sample()
+    result = cluster_hdbscan_cases(cases)
+    group = result.clusters[0]
+    rep = group.representative_case_id
+    member = next(m for m in group.members if m.case_id != rep)
+    altered = replace(member, similarity_to_representative=0.91)
+    mixed = replace(
+        group, screening_status="Heterogen – keine Ursachenübertragung",
+        members=tuple(
+            altered if m.case_id == member.case_id else m for m in group.members
+        ),
+    )
+    changed_result = replace(
+        result, clusters=(mixed, *result.clusters[1:])
+    )
+    plan = plan_representative_transfer(
+        cases, changed_result, (_label(rep, "PUMP_WINDING_SHORT"),)
+    )
+    row = next(r for r in plan.rows if r.target_case_id == member.case_id)
+    assert row.shared_dtc_count > 0
+    assert "Clusterwarnung" in row.status
+    assert "Keine gruppenweite Ursachenzuweisung" in row.explanation
+    assert plan.candidates >= 1
+    assert not hasattr(next(c for c in cases if c.case_id == member.case_id),
+                       "transferred_mechanism")
+
+
+def test_weak_medoid_pair_remains_withheld_even_when_rep_confirmed():
+    cases = sample()
+    result = cluster_hdbscan_cases(cases)
+    group = result.clusters[0]
+    rep = group.representative_case_id
+    member = next(m for m in group.members if m.case_id != rep)
+    weak = replace(member, similarity_to_representative=0.20)
+    changed_result = replace(
+        result, clusters=(
+            replace(group, members=tuple(
+                weak if m.case_id == member.case_id else m for m in group.members
+            )),
+            *result.clusters[1:],
+        ),
+    )
+    plan = plan_representative_transfer(
+        cases, changed_result, (_label(rep, "PUMP_WINDING_SHORT"),)
+    )
+    row = next(r for r in plan.rows if r.target_case_id == member.case_id)
+    assert "Zurückgestellt" in row.status
