@@ -156,6 +156,7 @@ class CasePage(QWidget):
             "bekannten Diagnosebilds. QuickTests ohne Schadteilfall "
             "werden nicht als zusätzliche Fälle gezählt."
         )
+        self.find_similar_button.setEnabled(False)
         self.find_similar_button.clicked.connect(self._request_similar_cases)
         selector_row.addWidget(self.find_similar_button)
 
@@ -430,6 +431,7 @@ class CasePage(QWidget):
             self.selector.setCurrentIndex(-1)
             self.add_event_button.setEnabled(False)
             self.correct_button.setEnabled(False)
+            self.find_similar_button.setEnabled(False)
             self._clear_view()
             return
 
@@ -708,7 +710,13 @@ class CasePage(QWidget):
             if self.case_model.case_id_at(row) == case_id:
                 source = self.case_model.index(row, 0)
                 proxy = self.case_proxy.mapFromSource(source)
+                if not proxy.isValid():
+                    # A previous FIN text search may hide the case selected
+                    # from the cluster-neighbour comparison.
+                    self.case_search.clear()
+                    proxy = self.case_proxy.mapFromSource(source)
                 if proxy.isValid():
+                    self.detail_tabs.setCurrentIndex(0)
                     self.case_table.selectRow(proxy.row())
                     self._case_clicked(proxy)
                 return
