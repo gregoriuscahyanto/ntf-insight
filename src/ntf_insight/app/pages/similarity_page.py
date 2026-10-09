@@ -16,7 +16,7 @@ from PySide6.QtWidgets import (
 )
 
 from ntf_insight.analysis.dtc_clusters import build_dtc_network
-from ntf_insight.analysis.similarity import all_pairwise_similarities
+from ntf_insight.analysis.case_clustering import all_diagnostic_matches
 from ntf_insight.app.models.simple_table_model import SimpleTableModel
 from ntf_insight.app.widgets.case_cluster_panel import CaseClusterPanel
 from ntf_insight.app.widgets.dtc_cluster_graph import DTCClusterGraph
@@ -121,36 +121,37 @@ class SimilarityPage(QWidget):
         layout.setSpacing(10)
 
         explanation = QLabel(
-            "Diagnostischer Paarvergleich ohne Lieferant, Charge oder Reparaturergebnis "
-            "als Ähnlichkeitsmerkmale. Die Spalte Wiederholungsmuster zeigt nur den "
-            "nachträglich beobachteten Verlauf, nicht die Grundlage des Scores.",
+            "Diagnostischer Paarvergleich ohne Lieferant, Charge, "
+            "Ursachenbewertung oder Reparaturergebnis als Ähnlichkeitsmerkmale. "
+            "Ohne ausreichende beidseitige Diagnoseinformationen erscheint "
+            "„k. A.“ statt eines irreführenden 0-%-Werts.",
             objectName="PageSubtitle",
         )
         explanation.setWordWrap(True)
         layout.addWidget(explanation)
 
         rows = []
-        for result in all_pairwise_similarities(self.repository.list_cases()):
-            shared_faults = ", ".join(f"{ecu}:{dtc}" for ecu, dtc in result.shared_faults)
-            rows.append(
-                (
-                    result.left_case_id,
-                    result.right_case_id,
-                    f"{result.score:.0%}",
-                    shared_faults or None,
-                    ", ".join(result.shared_ecus) or None,
-                    "Ja" if result.same_recurrence_pattern else "Nein",
-                )
+        for result in all_diagnostic_matches(self.repository.list_cases()):
+            shared_faults = ", ".join(
+                f"{ecu}:{dtc}" for ecu, dtc in result.shared_faults
             )
+            rows.append((
+                result.left_case_id,
+                result.right_case_id,
+                f"{result.score:.0%}" if result.score is not None else "k. A.",
+                f"{result.coverage:.0%}" if result.score is not None else "k. A.",
+                shared_faults or "—",
+                result.reason,
+            ))
 
         model = SimpleTableModel(
             (
                 "Fall A",
                 "Fall B",
                 "Ähnlichkeit",
+                "Merkmalsabdeckung",
                 "Gemeinsame DTCs",
-                "Gemeinsame Steuergeräte",
-                "Gleiches Wiederholungsmuster",
+                "Begründung / Einschränkung",
             ),
             rows,
         )
