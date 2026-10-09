@@ -25,7 +25,7 @@ def test_hdbscan_panel_groups_members_noise_and_navigation() -> None:
     assert panel.group_model.rowCount() == 2
     assert panel.member_model.rowCount() == 6
     assert panel.noise_model.rowCount() == 3
-    assert "keine" not in panel.summary.text().casefold()
+    assert "2 HDBSCAN-Gruppen" in panel.summary.text()
     assert "HDBSCAN-Gruppen" in panel.summary.text()
     assert "synthetisch" not in panel.summary.text().casefold()
     assert len(panel.map.items_by_case) == 13
