@@ -102,3 +102,50 @@ def test_pilot_local_review_imports_verified_rep_and_target_and_preserves_prior_
     assert panel.confirmed_mechanisms == previous
     panel.close()
     app.processEvents()
+
+
+def test_loaded_labels_can_be_backed_up_and_restored_after_restart(
+    tmp_path, monkeypatch,
+):
+    from ntf_insight.analysis.mechanism_review import ConfirmedMechanism
+    from datetime import date
+
+    app = QApplication.instance() or QApplication([])
+    initial = HDBSCANPanel(sample())
+    initial.run_analysis()
+    assert not initial.expert_backup_button.isEnabled()
+    groups = initial.result.clusters
+    initial.confirmed_mechanisms = tuple(
+        ConfirmedMechanism(
+            case_id=group.representative_case_id,
+            mechanism_code="PUMP_TEST_" + str(index),
+            reviewer="Fictional lab", evidence_ref="LAB-SYNTH-" + str(index),
+            confirmed_on=date(2026, 10, 9),
+        )
+        for index, group in enumerate(groups, start=1)
+    )
+    initial.expert_backup_button.setEnabled(True)
+    backup = tmp_path / "private_labels_NICHT_HOCHLADEN.csv"
+    monkeypatch.setattr(
+        QFileDialog, "getSaveFileName",
+        lambda *args, **kwargs: (str(backup), "CSV-Dateien (*.csv)"),
+    )
+    initial.expert_backup_button.click()
+    assert backup.exists()
+    with backup.open(encoding="utf-8-sig", newline="") as f:
+        data = list(csv.DictReader(f, delimiter=";"))
+    assert len(data) == 2
+    assert all(row["qec_ssl_end_finding"] == "" for row in data)
+
+    restarted = HDBSCANPanel(sample())
+    restarted.run_analysis()
+    monkeypatch.setattr(
+        QFileDialog, "getOpenFileName",
+        lambda *args, **kwargs: (str(backup), "CSV-Dateien (*.csv)"),
+    )
+    restarted.import_review_button.click()
+    assert restarted.confirmed_mechanisms == initial.confirmed_mechanisms
+    assert restarted.latest_pilot_validation.reviewed_representatives == 2
+    initial.close()
+    restarted.close()
+    app.processEvents()
