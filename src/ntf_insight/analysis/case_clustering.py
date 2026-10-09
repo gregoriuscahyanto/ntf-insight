@@ -88,6 +88,8 @@ class CaseClusterResult:
     unassigned: tuple[str, ...]
     matches: tuple[CaseMatch, ...]
     threshold: float
+    lookback_days: int | None = None
+    dtc_source: str = "all"
 
     def cluster_for(self, case_id: str) -> int | None:
         for cluster in self.clusters:
@@ -230,12 +232,35 @@ def _tokens(texts: Iterable[str]) -> frozenset[str]:
     )
 
 
-def _in_diagnostic_window(event, case: NTFCase) -> bool:
+def _in_diagnostic_window(
+    event, case: NTFCase, *, lookback_days: int | None = None
+) -> bool:
     replacement = case.investigated_replacement()
     if replacement is None:
         # Unanchored cases can be explored, but the UI must mark that fact.
         return True
-    return relative_to_replacement(event, replacement) == "pre"
+    if relative_to_replacement(event, replacement) != "pre":
+        return False
+    if lookback_days is None:
+        return True
+    if lookback_days <= 0:
+        raise ValueError("Analysezeitraum muss positiv sein.")
+    return (replacement.occurred_at - event.occurred_at).total_seconds() <= (
+        lookback_days * 86400
+    )
+
+
+def _matches_dtc_source(event, dtc_source: str) -> bool:
+    """Filter *observations*, not distinct fault keys or source documents."""
+    if dtc_source not in {"all", "quicktest", "autoexport"}:
+        raise ValueError("DTC-Quellmodus unbekannt.")
+    if dtc_source == "all":
+        return True
+    source_ref = getattr(event, "source_ref", None) or ""
+    session_id = getattr(event, "session_id", None)
+    if dtc_source == "quicktest":
+        return bool(session_id) and "#ecu:" in source_ref
+    return not session_id and "#csv:" in source_ref
 
 
 def _component_key(case: NTFCase) -> str:
@@ -250,16 +275,34 @@ def _component_key(case: NTFCase) -> str:
     return name
 
 
-def signature_for(case: NTFCase) -> DiagnosticSignature:
+def signature_for(
+    case: NTFCase,
+    *,
+    lookback_days: int | None = None,
+    dtc_source: str = "all",
+) -> DiagnosticSignature:
+    """Same weighted Jaccard signature, optionally restricting diagnostic input.
+
+    Defaults deliberately preserve the original Full-History/All-Sources
+    algorithm. Filters are exploratory sensitivity scenarios, never calibrated
+    root-cause predictors. Original case/diagnostic evidence remains intact.
+    """
+    if dtc_source not in {"all", "quicktest", "autoexport"}:
+        raise ValueError("DTC-Quellmodus unbekannt.")
+    if lookback_days is not None and lookback_days <= 0:
+        raise ValueError("Analysezeitraum muss positiv sein.")
     events = [
         event for event in case.diagnostics
-        if _in_diagnostic_window(event, case)
+        if _in_diagnostic_window(event, case, lookback_days=lookback_days)
+        and _matches_dtc_source(event, dtc_source)
     ]
     faults = frozenset(event.fault_key for event in events)
     complaints = [
         repair.complaint
         for repair in case.repairs
-        if repair.complaint and _in_diagnostic_window(repair, case)
+        if repair.complaint and _in_diagnostic_window(
+            repair, case, lookback_days=lookback_days
+        )
     ]
     # Use the *initial customer complaint* only when it was recorded before
     # the investigated replacement. Workshop findings, performed actions and
@@ -267,14 +310,19 @@ def signature_for(case: NTFCase) -> DiagnosticSignature:
     complaints.extend(
         report.complaint
         for report in case.tips_observations
-        if report.complaint and _in_diagnostic_window(report, case)
+        if report.complaint and _in_diagnostic_window(
+            report, case, lookback_days=lookback_days
+        )
     )
     ecu_software = frozenset(
         f"{state.ecu.strip().upper()}:{state.software_version.strip().upper()}"
         for state in case.ecu_states
         if (
             state.software_version
-            and _in_diagnostic_window(state, case)
+            and _in_diagnostic_window(
+                state, case, lookback_days=lookback_days
+            )
+            and _matches_dtc_source(state, dtc_source)
         )
     )
     context = frozenset(
@@ -387,12 +435,24 @@ def compare_signatures(left: DiagnosticSignature, right: DiagnosticSignature) ->
     )
 
 
-def compare_diagnostic_cases(left: NTFCase, right: NTFCase) -> CaseMatch:
-    return compare_signatures(signature_for(left), signature_for(right))
+def compare_diagnostic_cases(
+    left: NTFCase, right: NTFCase, *,
+    lookback_days: int | None = None, dtc_source: str = "all",
+) -> CaseMatch:
+    return compare_signatures(
+        signature_for(left, lookback_days=lookback_days, dtc_source=dtc_source),
+        signature_for(right, lookback_days=lookback_days, dtc_source=dtc_source),
+    )
 
 
-def all_diagnostic_matches(cases: list[NTFCase]) -> list[CaseMatch]:
-    signatures = [signature_for(case) for case in sorted(cases, key=lambda c: c.case_id)]
+def all_diagnostic_matches(
+    cases: list[NTFCase], *,
+    lookback_days: int | None = None, dtc_source: str = "all",
+) -> list[CaseMatch]:
+    signatures = [
+        signature_for(case, lookback_days=lookback_days, dtc_source=dtc_source)
+        for case in sorted(cases, key=lambda c: c.case_id)
+    ]
     matches = [
         compare_signatures(a, b)
         for index, a in enumerate(signatures)
@@ -421,6 +481,8 @@ def cluster_diagnostic_cases(
     cases: list[NTFCase],
     *,
     threshold: float = 0.65,
+    lookback_days: int | None = None,
+    dtc_source: str = "all",
 ) -> CaseClusterResult:
     """Deterministic complete-link hierarchical grouping.
 
@@ -436,7 +498,13 @@ def cluster_diagnostic_cases(
         raise ValueError("Fall-IDs müssen eindeutig sein.")
 
     ids = sorted(by_id)
-    signatures = {case_id: signature_for(by_id[case_id]) for case_id in ids}
+    signatures = {
+        case_id: signature_for(
+            by_id[case_id], lookback_days=lookback_days,
+            dtc_source=dtc_source,
+        )
+        for case_id in ids
+    }
     matches = [
         compare_signatures(signatures[left], signatures[right])
         for index, left in enumerate(ids) for right in ids[index + 1:]
@@ -498,6 +566,8 @@ def cluster_diagnostic_cases(
         ),
         matches=tuple(matches),
         threshold=threshold,
+        lookback_days=lookback_days,
+        dtc_source=dtc_source,
     )
 
 

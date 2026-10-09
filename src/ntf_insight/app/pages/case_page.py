@@ -102,6 +102,10 @@ class CasePage(QWidget):
         self.scatter_panel = CaseScatterPanel(
             self.real_cases,
             cluster_diagnostic_cases(self.real_cases) if self.real_cases else None,
+            population_metrics=(
+                self.source_knowledge.autoexport_population()
+                if self.source_knowledge is not None else {}
+            ),
         )
         self.detail_tabs.addTab(self.scatter_panel, "2D-Streudiagramm")
         self.scatter_panel.case_focused.connect(

@@ -38,7 +38,10 @@ class CaseProjection:
     axis_top_features: tuple[tuple[int, str, float], ...] = ()
 
 
-def project_diagnostic_cases(cases: list[NTFCase]) -> CaseProjection:
+def project_diagnostic_cases(
+    cases: list[NTFCase], *,
+    lookback_days: int | None = None, dtc_source: str = "all",
+) -> CaseProjection:
     """Project comparable diagnostic evidence, excluding evidence-free cases.
 
     Within a populated feature group every observed token has the same weight.
@@ -50,7 +53,11 @@ def project_diagnostic_cases(cases: list[NTFCase]) -> CaseProjection:
     if len({case.case_id for case in ordered}) != len(ordered):
         raise ValueError("Fall-IDs müssen eindeutig sein.")
 
-    signatures = [signature_for(case) for case in ordered]
+    signatures = [
+        signature_for(
+            case, lookback_days=lookback_days, dtc_source=dtc_source
+        ) for case in ordered
+    ]
     eligible = [
         sig for sig in signatures if sig.faults or sig.complaint_tokens
     ]
