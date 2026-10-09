@@ -263,7 +263,7 @@ def test_unassigned_explains_missing_vs_weak_vs_incohesive() -> None:
     plan = select_representative_cases(cases)
     assert len(plan.unassigned_reasons) == len(plan.unassigned)
     reasons = {entry.case_id: entry for entry in plan.unassigned_reasons}
-    assert "Vor-Tausch" in reasons["D"].reason
+    assert "vor Tausch" in reasons["D"].reason
     assert "Tauschanker" in reasons["E"].reason
     assert len(plan.clusters) == 1
     assert len({"A", "B", "C"} & set(plan.unassigned)) == 1
