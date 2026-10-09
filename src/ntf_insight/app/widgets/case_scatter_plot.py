@@ -31,6 +31,7 @@ from ntf_insight.analysis.case_clustering import (
     signature_for,
 )
 from ntf_insight.analysis.case_projection import CaseProjection, project_diagnostic_cases
+from ntf_insight.analysis.cluster_audit import audit_case_clusters
 from ntf_insight.analysis.case_similarity_explanation import (
     FEATURE_LABELS,
     explain_case_similarity,
@@ -296,7 +297,8 @@ class CaseScatterPanel(QWidget):
     quicktests_requested = Signal(str)
 
     def __init__(
-        self, cases: list[NTFCase], result: CaseClusterResult | None = None
+        self, cases: list[NTFCase], result: CaseClusterResult | None = None,
+        *, population_metrics: dict[str, int] | None = None,
     ) -> None:
         super().__init__()
         self.cases = sorted(cases, key=lambda case: case.case_id)
@@ -311,6 +313,7 @@ class CaseScatterPanel(QWidget):
         self.projection = CaseProjection((), ())
         self._visible_case_ids: list[str] = []
         self._neighbour_ids: list[str] = []
+        self.population_metrics = population_metrics or {}
 
         outer = QVBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
@@ -365,6 +368,33 @@ class CaseScatterPanel(QWidget):
         controls.addStretch(1)
         layout.addLayout(controls)
 
+        diagnostic_options = QHBoxLayout()
+        diagnostic_options.addWidget(QLabel("DTC-Datenbasis"))
+        self.dtc_source = QComboBox()
+        self.dtc_source.addItem("QuickTest + AutoExport (Standard)", "all")
+        self.dtc_source.addItem("Nur QuickTest-PDFs", "quicktest")
+        self.dtc_source.addItem("Nur AutoExport-CSV", "autoexport")
+        self.dtc_source.setToolTip(
+            "Berechnet dieselbe Clusterformel mit einer anderen DTC-Quellenbasis. "
+            "Es werden keine Originaldaten gelöscht."
+        )
+        diagnostic_options.addWidget(self.dtc_source)
+        diagnostic_options.addWidget(QLabel("Diagnosefenster vor Tausch"))
+        self.lookback = QComboBox()
+        self.lookback.addItem("Gesamte Vor-Tausch-Historie (Standard)", None)
+        for days in (30, 90, 180, 365):
+            self.lookback.addItem(f"Letzte {days} Tage", days)
+        self.lookback.setToolTip(
+            "Begrenzt die vor dem dokumentierten Tausch erfassten DTCs, "
+            "ECU-Stände und Beanstandungen. Ändert Signatur und Projektion."
+        )
+        diagnostic_options.addWidget(self.lookback)
+        diagnostic_options.addStretch(1)
+        layout.addLayout(diagnostic_options)
+
+        self.population_summary = QLabel(objectName="PageSubtitle")
+        self.population_summary.setWordWrap(True)
+        layout.addWidget(self.population_summary)
         self.summary = QLabel(objectName="PageSubtitle")
         self.summary.setWordWrap(True)
         layout.addWidget(self.summary)
@@ -400,6 +430,34 @@ class CaseScatterPanel(QWidget):
         self.cluster_note = QLabel(objectName="PageSubtitle")
         self.cluster_note.setWordWrap(True)
         layout.addWidget(self.cluster_note)
+
+        layout.addWidget(QLabel(
+            "Cluster-Qualitätsprüfung: Warum so wenige Gruppen?",
+            objectName="CardTitle",
+        ))
+        self.audit_note = QLabel(objectName="PageSubtitle")
+        self.audit_note.setWordWrap(True)
+        layout.addWidget(self.audit_note)
+        self.audit_model = SimpleTableModel(("Prüfschritt", "Anzahl", "Bedeutung"))
+        self.audit_table = self._table(self.audit_model, 245)
+        layout.addWidget(self.audit_table)
+        layout.addWidget(QLabel(
+            "Die nächsten fachlich prüfbaren, derzeit ausgeschlossenen Fallpaare",
+            objectName="CardTitle",
+        ))
+        self.rejected_model = SimpleTableModel((
+            "Fall A", "Fall B", "Jaccard", "Abdeckung",
+            "gemeinsame ECU:DTC", "Ausschlussgrund",
+        ))
+        self.rejected_table = self._table(self.rejected_model, 220)
+        layout.addWidget(self.rejected_table)
+        self.rejected_hint = QLabel(
+            "Die Liste zeigt Ähnlichkeitshinweise, keine bestätigten Cluster "
+            "oder Reparaturempfehlungen. Complete-Link verlangt alle Paarbeziehungen.",
+            objectName="PageSubtitle",
+        )
+        self.rejected_hint.setWordWrap(True)
+        layout.addWidget(self.rejected_hint)
 
         self.detail = QLabel(objectName="PageSubtitle")
         self.detail.setWordWrap(True)
@@ -498,6 +556,8 @@ class CaseScatterPanel(QWidget):
 
         self.component_filter.currentIndexChanged.connect(self._refresh)
         self.threshold.valueChanged.connect(self._recluster)
+        self.dtc_source.currentIndexChanged.connect(self._change_signature)
+        self.lookback.currentIndexChanged.connect(self._change_signature)
         self._refresh()
 
     @staticmethod
