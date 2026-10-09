@@ -210,7 +210,7 @@ def write_confirmed_review_backup(
         raise ValueError("Sicherung enthält doppelte oder unbekannte Fachlabels.")
     writer = csv.DictWriter(
         output, fieldnames=REVIEW_FIELDS,
-        delimiter=";", lineterminator="\\n",
+        delimiter=";", lineterminator="\n",
     )
     writer.writeheader()
     for case_id, label in sorted(labels.items()):
