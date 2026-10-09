@@ -183,7 +183,7 @@ def test_end_to_end_zip_archives_parses_and_avoids_fin_fabrication(tmp_path) -> 
     assert len(knowledge.list_rows(category="part_change")) == 2
     assert knowledge.list_rows(category="autoexport_dtc", fin="OTHER-VIN")
     # QEC details must not manufacture extra NTF cases from sub-sheets.
-    assert service.store.load_cases() == []  # fixture lacks primary QEC case schema
+    assert len(service.store.load_cases()) == 1  # sub-sheets never create duplicate NTF cases
     assert first.files_parsed >= 4
 
     again = importer.import_paths([archive])
