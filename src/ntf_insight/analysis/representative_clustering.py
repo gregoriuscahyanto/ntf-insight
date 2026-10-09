@@ -152,7 +152,10 @@ def _build_pairs(
     cases: Mapping[str, NTFCase],
     *,
     max_frequency: float,
-) -> tuple[dict[frozenset[str], RepresentativePair], dict[FaultKey, float]]:
+) -> tuple[
+    dict[frozenset[str], RepresentativePair],
+    dict[tuple[str, FaultKey], float],
+]:
     """Use documented pre-DTC QEC cases as the rarity denominator.
 
     Missing diagnostics are *not evidence* that a code is rare; counting them
@@ -164,17 +167,22 @@ def _build_pairs(
         case_id for case_id, sig in signatures.items()
         if sig.has_replacement_anchor and sig.faults
     ]
-    frequency: Counter[FaultKey] = Counter()
+    component_populations = Counter(
+        signatures[case_id].component_key for case_id in eligible
+    )
+    frequency: Counter[tuple[str, FaultKey]] = Counter()
     for case_id in eligible:
-        frequency.update(signatures[case_id].faults)
-    population = len(eligible)
+        sig = signatures[case_id]
+        frequency.update((sig.component_key, fault) for fault in sig.faults)
     rarity = {
-        fault: count / population
-        for fault, count in frequency.items()
+        (component, fault): count / component_populations[component]
+        for (component, fault), count in frequency.items()
     }
     idf = {
-        fault: 1.0 + log((population + 1) / (count + 1))
-        for fault, count in frequency.items()
+        (component, fault): 1.0 + log(
+            (component_populations[component] + 1) / (count + 1)
+        )
+        for (component, fault), count in frequency.items()
     }
     pairs = {}
     for left_id, right_id in combinations(sorted(cases), 2):
@@ -193,7 +201,8 @@ def _build_pairs(
         elif not shared:
             reason = "Kein gemeinsamer ECU:DTC"
         elif not (len(shared) >= 2 or any(
-            rarity[fault] <= max_frequency for fault in shared
+            rarity[(a.component_key, fault)] <= max_frequency
+            for fault in shared
         )):
             reason = "Nur ein häufig vorkommender gemeinsamer DTC"
         else:
@@ -202,9 +211,12 @@ def _build_pairs(
             if series_a and series_b and series_a != series_b:
                 reason = "Unterschiedliche bekannte Baureihe"
             else:
-                a_weight = sum(idf[fault] for fault in a.faults)
-                b_weight = sum(idf[fault] for fault in b.faults)
-                shared_weight = sum(idf[fault] for fault in shared)
+                a_weight = sum(idf[(a.component_key, fault)]
+                               for fault in a.faults)
+                b_weight = sum(idf[(a.component_key, fault)]
+                               for fault in b.faults)
+                shared_weight = sum(idf[(a.component_key, fault)]
+                                    for fault in shared)
                 weighted_jaccard = shared_weight / (
                     a_weight + b_weight - shared_weight
                 )
@@ -237,7 +249,7 @@ def _build_pairs(
 def _common_core(
     ids: tuple[str, ...],
     signatures: Mapping[str, DiagnosticSignature],
-    rarity: Mapping[FaultKey, float],
+    rarity: Mapping[tuple[str, FaultKey], float],
     max_frequency: float,
 ) -> tuple[FaultKey, ...]:
     if not ids:
@@ -249,7 +261,10 @@ def _common_core(
             break
     if not common or not (
         len(common) >= 2
-        or any(rarity[fault] <= max_frequency for fault in common)
+        or any(
+            rarity[(signatures[ids[0]].component_key, fault)] <= max_frequency
+            for fault in common
+        )
     ):
         return ()
     return tuple(sorted(common))
@@ -392,7 +407,10 @@ def select_representative_cases(
             notes.append("Nur eine FIN: keine fahrzeugübergreifende Bestätigung")
         if len(core) == 1:
             notes.append("Nur ein gemeinsamer ECU:DTC als Kernevidenz")
-        elif all(rarity[fault] > maximum_common_frequency for fault in core):
+        elif all(
+            rarity[(sigs[ids[0]].component_key, fault)] > maximum_common_frequency
+            for fault in core
+        ):
             notes.append("Gemeinsame Kerndiagnose nur aus häufigen DTCs")
         if not all(
             by_id[case_id].vehicle.model_series for case_id in ids
