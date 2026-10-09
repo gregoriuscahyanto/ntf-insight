@@ -737,12 +737,14 @@ class HDBSCANPanel(QWidget):
                     "Fachprüfer des Repräsentanten", "Evidenzreferenz des Repräsentanten",
                     "Bestätigungsdatum", "Cosinus zum Medoid",
                     "Gemeinsame ECU:DTC", "Prüfstatus", "Begründung",
-                    "Ergebnisstatus Ziel", "Unabhängige Zielevidenz",
+                    "Ergebnisstatus Ziel", "Bestätigter Zielmechanismus",
+                    "Unabhängige Zielevidenz",
                     "HDBSCAN-Methode", "DTC-Quellen", "Vor-Tausch-Tage",
                     "DTC-Häufigkeitsfilter", "Methodenhinweis",
                 ))
                 for row in plan.rows:
                     label = labels.get(row.representative_case_id)
+                    target_label = labels.get(row.target_case_id)
                     writer.writerow((
                         row.group,
                         safe_spreadsheet_cell(row.representative_case_id),
@@ -756,7 +758,16 @@ class HDBSCANPanel(QWidget):
                         f"{row.cosine:.4f}", row.shared_dtc_count,
                         safe_spreadsheet_cell(row.status),
                         safe_spreadsheet_cell(row.explanation),
-                        "Nicht bestätigt", "",
+                        (
+                            "Unabhängig bestätigt"
+                            if target_label is not None else "Nicht bestätigt"
+                        ),
+                        safe_spreadsheet_cell(
+                            target_label.mechanism_code if target_label else ""
+                        ),
+                        safe_spreadsheet_cell(
+                            target_label.evidence_ref if target_label else ""
+                        ),
                         self.result.selection_method, self.result.dtc_source,
                         self.result.lookback_days or "gesamte Vorher-Historie",
                         (
