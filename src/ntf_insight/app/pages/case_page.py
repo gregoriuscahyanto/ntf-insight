@@ -43,6 +43,7 @@ from ntf_insight.app.models.timeline_table_model import TimelineTableModel
 from ntf_insight.app.widgets.event_time_plot import EventTimePlot
 from ntf_insight.app.widgets.quicktest_browser import QuickTestBrowser
 from ntf_insight.ingestion.manual_entry import ManualCaseService, ManualEntryError
+from ntf_insight.domain.events import PartReplacement
 from ntf_insight.reporting.markdown import save_case_report
 from ntf_insight.storage.reference_repositories import ReferenceRepository
 from ntf_insight.storage.repositories import CaseRepository
@@ -216,6 +217,7 @@ class CasePage(QWidget):
         self.component_value = QLabel("—")
         self.replacement_value = QLabel("—")
         self.autoexport_date_value = QLabel("—")
+        self.effective_swap_value = QLabel("—")
         self.date_match_value = QLabel("—")
         self.root_cause_value = QLabel("—")
         self.supplier_value = QLabel("—")
@@ -226,6 +228,7 @@ class CasePage(QWidget):
             ("Bauteil", self.component_value),
             ("QEC-/dokumentiertes Tauschdatum", self.replacement_value),
             ("AutoExport-Reparaturdatum", self.autoexport_date_value),
+            ("Für NTF verwendeter Tauschanker", self.effective_swap_value),
             ("Datumsabgleich", self.date_match_value),
             ("Aktuelle Bewertung", self.root_cause_value),
             ("Lieferantenbeteiligung", self.supplier_value),
@@ -242,6 +245,17 @@ class CasePage(QWidget):
         self.date_comparison_note = QLabel("—", objectName="PageSubtitle")
         self.date_comparison_note.setWordWrap(True)
         layout.addWidget(self.date_comparison_note)
+        self.confirm_swap_button = QPushButton(
+            "AutoExport-Datum als Tauschanker bestätigen…"
+        )
+        self.confirm_swap_button.setEnabled(False)
+        self.confirm_swap_button.setToolTip(
+            "Nur nach Prüfung der Werkstattunterlagen: Legt einen manuellen "
+            "Tauschanker mit Audit-Eintrag an. Der ursprüngliche QEC-Termin "
+            "und der AutoExport-Reparatureintrag bleiben erhalten."
+        )
+        self.confirm_swap_button.clicked.connect(self._confirm_autoexport_swap)
+        layout.addWidget(self.confirm_swap_button)
 
         self.assessment_text = QLabel("—", objectName="PageSubtitle")
         self.assessment_text.setWordWrap(True)
@@ -376,7 +390,8 @@ class CasePage(QWidget):
     def _clear_view(self) -> None:
         for value in (
             self.component_value, self.replacement_value, self.autoexport_date_value,
-            self.date_match_value, self.date_comparison_note, self.root_cause_value,
+            self.effective_swap_value, self.date_match_value,
+            self.date_comparison_note, self.root_cause_value,
             self.supplier_value, self.confidence_value, self.recurrence_value,
             self.assessment_text, self.recurrence_text, self.evidence_balance,
         ):
@@ -400,6 +415,7 @@ class CasePage(QWidget):
         self.correct_button.setEnabled(editable)
         self.history_button.setEnabled(editable)
         self.export_button.setEnabled(case is not None and not is_preview)
+        self.confirm_swap_button.setEnabled(False)
         if case is None:
             self._clear_view()
             return
@@ -409,6 +425,7 @@ class CasePage(QWidget):
             self.component_value.setText("Noch keinem Schadteilfall zugeordnet")
             self.replacement_value.setText("Nicht dokumentiert")
             self.autoexport_date_value.setText("Noch kein Fallbezug")
+            self.effective_swap_value.setText("Fehlt")
             self.date_match_value.setText("Nicht beurteilbar")
             self.date_comparison_note.setText(
                 "AutoExport-Reparaturen werden erst nach eindeutiger FIN-/Fall- "
@@ -452,8 +469,26 @@ class CasePage(QWidget):
 
         self.component_value.setText(case.component_type)
         self.replacement_value.setText(
-            replacement.occurred_at.strftime("%d.%m.%Y")
+            date_comparison.qec_anchor.occurred_at.strftime("%d.%m.%Y")
+            if date_comparison.qec_anchor else "Fehlt"
+        )
+        self.effective_swap_value.setText(
+            (
+                replacement.occurred_at.strftime("%d.%m.%Y")
+                + (
+                    " (manuell bestätigt)"
+                    if getattr(replacement, "confirmed_from_autoexport", False)
+                    else " (QEC / vorläufig)"
+                    if "Schadteile QEC" in (replacement.source_ref or "")
+                    else " (dokumentiert)"
+                )
+            )
             if replacement else "Fehlt"
+        )
+        self.confirm_swap_button.setEnabled(
+            editable
+            and date_comparison.preferred_candidate is not None
+            and not getattr(replacement, "confirmed_from_autoexport", False)
         )
         if date_comparison.preferred_candidate is not None:
             auto_repair = date_comparison.preferred_candidate.repair
@@ -621,6 +656,71 @@ class CasePage(QWidget):
             )
         except (ValueError, ManualEntryError, OSError) as exc:
             QMessageBox.warning(self, "Ereignis konnte nicht gespeichert werden", str(exc))
+            return
+        self.case_saved.emit(case.case_id)
+
+    def _confirm_autoexport_swap(self) -> None:
+        """Audited human confirmation; never automatically reassign the anchor."""
+        case = self._persistent_case()
+        if case is None or self.manual_service is None:
+            return
+        comparison = compare_replacement_dates(case, self.source_knowledge)
+        candidate = comparison.preferred_candidate
+        qec = comparison.qec_anchor
+        if candidate is None or qec is None:
+            QMessageBox.information(
+                self, "Kein eindeutiger Kandidat",
+                "Bitte zunächst einen eindeutig passenden AutoExport-"
+                "Reparatureintrag mit FIN und Teilenummer zuordnen.",
+            )
+            return
+        current_anchor = case.investigated_replacement()
+        if getattr(current_anchor, "confirmed_from_autoexport", False):
+            QMessageBox.information(
+                self, "Tauschanker bereits bestätigt",
+                "Der untersuchte Tauschanker wurde bereits manuell bestätigt.",
+            )
+            return
+        repair = candidate.repair
+        confirm = QMessageBox.question(
+            self,
+            "Tatsächlichen Pumpentausch bestätigen?",
+            "AutoExport enthält zunächst nur ein Reparaturdatum.\n\n"
+            f"QEC: {qec.occurred_at:%d.%m.%Y} · {qec.mileage_km} km\n"
+            f"AutoExport: {repair.occurred_at:%d.%m.%Y} · "
+            f"{repair.mileage_km} km\n"
+            f"Abgleich: {candidate.association}\n\n"
+            "Hast du anhand der Werkstattunterlagen geprüft, dass die "
+            "Pumpe tatsächlich an diesem AutoExport-Datum ausgetauscht wurde?\n\n"
+            "Nur bei Ja wird ein neuer manueller, auditierter Tauschanker "
+            "für die Vorher-/Nachher-Analyse gesetzt. Die beiden "
+            "ursprünglichen Quellen bleiben unverändert erhalten.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if confirm != QMessageBox.StandardButton.Yes:
+            return
+        verified = PartReplacement(
+            vin=case.vin,
+            occurred_at=repair.occurred_at,
+            time_precision=getattr(repair, "time_precision", "date"),
+            mileage_km=repair.mileage_km,
+            component_type=qec.component_type,
+            old_part_number=qec.old_part_number,
+            new_part_number=qec.new_part_number,
+            supplier=qec.supplier,
+            confirmed_from_autoexport=True,
+            repair_source_ref=repair.source_ref,
+            initial_qec_event_id=qec.event_id,
+            confirmation_basis="Werkstattunterlagen durch Nutzer verifiziert",
+        )
+        try:
+            self.manual_service.add_event(
+                case.case_id, "replacement", verified,
+                set_replacement_anchor=True,
+            )
+        except (ValueError, ManualEntryError, OSError) as exc:
+            QMessageBox.warning(self, "Bestätigung fehlgeschlagen", str(exc))
             return
         self.case_saved.emit(case.case_id)
 
