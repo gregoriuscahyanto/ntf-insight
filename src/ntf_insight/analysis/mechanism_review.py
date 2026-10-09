@@ -30,6 +30,17 @@ REVIEW_FIELDS = (
 )
 
 
+def safe_spreadsheet_cell(value: str) -> str:
+    """Avoid CSV formula injection when opening untrusted QEC text in Excel.
+
+    A leading apostrophe is a representation-only escape in the LOCAL
+    review/export CSV. Source evidence stored in DuckDB stays untouched.
+    """
+    if value.lstrip().startswith(("=", "+", "-", "@", "\t", "\r")):
+        return "'" + value
+    return value
+
+
 @dataclass(frozen=True, slots=True)
 class ConfirmedMechanism:
     case_id: str
@@ -163,7 +174,9 @@ def write_review_template(
         writer.writerow({
             "qec_case_id": case.case_id,
             "fin": case.vin,
-            "qec_ssl_end_finding": finding.text if finding else "",
+            "qec_ssl_end_finding": (
+                safe_spreadsheet_cell(finding.text) if finding else ""
+            ),
             "review_status": "pending",
             "mechanism_code": "",
             "reviewer": "",
