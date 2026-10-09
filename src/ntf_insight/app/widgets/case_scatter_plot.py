@@ -6,7 +6,7 @@ from collections import Counter, defaultdict
 from math import cos, pi, sin
 
 from PySide6.QtCore import QRectF, Qt, Signal
-from PySide6.QtGui import QColor, QFont, QPainter, QPen
+from PySide6.QtGui import QColor, QPainter, QPen
 from PySide6.QtWidgets import (
     QComboBox,
     QGraphicsScene,
@@ -173,6 +173,8 @@ class CaseScatterPlot(QGraphicsView):
             case_id = item.data(0)
             if isinstance(case_id, str):
                 self.case_selected.emit(case_id)
+                event.accept()
+                return
         super().mousePressEvent(event)
 
     def wheelEvent(self, event) -> None:  # noqa: N802
