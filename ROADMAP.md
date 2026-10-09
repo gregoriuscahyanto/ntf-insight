@@ -216,6 +216,10 @@ Current PySide6 views:
 - [x] QEC-/AutoExport-Datumsabgleich nach FIN, Teilenummer und Kilometerstand
 - [x] separate Tausch- und Reparaturkandidaten im Zeitplot
 - [x] umschaltbare X-Achse (Datum / Kilometerstand), fehlende km sichtbar
+- [x] HW-/SW-Standabweichungen zwischen QuickTests je FIN/ECU erkennen
+- [x] Änderungen mit Beobachtungsintervall statt erfundenem Flashdatum plotten
+- [x] QuickTest-ECU-Tabelle mit kontraststarken HW-/SW-Abweichungsmarkierungen
+- [x] HW-/SW-Vorher-/Nachher-Vergleich auch ohne QEC-Fall
 - [x] DTC-Filter mit stets sichtbaren Kurztest-, ECU-, Tausch- und Lieferantenereignissen
 - [x] manuelle Bestätigung eines Tauschankers mit Audit-Trail
 - [x] dashboard vehicle/QuickTest counts independent of existing QEC cases
