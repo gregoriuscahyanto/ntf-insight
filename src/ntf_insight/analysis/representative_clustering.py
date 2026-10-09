@@ -22,6 +22,7 @@ from ntf_insight.analysis.case_clustering import (
     signature_for,
 )
 from ntf_insight.analysis.qec_findings import qec_ssl_finding
+from ntf_insight.analysis.recurrence import relative_to_replacement
 from ntf_insight.domain.case import NTFCase
 
 
@@ -414,6 +415,9 @@ def select_representative_cases(
             with_pre_quicktest=sum(
                 any(
                     e.session_id and "#ecu:" in (e.source_ref or "")
+                    and relative_to_replacement(
+                        e, by_id[case_id].investigated_replacement()
+                    ) == "pre"
                     and e.fault_key in signatures[case_id].faults
                     for e in by_id[case_id].diagnostics
                 )
