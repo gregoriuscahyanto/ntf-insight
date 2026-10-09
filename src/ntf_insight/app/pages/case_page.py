@@ -142,6 +142,7 @@ class CasePage(QWidget):
         selector_row.addWidget(self.add_event_button)
 
         export_button = QPushButton("Markdown-Bericht exportieren…")
+        self.export_button = export_button
         export_button.clicked.connect(self._export_report)
         selector_row.addWidget(export_button)
         layout.addLayout(selector_row)
@@ -287,6 +288,7 @@ class CasePage(QWidget):
         timeline_row.addWidget(self.correct_button)
 
         history_button = QPushButton("Änderungsverlauf")
+        self.history_button = history_button
         history_button.setEnabled(self.manual_service is not None)
         history_button.clicked.connect(self._show_history)
         timeline_row.addWidget(history_button)
@@ -357,6 +359,8 @@ class CasePage(QWidget):
         editable = self.manual_service is not None and not is_preview and case is not None
         self.add_event_button.setEnabled(editable)
         self.correct_button.setEnabled(editable)
+        self.history_button.setEnabled(editable)
+        self.export_button.setEnabled(case is not None and not is_preview)
         if case is None:
             self._clear_view()
             return
