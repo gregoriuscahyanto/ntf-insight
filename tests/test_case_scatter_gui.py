@@ -4,12 +4,16 @@ import os
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QPoint, Qt
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication
 
 from ntf_insight.analysis.case_clustering import cluster_diagnostic_cases
-from ntf_insight.app.widgets.case_scatter_plot import CaseScatterPanel
+from ntf_insight.app.widgets.case_scatter_plot import (
+    UNASSIGNED,
+    CaseScatterPanel,
+    color_for_cluster,
+)
 from ntf_insight.demo.synthetic_cases import build_demo_cases
 
 
@@ -129,5 +133,92 @@ def test_scatter_numeric_tables_explain_plot_and_pairwise_score() -> None:
     assert panel.focus_id == "DEMO-006"
     assert panel.neighbor_model.rowCount() == len(cases) - 1
     assert "Fokus: DEMO-006" in panel.detail.text()
+    panel.close()
+    app.processEvents()
+
+
+
+def test_palette_is_not_reused_for_14_clusters_and_unassigned_is_gray() -> None:
+    """The production screenshot had 14 clusters but only 8 unique colours."""
+    first_14 = [color_for_cluster(cluster_id).name() for cluster_id in range(1, 15)]
+    assert len(set(first_14)) == 14
+    assert first_14[0] != first_14[8]
+    assert first_14[5] != first_14[13]
+    assert color_for_cluster(None).name() == UNASSIGNED
+    assert color_for_cluster(35).name() != color_for_cluster(3).name()
+
+
+def test_cluster_legend_and_group_note_identify_actual_membership() -> None:
+    app = QApplication.instance() or QApplication([])
+    cases = build_demo_cases()
+    grouped = cluster_diagnostic_cases(cases)
+    panel = CaseScatterPanel(cases, grouped)
+    assert grouped.clusters
+    selected = grouped.clusters[0]
+    assert panel.focus_case(selected.case_ids[0])
+
+    assert f"C{selected.cluster_id}" in panel.cluster_legend.text()
+    assert f"Fokuscluster C{selected.cluster_id}" in panel.cluster_note.text()
+    assert "schwächste originale Paarähnlichkeit" in panel.cluster_note.text()
+    assert "größter Abstand" in panel.cluster_note.text()
+    assert "Jaccard-Distanz" in panel.cluster_note.text()
+    assert panel.result == grouped
+    app.processEvents()
+    panel.close()
+
+
+def test_mouse_wheel_zoom_uses_two_factors_and_survives_selection() -> None:
+    app = QApplication.instance() or QApplication([])
+    cases = build_demo_cases()
+    panel = CaseScatterPanel(cases, cluster_diagnostic_cases(cases))
+    panel.resize(1100, 850)
+    panel.show()
+    app.processEvents()
+    chart = panel.plot
+    initial = chart.transform().m11()
+
+    class Wheel:
+        def __init__(self, delta: int):
+            self.delta = delta
+            self.accepted = False
+
+        def angleDelta(self):
+            return QPoint(0, self.delta)
+
+        def accept(self):
+            self.accepted = True
+
+        def ignore(self):
+            self.accepted = False
+
+    zoom_in = Wheel(120)
+    chart.wheelEvent(zoom_in)
+    assert zoom_in.accepted
+    assert chart._zoom_level > 1
+    after = chart.transform().m11()
+    assert after > initial
+
+    target = next(
+        point.case_id for point in panel.projection.points
+        if point.case_id != panel.focus_id
+    )
+    assert panel.focus_case(target)
+    assert abs(chart.transform().m11() - after) < 1e-9
+
+    # Updating cluster threshold must change labels only, not camera zoom.
+    panel.threshold.setValue(0.90)
+    assert abs(chart.transform().m11() - after) < 1e-9
+
+    zoom_out = Wheel(-120)
+    chart.wheelEvent(zoom_out)
+    assert zoom_out.accepted
+    assert abs(chart._zoom_level - 1) < 1e-8
+    assert abs(chart.transform().m11() - initial) < 1e-8
+
+    zoom_in_again = Wheel(120)
+    chart.wheelEvent(zoom_in_again)
+    chart.reset_zoom()
+    assert chart._zoom_level == 1.0
+    assert abs(chart.transform().m11() - initial) < 1e-8
     panel.close()
     app.processEvents()
