@@ -72,6 +72,10 @@ Mit `--vergleich` kann zusätzlich EOM/Leaf verglichen werden.
   aber **umbenannte** DTC-Schlüssel (`D0001` usw.) und CPC3-Kennzeichen.
 - `diagnosequalitaet.csv` und `ausgeschlossene_faelle.csv` – auditierbare
   Diagnosebasis und Gründe für nicht ausgewertete QEC-Fälle.
+- `wiederauftreten.csv` – Vorher-/Nachher-Diagnose-Verfügbarkeit
+  und – **nur bei beidseitig vorhandenen Diagnosesitzungen** – Anzahl
+  erneut beobachteter, neuer und nicht mehr beobachteter ECU:DTCs.
+  Fehlende Nachher-Diagnose darf nicht als Fehlerbehebung gelten.
 - `methodenvergleich.csv` – optional EOM/Leaf-Vergleich.
 
 Die QEC- und FIN-Pseudonyme sind **pro ZIP neu erzeugt** und
