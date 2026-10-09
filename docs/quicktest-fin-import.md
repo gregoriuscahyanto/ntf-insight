@@ -47,6 +47,39 @@ Dateien mit gleicher Textsubstanz, aber unterschiedlichen PDF-Metadaten,
 werden als **ein logischer QuickTest** behandelt. Beide Originaldateien können
 weiterhin im Roharchiv nachgewiesen werden.
 
+## Wo erscheinen FINs ohne Schadteilfall?
+
+Bereits mit **einem einzigen erfolgreich importierten QuickTest** erscheint
+die FIN unter **Fälle / FIN → FIN / Fallanalyse** als
+**„Nur QuickTests (kein Fall)“**. Die Übersicht zeigt die Zahl der DTCs,
+die **Diagnose-Timeline** mit QuickTest-Zeitpunkten, die DTC-Beobachtungen
+und die Steuergeräte-Stände. Auch der Zeitplot funktioniert ohne QEC-Fall.
+
+Die Anzeige ist dann **schreibgeschützt** und enthält **keine
+NTF-Ursachen- oder Lieferantenbewertung**. Erst ein gesonderter
+Fall/Tauschanker macht den Vorher-/Nachher-Vergleich fachlich möglich.
+
+## Warum stehen noch alte Dateien in „Datenquellen“?
+
+Das Rohdatenarchiv ist bewusst revisionsfreundlich: Ein früher hochgeladenes
+PDF oder eine CDD-Datei wird durch einen neuen Import **nicht gelöscht**.
+
+Über **Archivansicht** kannst du zwischen
+**„Verarbeitete Dateien“** (Standard), **„Alle archivierten Dateien“** und
+**„Noch nicht verarbeitet / Fehler“** wechseln.
+
+Falls ein älterer QuickTest zuvor als **„Sonstiges“** archiviert wurde:
+
+1. **„Alle archivierten Dateien“** auswählen.
+2. Alten PDF-Eintrag markieren.
+3. Quellenart **„Automatisch erkennen“** belassen oder bewusst
+   „Kurztest“ auswählen.
+4. **„Markierte Datei neu prüfen…“** anklicken.
+
+Das ursprüngliche PDF und sein historischer Archiv-Eintrag bleiben
+erhalten. Eine erfolgreiche Neuverarbeitung legt die FIN-Diagnose
+auch nachträglich an, ohne sie doppelt zu zählen.
+
 ## FIN ≠ Fall
 
 Ein QuickTest gehört zunächst **zum Fahrzeug (FIN)**, auch wenn noch kein
