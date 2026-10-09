@@ -124,7 +124,7 @@ def test_mismatched_source_fin_cannot_be_forced_into_qec_case(tmp_path) -> None:
     # Snapshot changes after the proposal (e.g. another operator), backend
     # revalidates source and destination identity inside the transaction.
     case = store.get_case("QEC-1")
-    case.vehicle.vin = OTHER
+    case.vehicle = case.vehicle.model_copy(update={"vin": OTHER})
     store.save_case(case)
     with pytest.raises(ValueError, match="FIN"):
         confirm_tips_link(store, candidate)
