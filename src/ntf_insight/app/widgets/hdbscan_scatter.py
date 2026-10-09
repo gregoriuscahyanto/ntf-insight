@@ -26,6 +26,7 @@ class HDBSCANScatter(QGraphicsView):
         self.setDragMode(QGraphicsView.DragMode.ScrollHandDrag)
         self._zoom = 1.0
         self.items_by_case = {}
+        self.connector_count = 0
 
     def set_result(
         self,
@@ -35,6 +36,7 @@ class HDBSCANScatter(QGraphicsView):
     ) -> None:
         self._scene.clear()
         self.items_by_case = {}
+        self.connector_count = 0
         coords = {
             cid: (x, y) for cid, x, y in result.coordinates
         }
@@ -45,8 +47,10 @@ class HDBSCANScatter(QGraphicsView):
             return
         by_id = {case.case_id: case for case in cases}
         by_group = {
-            member.case_id: (group.cluster_id, group.representative_case_id,
-                             member.membership_strength)
+            member.case_id: (
+                group.cluster_id, group.representative_case_id,
+                member.membership_strength, member.similarity_to_representative,
+            )
             for group in result.clusters
             for member in group.members
         }
@@ -61,7 +65,15 @@ class HDBSCANScatter(QGraphicsView):
             return (33 + (x-low_x)/span_x*665,
                     32 + (1-(y-low_y)/span_y)*305)
 
+        # Avoid the misleading "100-case star" on EOM broad groups.
+        # Only draw selected *small* groups, and never link weak pairs.
+        self.connector_count = 0
         for group in result.clusters:
+            if (
+                highlighted_cluster != group.cluster_id
+                or group.case_count > 12
+            ):
+                continue
             center = group.representative_case_id
             if center not in coords:
                 continue
@@ -69,14 +81,16 @@ class HDBSCANScatter(QGraphicsView):
             pen = QPen(color_for_cluster(group.cluster_id), 0.8)
             pen.setStyle(Qt.PenStyle.DashLine)
             for member in group.members:
-                if member.case_id == center:
+                if (
+                    member.case_id == center
+                    or member.similarity_to_representative < 0.45
+                ):
                     continue
                 mx, my = pos(member.case_id)
                 line = self._scene.addLine(center_x, center_y, mx, my, pen)
-                line.setOpacity(
-                    0.55 if group.cluster_id == highlighted_cluster else 0.17
-                )
+                line.setOpacity(0.37)
                 line.setZValue(0)
+                self.connector_count += 1
 
         for case_id in sorted(coords):
             meta = by_group.get(case_id)
@@ -102,6 +116,7 @@ class HDBSCANScatter(QGraphicsView):
                 + (
                     f"ML-Gruppe H{group_id} · repräsentativer Fall {meta[1]}\n"
                     f"HDBSCAN-Zugehörigkeitsstärke: {meta[2]:.1%}\n"
+                    f"Cosinus zum Medoid: {meta[3]:.1%}\n"
                     "Keine bestätigte gleiche technische Ursache"
                     if meta else
                     "HDBSCAN-Ausreißer / Rauschen: kein zugeordneter Cluster"
