@@ -33,6 +33,7 @@ class SourceKnowledgePage(QWidget):
         ("QEC · alle Tabellenzeilen", "qec_row"),
         ("AutoExport · DTC-Export", "autoexport_dtc"),
         ("AutoExport · Werkstatt / Claim", "autoexport_repair"),
+        ("AutoExport · TIPS-Fall", "autoexport_tips"),
         ("AutoExport · Aggregat", "autoexport_aggregate"),
         ("AutoExport · andere", "autoexport_other"),
         ("Lieferanten-Analysebericht · Originaltext", "supplier_analysis_page"),
