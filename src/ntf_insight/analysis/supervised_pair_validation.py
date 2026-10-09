@@ -117,7 +117,7 @@ def evaluate_supervised_pairs(
     by_id = {c.case_id: c for c in cases}
     if len(by_id) != len(cases):
         raise ValueError("Mehrfach angelegte QEC-Fall-ID.")
-    labels = {l.case_id: l for l in confirmations}
+    labels = {review.case_id: review for review in confirmations}
     if len(labels) != len(confirmations):
         raise ValueError("Mehrfach bestätigte QEC-ID.")
     if not set(labels).issubset(by_id):
