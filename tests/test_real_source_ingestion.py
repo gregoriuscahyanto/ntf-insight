@@ -522,3 +522,46 @@ def test_failed_raw_history_write_is_not_reported_as_success(tmp_path, monkeypat
     assert summary.events_linked == 0
     assert any("nicht vollstaendig" in issue for issue in summary.issues)
     assert len(source.store.load_artifacts()) == 1
+
+
+
+def test_qec_import_relinks_older_autoexport_sources_without_reupload(tmp_path) -> None:
+    """Upload order may not cause historical DTCs and TIPS to disappear."""
+    from ntf_insight.storage.source_knowledge_store import SourceKnowledgeStore
+
+    diagnostics = tmp_path / "diagnostics.csv"
+    diagnostics.write_bytes(_autoexport_csv())
+    tips = tmp_path / "tips.csv"
+    tips.write_bytes(_tips_csv())
+    qec = tmp_path / "qec.xlsx"
+    qec.write_bytes(_workbook_bytes())
+
+    service = SourceImportService(tmp_path / "raw", tmp_path / "cases.duckdb")
+    importer = LocalBatchImporter(service)
+    first = importer.import_paths([diagnostics, tips])
+    assert first.cases_created == 0
+    assert first.events_linked == 0
+    assert service.store.load_cases() == []
+
+    history = SourceKnowledgeStore(service.store)
+    assert history.fin_history_counts(SYNTHETIC_FIN) == {
+        "autoexport_dtc": 2, "autoexport_tips": 1,
+    }
+
+    # A newly supplied QEC case automatically replays old archived AutoExport
+    # CSVs. It does not re-index the already complete original row history.
+    second = importer.import_paths([qec])
+    assert second.cases_created == 1
+    assert second.tips_linked == 1
+    assert second.reference_rows >= 1  # QEC original sheets, not replayed CSVs
+    case = service.store.load_cases()[0]
+    assert len(case.diagnostics) == 2
+    assert len(case.tips_observations) == 1
+    assert history.fin_history_counts(SYNTHETIC_FIN) == {
+        "autoexport_dtc": 2, "autoexport_tips": 1,
+    }
+
+    importer.import_paths([qec])
+    case = service.store.load_cases()[0]
+    assert len(case.diagnostics) == 2
+    assert len(case.tips_observations) == 1
