@@ -774,6 +774,8 @@ class CaseScatterPanel(QWidget):
         else:
             percentages = "keine belastbare Achse (zu wenige Fälle/Merkmale)"
         self.method_note.setText(
+            f"Aktive DTC-Datenbasis: {self.dtc_source.currentText()}. "
+            f"Berücksichtigtes Vor-Tausch-Fenster: {self.lookback.currentText()}. "
             "Datengrundlage: ausschließlich diagnostische Merkmale vor dem "
             "untersuchten Tausch. Doppelte ECU:DTC-Quellzeilen zählen als "
             "ein Mengenmerkmal. Für jede Merkmalsgruppe g und jeden vorkommenden "
@@ -785,6 +787,8 @@ class CaseScatterPanel(QWidget):
             "deren projizierte Koordinaten werden je Achse mittelwertzentriert. "
             f"Erklärte Varianz der Matrix: {percentages}. "
             "Das ist NICHT die bewahrte Jaccard-Ähnlichkeit. "
+            "Ein Quell-/Fensterwechsel kann Matrix, Ähnlichkeit und "
+            "SVD-Koordinaten verändern; eine reine Schwellenänderung nicht. "
             "Die Clusterfarben folgen weiterhin dem gewichteten Jaccard "
             f"und der konservativen Complete-Link-Schwelle {self.threshold.value():.2f}. "
             "Die Merkmalsgewichte sind fachliche Startwerte, keine "
