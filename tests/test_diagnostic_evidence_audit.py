@@ -112,7 +112,6 @@ def test_optional_frequent_code_screening_is_separate_and_never_claims_relevance
     assert screened.common_dtc_cutoff == 0.35
     assert original.case_count == screened.case_count
     assert original.distances != screened.distances
-    assert all(item.faults if hasattr(item, "faults") else True for item in [])
     for group in screened.clusters:
         assert not any(
             fault in {("CPC3", "CODE-A-ROOT-A"), ("CPC3", "CODE-B-ROOT-B")}
