@@ -409,7 +409,8 @@ class HDBSCANPanel(QWidget):
             "Geprüfte Ziel-FINs", "Gleicher Mechanismus",
             "Anderer Mechanismus", "Treffer mit DTC-Screening",
             "Widersprüche mit DTC-Screening", "Mehrfach verwendete Evidenz",
-            "Mehrfache Ziel-FIN-Bestätigungen", "Offene Ziel-FINs",
+            "Mehrfache Ziel-FIN-Bestätigungen",
+            "Widersprüche ohne unabhängigen Beleg", "Offene Ziel-FINs",
             "Fachliche Bewertung",
         ))
         self.pilot_validation_table = _table(self.pilot_validation_model, 215)
@@ -1254,7 +1255,8 @@ class HDBSCANPanel(QWidget):
                 row.concordant_target_fins, row.discordant_target_fins,
                 row.screened_agree, row.screened_disagree,
                 row.shared_evidence_excluded,
-                row.repeated_fin_excluded, row.open_target_fins, row.status,
+                row.repeated_fin_excluded, row.unresolved_mechanism_conflicts,
+                row.open_target_fins, row.status,
             ) for row in report.groups
         ])
         self.pilot_validation_target_model.set_rows([
