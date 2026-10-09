@@ -258,3 +258,107 @@ def test_pdf_drag_drop_opens_fin_browser_without_qec_case(tmp_path, monkeypatch)
 
     window.close()
     app.processEvents()
+
+
+def test_fin_case_overview_shows_readonly_quicktest_timeline_without_qec(
+    tmp_path, monkeypatch,
+) -> None:
+    monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
+    monkeypatch.setenv("NTF_INSIGHT_DATA_DIR", str(tmp_path / "local"))
+    from PySide6.QtWidgets import QApplication
+
+    from ntf_insight.app.windows.main_window import MainWindow
+
+    source = _sources(tmp_path)
+    pdf = tmp_path / "diagnosis.pdf"
+    pdf.write_bytes(_pdf())
+    LocalBatchImporter(source).import_paths([pdf])
+    app = QApplication.instance() or QApplication([])
+    window = MainWindow()
+    page = window.pages["cases"]
+
+    assert not window.repository.list_cases()
+    assert page.case_model.rowCount() == 1
+    assert page.case_model.data(page.case_model.index(0, 0)) == "Nur QuickTests (kein Fall)"
+    assert page.case_model.data(page.case_model.index(0, 1)) == FIN
+    assert len(page.fin_only_previews) == 1
+    assert page.selector.currentData() == "FIN-QUICKTEST:" + FIN
+    assert page.timeline_model.rowCount() == 4  # 1 session, 1 DTC, 2 ECU states
+    assert page.time_plot._entries
+    assert page.recurrence_value.text() == "Nicht beurteilbar"
+    assert page.root_cause_value.text() == "Nicht bestimmbar"
+    assert page.evidence_model.rowCount() == 0
+    assert page._selected_case() is None
+    assert not page.add_event_button.isEnabled()
+    assert not page.correct_button.isEnabled()
+
+    page.case_search.setText("NOT-A-FIN")
+    assert page.case_proxy.rowCount() == 0
+    assert page.selector.currentIndex() == -1
+    assert not page.time_plot._entries
+    page.case_search.setText(FIN)
+    assert page.case_proxy.rowCount() == 1
+    assert page.timeline_model.rowCount() == 4
+
+    window.close()
+    app.processEvents()
+
+
+def test_archived_quicktest_can_be_reclassified_without_losing_provenance(
+    tmp_path,
+) -> None:
+    from ntf_insight.ingestion.artifacts import SourceType
+
+    service = _sources(tmp_path)
+    source = tmp_path / "original-quicktest.pdf"
+    source.write_bytes(_pdf())
+    artifact = service.import_raw(source, SourceType.OTHER)
+
+    result = LocalBatchImporter(service).import_paths(
+        [type(source)(artifact.archived_path)]
+    )
+
+    assert result.quicktests_saved == 1
+    assert result.files_archived == 0
+    saved = service.store.load_artifacts()
+    assert len(saved) == 1
+    assert saved[0].source_type == SourceType.SHORT_TEST
+    assert saved[0].original_name == "original-quicktest.pdf"
+    assert saved[0].archived_path == artifact.archived_path
+    assert saved[0].imported_at == artifact.imported_at
+
+
+def test_archived_old_sources_can_be_filtered_without_deleting_them(
+    tmp_path, monkeypatch,
+) -> None:
+    monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
+    monkeypatch.setenv("NTF_INSIGHT_DATA_DIR", str(tmp_path / "local"))
+    from PySide6.QtWidgets import QApplication
+
+    from ntf_insight.app.windows.main_window import MainWindow
+    from ntf_insight.ingestion.artifacts import SourceType
+
+    service = _sources(tmp_path)
+    old = tmp_path / "old-format.dat"
+    old.write_text("Synthetischer, noch nicht unterstützter Inhalt")
+    service.import_raw(old, SourceType.OTHER)
+    pdf = tmp_path / "report.pdf"
+    pdf.write_bytes(_pdf())
+    LocalBatchImporter(service).import_paths([pdf])
+
+    app = QApplication.instance() or QApplication([])
+    window = MainWindow()
+    page = window.pages["sources"]
+    assert page.archive_view.currentData() == "processed"
+    assert page.artifact_model.rowCount() == 1
+    assert "1 verarbeitet" in page.archive_counts.text()
+
+    page.archive_view.setCurrentIndex(page.archive_view.findData("all"))
+    assert page.artifact_model.rowCount() == 2
+    page.archive_view.setCurrentIndex(page.archive_view.findData("pending"))
+    assert page.artifact_model.rowCount() == 1
+    assert page._visible_artifacts[0].original_name == "old-format.dat"
+    assert len(service.store.load_artifacts()) == 2
+
+    window.close()
+    app.processEvents()
