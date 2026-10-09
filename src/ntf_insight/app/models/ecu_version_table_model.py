@@ -44,15 +44,19 @@ class ECUVersionTableModel(SimpleTableModel):
             )
             dark = theme == "dark"
             if role == Qt.ItemDataRole.BackgroundRole:
-                return QBrush(QColor(
-                    "#67481c" if dark else "#ffefce"
-                    if hw_cell else "#184e58" if dark else "#ddf5f8"
-                ))
+                background = (
+                    ("#67481c" if dark else "#ffefce")
+                    if hw_cell
+                    else ("#184e58" if dark else "#ddf5f8")
+                )
+                return QBrush(QColor(background))
             if role == Qt.ItemDataRole.ForegroundRole:
-                return QBrush(QColor(
-                    "#fff6d8" if dark else "#543b00"
-                    if hw_cell else "#e3fdff" if dark else "#064955"
-                ))
+                foreground = (
+                    ("#fff6d8" if dark else "#543b00")
+                    if hw_cell
+                    else ("#e3fdff" if dark else "#064955")
+                )
+                return QBrush(QColor(foreground))
             if role == Qt.ItemDataRole.FontRole:
                 font = QFont()
                 font.setBold(True)
