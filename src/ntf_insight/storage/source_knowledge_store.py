@@ -197,6 +197,40 @@ class SourceKnowledgeStore:
             for row in rows
         ]
 
+    def autoexport_population(self) -> dict[str, int]:
+        """Count rows and distinct FINs by source category, not QEC cases.
+
+        This uses indexed metadata and does not materialize sensitive vehicle
+        rows or customer text in Python. A TIPS record is a workshop case
+        record; an AutoExport DTC row is not a failed-part case.
+        """
+        with self.store.connect() as con:
+            rows = con.execute(
+                """
+                SELECT category, COUNT(*) AS row_count,
+                       COUNT(DISTINCT fin) AS fin_count
+                FROM source_knowledge_rows
+                WHERE category IN (
+                    'autoexport_dtc', 'autoexport_repair', 'autoexport_tips'
+                )
+                GROUP BY category
+                """
+            ).fetchall()
+            tips_ids = con.execute(
+                """
+                SELECT COUNT(DISTINCT NULLIF(
+                    json_extract_string(payload_json, '$.CaseId'), ''
+                ))
+                FROM source_knowledge_rows
+                WHERE category = 'autoexport_tips'
+                """
+            ).fetchone()[0]
+        results: dict[str, int] = {"tips_distinct_case_ids": int(tips_ids or 0)}
+        for category, row_count, fin_count in rows:
+            results[f"{category}_rows"] = int(row_count)
+            results[f"{category}_fins"] = int(fin_count)
+        return results
+
     def fin_history_counts(self, fin: str) -> dict[str, int]:
         """Counts of immutable original AutoExport rows for a FIN (not DTC rates)."""
         with self.store.connect() as con:
