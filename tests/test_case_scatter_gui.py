@@ -6,7 +6,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PySide6.QtCore import QPoint, Qt
 from PySide6.QtTest import QTest
-from PySide6.QtWidgets import QApplication
+from PySide6.QtWidgets import QApplication, QGraphicsLineItem
 
 from ntf_insight.analysis.case_clustering import cluster_diagnostic_cases
 from ntf_insight.app.widgets.case_scatter_plot import (
@@ -163,6 +163,15 @@ def test_cluster_legend_and_group_note_identify_actual_membership() -> None:
     assert "größter Abstand" in panel.cluster_note.text()
     assert "Jaccard-Distanz" in panel.cluster_note.text()
     assert panel.result == grouped
+    # Dashed links must connect only members of the *same* actual cluster.
+    connector_lines = [
+        item for item in panel.plot.scene().items()
+        if isinstance(item, QGraphicsLineItem) and item.zValue() == 1
+    ]
+    assert len(connector_lines) == len(selected.case_ids) - 1
+    for case_id in selected.case_ids:
+        tooltip = panel.plot.items_by_case[case_id].toolTip()
+        assert f"Cluster {selected.cluster_id}" in tooltip
     app.processEvents()
     panel.close()
 
