@@ -18,6 +18,8 @@ from ntf_insight.analysis.timeline import TimelineEntry
 LANE_LABELS = {
     "diagnostic_session": "Kurztest",
     "ecu_state": "Steuergerät HW-/SW-Stand",
+    "ecu_hw_change": "HW-Standabweichung",
+    "ecu_sw_change": "SW-Standabweichung",
     "replacement": "QEC / dokumentierter Tausch",
     "replacement_candidate": "AutoExport-Reparaturdatum",
     "repair": "Werkstatt",
@@ -95,6 +97,8 @@ class EventTimePlot(QWidget):
                 "dtc_fill": QColor("#374151"),
                 "qec": QColor("#ffcf6a"),
                 "auto": QColor("#62d1e5"),
+                "hw_change": QColor("#ffcb77"),
+                "sw_change": QColor("#6ce5d4"),
                 "event": QColor("#9ca3af"),
             }
         return {
@@ -106,6 +110,8 @@ class EventTimePlot(QWidget):
             "dtc_fill": QColor("#e5e7eb"),
             "qec": QColor("#986800"),
             "auto": QColor("#126782"),
+            "hw_change": QColor("#975700"),
+            "sw_change": QColor("#006977"),
             "event": QColor("#6b7280"),
         }
 
@@ -159,7 +165,13 @@ class EventTimePlot(QWidget):
             self._axis_mode == "mileage"
             and any(entry.mileage_km is None for entry in entries)
         )
-        left, right, top, bottom = 215.0, 32.0, 59.0, 50.0
+        has_version_changes = any(
+            entry.kind in {"ecu_hw_change", "ecu_sw_change"}
+            for entry in entries
+        )
+        left, right, top, bottom = 215.0, 32.0, (
+            85.0 if has_version_changes else 59.0
+        ), 50.0
         if missing_km:
             right += 115.0
         plot_width = max(80.0, self.width() - left - right)
@@ -219,6 +231,23 @@ class EventTimePlot(QWidget):
                     QRectF(left + 26, 21 if kind == "replacement" else 34,
                            min(450.0, plot_width - 30), 20),
                     Qt.AlignmentFlag.AlignVCenter, description,
+                )
+
+        if has_version_changes:
+            for kind, offset, label in (
+                ("ecu_hw_change", 61.0, "HW-Standabweichung (Zeitraum zwischen Tests)"),
+                ("ecu_sw_change", 74.0, "SW-Standabweichung (kein bestätigtes Update)"),
+            ):
+                if not any(entry.kind == kind for entry in entries):
+                    continue
+                painter.setPen(QPen(colors["hw_change"] if kind == "ecu_hw_change" else colors["sw_change"], 2, Qt.PenStyle.DotLine))
+                painter.drawLine(
+                    QPointF(left, offset), QPointF(left + 22, offset)
+                )
+                painter.setPen(colors["muted"])
+                painter.drawText(
+                    QRectF(left + 26, offset - 10, min(480.0, plot_width - 30), 20),
+                    Qt.AlignmentFlag.AlignVCenter, label,
                 )
 
         for tick in range(5):
@@ -287,6 +316,48 @@ class EventTimePlot(QWidget):
                 QPointF(x, top), QPointF(x, top + plot_height)
             )
 
+        # Version deviations have a bounded observation interval.
+        # Draw only an interval with two genuinely observed coordinates;
+        # never interpolate unknown km or claim the update happened at
+        # the later report's exact timestamp.
+        for entry in entries:
+            if entry.kind not in {"ecu_hw_change", "ecu_sw_change"}:
+                continue
+            index = lane_index.get((entry.kind, LANE_LABELS[entry.kind]))
+            if index is None:
+                continue
+            previous_x: float | None = None
+            if self._axis_mode == "date" and entry.interval_start_at is not None:
+                previous_x = left + (
+                    (entry.interval_start_at - start).total_seconds() / date_span
+                ) * plot_width
+            elif (
+                self._axis_mode == "mileage"
+                and km_bounds is not None
+                and entry.interval_start_mileage_km is not None
+                and entry.mileage_km is not None
+                and entry.interval_start_mileage_km <= entry.mileage_km
+            ):
+                low, high = km_bounds
+                previous_x = left + (
+                    (entry.interval_start_mileage_km - low)
+                    / max(high - low, 1)
+                ) * plot_width
+            if previous_x is None:
+                continue
+            y = top + (index + 0.5) * lane_height
+            current_x = position(entry)
+            color = (
+                colors["hw_change"]
+                if entry.kind == "ecu_hw_change" else colors["sw_change"]
+            )
+            painter.setPen(QPen(color, 2, Qt.PenStyle.DotLine))
+            painter.drawLine(
+                QPointF(previous_x, y), QPointF(current_x, y)
+            )
+            painter.setBrush(colors["bg"])
+            painter.drawEllipse(QPointF(previous_x, y), 3.2, 3.2)
+
         for entry in entries:
             lane_key = (
                 ("diagnostic", entry.title)
@@ -303,7 +374,22 @@ class EventTimePlot(QWidget):
             ):
                 x += 3
             y = top + (index + 0.5) * lane_height
-            if entry.kind == "diagnostic":
+            if entry.kind in {"ecu_hw_change", "ecu_sw_change"}:
+                color = (
+                    colors["hw_change"]
+                    if entry.kind == "ecu_hw_change" else colors["sw_change"]
+                )
+                painter.setPen(QPen(color, 1.8))
+                painter.setBrush(color)
+                if entry.kind == "ecu_hw_change":
+                    painter.drawRect(QRectF(x - 6, y - 6, 12, 12))
+                else:
+                    painter.drawPolygon(QPolygonF([
+                        QPointF(x, y - 8),
+                        QPointF(x + 7, y + 7),
+                        QPointF(x - 7, y + 7),
+                    ]))
+            elif entry.kind == "diagnostic":
                 painter.setPen(QPen(colors["dtc"], 1.5))
                 painter.setBrush(colors["dtc_fill"])
                 painter.drawEllipse(QPointF(x, y), 5.2, 5.2)
