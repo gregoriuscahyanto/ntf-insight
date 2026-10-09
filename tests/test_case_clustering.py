@@ -314,3 +314,20 @@ def test_incomparable_case_explanation_shows_na_instead_of_crashing() -> None:
     explanation = case_match_explanation(pump, battery, match)
     assert "Ähnlichkeit: k. A." in explanation
     assert "Verschiedene Bauteilfamilien" in explanation
+
+
+
+def test_qec_ssl_finding_count_is_post_cluster_annotation_only() -> None:
+    left = _case("SSL-A", ("P1",))
+    right = _case("SSL-B", ("P1",))
+    baseline = cluster_diagnostic_cases([left, right])
+    assert len(baseline.clusters) == 1
+
+    left.qec_ssl_end_finding = "NTF - Original QEC text"
+    left.qec_ssl_end_date = None
+    result = cluster_diagnostic_cases([left, right])
+    profiles = cluster_insights(result, [left, right])
+
+    assert result.matches == baseline.matches
+    assert result.clusters == baseline.clusters
+    assert profiles[0].cases_with_qec_ssl_finding == 1
