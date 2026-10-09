@@ -192,6 +192,41 @@ def write_review_template(
         })
 
 
+def write_confirmed_review_backup(
+    output: TextIO,
+    cases: list[NTFCase],
+    confirmations: tuple[ConfirmedMechanism, ...],
+) -> None:
+    """Local-only re-importable backup of ALL explicitly confirmed QEC labels.
+
+    Contains no SSL free-text, but real QEC IDs, FINs and evidence references.
+    Must NEVER enter an external cluster review ZIP or CI artifacts.
+    """
+    by_id = {case.case_id: case for case in cases}
+    if len(by_id) != len(cases):
+        raise ValueError("QEC-Fall-IDs im Bestand nicht eindeutig.")
+    labels = {label.case_id: label for label in confirmations}
+    if len(labels) != len(confirmations) or not set(labels).issubset(by_id):
+        raise ValueError("Sicherung enthält doppelte oder unbekannte Fachlabels.")
+    writer = csv.DictWriter(
+        output, fieldnames=REVIEW_FIELDS,
+        delimiter=";", lineterminator="\\n",
+    )
+    writer.writeheader()
+    for case_id, label in sorted(labels.items()):
+        case = by_id[case_id]
+        writer.writerow({
+            "qec_case_id": safe_spreadsheet_cell(case.case_id),
+            "fin": safe_spreadsheet_cell(case.vin),
+            "qec_ssl_end_finding": "",
+            "review_status": "confirmed",
+            "mechanism_code": safe_spreadsheet_cell(label.mechanism_code),
+            "reviewer": safe_spreadsheet_cell(label.reviewer),
+            "evidence_ref": safe_spreadsheet_cell(label.evidence_ref),
+            "confirmed_on": label.confirmed_on.isoformat(),
+        })
+
+
 def review_cluster_mechanisms(
     cases: list[NTFCase],
     result: MLClusterResult,
