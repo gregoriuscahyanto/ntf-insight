@@ -1,0 +1,74 @@
+name: NTF Insight - Windows lokal (manuell)
+
+on:
+  workflow_dispatch:
+    inputs:
+      runner:
+        description: "Welcher Windows-Runner soll testen?"
+        required: true
+        type: choice
+        default: ntf-insight-1
+        options:
+          - ntf-insight-1
+          - ntf-insight-2
+      pruefung:
+        description: "Nur synthetische Tests oder zusaetzlich lokale DB lesen?"
+        required: true
+        type: choice
+        default: code
+        options:
+          - code
+          - lokal-readonly
+
+permissions:
+  contents: read
+
+# Die zwei Runner befinden sich auf demselben PC: keine parallelen Datenbank-Checks.
+concurrency:
+  group: ntf-insight-lokal-windows
+  cancel-in-progress: false
+
+jobs:
+  windows-lokal:
+    # Keine ungeprueften PRs/Branches und keine fremden Ausloeser auf dem Daten-PC.
+    if: ${{ github.ref == 'refs/heads/main' && github.actor == 'gregoriuscahyanto' }}
+    runs-on: [self-hosted, Windows, X64, "${{ inputs.runner }}"]
+    timeout-minutes: 60
+    defaults:
+      run:
+        shell: powershell
+    steps:
+      - name: Code aus freigegebenem Hauptzweig laden
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Windows-Host und Python pruefen
+        run: |
+          if ($env:RUNNER_OS -ne "Windows") { throw "Windows-Runner erforderlich" }
+          if (@("vehicle-sim-windows-laptop", "vehicle-sim-windows-laptop-2") -notcontains $env:RUNNER_NAME) {
+            throw "Unerwarteter NTF-Runnername"
+          }
+          python -c "import struct,sys; assert sys.version_info >= (3,11); assert struct.calcsize('P')*8 == 64"
+
+      - name: Isolierte Python-Umgebung einrichten
+        run: |
+          python -m venv .venv
+          .\.venv\Scripts\python.exe -m pip install -e ".[dev]"
+
+      - name: Qualitaetspruefung mit synthetischen Daten
+        env:
+          QT_QPA_PLATFORM: offscreen
+          NTF_INSIGHT_DATA_DIR: ${{ runner.temp }}\ntf-insight-ci-synthetisch
+        run: |
+          .\.venv\Scripts\python.exe ci/quality_gate.py
+
+      - name: Lokale DuckDB ausschliesslich lesend pruefen
+        if: ${{ inputs.pruefung == 'lokal-readonly' }}
+        run: |
+          if ([string]::IsNullOrWhiteSpace($env:NTF_INSIGHT_DATA_DIR)) {
+            throw "NTF_INSIGHT_DATA_DIR muss lokal fuer das Runner-Konto gesetzt sein"
+          }
+          .\.venv\Scripts\python.exe ci/windows_local_readonly_check.py
+
+# Bewusst kein upload-artifact und kein Ausgeben von FIN, Pfaden oder Quelldokumenten.
