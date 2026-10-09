@@ -96,6 +96,118 @@ class CaseClusterResult:
 
 
 @dataclass(frozen=True, slots=True)
+class ClusterInsight:
+    """Human-readable cluster profile, distinct from any causal diagnosis."""
+
+    cluster_id: int
+    case_count: int
+    vehicle_count: int
+    representative_case_id: str
+    common_faults: tuple[FaultKey, ...]
+    weakest_pair_similarity: float
+    mean_similarity: float
+    mean_feature_coverage: float
+    cases_with_pre_and_post_test: int
+
+
+def cluster_insights(
+    result: CaseClusterResult,
+    cases: list[NTFCase],
+) -> tuple[ClusterInsight, ...]:
+    """Profile formed clusters without using post-repair outcomes for membership.
+
+    Representative = observed case with highest average score x feature
+    coverage to other cluster members, deterministic tie-break by case ID.
+    The representative is not a recommended repair or a mean/synthetic case.
+    """
+    by_id = {case.case_id: case for case in cases}
+    pairs = {
+        frozenset((match.left_case_id, match.right_case_id)): match
+        for match in result.matches
+    }
+    insights = []
+    for cluster in result.clusters:
+        members = cluster.case_ids
+        pair_matches = [
+            pairs[frozenset((left, right))]
+            for index, left in enumerate(members)
+            for right in members[index + 1:]
+        ]
+        weighted_neighbour_scores = {
+            case_id: sum(
+                (pair.score or 0.0) * pair.coverage
+                for pair in pair_matches
+                if case_id in (pair.left_case_id, pair.right_case_id)
+            ) / max(1, len(members) - 1)
+            for case_id in members
+        }
+        representative = min(
+            members,
+            key=lambda case_id: (-weighted_neighbour_scores[case_id], case_id),
+        )
+        followup = sum(
+            (
+                (observation := resolution_observation(by_id[case_id])).has_pre_test
+                and observation.has_post_test
+            )
+            for case_id in members
+        )
+        insights.append(ClusterInsight(
+            cluster_id=cluster.cluster_id,
+            case_count=len(members),
+            vehicle_count=len({by_id[case_id].vin for case_id in members}),
+            representative_case_id=representative,
+            common_faults=cluster.common_faults,
+            weakest_pair_similarity=round(min(pair.score or 0.0 for pair in pair_matches), 4),
+            mean_similarity=round(
+                sum(pair.score or 0.0 for pair in pair_matches) / len(pair_matches), 4
+            ),
+            mean_feature_coverage=round(
+                sum(pair.coverage for pair in pair_matches) / len(pair_matches), 4
+            ),
+            cases_with_pre_and_post_test=followup,
+        ))
+    return tuple(insights)
+
+
+def case_match_explanation(
+    focused: NTFCase,
+    other: NTFCase,
+    match: CaseMatch,
+) -> str:
+    """Explain both shared and dissimilar diagnostic evidence for a neighbour."""
+    first = signature_for(focused)
+    second = signature_for(other)
+    shared = ", ".join(
+        f"{ecu}:{code}" for ecu, code in match.shared_faults
+    ) or "Keine gemeinsamen ECU:DTC-Kombinationen"
+    focus_only = sorted(first.faults - second.faults)
+    other_only = sorted(second.faults - first.faults)
+
+    def compact(faults: list[FaultKey]) -> str:
+        if not faults:
+            return "Keine"
+        preview = ", ".join(
+            f"{ecu}:{code}" for ecu, code in faults[:8]
+        )
+        return preview + (f" (+{len(faults) - 8} weitere)" if len(faults) > 8 else "")
+
+    return (
+        f"Gemeinsames Diagnosebild: {shared}\n"
+        f"Nur im gewählten Fall: {compact(focus_only)}\n"
+        f"Nur im Vergleichsfall: {compact(other_only)}\n"
+        f"Gemeinsame Beanstandungsbegriffe: "
+        f"{', '.join(match.shared_complaint) or 'Keine beidseitig bekannten'}\n"
+        f"Gemeinsame Softwarestände: "
+        f"{', '.join(match.shared_software[:6]) or 'Keine belegten'}\n"
+        f"Ähnlichkeit: {match.score:.0%} · "
+        f"vergleichbare Merkmalsabdeckung: {match.coverage:.0%}\n"
+        f"{match.reason}\n"
+        "Ähnlichkeit ist keine Ursachen- oder Reparaturwahrscheinlichkeit."
+    )
+
+
+@dataclass(frozen=True, slots=True)
 class ResolutionObservation:
     measures: tuple[str, ...]
     outcome: str
@@ -225,7 +337,12 @@ def compare_signatures(left: DiagnosticSignature, right: DiagnosticSignature) ->
 
     has_meaningful_overlap = bool(shared_faults or len(shared_complaint) >= 2)
     # Strict gate: do not form a cluster based on an ECU/variant or scant text.
-    eligible = bool(shared_faults) and covered_weight >= 0.50
+    eligible = (
+        bool(shared_faults)
+        and covered_weight >= 0.50
+        and left.has_replacement_anchor
+        and right.has_replacement_anchor
+    )
 
     if shared_faults:
         reason = "Gemeinsame DTCs: " + ", ".join(f"{ecu}:{code}" for ecu, code in shared_faults)
@@ -237,7 +354,10 @@ def compare_signatures(left: DiagnosticSignature, right: DiagnosticSignature) ->
     if not has_meaningful_overlap:
         reason += " · schwache diagnostische Evidenz"
     if not left.has_replacement_anchor or not right.has_replacement_anchor:
-        reason += " · mindestens ein Fall ohne Tauschanker"
+        reason += (
+            " · ohne dokumentierten Tauschanker nur Ähnlichkeitssuche, "
+            "keine automatische Clusterzuordnung"
+        )
 
     return CaseMatch(
         left_case_id=left.case_id,
@@ -302,7 +422,15 @@ def cluster_diagnostic_cases(
         raise ValueError("Fall-IDs müssen eindeutig sein.")
 
     ids = sorted(by_id)
-    matches = all_diagnostic_matches(cases)
+    signatures = {case_id: signature_for(by_id[case_id]) for case_id in ids}
+    matches = [
+        compare_signatures(signatures[left], signatures[right])
+        for index, left in enumerate(ids) for right in ids[index + 1:]
+    ]
+    matches.sort(key=lambda m: (
+        -(m.score if m.score is not None else -1.0),
+        m.left_case_id, m.right_case_id,
+    ))
     lookup = {
         frozenset((match.left_case_id, match.right_case_id)): match
         for match in matches
@@ -343,9 +471,9 @@ def cluster_diagnostic_cases(
     )
     clusters = []
     for index, group in enumerate(multi, start=1):
-        common = set(signature_for(by_id[group[0]]).faults)
+        common = set(signatures[group[0]].faults)
         for case_id in group[1:]:
-            common &= signature_for(by_id[case_id]).faults
+            common &= signatures[case_id].faults
         clusters.append(
             CaseCluster(index, group, tuple(sorted(common)))
         )
