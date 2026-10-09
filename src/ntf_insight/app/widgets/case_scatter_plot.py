@@ -32,6 +32,10 @@ from ntf_insight.analysis.case_clustering import (
 )
 from ntf_insight.analysis.case_projection import CaseProjection, project_diagnostic_cases
 from ntf_insight.analysis.cluster_audit import audit_case_clusters
+from ntf_insight.analysis.dtc_case_patterns import (
+    DtcCasePattern,
+    discover_case_dtc_patterns,
+)
 from ntf_insight.analysis.case_similarity_explanation import (
     FEATURE_LABELS,
     explain_case_similarity,
@@ -102,6 +106,11 @@ class CaseScatterPlot(QGraphicsView):
         result: CaseClusterResult | None,
         by_id: dict[str, NTFCase],
         focus_id: str | None,
+        *,
+        pattern_members: frozenset[str] = frozenset(),
+        pattern_label: str | None = None,
+        dtc_source: str = "all",
+        lookback_days: int | None = None,
     ) -> None:
         scene = self._scene
         new_key = tuple(
@@ -203,11 +212,16 @@ class CaseScatterPlot(QGraphicsView):
             color = color_for_cluster(cluster)
             x, y = locations[point.case_id]
             radius = 9.5 if point.case_id == focus_id else 7.0
-            outline = QColor("#172638") if point.case_id == focus_id else QColor("#ffffff")
+            highlighted = point.case_id in pattern_members
+            outline = (
+                QColor("#172638") if point.case_id == focus_id
+                else QColor("#e0a300") if highlighted else QColor("#ffffff")
+            )
             in_focus_cluster = focus_cluster is not None and cluster == focus_cluster
             pen = QPen(
                 outline,
-                3.0 if point.case_id == focus_id else 2.0 if in_focus_cluster else 1.3,
+                3.0 if point.case_id == focus_id else
+                3.2 if highlighted else 2.0 if in_focus_cluster else 1.3,
             )
 
             # Square markers explicitly flag cases without a replacement anchor.
@@ -221,7 +235,9 @@ class CaseScatterPlot(QGraphicsView):
                 )
             item.setZValue(3 if point.case_id == focus_id else 2)
             item.setData(0, point.case_id)
-            sig = signature_for(case)
+            sig = signature_for(
+                case, dtc_source=dtc_source, lookback_days=lookback_days
+            )
             preview = ", ".join(f"{ecu}:{dtc}" for ecu, dtc in sorted(sig.faults)[:8])
             if len(sig.faults) > 8:
                 preview += f" (+{len(sig.faults) - 8})"
@@ -229,7 +245,11 @@ class CaseScatterPlot(QGraphicsView):
                 f"Fall {point.case_id} · FIN {case.vin}\n"
                 f"{'Cluster ' + str(cluster) if cluster else 'Einzelfall / unzugeordnet'}\n"
                 f"Diagnostische ECU:DTCs: {preview or 'Keine'}\n"
-                f"Tauschanker: {'vorhanden' if point.has_replacement_anchor else 'fehlt'}\n"
+                (
+                    f"Gemeinsames DTC-Muster (nur Kandidaten): {pattern_label}\n"
+                    if highlighted and pattern_label else ""
+                )
+                + f"Tauschanker: {'vorhanden' if point.has_replacement_anchor else 'fehlt'}\n"
                 f"SSL-Endbefund (nicht im Score): {qec_ssl_finding_label(case)}\n"
                 "Darstellungsabstand ist keine Ursachenwahrscheinlichkeit."
                 + (
