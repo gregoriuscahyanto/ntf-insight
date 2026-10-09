@@ -25,6 +25,10 @@ from PySide6.QtWidgets import (
 )
 
 from ntf_insight.analysis.evidence_engine import generate_case_evidence
+from ntf_insight.analysis.fin_diagnostics import (
+    FIN_ONLY_PREFIX,
+    build_fin_only_previews,
+)
 from ntf_insight.analysis.recurrence import analyze_recurrence, format_faults
 from ntf_insight.analysis.timeline import build_timeline
 from ntf_insight.app.dialogs.manual_entry_dialogs import (
@@ -59,6 +63,18 @@ class CasePage(QWidget):
         self.repository = repository
         self.references = references
         self.manual_service = manual_service
+        self.fin_only_previews = (
+            build_fin_only_previews(
+                QuickTestStore(manual_service.store),
+                {case.vin for case in repository.list_cases()},
+            )
+            if manual_service is not None
+            else {}
+        )
+        self.view_cases = [
+            *repository.list_cases(),
+            *self.fin_only_previews.values(),
+        ]
 
         outer_layout = QVBoxLayout(self)
         outer_layout.setContentsMargins(0, 0, 0, 0)
@@ -96,8 +112,13 @@ class CasePage(QWidget):
 
         self.selector = QComboBox(self)
         self.selector.setVisible(False)
-        for case in repository.list_cases():
-            self.selector.addItem(f"{case.case_id} · {case.vin}", case.case_id)
+        for case in self.view_cases:
+            title = (
+                f"Nur QuickTests · {case.vin}"
+                if case.case_id.startswith(FIN_ONLY_PREFIX)
+                else f"{case.case_id} · {case.vin}"
+            )
+            self.selector.addItem(title, case.case_id)
         self.selector.currentIndexChanged.connect(self._refresh)
 
         selector_row = QHBoxLayout()
@@ -125,10 +146,13 @@ class CasePage(QWidget):
         layout.addLayout(selector_row)
 
         case_rows: list[CaseRow] = []
-        for case in repository.list_cases():
+        for case in self.view_cases:
+            is_preview = case.case_id.startswith(FIN_ONLY_PREFIX)
             replacement = case.investigated_replacement()
             recurrence = analyze_recurrence(case)
-            if recurrence.assessable:
+            if is_preview:
+                recurrence_text = "Ohne Tauschanker"
+            elif recurrence.assessable:
                 recurrence_text = "Ja" if recurrence.has_recurrence else "Nein"
             else:
                 recurrence_text = "Unbekannt"
@@ -145,7 +169,11 @@ class CasePage(QWidget):
                     ),
                     recurrence=recurrence_text,
                     assessment=(
-                        str(case.assessment.root_cause) if case.assessment is not None else None
+                        "Kein NTF-Fall"
+                        if is_preview
+                        else str(case.assessment.root_cause)
+                        if case.assessment is not None
+                        else None
                     ),
                 )
             )
@@ -277,6 +305,8 @@ class CasePage(QWidget):
         if self.selector.count():
             self.case_table.selectRow(0)
             self._refresh()
+        else:
+            self._clear_view()
 
     def _filter_cases(self, text: str) -> None:
         """Keep the editable case in sync with the visible filtered selection."""
@@ -286,12 +316,11 @@ class CasePage(QWidget):
             self.selector.setCurrentIndex(-1)
             self.add_event_button.setEnabled(False)
             self.correct_button.setEnabled(False)
+            self._clear_view()
             return
 
         self.case_table.selectRow(0)
         self._case_clicked(self.case_proxy.index(0, 0))
-        self.add_event_button.setEnabled(self.manual_service is not None)
-        self.correct_button.setEnabled(self.manual_service is not None)
 
     def _case_clicked(self, index) -> None:
         source_index = self.case_proxy.mapToSource(self.case_proxy.index(index.row(), 0))
@@ -302,10 +331,61 @@ class CasePage(QWidget):
         if selector_index >= 0:
             self.selector.setCurrentIndex(selector_index)
 
+    def _clear_view(self) -> None:
+        for value in (
+            self.component_value, self.replacement_value, self.root_cause_value,
+            self.supplier_value, self.confidence_value, self.recurrence_value,
+            self.assessment_text, self.recurrence_text, self.evidence_balance,
+        ):
+            value.setText("—")
+        self.evidence_model.set_rows([])
+        self.timeline_model.set_entries([])
+        self.time_plot.set_entries([])
+
     def _refresh(self) -> None:
         case_id = self.selector.currentData()
-        case = self.repository.get_case(case_id) if case_id else None
+        is_preview = isinstance(case_id, str) and case_id.startswith(FIN_ONLY_PREFIX)
+        case = (
+            self.fin_only_previews.get(case_id)
+            if is_preview
+            else self.repository.get_case(case_id)
+            if case_id
+            else None
+        )
+        editable = self.manual_service is not None and not is_preview and case is not None
+        self.add_event_button.setEnabled(editable)
+        self.correct_button.setEnabled(editable)
         if case is None:
+            self._clear_view()
+            return
+
+        if is_preview:
+            entries = build_timeline(case)
+            self.component_value.setText("Noch keinem Schadteilfall zugeordnet")
+            self.replacement_value.setText("Nicht dokumentiert")
+            self.root_cause_value.setText("Nicht bestimmbar")
+            self.supplier_value.setText("Nicht bestimmbar")
+            self.confidence_value.setText("—")
+            self.recurrence_value.setText("Nicht beurteilbar")
+            self.assessment_text.setText(
+                "FIN-Diagnose aus QuickTests: Es liegt noch kein verknüpfter "
+                "NTF-/QEC-Fall vor. Diese Fahrzeugdaten sind sichtbar und "
+                "dauerhaft gespeichert, aber keine Reparatur- oder "
+                "Lieferantenursache wird daraus abgeleitet."
+            )
+            self.recurrence_text.setText(
+                f"{len(case.diagnostic_sessions)} QuickTest(s), "
+                f"{len(case.diagnostics)} DTC-Beobachtungen, "
+                f"{len(case.ecu_states)} Steuergeräte-Stände. "
+                "Für eine Vorher-/Nachher-Bewertung fehlt der zugehörige Tausch."
+            )
+            self.evidence_model.set_rows([])
+            self.evidence_balance.setText(
+                "Kein NTF-Fall vorhanden – keine Root-Cause-Evidenz bewertet. "
+                "Details unter »QuickTests nach FIN«."
+            )
+            self.time_plot.set_entries(entries)
+            self.timeline_model.set_entries(entries)
             return
 
         replacement = case.investigated_replacement()
