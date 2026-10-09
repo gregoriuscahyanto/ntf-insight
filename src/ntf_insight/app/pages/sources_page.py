@@ -335,6 +335,12 @@ class SourcesPage(QWidget):
             f"{summary.cases_created} neue Fälle, "
             f"{summary.quicktests_saved} QuickTest(s) dauerhaft nach FIN gespeichert, "
             f"{summary.events_linked} zugeordnete Ereignisse · "
+            f"{summary.events_unassigned} Ereignisse ohne eindeutige QEC-Zuordnung · "
+            f"{summary.rows_scanned} gepruefte CSV-Zeilen, "
+            f"{summary.rows_skipped} nicht fallbezogen verwendbar "
+            f"({summary.rows_invalid} ungueltig) · "
+            f"{summary.tips_linked} TIPS verknuepft, "
+            f"{summary.tips_unassigned} TIPS ohne eindeutigen QEC-Fall · "
             f"{summary.reference_sources} Referenzquellen, "
             f"{summary.reference_rows} strukturierte Quellzeilen"
         )
@@ -463,6 +469,14 @@ class SourcesPage(QWidget):
             if self.import_service is not None else {}
         )
         repair_count = sum(len(case.repairs) for case in all_cases)
+        linked_tips_count = sum(
+            len(case.tips_observations) for case in all_cases
+        )
+        raw_tips_count = (
+            SourceKnowledgeStore(self.import_service.store).count_rows(
+                "autoexport_tips"
+            ) if self.import_service is not None else 0
+        )
         trigger_count = len(self.references.list_triggers())
         change_count = len(self.references.list_changes())
 
@@ -508,6 +522,12 @@ class SourcesPage(QWidget):
                 "DTC-/Werkstattzeilen auch ohne QEC-Fall",
                 "CSV-Rohfelder und FIN-Bezug in DuckDB",
                 f"{knowledge_counts.get('autoexport_rows', 0)} Zeilen gespeichert",
+            ),
+            (
+                "TIPS-Fallberichte",
+                "Initiale Kundenbeanstandung, Befund und Maßnahmen je FIN",
+                "Alle Rohzeilen lokal; nur eindeutige zeitliche QEC-Zuordnung",
+                f"{raw_tips_count} Quellzeilen · {linked_tips_count} mit Fall verbunden",
             ),
             (
                 "Fall-/FIN-Liste",
