@@ -22,6 +22,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from ntf_insight.analysis.case_clustering import _component_key
 from ntf_insight.analysis.representative_clustering import (
     RepresentativePlan,
     select_representative_cases,
@@ -70,6 +71,9 @@ class RepresentativeCasePanel(QWidget):
         super().__init__()
         self.cases = sorted(cases, key=lambda item: item.case_id)
         self.by_id = {case.case_id: case for case in self.cases}
+        self._family_by_id = {
+            case.case_id: _component_key(case) for case in self.cases
+        }
         self.knowledge = source_knowledge
         self.store = store
         self.plan: RepresentativePlan | None = None
@@ -106,12 +110,15 @@ class RepresentativeCasePanel(QWidget):
         controls = QGridLayout()
         controls.addWidget(QLabel("Bauteilfamilie"), 0, 0)
         self.family = QComboBox()
-        families = sorted({
-            case.component_profile_id or case.component_type
+        family_counts = Counter(self._family_by_id.values())
+        family_label = {
+            self._family_by_id[case.case_id]: case.component_type
             for case in self.cases
-        })
-        for family in families:
-            self.family.addItem(family, family)
+        }
+        for family in sorted(family_counts):
+            self.family.addItem(
+                f"{family_label[family]} ({family_counts[family]})", family
+            )
         controls.addWidget(self.family, 0, 1)
         controls.addWidget(QLabel("Max. Untersuchungsfälle"), 0, 2)
         self.budget = QSpinBox()
@@ -271,7 +278,7 @@ class RepresentativeCasePanel(QWidget):
         family = self.family.currentData()
         subset = [
             case for case in self.cases
-            if (case.component_profile_id or case.component_type) == family
+            if self._family_by_id[case.case_id] == family
         ]
         self.plan = select_representative_cases(
             subset,
@@ -357,7 +364,7 @@ class RepresentativeCasePanel(QWidget):
         self.map.set_plan(
             self.plan,
             [case for case in self.cases if (
-                case.component_profile_id or case.component_type
+                self._family_by_id[case.case_id]
             ) == self.family.currentData()],
             group.cluster_id,
         )
