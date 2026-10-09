@@ -390,3 +390,131 @@ def cluster_hdbscan_cases(
         dtc_source=dtc_source,
         distances=tuple(tuple(float(val) for val in row) for row in distance),
     )
+
+
+
+@dataclass(frozen=True, slots=True)
+class HDBSCANMethodSummary:
+    """Method-comparable cohort statistics, free of QEC and VIN identifiers."""
+
+    selection_method: str
+    group_count: int
+    clustered_cases: int
+    noise_cases: int
+    largest_cluster_size: int
+    groups_with_common_faults: int
+    groups_without_weak_pairs: int
+    weak_pair_count: int
+    all_internal_pair_count: int
+    median_of_group_medians: float | None
+
+    @property
+    def weak_pair_fraction(self) -> float:
+        return (
+            self.weak_pair_count / self.all_internal_pair_count
+            if self.all_internal_pair_count else 0.0
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class HDBSCANMethodComparison:
+    """Two HDBSCAN selection methods on identical pre-swap QEC input."""
+
+    eom: HDBSCANMethodSummary
+    leaf: HDBSCANMethodSummary
+    pair_coassignment_jaccard: float
+    both_grouped_cases: int
+    eligible_case_count: int
+    min_cluster_size: int
+    min_samples: int
+    dtc_source: str
+    lookback_days: int | None
+
+    @property
+    def rows(self) -> tuple[HDBSCANMethodSummary, HDBSCANMethodSummary]:
+        return self.eom, self.leaf
+
+
+def _method_summary(result: MLClusterResult) -> HDBSCANMethodSummary:
+    groups = result.clusters
+    group_medians = sorted(group.median_internal_similarity for group in groups)
+    return HDBSCANMethodSummary(
+        selection_method=result.selection_method,
+        group_count=len(groups),
+        clustered_cases=result.clustered_count,
+        noise_cases=len(result.noise_case_ids),
+        largest_cluster_size=max((group.case_count for group in groups), default=0),
+        groups_with_common_faults=sum(bool(group.common_faults) for group in groups),
+        groups_without_weak_pairs=sum(
+            group.weak_pair_count == 0 for group in groups
+        ),
+        weak_pair_count=sum(group.weak_pair_count for group in groups),
+        all_internal_pair_count=sum(group.internal_pair_count for group in groups),
+        median_of_group_medians=(
+            round(float(np.median(group_medians)), 4)
+            if group_medians else None
+        ),
+    )
+
+
+def _same_cluster_pairs(
+    result: MLClusterResult,
+) -> set[tuple[str, str]]:
+    """Agreement on positive case *pairs*, independent of H1/H2 label names."""
+    return {
+        (left, right)
+        for group in result.clusters
+        for index, left in enumerate(group.case_ids)
+        for right in group.case_ids[index + 1:]
+    }
+
+
+def compare_hdbscan_methods(
+    cases: list[NTFCase],
+    *,
+    min_cluster_size: int = 3,
+    min_samples: int = 2,
+    lookback_days: int | None = None,
+    dtc_source: str = "all",
+) -> HDBSCANMethodComparison:
+    """Apples-to-apples EOM/Leaf sensitivity report on identical input.
+
+    Cluster numbers are arbitrary. Pair co-assignment compares actual
+    memberships and avoids the illusion of label ID matching.
+    1.0 when neither method forms any positive pair means 'agreement in
+    finding no groups', NOT a proof of high diagnostic quality.
+    """
+    params = {
+        "min_cluster_size": min_cluster_size,
+        "min_samples": min_samples,
+        "lookback_days": lookback_days,
+        "dtc_source": dtc_source,
+    }
+    eom = cluster_hdbscan_cases(cases, selection_method="eom", **params)
+    leaf = cluster_hdbscan_cases(cases, selection_method="leaf", **params)
+    if eom.eligible_case_ids != leaf.eligible_case_ids:
+        raise AssertionError("EOM and Leaf must share the eligible case cohort.")
+    if eom.distances != leaf.distances:
+        raise AssertionError("EOM and Leaf must use the same diagnostic distance.")
+    eom_pairs = _same_cluster_pairs(eom)
+    leaf_pairs = _same_cluster_pairs(leaf)
+    union = eom_pairs | leaf_pairs
+    grouped_eom = {
+        cid for group in eom.clusters for cid in group.case_ids
+    }
+    grouped_leaf = {
+        cid for group in leaf.clusters for cid in group.case_ids
+    }
+    return HDBSCANMethodComparison(
+        eom=_method_summary(eom),
+        leaf=_method_summary(leaf),
+        pair_coassignment_jaccard=round(
+            len(eom_pairs & leaf_pairs) / len(union) if union else 1.0, 4
+        ),
+        both_grouped_cases=len(grouped_eom & grouped_leaf),
+        eligible_case_count=len(eom.eligible_case_ids),
+        min_cluster_size=min_cluster_size,
+        min_samples=min_samples,
+        dtc_source=dtc_source,
+        lookback_days=lookback_days,
+    )
