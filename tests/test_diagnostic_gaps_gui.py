@@ -91,3 +91,40 @@ def test_exactly_one_representative_per_group_can_be_reviewed_and_shared_locally
     )
     panel.close()
     app.processEvents()
+
+
+def test_local_duckdb_raw_autoexport_is_visible_without_mutating_qec(
+    tmp_path,
+):
+    from ntf_insight.storage.duckdb_store import DuckDBStore
+    from ntf_insight.storage.source_knowledge_store import SourceKnowledgeStore
+
+    app = QApplication.instance() or QApplication([])
+    cases = sample()
+    victim = cases[0]
+    victim.diagnostics.clear()
+    db = DuckDBStore(tmp_path / "synthetic.duckdb")
+    knowledge = SourceKnowledgeStore(db)
+    knowledge.save_records(
+        "synthetic-source-sha", "autoexport_rows",
+        [{
+            "category": "autoexport_dtc",
+            "source_location": "row:1",
+            "fin": victim.vin,
+            "data": {
+                "DiagStartDt": "2026-04-01",
+                "DiagStartTs": "2026-04-01T12:00:00Z",
+                "EcuNm": "CPC3", "EcuFaultNm": "P26F100",
+            },
+        }],
+    )
+    panel = HDBSCANPanel(cases, store=db)
+    panel.run_analysis()
+    assert panel.evidence_audit.without_any_dtc >= 1
+    gap = next(r for r in panel.gap_model.rows if r[0] == victim.case_id)
+    assert gap[6] == 1  # FIN raw pre-Tausch, not a QEC-attached fault
+    assert gap[11] == 1  # AutoExport raw row only
+    assert victim.diagnostics == []
+    assert "Rohquellen lokal geprüft" in panel.gap_summary.text()
+    panel.close()
+    app.processEvents()
