@@ -3,27 +3,40 @@
 from __future__ import annotations
 
 from collections import Counter, defaultdict
-from math import cos, pi, sin
+from math import cos, hypot, pi, sin
 
 from PySide6.QtCore import QRectF, Qt, Signal
 from PySide6.QtGui import QColor, QPainter, QPen
 from PySide6.QtWidgets import (
+    QAbstractItemView,
     QComboBox,
+    QDoubleSpinBox,
+    QFrame,
     QGraphicsScene,
     QGraphicsView,
     QHBoxLayout,
+    QHeaderView,
     QLabel,
     QPushButton,
+    QScrollArea,
+    QTableView,
     QVBoxLayout,
     QWidget,
 )
 
 from ntf_insight.analysis.case_clustering import (
+    VIEW_WEIGHTS,
     CaseClusterResult,
+    cluster_diagnostic_cases,
     signature_for,
 )
 from ntf_insight.analysis.case_projection import CaseProjection, project_diagnostic_cases
+from ntf_insight.analysis.case_similarity_explanation import (
+    FEATURE_LABELS,
+    explain_case_similarity,
+)
 from ntf_insight.analysis.qec_findings import qec_ssl_finding_label
+from ntf_insight.app.models.simple_table_model import SimpleTableModel
 from ntf_insight.domain.case import NTFCase
 
 
@@ -192,63 +205,97 @@ class CaseScatterPlot(QGraphicsView):
 
 
 class CaseScatterPanel(QWidget):
-    """2D depiction of unchanged complete-link case clusters, per component."""
+    """Linked case scatter + numerical provenance in the FIN workspace.
+
+    Only the original cluster_diagnostic_cases() determines memberships.
+    This view uses SVD coordinates exclusively for positioning.
+    """
 
     case_focused = Signal(str)
-    compare_requested = Signal(str)
     case_requested = Signal(str)
+    quicktests_requested = Signal(str)
 
     def __init__(
-        self,
-        cases: list[NTFCase],
-        result: CaseClusterResult | None,
+        self, cases: list[NTFCase], result: CaseClusterResult | None = None
     ) -> None:
         super().__init__()
-        self.cases = sorted(cases, key=lambda c: c.case_id)
+        self.cases = sorted(cases, key=lambda case: case.case_id)
         self.by_id = {case.case_id: case for case in self.cases}
-        self.result = result
         self._component_of = {
             case.case_id: signature_for(case).component_key for case in self.cases
         }
+        self.result = result if result is not None else (
+            cluster_diagnostic_cases(self.cases) if self.cases else None
+        )
         self.focus_id: str | None = None
         self.projection = CaseProjection((), ())
+        self._visible_case_ids: list[str] = []
+        self._neighbour_ids: list[str] = []
 
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(12, 14, 12, 12)
-        layout.setSpacing(11)
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
+        outer.addWidget(scroll)
+        content = QWidget()
+        scroll.setWidget(content)
+        layout = QVBoxLayout(content)
+        layout.setContentsMargins(22, 18, 22, 20)
+        layout.setSpacing(12)
+
+        layout.addWidget(QLabel("Fallübersicht · 2D-Streudiagramm", objectName="PageTitle"))
         intro = QLabel(
-            "Explorative 2D-Projektion der gleichen diagnostischen Signaturen wie "
-            "im Fall-Cluster. Die Farben stammen UNVERÄNDERT aus Complete-Link; "
-            "Abstände im Bild sind weder Jaccard-Werte noch Ursachenwahrscheinlichkeiten.",
+            "Ein Punkt ist ein echter Fall, nicht ein QuickTest. Die Position kommt "
+            "aus den diagnostischen Vorher-Merkmalen (TruncatedSVD). "
+            "Die Farben sind die unveränderten Complete-Link-Cluster. "
+            "QEC-SSL-Endbefunde und Reparaturergebnisse ändern die Position nicht.",
             objectName="PageSubtitle",
         )
         intro.setWordWrap(True)
         layout.addWidget(intro)
 
         controls = QHBoxLayout()
-        controls.addWidget(QLabel("Bauteilfamilie:"))
+        controls.addWidget(QLabel("Bauteilfamilie"))
         self.component_filter = QComboBox()
         names = {
-            key: next(case.component_type for case in self.cases if self._component_of[case.case_id] == key)
+            key: next(
+                case.component_type for case in self.cases
+                if self._component_of[case.case_id] == key
+            )
             for key in set(self._component_of.values())
         }
         counts = Counter(self._component_of.values())
         for key in sorted(names, key=lambda item: (-counts[item], item)):
             self.component_filter.addItem(names[key], key)
         controls.addWidget(self.component_filter)
+        controls.addSpacing(18)
+        controls.addWidget(QLabel("Cluster-Mindestähnlichkeit"))
+        self.threshold = QDoubleSpinBox()
+        self.threshold.setRange(0.05, 1.0)
+        self.threshold.setSingleStep(0.05)
+        self.threshold.setDecimals(2)
+        self.threshold.setValue(self.result.threshold if self.result else 0.65)
+        self.threshold.setToolTip(
+            "Mindestwert für alle Paarwerte in einer Clustergruppe. "
+            "Ändert ausschließlich die Clusterfarben, niemals die 2D-Koordinaten."
+        )
+        controls.addWidget(self.threshold)
         controls.addStretch(1)
+        layout.addLayout(controls)
+
         self.summary = QLabel(objectName="PageSubtitle")
         self.summary.setWordWrap(True)
-        controls.addWidget(self.summary, 1)
-        layout.addLayout(controls)
+        layout.addWidget(self.summary)
 
         self.plot = CaseScatterPlot()
         self.plot.case_selected.connect(self._select_point)
-        layout.addWidget(self.plot, 1)
+        layout.addWidget(self.plot)
         legend = QLabel(
-            "Farbe = bestehender Fall-Cluster · Grau = unzugeordnet · "
-            "Quadrat = ohne Tauschanker · Dunkler Rand = ausgewählt · "
-            "Mausrad = Zoom · Punkt anklicken = Fall fokussieren",
+            "Farbe = berechnete Clusterzuordnung · Grau = unzugeordnet · "
+            "Quadrat = fehlender Tauschanker · Dunkler Rand = Fokusfall · "
+            "Bei gleicher Position werden Symbole nur für die Auswahl versetzt. "
+            "Die 2D-Entfernung ist KEIN Jaccard-Wert.",
             objectName="PageSubtitle",
         )
         legend.setWordWrap(True)
@@ -259,22 +306,132 @@ class CaseScatterPanel(QWidget):
         layout.addWidget(self.detail)
 
         buttons = QHBoxLayout()
-        self.compare_button = QPushButton("Im Fall-Cluster vergleichen")
-        self.compare_button.setEnabled(False)
-        self.compare_button.clicked.connect(self._compare_focus)
-        buttons.addWidget(self.compare_button)
-        self.open_button = QPushButton("Fallanalyse öffnen")
+        self.open_button = QPushButton("FIN / Fallanalyse öffnen")
         self.open_button.setEnabled(False)
         self.open_button.clicked.connect(self._open_focus)
         buttons.addWidget(self.open_button)
+        self.quicktests_button = QPushButton("QuickTests dieser FIN")
+        self.quicktests_button.setEnabled(False)
+        self.quicktests_button.clicked.connect(self._open_quicktests)
+        buttons.addWidget(self.quicktests_button)
         buttons.addStretch(1)
         layout.addLayout(buttons)
 
+        layout.addWidget(QLabel("Warum liegen die Punkte dort?", objectName="CardTitle"))
+        self.method_note = QLabel(objectName="PageSubtitle")
+        self.method_note.setWordWrap(True)
+        self.method_note.setTextInteractionFlags(
+            self.method_note.textInteractionFlags()
+            | Qt.TextInteractionFlag.TextSelectableByMouse
+        )
+        layout.addWidget(self.method_note)
+
+        layout.addWidget(QLabel("Berechnungsgrundlage: Merkmalsgewichte", objectName="CardTitle"))
+        self.feature_model = SimpleTableModel((
+            "Merkmalsgruppe", "Gewicht", "Merkmale im Fokusfall",
+            "Regel für die Projektion",
+        ))
+        self.feature_table = self._table(self.feature_model, 195)
+        layout.addWidget(self.feature_table)
+
+        layout.addWidget(QLabel("Erklärbare SVD-Achsen: wichtigste Ladungen", objectName="CardTitle"))
+        axis_note = QLabel(
+            "Die Vorzeichen und Achsenrichtungen sind mathematisch austauschbar. "
+            "Die Ladungen zeigen, welche gewichteten Merkmale die dargestellten "
+            "Achsen am stärksten prägen – nicht, welche Fehlerursache vorliegt.",
+            objectName="PageSubtitle",
+        )
+        axis_note.setWordWrap(True)
+        layout.addWidget(axis_note)
+        self.axis_model = SimpleTableModel((
+            "SVD-Achse", "Merkmalsgruppe", "Merkmal", "Ladung",
+        ))
+        self.axis_table = self._table(self.axis_model, 210)
+        layout.addWidget(self.axis_table)
+
+        layout.addWidget(QLabel("Alle Fallkoordinaten und Eingangsdaten", objectName="CardTitle"))
+        self.coordinate_model = SimpleTableModel((
+            "Fall", "FIN", "Cluster", "SVD 1", "SVD 2",
+            "ECU:DTC vor Tausch", "Merkmalsgruppen", "Tauschanker",
+        ))
+        self.coordinate_table = self._table(self.coordinate_model, 235)
+        self.coordinate_table.selectionModel().currentRowChanged.connect(
+            self._coordinate_selected
+        )
+        layout.addWidget(self.coordinate_table)
+
+        layout.addWidget(QLabel("Fallvergleich: echte Ähnlichkeit statt Plotabstand", objectName="CardTitle"))
+        compare_note = QLabel(
+            "Sortierung: Jaccard-Ähnlichkeit × Merkmalsabdeckung. "
+            "Der SVD-Punktabstand steht zum Vergleich daneben, ist jedoch "
+            "keine diagnostische Ähnlichkeitszahl. "
+            "SSL-Endbefunde sind nachgelagerte Informationen und kein Score-Merkmal.",
+            objectName="PageSubtitle",
+        )
+        compare_note.setWordWrap(True)
+        layout.addWidget(compare_note)
+        self.neighbor_model = SimpleTableModel((
+            "Vergleichsfall", "Jaccard", "Abdeckung", "Score × Abdeckung",
+            "Gleiche ECU:DTCs", "SVD-Distanz", "Clusterpaar zulässig",
+            "QEC SSL-Endbefund",
+        ))
+        self.neighbor_table = self._table(self.neighbor_model, 230)
+        self.neighbor_table.selectionModel().currentRowChanged.connect(
+            self._neighbor_selected
+        )
+        layout.addWidget(self.neighbor_table)
+
+        layout.addWidget(QLabel("Numerische Zerlegung des ausgewählten Paarvergleichs", objectName="CardTitle"))
+        self.comparison_note = QLabel(objectName="PageSubtitle")
+        self.comparison_note.setWordWrap(True)
+        self.comparison_note.setTextInteractionFlags(
+            self.comparison_note.textInteractionFlags()
+            | Qt.TextInteractionFlag.TextSelectableByMouse
+        )
+        layout.addWidget(self.comparison_note)
+        self.breakdown_model = SimpleTableModel((
+            "Gruppe", "Gewicht", "Fokus", "Vergleich", "Schnitt", "Vereinigung",
+            "Jaccard", "Beitrag zum Score",
+        ))
+        self.breakdown_table = self._table(self.breakdown_model, 205)
+        layout.addWidget(self.breakdown_table)
+
         self.component_filter.currentIndexChanged.connect(self._refresh)
+        self.threshold.valueChanged.connect(self._recluster)
         self._refresh()
 
+    @staticmethod
+    def _table(model: SimpleTableModel, height: int) -> QTableView:
+        table = QTableView()
+        table.setModel(model)
+        table.setMinimumHeight(min(130, height))
+        table.setMaximumHeight(height)
+        table.setAlternatingRowColors(True)
+        table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
+        table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        table.verticalHeader().setVisible(False)
+        table.horizontalHeader().setSectionResizeMode(
+            QHeaderView.ResizeMode.ResizeToContents
+        )
+        table.horizontalHeader().setStretchLastSection(True)
+        return table
+
     def set_result(self, result: CaseClusterResult | None) -> None:
+        """Compatibility hook for callers using a precomputed cluster result."""
         self.result = result
+        if result is not None and self.threshold.value() != result.threshold:
+            self.threshold.blockSignals(True)
+            self.threshold.setValue(result.threshold)
+            self.threshold.blockSignals(False)
+        self._draw()
+
+    def _recluster(self) -> None:
+        self.result = (
+            cluster_diagnostic_cases(self.cases, threshold=self.threshold.value())
+            if self.cases else None
+        )
+        # Recompute only visible labels/tables, never SVD positions.
         self._draw()
 
     def focus_case(self, case_id: str) -> bool:
@@ -290,49 +447,241 @@ class CaseScatterPanel(QWidget):
 
     def _refresh(self) -> None:
         family = self.component_filter.currentData()
-        subset = [
-            case for case in self.cases
+        self._visible_case_ids = [
+            case.case_id for case in self.cases
             if self._component_of[case.case_id] == family
         ]
+        subset = [self.by_id[case_id] for case_id in self._visible_case_ids]
         self.projection = project_diagnostic_cases(subset)
-        visible = {p.case_id for p in self.projection.points}
-        if self.focus_id not in {case.case_id for case in subset}:
-            self.focus_id = self.projection.points[0].case_id if self.projection.points else None
-        self.summary.setText(
-            f"{len(visible)} projizierte Fälle · "
-            f"{len(self.projection.omitted_case_ids)} ohne ausreichende Diagnosebasis"
-            + (" · 2D bei weniger als 3 Fällen eingeschränkt" if len(visible) < 3 else "")
-        )
+        if self.focus_id not in self._visible_case_ids:
+            self.focus_id = self._visible_case_ids[0] if self._visible_case_ids else None
         self._draw()
 
     def _draw(self) -> None:
+        projected = {p.case_id: p for p in self.projection.points}
         self.plot.set_points(self.projection, self.result, self.by_id, self.focus_id)
-        case = self.by_id.get(self.focus_id) if self.focus_id else None
-        if case is None:
-            self.detail.setText(
-                "Kein Fall ausgewählt. Fälle ohne Diagnosebasis erhalten keine erfundenen Koordinaten."
+        count = len(self.projection.points)
+        self.summary.setText(
+            f"{len(self._visible_case_ids)} echte Fälle · {count} projiziert · "
+            f"{len(self.projection.omitted_case_ids)} ohne Diagnosebasis · "
+            f"{self.projection.feature_count} gewichtete Matrixspalten · "
+            f"{len(self.result.clusters) if self.result else 0} Cluster (alle Bauteile)"
+        )
+
+        if self.projection.components > 0:
+            percentages = ", ".join(
+                f"Achse {i}: {100 * v:.1f} %"
+                for i, v in enumerate(self.projection.explained_variance_ratio, 1)
             )
         else:
-            cluster = self.result.cluster_for(case.case_id) if self.result else None
-            plotted = case.case_id in {point.case_id for point in self.projection.points}
-            self.detail.setText(
-                f"Fokus: {case.case_id} · FIN {case.vin} · "
-                + (f"Cluster {cluster}" if cluster else "Einzelfall / unzugeordnet")
-                + (" · keine 2D-Position (Diagnosebasis fehlt)" if not plotted else "")
-                + ". Für exakte Paarähnlichkeit und Merkmalsabdeckung den Fall-Cluster öffnen. "
-                + "SSL-Endbefund: " + qec_ssl_finding_label(case)
-            )
-        self.compare_button.setEnabled(case is not None)
+            percentages = "keine belastbare Achse (zu wenige Fälle/Merkmale)"
+        self.method_note.setText(
+            "Datengrundlage: ausschließlich diagnostische Merkmale vor dem "
+            "untersuchten Tausch. Doppelte ECU:DTC-Quellzeilen zählen als "
+            "ein Mengenmerkmal. Für jede Merkmalsgruppe g und jeden vorkommenden "
+            "Token wird X[Fall, Token] = sqrt(Gruppengewicht / Tokenanzahl "
+            "dieses Falls in dieser Gruppe) gesetzt; sonst 0. "
+            "Die Sparse-Matrix hat hier "
+            f"{count} Zeilen und {self.projection.feature_count} Spalten. "
+            f"TruncatedSVD berechnet {self.projection.components} Komponenten; "
+            "deren projizierte Koordinaten werden je Achse mittelwertzentriert. "
+            f"Erklärte Varianz der Matrix: {percentages}. "
+            "Das ist NICHT die bewahrte Jaccard-Ähnlichkeit. "
+            "Die Clusterfarben folgen weiterhin dem gewichteten Jaccard "
+            f"und der konservativen Complete-Link-Schwelle {self.threshold.value():.2f}. "
+            "Die Merkmalsgewichte sind fachliche Startwerte, keine "
+            "empirisch kalibrierten Wahrscheinlichkeiten."
+        )
+
+        axis_rows = []
+        for axis, key, loading in self.projection.axis_top_features:
+            group, _, feature = key.partition("::")
+            axis_rows.append((
+                f"SVD {axis}", FEATURE_LABELS.get(group, group),
+                feature, f"{loading:+.4f}",
+            ))
+        self.axis_model.set_rows(axis_rows)
+
+        rows = []
+        for case_id in self._visible_case_ids:
+            case = self.by_id[case_id]
+            signature = signature_for(case)
+            point = projected.get(case_id)
+            cluster = self.result.cluster_for(case_id) if self.result else None
+            rows.append((
+                case_id, case.vin,
+                f"Cluster {cluster}" if cluster else "Einzelfall",
+                f"{point.x:+.5f}" if point else "k. A.",
+                f"{point.y:+.5f}" if point else "k. A.",
+                len(signature.faults),
+                sum(bool(view) for view in signature.views().values()),
+                "Ja" if signature.has_replacement_anchor else "Nein",
+            ))
+        self.coordinate_model.set_rows(rows)
+        self._render_focus(projected)
+
+    def _render_focus(self, projected: dict | None = None) -> None:
+        projected = projected if projected is not None else {
+            p.case_id: p for p in self.projection.points
+        }
+        case = self.by_id.get(self.focus_id) if self.focus_id else None
         self.open_button.setEnabled(case is not None)
+        self.quicktests_button.setEnabled(case is not None)
+        if case is None:
+            self.detail.setText(
+                "Kein NTF-/QEC-Fall. Reine FIN-QuickTests findest du im "
+                "benachbarten QuickTest-Reiter."
+            )
+            self.feature_model.set_rows([])
+            self.neighbor_model.set_rows([])
+            self.breakdown_model.set_rows([])
+            self.comparison_note.setText("Kein Fallvergleich verfügbar.")
+            return
+
+        signature = signature_for(case)
+        point = projected.get(case.case_id)
+        cluster = self.result.cluster_for(case.case_id) if self.result else None
+        position = (
+            f"({point.x:+.5f}; {point.y:+.5f})"
+            if point is not None else "keine Koordinaten (Diagnosebasis fehlt)"
+        )
+        self.detail.setText(
+            f"Fokus: {case.case_id} · FIN {case.vin} · "
+            f"{'Cluster ' + str(cluster) if cluster else 'Einzelfall / unzugeordnet'} · "
+            f"SVD-Koordinaten: {position} · "
+            f"ECU:DTCs vor Tausch: {len(signature.faults)}. "
+            "QEC SSL-Endbefund (nicht im Score): "
+            + qec_ssl_finding_label(case)
+        )
+
+        self.feature_model.set_rows([
+            (
+                FEATURE_LABELS[group],
+                f"{weight:.0%}",
+                len(signature.views()[group]),
+                (
+                    f"sqrt({weight:.2f} / Anzahl Tokens)"
+                    if signature.views()[group] else "keine Daten; Spalten = 0"
+                ),
+            )
+            for group, weight in VIEW_WEIGHTS.items()
+        ])
+        match_map = {
+            (m.right_case_id if m.left_case_id == case.case_id else m.left_case_id): m
+            for m in (self.result.matches if self.result else ())
+            if case.case_id in (m.left_case_id, m.right_case_id)
+        }
+        matches = [
+            (other, match_map.get(other))
+            for other in self._visible_case_ids if other != case.case_id
+        ]
+        matches.sort(key=lambda item: (
+            -(
+                (item[1].score * item[1].coverage)
+                if item[1] is not None and item[1].score is not None else -1
+            ),
+            item[0],
+        ))
+        self._neighbour_ids = [other for other, _ in matches]
+        table_rows = []
+        for other_id, match in matches:
+            other_point = projected.get(other_id)
+            distance = (
+                hypot(point.x - other_point.x, point.y - other_point.y)
+                if point is not None and other_point is not None else None
+            )
+            table_rows.append((
+                other_id,
+                f"{match.score:.1%}" if match and match.score is not None else "k. A.",
+                f"{match.coverage:.0%}" if match and match.score is not None else "k. A.",
+                f"{match.score * match.coverage:.3f}"
+                if match and match.score is not None else "k. A.",
+                len(match.shared_faults) if match else 0,
+                f"{distance:.5f}" if distance is not None else "k. A.",
+                (
+                    "Ja" if match and match.eligible_for_cluster
+                    and match.score is not None and match.score >= self.threshold.value()
+                    else "Nein"
+                ),
+                qec_ssl_finding_label(self.by_id[other_id]),
+            ))
+        self.neighbor_model.set_rows(table_rows)
+        if matches:
+            self.neighbor_table.selectRow(0)
+            self._display_pair(matches[0][0])
+        else:
+            self.breakdown_model.set_rows([])
+            self.comparison_note.setText(
+                "Kein weiterer Fall dieser Bauteilfamilie verfügbar. "
+                "Eine 2D-Projektion allein kann keine Ähnlichkeit bestätigen."
+            )
+
+        # Reflect selection in the input-coordinates table without re-entering
+        # case-change handlers or automatically switching to another tab.
+        if case.case_id in self._visible_case_ids:
+            row = self._visible_case_ids.index(case.case_id)
+            selection = self.coordinate_table.selectionModel()
+            selection.blockSignals(True)
+            self.coordinate_table.selectRow(row)
+            selection.blockSignals(False)
+
+    def _display_pair(self, other_id: str) -> None:
+        if self.focus_id not in self.by_id or other_id not in self.by_id:
+            return
+        explanation = explain_case_similarity(
+            self.by_id[self.focus_id], self.by_id[other_id]
+        )
+        match = explanation.match
+        self.breakdown_model.set_rows([
+            (
+                row.label, f"{row.weight:.0%}", row.left_count,
+                row.right_count, row.overlap_count, row.union_count,
+                f"{row.jaccard:.1%}" if row.jaccard is not None else "k. A.",
+                f"{row.normalized_contribution:.4f}"
+                if row.normalized_contribution is not None else "k. A.",
+            )
+            for row in explanation.contributions
+        ])
+        if match.score is None:
+            score_description = "Nicht vergleichbar: " + match.reason
+        else:
+            score_description = (
+                f"Gewichtete Summe {explanation.weighted_sum:.4f} "
+                f"÷ Abdeckungsgewicht {explanation.covered_weight:.2f} "
+                f"= Jaccard-Score {match.score:.1%} "
+                f"(interne Rundung auf vier Dezimalstellen). "
+                f"Merkmalsabdeckung {match.coverage:.0%}."
+            )
+        self.comparison_note.setText(
+            f"{self.focus_id} ↔ {other_id}: {score_description} "
+            "Nur beidseitig vorhandene Gruppen stehen im Nenner; "
+            "fehlende Informationen bedeuten nicht 0 % Übereinstimmung. "
+            "Clusterfähig nur bei gemeinsamer ECU:DTC-Kombination, "
+            "mindestens 50 % Abdeckung, dokumentierten Tauschankern und "
+            f"Paarwert ≥ {self.threshold.value():.2f}. "
+            f"Entscheidung für dieses Paar: {'zulässig' if match.eligible_for_cluster and match.score is not None and match.score >= self.threshold.value() else 'nicht zulässig'}. "
+            "Ein zulässiges Paar garantiert dennoch nicht, dass beide Fälle "
+            "im selben Complete-Link-Cluster liegen."
+        )
+
+    def _coordinate_selected(self, current, _previous) -> None:
+        if current.isValid() and 0 <= current.row() < len(self._visible_case_ids):
+            self._select_point(self._visible_case_ids[current.row()])
+
+    def _neighbor_selected(self, current, _previous) -> None:
+        if current.isValid() and 0 <= current.row() < len(self._neighbour_ids):
+            self._display_pair(self._neighbour_ids[current.row()])
 
     def _select_point(self, case_id: str) -> None:
         if self.focus_case(case_id):
             self.case_focused.emit(case_id)
 
-    def _compare_focus(self) -> None:
-        if self.focus_id is not None:
-            self.compare_requested.emit(self.focus_id)
-
     def _open_focus(self) -> None:
         if self.focus_id is not None:
             self.case_requested.emit(self.focus_id)
+
+    def _open_quicktests(self) -> None:
+        case = self.by_id.get(self.focus_id) if self.focus_id else None
+        if case is not None:
+            self.quicktests_requested.emit(case.vin)
+
