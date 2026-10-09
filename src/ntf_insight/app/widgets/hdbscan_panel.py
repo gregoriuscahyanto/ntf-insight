@@ -10,6 +10,7 @@ from PySide6.QtWidgets import (
 )
 
 from ntf_insight.analysis.case_clustering import _component_key
+from ntf_insight.analysis.cluster_review_zip import write_cluster_review_zip
 from ntf_insight.analysis.diagnostic_gap_investigation import (
     investigate_diagnostic_gaps,
 )
@@ -55,6 +56,7 @@ class HDBSCANPanel(QWidget):
         self.result: MLClusterResult | None = None
         self.comparison: HDBSCANMethodComparison | None = None
         self.evidence_audit: DiagnosticEvidenceAudit | None = None
+        self.latest_gap_report = None
         self.confirmed_mechanisms: tuple[ConfirmedMechanism, ...] = ()
         self._activated = False
         layout = QVBoxLayout(self)
@@ -355,6 +357,18 @@ class HDBSCANPanel(QWidget):
         self.transfer_export_button.clicked.connect(self.export_transfer_hypotheses)
         representative_controls.addWidget(self.transfer_export_button)
         body.addLayout(representative_controls)
+        self.chat_zip_button = QPushButton(
+            "Pseudonymisiertes Cluster-Prüfpaket als ZIP erstellen"
+        )
+        self.chat_zip_button.setEnabled(False)
+        self.chat_zip_button.setToolTip(
+            "Erzeugt EINE ZIP zur möglichen Fachbesprechung sowie zwei lokale "
+            "Zuordnungstabellen mit FIN/QEC und ECU:DTC. "
+            "Nur die ZIP darf nach interner Freigabe geteilt werden. "
+            "Keine Original-SSL-Texte oder FINs in der ZIP."
+        )
+        self.chat_zip_button.clicked.connect(self.export_chat_zip)
+        body.addWidget(self.chat_zip_button)
         self.mechanism_summary = QLabel(
             "Noch keine Fachbestätigungen geladen. "
             "Alle Cluster sind unvalidierte Diagnostik-Vergleichsgruppen.",
@@ -426,6 +440,8 @@ class HDBSCANPanel(QWidget):
             self.noise_model.set_rows([])
             self.result = None
             self.evidence_audit = None
+            self.latest_gap_report = None
+            self.chat_zip_button.setEnabled(False)
             self.gap_model.set_rows([])
             self.transfer_model.set_rows([])
             self.representative_template_button.setEnabled(False)
@@ -437,6 +453,7 @@ class HDBSCANPanel(QWidget):
             return
         self.result = result
         self.evidence_audit = audit
+        self.chat_zip_button.setEnabled(bool(result.clusters))
         self.representative_template_button.setEnabled(bool(result.clusters))
         self.transfer_export_button.setEnabled(bool(result.clusters))
         if not {review.case_id for review in self.confirmed_mechanisms}.issubset(
@@ -686,6 +703,44 @@ class HDBSCANPanel(QWidget):
         except OSError as exc:
             QMessageBox.warning(self, "Fachprüfvorlage nicht gespeichert", str(exc))
 
+    def export_chat_zip(self) -> None:
+        """Prepare a pseudonymized ZIP without FIN/QEC IDs or original DTCs."""
+        if self.result is None or self.evidence_audit is None:
+            return
+        target, _ = QFileDialog.getSaveFileName(
+            self,
+            "Lokales Cluster-Prüfpaket speichern – vor Weitergabe freigeben",
+            "NTF_Cluster_Pruefpaket_ohne_FIN.zip",
+            "ZIP-Dateien (*.zip)",
+        )
+        if not target:
+            return
+        try:
+            exported = write_cluster_review_zip(
+                target,
+                self._subset(),
+                self.result,
+                self.evidence_audit,
+                confirmations=self.confirmed_mechanisms,
+                gaps=self.latest_gap_report,
+                comparison=self.comparison,
+            )
+        except (OSError, ValueError) as exc:
+            QMessageBox.warning(self, "ZIP-Prüfpaket nicht erstellt", str(exc))
+            return
+        QMessageBox.information(
+            self,
+            "ZIP-Prüfpaket lokal erstellt",
+            f"{exported.cluster_count} Cluster und "
+            f"{exported.representative_count} Repräsentanten exportiert. "
+            "Die ZIP enthält pseudonymisierte Analysewerte, KEINE FINs, "
+            "QEC-IDs, SSL-Freitexte oder Original-DTC-Schlüssel. "
+            "Zwei weitere Dateien *_NICHT_HOCHLADEN_*.csv liegen "
+            "NEBEN der ZIP und müssen lokal bleiben. "
+            "Auch die ZIP darf nur nach interner Freigabe geteilt werden. "
+            "Ein Cluster ist kein technischer Ursachennachweis.",
+        )
+
     def export_representative_template(self) -> None:
         """Export exactly one real ML medoid per group, local and confidential."""
         if self.result is None or not self.result.clusters:
@@ -819,9 +874,11 @@ class HDBSCANPanel(QWidget):
                 subset, audit, quicktests=quicktests, autoexport=autoexport,
             )
         except (ValueError, OSError) as exc:
+            self.latest_gap_report = None
             self.gap_summary.setText(f"FIN-Rohquellenprüfung nicht möglich: {exc}")
             self.gap_model.set_rows([])
             return
+        self.latest_gap_report = report
         self.gap_summary.setText(
             f"{len(report.cases)} QEC-Fälle ohne geeignete Vorher-Diagnose: "
             f"{report.missing_qec_dtc} ohne QEC-DTC, "
