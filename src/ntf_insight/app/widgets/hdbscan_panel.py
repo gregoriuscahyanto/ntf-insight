@@ -9,7 +9,7 @@ from PySide6.QtWidgets import (
     QPushButton, QScrollArea, QSpinBox, QVBoxLayout, QWidget,
 )
 
-from ntf_insight.analysis.case_clustering import _component_key, signature_for
+from ntf_insight.analysis.case_clustering import _component_key
 from ntf_insight.analysis.diagnostic_evidence_audit import (
     DiagnosticEvidenceAudit, audit_diagnostic_evidence,
 )
