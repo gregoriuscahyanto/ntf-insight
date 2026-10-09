@@ -54,6 +54,7 @@ class MLCluster:
     p10_internal_similarity: float
     internal_pair_count: int
     weak_pair_count: int
+    screening_status: str
     min_membership_strength: float
     ssl_finding_count: int
     warnings: tuple[str, ...]
@@ -315,6 +316,12 @@ def cluster_hdbscan_cases(
             )
         if any(strengths[i] < 0.5 for i in positions):
             warnings.append("Mindestens eine schwache HDBSCAN-Zugehörigkeitsstärke")
+        if not core or pair_p10 < 0.45:
+            status = "Heterogen – keine Ursachenübertragung"
+        elif weak_pair_count:
+            status = "Uneinheitlich – einzelne schwache Fallpaare"
+        else:
+            status = "Diagnostischer Prüfkandidat – Ursache unbestätigt"
         unsorted.append((
             group_ids,
             representative,
@@ -334,6 +341,7 @@ def cluster_hdbscan_cases(
             round(pair_p10, 4),
             len(offdiag),
             weak_pair_count,
+            status,
             round(float(min(strengths[i] for i in positions)), 4),
             len(documented),
             tuple(warnings),
@@ -354,12 +362,13 @@ def cluster_hdbscan_cases(
             p10_internal_similarity=p10,
             internal_pair_count=pair_count,
             weak_pair_count=weak_count,
+            screening_status=status,
             min_membership_strength=min_strength,
             ssl_finding_count=ssl_count,
             warnings=warnings,
         )
         for k, (ids, rep, members, core, majority, avg, weakest,
-                median, p10, pair_count, weak_count, min_strength,
+                median, p10, pair_count, weak_count, status, min_strength,
                 ssl_count, warnings) in enumerate(unsorted, 1)
     )
     noise = tuple(
