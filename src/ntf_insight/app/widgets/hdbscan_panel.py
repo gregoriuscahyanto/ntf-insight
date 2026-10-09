@@ -331,6 +331,30 @@ class HDBSCANPanel(QWidget):
         self.pair_test_button.clicked.connect(self.test_supervised_pairs)
         review_controls.addWidget(self.pair_test_button)
         body.addLayout(review_controls)
+        representative_controls = QHBoxLayout()
+        self.representative_template_button = QPushButton(
+            "Nur Cluster-Repräsentanten zur Fachprüfung exportieren"
+        )
+        self.representative_template_button.setEnabled(False)
+        self.representative_template_button.setToolTip(
+            "Eine vertrauliche CSV mit genau einem echten Medoid je Cluster. "
+            "Die Vorlage kann nach unabhängiger Prüfung direkt wieder eingelesen werden."
+        )
+        self.representative_template_button.clicked.connect(
+            self.export_representative_template
+        )
+        representative_controls.addWidget(self.representative_template_button)
+        self.transfer_export_button = QPushButton(
+            "Befundhypothesen lokal als CSV exportieren"
+        )
+        self.transfer_export_button.setEnabled(False)
+        self.transfer_export_button.setToolTip(
+            "Gibt Ziel-Fälle und Prüfsperren aus. "
+            "Niemals eine bestätigte Ursache automatisch übertragen."
+        )
+        self.transfer_export_button.clicked.connect(self.export_transfer_hypotheses)
+        representative_controls.addWidget(self.transfer_export_button)
+        body.addLayout(representative_controls)
         self.mechanism_summary = QLabel(
             "Noch keine Fachbestätigungen geladen. "
             "Alle Cluster sind unvalidierte Diagnostik-Vergleichsgruppen.",
@@ -404,6 +428,8 @@ class HDBSCANPanel(QWidget):
             self.evidence_audit = None
             self.gap_model.set_rows([])
             self.transfer_model.set_rows([])
+            self.representative_template_button.setEnabled(False)
+            self.transfer_export_button.setEnabled(False)
             self.gap_summary.setText("Diagnose-Datenlückenanalyse nicht verfügbar.")
             self.transfer_summary.setText("Repräsentantenprüfung nicht verfügbar.")
             self.export_button.setEnabled(False)
@@ -411,6 +437,8 @@ class HDBSCANPanel(QWidget):
             return
         self.result = result
         self.evidence_audit = audit
+        self.representative_template_button.setEnabled(bool(result.clusters))
+        self.transfer_export_button.setEnabled(bool(result.clusters))
         if not {review.case_id for review in self.confirmed_mechanisms}.issubset(
             {case.case_id for case in subset}
         ):
@@ -657,6 +685,90 @@ class HDBSCANPanel(QWidget):
                 write_review_template(stream, self._subset())
         except OSError as exc:
             QMessageBox.warning(self, "Fachprüfvorlage nicht gespeichert", str(exc))
+
+    def export_representative_template(self) -> None:
+        """Export exactly one real ML medoid per group, local and confidential."""
+        if self.result is None or not self.result.clusters:
+            return
+        medoids = {
+            group.representative_case_id for group in self.result.clusters
+        }
+        target, _ = QFileDialog.getSaveFileName(
+            self,
+            "Vertrauliche Repräsentantenprüfung LOKAL speichern (FIN / SSL)",
+            "NTF_Cluster_Repraesentanten_Fachpruefung_vertraulich.csv",
+            "CSV-Dateien (*.csv)",
+        )
+        if not target:
+            return
+        try:
+            with open(target, "w", encoding="utf-8-sig", newline="") as stream:
+                write_review_template(
+                    stream,
+                    [case for case in self._subset() if case.case_id in medoids],
+                )
+        except OSError as exc:
+            QMessageBox.warning(
+                self, "Repräsentantenprüfung nicht gespeichert", str(exc),
+            )
+
+    def export_transfer_hypotheses(self) -> None:
+        """Export read-only transfer candidates, not any new cause labels."""
+        if self.result is None or not self.result.clusters:
+            return
+        target, _ = QFileDialog.getSaveFileName(
+            self,
+            "Vertrauliche Befundhypothesen LOKAL speichern (QEC und FIN)",
+            "NTF_Cluster_Befundhypothesen_vertraulich.csv",
+            "CSV-Dateien (*.csv)",
+        )
+        if not target:
+            return
+        plan = plan_representative_transfer(
+            self._subset(), self.result, self.confirmed_mechanisms,
+        )
+        labels = {label.case_id: label for label in self.confirmed_mechanisms}
+        try:
+            with open(target, "w", encoding="utf-8-sig", newline="") as stream:
+                writer = csv.writer(stream, delimiter=";")
+                writer.writerow((
+                    "ML-Gruppe", "Repräsentant-QEC", "Repräsentant-FIN",
+                    "Ziel-QEC", "Ziel-FIN", "Repräsentantenmechanismus nur als Hypothese",
+                    "Fachprüfer des Repräsentanten", "Evidenzreferenz des Repräsentanten",
+                    "Bestätigungsdatum", "Cosinus zum Medoid",
+                    "Gemeinsame ECU:DTC", "Prüfstatus", "Begründung",
+                    "Ergebnisstatus Ziel", "Unabhängige Zielevidenz",
+                    "HDBSCAN-Methode", "DTC-Quellen", "Vor-Tausch-Tage",
+                    "DTC-Häufigkeitsfilter", "Methodenhinweis",
+                ))
+                for row in plan.rows:
+                    label = labels.get(row.representative_case_id)
+                    writer.writerow((
+                        row.group,
+                        safe_spreadsheet_cell(row.representative_case_id),
+                        safe_spreadsheet_cell(self.by_id[row.representative_case_id].vin),
+                        safe_spreadsheet_cell(row.target_case_id),
+                        safe_spreadsheet_cell(self.by_id[row.target_case_id].vin),
+                        safe_spreadsheet_cell(row.mechanism_hypothesis),
+                        safe_spreadsheet_cell(label.reviewer if label else ""),
+                        safe_spreadsheet_cell(label.evidence_ref if label else ""),
+                        label.confirmed_on.isoformat() if label else "",
+                        f"{row.cosine:.4f}", row.shared_dtc_count,
+                        safe_spreadsheet_cell(row.status),
+                        safe_spreadsheet_cell(row.explanation),
+                        "Nicht bestätigt", "",
+                        self.result.selection_method, self.result.dtc_source,
+                        self.result.lookback_days or "gesamte Vorher-Historie",
+                        (
+                            f"{self.result.common_dtc_cutoff:.0%}"
+                            if self.result.common_dtc_cutoff is not None else "Aus"
+                        ),
+                        "Hypothese zur Einzelprüfung; keine automatische Ursache",
+                    ))
+        except OSError as exc:
+            QMessageBox.warning(
+                self, "Befundhypothesen nicht gespeichert", str(exc),
+            )
 
     def import_mechanism_labels(self) -> None:
         """Read an explicitly edited, reviewed CSV; never infer from QEC text."""
