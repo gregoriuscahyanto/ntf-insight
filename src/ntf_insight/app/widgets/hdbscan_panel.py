@@ -11,6 +11,8 @@ from PySide6.QtWidgets import (
 
 from ntf_insight.analysis.case_clustering import _component_key
 from ntf_insight.analysis.cluster_review_zip import write_cluster_review_zip
+from ntf_insight.analysis.cross_cluster_bridges import build_cluster_bridges
+from ntf_insight.analysis.recurrence_coverage_audit import audit_recurrence_coverage
 from ntf_insight.analysis.diagnostic_gap_investigation import (
     investigate_diagnostic_gaps,
 )
@@ -57,6 +59,8 @@ class HDBSCANPanel(QWidget):
         self.comparison: HDBSCANMethodComparison | None = None
         self.evidence_audit: DiagnosticEvidenceAudit | None = None
         self.latest_gap_report = None
+        self.latest_recurrence_report = None
+        self.latest_bridge_report = None
         self.confirmed_mechanisms: tuple[ConfirmedMechanism, ...] = ()
         self._activated = False
         layout = QVBoxLayout(self)
@@ -221,6 +225,27 @@ class HDBSCANPanel(QWidget):
             self._group_changed
         )
         body.addWidget(self.group_table)
+
+        body.addWidget(QLabel(
+            "Clusterübergreifende CPC3-Diagnosemuster",
+            objectName="CardTitle",
+        ))
+        self.bridge_summary = QLabel(
+            "Noch keine clusterübergreifende Diagnoseprüfung.",
+            objectName="PageSubtitle",
+        )
+        self.bridge_summary.setWordWrap(True)
+        body.addWidget(self.bridge_summary)
+        self.bridge_model = SimpleTableModel((
+            "Cluster A", "Cluster B", "Gemeinsame CPC3-Kern-DTCs",
+            "CPC3-DTCs als Screening-Gewicht", "Cosinus der Repräsentanten",
+            "Median über Clustergrenzen", "Schwache grenzüberschreitende Paare",
+            "Gleiche-FIN-Paare", "CPC3 nur in A", "CPC3 nur in B",
+            "Bestätigter Befundvergleich", "Prüfhinweis",
+        ))
+        self.bridge_table = _table(self.bridge_model, 190)
+        body.addWidget(self.bridge_table)
+
         self.group_note = QLabel(objectName="PageSubtitle")
         self.group_note.setWordWrap(True)
         body.addWidget(self.group_note)
@@ -283,6 +308,27 @@ class HDBSCANPanel(QWidget):
         ))
         self.gap_table = _table(self.gap_model, 210)
         body.addWidget(self.gap_table)
+
+        body.addWidget(QLabel(
+            "Diagnosesitzungen und Wiederauftreten nach Pumpentausch",
+            objectName="CardTitle",
+        ))
+        self.recurrence_coverage_summary = QLabel(
+            "Noch keine Vorher-/Nachher-Sitzungsprüfung.",
+            objectName="PageSubtitle",
+        )
+        self.recurrence_coverage_summary.setWordWrap(True)
+        body.addWidget(self.recurrence_coverage_summary)
+        self.recurrence_coverage_model = SimpleTableModel((
+            "QEC-Fall", "FIN", "Vorher-DTC-Zeilen", "Nachher-DTC-Zeilen",
+            "DTC zeitlich unklar", "QEC-Vorher-Sitzungen",
+            "QEC-Nachher-Sitzungen", "Beurteilbar",
+            "FIN-Roh-QuickTests vor Tausch", "Roh-QuickTests am Tauschtag",
+            "FIN-Roh-QuickTests nach Tausch", "Mehrere QEC je FIN",
+            "Ausschlussgrund Wiederauftreten",
+        ))
+        self.recurrence_coverage_table = _table(self.recurrence_coverage_model, 210)
+        body.addWidget(self.recurrence_coverage_table)
 
         body.addWidget(QLabel(
             "Repräsentantenbefund: Übertragbarkeit als Prüfhypothese",
@@ -441,6 +487,12 @@ class HDBSCANPanel(QWidget):
             self.result = None
             self.evidence_audit = None
             self.latest_gap_report = None
+            self.latest_recurrence_report = None
+            self.latest_bridge_report = None
+            self.bridge_model.set_rows([])
+            self.recurrence_coverage_model.set_rows([])
+            self.bridge_summary.setText("CPC3-Brückenprüfung nicht verfügbar.")
+            self.recurrence_coverage_summary.setText("Sitzungsprüfung nicht verfügbar.")
             self.chat_zip_button.setEnabled(False)
             self.gap_model.set_rows([])
             self.transfer_model.set_rows([])
@@ -529,6 +581,7 @@ class HDBSCANPanel(QWidget):
             "NICHT technisch irrelevant."
         )
         self._refresh_diagnostic_gaps(subset, audit)
+        self._refresh_recurrence_coverage(subset)
         self.frequency_model.set_rows([
             (
                 item.fault[0], item.fault[1], item.case_count,
@@ -724,6 +777,7 @@ class HDBSCANPanel(QWidget):
                 confirmations=self.confirmed_mechanisms,
                 gaps=self.latest_gap_report,
                 comparison=self.comparison,
+                recurrence_coverage=self.latest_recurrence_report,
             )
         except (OSError, ValueError) as exc:
             QMessageBox.warning(self, "ZIP-Prüfpaket nicht erstellt", str(exc))
@@ -904,6 +958,93 @@ class HDBSCANPanel(QWidget):
             ) for item in report.cases
         ])
 
+    def _refresh_recurrence_coverage(self, subset: list[NTFCase]) -> None:
+        try:
+            report = audit_recurrence_coverage(
+                subset,
+                quicktests=(
+                    QuickTestStore(self._local_store)
+                    if self._local_store is not None else None
+                ),
+            )
+        except (OSError, ValueError) as exc:
+            self.latest_recurrence_report = None
+            self.recurrence_coverage_summary.setText(
+                f"Diagnosesitzungsprüfung nicht möglich: {exc}"
+            )
+            self.recurrence_coverage_model.set_rows([])
+            return
+        self.latest_recurrence_report = report
+        self.recurrence_coverage_summary.setText(
+            f"{len(report.cases)} QEC-Fälle: "
+            f"{report.qec_with_before_dtc} mit Vorher-DTC, "
+            f"{report.qec_with_before_session} mit QEC-Vorher-Sitzung, "
+            f"{report.qec_with_after_session} mit QEC-Nachher-Sitzung. "
+            f"{report.assessable_qec} Fälle mit Sitzungen auf beiden Seiten; "
+            f"{report.pre_dtc_but_no_pre_session} Fälle haben Vorher-DTC "
+            "ohne belegte Vorher-Sitzung. "
+            + (
+                f"FIN-Roh-QuickTests vor Tausch bei {report.raw_qt_possible_before} "
+                f"Fällen, nach Tausch bei {report.raw_qt_possible_after}; "
+                if report.raw_qt_available else "FIN-QuickTest-Rohquellen nicht angebunden. "
+            )
+            + "FIN-Rohberichte sind nur Prüfhinweise, keine automatisch "
+            "zugeordneten QEC-Sitzungen. Ohne vorherige UND nachherige "
+            "Diagnosesitzung keine Aussage über Fehlerbehebung."
+        )
+        self.recurrence_coverage_model.set_rows([
+            (
+                row.case_id, row.vin,
+                row.before_dtc_count, row.after_dtc_count,
+                row.same_day_or_unknown_dtc_count,
+                row.before_session_count, row.after_session_count,
+                "Ja" if row.recurrence_assessable else "Nein",
+                row.raw_qt_before if row.raw_qt_before is not None else "Nicht angebunden",
+                row.raw_qt_same_day if row.raw_qt_same_day is not None else "Nicht angebunden",
+                row.raw_qt_after if row.raw_qt_after is not None else "Nicht angebunden",
+                "Ja" if row.multiple_qec_same_fin else "Nein",
+                row.missing_evidence_reason,
+            ) for row in report.cases
+        ])
+
+    def _refresh_cluster_bridges(self) -> None:
+        if self.result is None or self.evidence_audit is None:
+            self.latest_bridge_report = None
+            self.bridge_model.set_rows([])
+            return
+        try:
+            report = build_cluster_bridges(
+                self._subset(), self.result, self.evidence_audit,
+                confirmations=self.confirmed_mechanisms,
+                min_shared_cpc3=1,
+            )
+        except ValueError as exc:
+            self.latest_bridge_report = None
+            self.bridge_model.set_rows([])
+            self.bridge_summary.setText(f"CPC3-Brückenprüfung nicht möglich: {exc}")
+            return
+        self.latest_bridge_report = report
+        self.bridge_summary.setText(
+            f"{report.compared_pairs} Paare von ML-Clustern verglichen; "
+            f"{report.cpc3_bridge_pairs} davon teilen mindestens einen "
+            "CPC3-Kern-DTC. Wichtig: Gemeinsame DTCs können unspezifisch sein, "
+            "die Gewichte sind nicht kalibriert. Nicht automatisch zusammenlegen. "
+            "Fachlich zuerst die Repräsentanten beider Gruppen unabhängig vergleichen."
+        )
+        self.bridge_model.set_rows([
+            (
+                item.left, item.right, len(item.shared_cpc3),
+                f"{item.cpc3_idf_sum:.2f}", f"{item.medoid_cosine:.1%}",
+                f"{item.between_median_cosine:.1%}",
+                f"{item.weak_between_pairs} / {item.between_pairs}",
+                item.same_fin_between_pairs,
+                ", ".join(f"{e}:{d}" for e, d in item.left_only_cpc3[:5]) or "—",
+                ", ".join(f"{e}:{d}" for e, d in item.right_only_cpc3[:5]) or "—",
+                item.reviewed_mechanism_relation,
+                item.note,
+            ) for item in report.links
+        ])
+
     def _refresh_transfer_plan(self) -> None:
         if self.result is None:
             self.transfer_model.set_rows([])
@@ -933,6 +1074,7 @@ class HDBSCANPanel(QWidget):
             self.mechanism_model.set_rows([])
             return
         self._refresh_transfer_plan()
+        self._refresh_cluster_bridges()
         review = review_cluster_mechanisms(
             self._subset(), self.result, self.confirmed_mechanisms,
         )
