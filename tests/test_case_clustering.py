@@ -277,7 +277,7 @@ def test_unanchored_case_can_be_reviewed_but_is_not_auto_clustered() -> None:
     match = compare_diagnostic_cases(a, b)
     assert match.score is not None and match.score >= 0.65
     assert match.eligible_for_cluster is False
-    assert "ohne dokumentierten Tauschanker" in match.reason
+    assert "ohne Tauschanker" in match.reason
     result = cluster_diagnostic_cases([a, b])
     assert not result.clusters
     assert set(result.unassigned) == {"A", "B"}
