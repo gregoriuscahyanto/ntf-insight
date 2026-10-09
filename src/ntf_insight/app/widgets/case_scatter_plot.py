@@ -328,7 +328,8 @@ class CaseScatterPanel(QWidget):
         intro = QLabel(
             "Ein Punkt ist ein echter Fall, nicht ein QuickTest. Die Position kommt "
             "aus den diagnostischen Vorher-Merkmalen (TruncatedSVD). "
-            "Die Farben sind die unveränderten Complete-Link-Cluster. "
+            "Die Farbzuordnung zeigt das unveränderte Complete-Link-Ergebnis; "
+            "jede Cluster-ID erhält eine eigene Kennzeichnung. "
             "QEC-SSL-Endbefunde und Reparaturergebnisse ändern die Position nicht.",
             objectName="PageSubtitle",
         )
@@ -371,15 +372,34 @@ class CaseScatterPanel(QWidget):
         self.plot = CaseScatterPlot()
         self.plot.case_selected.connect(self._select_point)
         layout.addWidget(self.plot)
+        zoom_row = QHBoxLayout()
+        zoom_row.addStretch(1)
+        zoom_reset = QPushButton("Zoom zurücksetzen")
+        zoom_reset.setToolTip(
+            "Stellt das gesamte Diagramm wieder dar; der Mausrad-Zoom "
+            "bleibt auch beim Auswählen eines Falls erhalten."
+        )
+        zoom_reset.clicked.connect(self.plot.reset_zoom)
+        zoom_row.addWidget(zoom_reset)
+        layout.addLayout(zoom_row)
         legend = QLabel(
-            "Farbe = berechnete Clusterzuordnung · Grau = unzugeordnet · "
+            "Farbe + Cluster-Nr. = bestehende Clusterzuordnung · Grau = unzugeordnet · "
             "Quadrat = fehlender Tauschanker · Dunkler Rand = Fokusfall · "
+            "Gestrichelte Verbindung = andere Fälle desselben Fokusclusters "
+            "(keine Ähnlichkeitsdistanz) · "
             "Bei gleicher Position werden Symbole nur für die Auswahl versetzt. "
             "Die 2D-Entfernung ist KEIN Jaccard-Wert.",
             objectName="PageSubtitle",
         )
         legend.setWordWrap(True)
         layout.addWidget(legend)
+        self.cluster_legend = QLabel(objectName="PageSubtitle")
+        self.cluster_legend.setWordWrap(True)
+        self.cluster_legend.setTextFormat(Qt.TextFormat.RichText)
+        layout.addWidget(self.cluster_legend)
+        self.cluster_note = QLabel(objectName="PageSubtitle")
+        self.cluster_note.setWordWrap(True)
+        layout.addWidget(self.cluster_note)
 
         self.detail = QLabel(objectName="PageSubtitle")
         self.detail.setWordWrap(True)
@@ -553,6 +573,30 @@ class CaseScatterPanel(QWidget):
             f"{self.projection.feature_count} gewichtete Matrixspalten · "
             f"{len(self.result.clusters) if self.result else 0} Cluster (alle Bauteile)"
         )
+        visible_ids = set(projected)
+        color_keys = []
+        for group in (self.result.clusters if self.result else ()):
+            matching = visible_ids.intersection(group.case_ids)
+            if not matching:
+                continue
+            colour = color_for_cluster(group.cluster_id).name()
+            color_keys.append(
+                f'<span style="color: {colour};"><b>● C{group.cluster_id}</b> '
+                f'({len(matching)} Fälle)</span>'
+            )
+        number_unassigned = sum(
+            self.result is None or self.result.cluster_for(case_id) is None
+            for case_id in visible_ids
+        )
+        if number_unassigned:
+            color_keys.append(
+                f'<span style="color: {UNASSIGNED};"><b>● Unzugeordnet</b> '
+                f'({number_unassigned})</span>'
+            )
+        self.cluster_legend.setText(
+            "Cluster-Legende (nur geplottete Fälle): "
+            + (" · ".join(color_keys) if color_keys else "Keine Clusterpunkte")
+        )
 
         if self.projection.components > 0:
             percentages = ", ".join(
@@ -614,6 +658,10 @@ class CaseScatterPanel(QWidget):
         self.open_button.setEnabled(case is not None)
         self.quicktests_button.setEnabled(case is not None)
         if case is None:
+            self.cluster_note.setText(
+                "Keine Clustergruppe gewählt. Gleichfarbigkeit allein ist "
+                "keine Identifikation: Entscheidend ist die Cluster-Nr."
+            )
             self.detail.setText(
                 "Kein NTF-/QEC-Fall. Reine FIN-QuickTests findest du im "
                 "benachbarten QuickTest-Reiter."
@@ -627,6 +675,46 @@ class CaseScatterPanel(QWidget):
         signature = signature_for(case)
         point = projected.get(case.case_id)
         cluster = self.result.cluster_for(case.case_id) if self.result else None
+        if cluster is not None and self.result is not None:
+            members = next(
+                group.case_ids for group in self.result.clusters
+                if group.cluster_id == cluster
+            )
+            member_set = set(members)
+            real_pairs = [
+                match.score for match in self.result.matches
+                if match.left_case_id in member_set
+                and match.right_case_id in member_set
+                and match.score is not None
+            ]
+            member_positions = [
+                (projected[case_id].x, projected[case_id].y)
+                for case_id in members if case_id in projected
+            ]
+            largest_2d_distance = max(
+                (
+                    hypot(a[0] - b[0], a[1] - b[1])
+                    for i, a in enumerate(member_positions)
+                    for b in member_positions[i + 1:]
+                ),
+                default=0.0,
+            )
+            weakest = (
+                f"{min(real_pairs):.1%}" if real_pairs else "nicht berechenbar"
+            )
+            self.cluster_note.setText(
+                f"Fokuscluster C{cluster}: {len(members)} Fälle · "
+                f"schwächste originale Paarähnlichkeit {weakest} · "
+                f"größter Abstand in der 2D-Projektion "
+                f"{largest_2d_distance:.5f}. "
+                "Der 2D-Abstand ist keine Jaccard-Distanz. "
+                "Die gestrichelten Linien verbinden reale Gruppenmitglieder."
+            )
+        else:
+            self.cluster_note.setText(
+                "Fokusfall unzugeordnet: kein automatisch bestätigter Cluster. "
+                "Die grauen Punkte bilden keine gemeinsame Gruppe."
+            )
         position = (
             f"({point.x:+.5f}; {point.y:+.5f})"
             if point is not None else "keine Koordinaten (Diagnosebasis fehlt)"
