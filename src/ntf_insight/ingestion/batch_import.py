@@ -285,6 +285,32 @@ class LocalBatchImporter:
                         prior.qec_ssl_end_finding = case.qec_ssl_end_finding
                         prior.qec_ssl_end_date = getattr(case, "qec_ssl_end_date", None)
 
+            # Import order must not decide whether historical AutoExport data
+            # reaches new QEC cases: revisit already archived CSVs when a new
+            # investigated case was created. Original raw rows are retained;
+            # never index the complete 423k-row source a second time merely
+            # to attach matching FIN events to a newly added QEC case.
+            replay_shas: set[str] = set()
+            indexed_raw_shas = {
+                doc["source_sha256"]
+                for doc in self.knowledge.documents()
+                if doc["source_kind"] == "autoexport_rows"
+            }
+            if summary.cases_created:
+                current_shas = {artifact.sha256 for artifact in artifacts}
+                for archived in previously_archived_items:
+                    if (
+                        archived.sha256 not in current_shas
+                        and archived.source_type in {
+                            SourceType.SHORT_TEST,
+                            SourceType.WORKSHOP_HISTORY,
+                            SourceType.TIPS_CASE,
+                        }
+                        and Path(archived.original_name).suffix.casefold() == ".csv"
+                    ):
+                        others.append(archived)
+                        replay_shas.add(archived.sha256)
+
             case_fin: dict[str, list[NTFCase]] = defaultdict(list)
             for case in existing.values():
                 case_fin[case.vin].append(case)
@@ -325,35 +351,39 @@ class LocalBatchImporter:
                     SourceType.SHORT_TEST, SourceType.WORKSHOP_HISTORY,
                     SourceType.TIPS_CASE,
                 } and suffix == ".csv":
-                    # Store all export rows, including vehicles for which no
-                    # QEC case exists yet. Duplicate source columns are kept.
-                    try:
-                        rows = iter_autoexport_rows(
-                            Path(artifact.archived_path)
-                        )
-                        total = self.knowledge.save_records(
-                            artifact.sha256, "autoexport_rows", rows,
-                            metadata={
-                                "fin_independent": True,
-                                "raw_fields_preserved": True,
-                                "source_type": str(artifact.source_type),
-                            },
-                            # Historical DTC exports exceed 423k rows. Stream
-                            # into DuckDB; do not truncate the source history.
-                            maximum_rows=1_000_000,
-                        )
-                        summary.reference_rows += total
-                        summary.reference_sources += 1
-                    except Exception as exc:
-                        # Do not report successful parsing with a truncated
-                        # or missing FIN-wide history. Originals remain safe.
-                        summary.files_pending += 1
-                        summary.issues.append(
-                            f"AutoExport-Rohzeilen konnten nicht vollstaendig "
-                            f"gespeichert werden: {type(exc).__name__}. "
-                            "Quelle bleibt archiviert und muss neu verarbeitet werden."
-                        )
-                        continue
+                    # Store all FINs, not only those with QEC. When QEC
+                    # is uploaded later, previously indexed AutoExport CSVs
+                    # are re-parsed for case association WITHOUT deleting and
+                    # re-inserting the large immutable raw history.
+                    if not (
+                        artifact.sha256 in replay_shas
+                        and artifact.sha256 in indexed_raw_shas
+                    ):
+                        try:
+                            rows = iter_autoexport_rows(
+                                Path(artifact.archived_path)
+                            )
+                            total = self.knowledge.save_records(
+                                artifact.sha256, "autoexport_rows", rows,
+                                metadata={
+                                    "fin_independent": True,
+                                    "raw_fields_preserved": True,
+                                    "source_type": str(artifact.source_type),
+                                },
+                                # Handle the actual 423k-row diagnosis export.
+                                maximum_rows=1_000_000,
+                            )
+                            summary.reference_rows += total
+                            summary.reference_sources += 1
+                        except Exception as exc:
+                            # No false "parsed" state after incomplete archival.
+                            summary.files_pending += 1
+                            summary.issues.append(
+                                "AutoExport-Rohzeilen konnten nicht vollstaendig "
+                                f"gespeichert werden: {type(exc).__name__}. "
+                                "Quelle bleibt archiviert und muss neu verarbeitet werden."
+                            )
+                            continue
                 parser = None
                 if artifact.source_type in {
                     SourceType.SHORT_TEST, SourceType.WORKSHOP_HISTORY,
