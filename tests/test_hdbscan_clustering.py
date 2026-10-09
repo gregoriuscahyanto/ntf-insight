@@ -199,3 +199,15 @@ def test_source_and_window_cannot_be_ignored() -> None:
     assert recent_only.eligible_case_ids == ()
     assert not quicktest_only.clusters
     assert not recent_only.clusters
+
+
+
+def test_duplicate_fin_cases_are_not_misreported_as_independent_vehicles() -> None:
+    cases = sample()
+    cases[1] = synthetic("A1", "A", 1, vin=cases[0].vin)
+    plan = cluster_hdbscan_cases(cases)
+    group = next(g for g in plan.clusters if "A0" in g.case_ids)
+    assert group.case_count == 6
+    assert group.vehicle_count == 5
+    assert any("derselben FIN" in warning for warning in group.warnings)
+    assert plan.vehicle_count == 14
