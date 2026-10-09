@@ -377,7 +377,7 @@ class HDBSCANPanel(QWidget):
             f"EOM/Leaf-Vergleich auf identischen "
             f"{report.eligible_case_count} diagnostizierbaren QEC-Fällen · "
             f"{report.both_grouped_cases} Fälle in beiden Verfahren gruppiert · "
-            f"{'Paar-Zuordnungs-Übereinstimmung: ' + format(report.pair_coassignment_jaccard, '.1%') if (report.eom.all_internal_pair_count or report.leaf.all_internal_pair_count) else 'Keine gruppierten Paare in beiden Varianten'}. "
+            f"{'Paar-Zuordnungs-Übereinstimmung: ' + format(report.pair_coassignment_jaccard, '.1%') if report.pair_coassignment_jaccard is not None else 'Keine gruppierten Paare in beiden Varianten'}. "
             "Dabei werden echte Fallpaare verglichen, nicht willkürliche "
             "Cluster-IDs H1/H2. Ein hoher Wert bestätigt keine gleiche Ursache. "
             "Prüfe zusätzlich gemeinsame ECU:DTC und SSL-Endbefunde."
@@ -429,7 +429,11 @@ class HDBSCANPanel(QWidget):
                             f"{line.median_of_group_medians:.6f}"
                             if line.median_of_group_medians is not None else ""
                         ),
-                        f"{report.pair_coassignment_jaccard:.6f}",
+                        (
+                            f"{report.pair_coassignment_jaccard:.6f}"
+                            if report.pair_coassignment_jaccard is not None
+                            else "Nicht berechenbar"
+                        ),
                         report.both_grouped_cases,
                         report.min_cluster_size,
                         report.min_samples,
