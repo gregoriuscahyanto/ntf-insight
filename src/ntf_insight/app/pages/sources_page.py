@@ -434,10 +434,18 @@ class SourcesPage(QWidget):
         counts = Counter(artifact.source_type for artifact in artifacts)
         all_cases = self.cases.list_cases()
         case_count = len(all_cases)
+        quicktest_store = (
+            QuickTestStore(self.import_service.store)
+            if self.import_service is not None else None
+        )
         qt_statistics = (
-            QuickTestStore(self.import_service.store).statistics()
-            if self.import_service is not None
+            quicktest_store.statistics()
+            if quicktest_store is not None
             else {"reports": 0, "ecus": 0, "dtcs": 0, "parameters": 0}
+        )
+        quicktest_fin_count = (
+            len(quicktest_store.list_fins())
+            if quicktest_store is not None else 0
         )
         repair_count = sum(len(case.repairs) for case in all_cases)
         trigger_count = len(self.references.list_triggers())
@@ -450,7 +458,12 @@ class SourcesPage(QWidget):
                 return f"{archived} {suffix} archiviert"
             return fallback
 
-        demo_case = f"{case_count} Demo-Fälle (intern)" if self.mode == "demo" else f"{case_count} Fälle"
+        demo_case = (
+            f"{case_count} Demo-Fälle (intern)"
+            if self.mode == "demo"
+            else f"{case_count} QEC-/NTF-Fälle · "
+                 f"{quicktest_fin_count} FIN mit QuickTests"
+        )
         demo_triggers = (
             f"{trigger_count} Demo-Definitionen (intern)"
             if self.mode == "demo"
@@ -474,7 +487,8 @@ class SourcesPage(QWidget):
                 "Fallumfang und Fahrzeugidentität",
                 "QEC-Excel-Parser bereit",
                 (
-                    f"{counts[SourceType.VEHICLE_CASE_LIST]} Datei(en) · {case_count} Fälle"
+                    f"{counts[SourceType.VEHICLE_CASE_LIST]} Datei(en) · "
+                    f"{case_count} Fälle · {quicktest_fin_count} FIN mit QuickTests"
                     if counts[SourceType.VEHICLE_CASE_LIST]
                     else demo_case
                 ),
