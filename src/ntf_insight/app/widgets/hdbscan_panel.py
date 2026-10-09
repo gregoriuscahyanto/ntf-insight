@@ -13,6 +13,10 @@ from ntf_insight.analysis.case_clustering import _component_key
 from ntf_insight.analysis.cluster_review_zip import write_cluster_review_zip
 from ntf_insight.analysis.cross_cluster_bridges import build_cluster_bridges
 from ntf_insight.analysis.cluster_pilot_priority import prioritize_cluster_pilots
+from ntf_insight.analysis.pilot_expert_validation import (
+    merge_confirmed_mechanisms, validate_pilot_evidence,
+    write_pilot_review_template,
+)
 from ntf_insight.analysis.recurrence_coverage_audit import audit_recurrence_coverage
 from ntf_insight.analysis.diagnostic_gap_investigation import (
     investigate_diagnostic_gaps,
@@ -63,6 +67,7 @@ class HDBSCANPanel(QWidget):
         self.latest_recurrence_report = None
         self.latest_bridge_report = None
         self.latest_pilot_plan = None
+        self.latest_pilot_validation = None
         self.confirmed_mechanisms: tuple[ConfirmedMechanism, ...] = ()
         self._activated = False
         layout = QVBoxLayout(self)
@@ -376,6 +381,49 @@ class HDBSCANPanel(QWidget):
         ))
         self.pilot_inspection_table = _table(self.pilot_inspection_model, 210)
         body.addWidget(self.pilot_inspection_table)
+        self.pilot_review_button = QPushButton(
+            "Priorisierte Pilotfälle zur Fachprüfung lokal exportieren"
+        )
+        self.pilot_review_button.setEnabled(False)
+        self.pilot_review_button.setToolTip(
+            "Vertrauliche CSV mit realen QEC-IDs, FINs und SSL als Referenz: "
+            "ein Medoid und höchstens zwei unabhängige Zielfälle pro Cluster. "
+            "Vorhandene manuelle Fachbestätigungen bleiben erhalten."
+        )
+        self.pilot_review_button.clicked.connect(self.export_pilot_review_template)
+        body.addWidget(self.pilot_review_button)
+
+        body.addWidget(QLabel(
+            "Pilot-Fachvalidierung: Übereinstimmung und Widerspruch",
+            objectName="CardTitle",
+        ))
+        self.pilot_validation_summary = QLabel(
+            "Noch keine überprüften Medoid-Zielfall-Paare. "
+            "DTC-Ähnlichkeit beweist keine identische Fehlerursache.",
+            objectName="PageSubtitle",
+        )
+        self.pilot_validation_summary.setWordWrap(True)
+        body.addWidget(self.pilot_validation_summary)
+        self.pilot_validation_model = SimpleTableModel((
+            "Gruppe", "Repräsentant", "Repräsentant bestätigt",
+            "Geprüfte Ziel-FINs", "Gleicher Mechanismus",
+            "Anderer Mechanismus", "Treffer mit DTC-Screening",
+            "Widersprüche mit DTC-Screening", "Mehrfach verwendete Evidenz",
+            "Mehrfache Ziel-FIN-Bestätigungen", "Offene Ziel-FINs",
+            "Fachliche Bewertung",
+        ))
+        self.pilot_validation_table = _table(self.pilot_validation_model, 215)
+        body.addWidget(self.pilot_validation_table)
+        self.pilot_validation_target_model = SimpleTableModel((
+            "Gruppe", "Repräsentant", "Zielfall",
+            "Mechanismus Repräsentant", "Mechanismus Ziel",
+            "Cosinus zum Medoid", "45%-DTC-Screening",
+            "FIN gleich", "Prüfstatus", "Hinweis",
+        ))
+        self.pilot_validation_target_table = _table(
+            self.pilot_validation_target_model, 235,
+        )
+        body.addWidget(self.pilot_validation_target_table)
 
         body.addWidget(QLabel(
             "Fachlich bestätigte Fehlermechanismen – unabhängige Validierung",
@@ -518,6 +566,11 @@ class HDBSCANPanel(QWidget):
             self.latest_recurrence_report = None
             self.latest_bridge_report = None
             self.latest_pilot_plan = None
+            self.latest_pilot_validation = None
+            self.pilot_review_button.setEnabled(False)
+            self.pilot_validation_model.set_rows([])
+            self.pilot_validation_target_model.set_rows([])
+            self.pilot_validation_summary.setText("Pilot-Fachvalidierung nicht verfügbar.")
             self.pilot_model.set_rows([])
             self.pilot_inspection_model.set_rows([])
             self.pilot_summary.setText("Pilotpriorisierung nicht verfügbar.")
@@ -538,6 +591,7 @@ class HDBSCANPanel(QWidget):
         self.result = result
         self.evidence_audit = audit
         self.chat_zip_button.setEnabled(bool(result.clusters))
+        self.pilot_review_button.setEnabled(bool(result.clusters))
         self.representative_template_button.setEnabled(bool(result.clusters))
         self.transfer_export_button.setEnabled(bool(result.clusters))
         if not {review.case_id for review in self.confirmed_mechanisms}.issubset(
