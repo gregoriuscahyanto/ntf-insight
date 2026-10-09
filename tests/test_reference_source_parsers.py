@@ -20,6 +20,7 @@ from ntf_insight.ingestion.reference_source_parsers import (
     CandelaParser,
     PartHistoryParser,
     QECDetailsParser,
+    SupplierAnalysisDocumentParser,
     iter_autoexport_rows,
 )
 from ntf_insight.ingestion.service import SourceImportService
@@ -203,3 +204,70 @@ def test_source_knowledge_transaction_rolls_back_on_invalid_row(tmp_path) -> Non
             {"category": "a", "data": {}},
         ], maximum_rows=1)
     assert store.count_rows("a") == 1
+
+
+def _supplier_pdf() -> bytes:
+    out = io.BytesIO()
+    report = canvas.Canvas(out)
+    report.drawString(25, 760, "ANALYSIS REPORT")
+    report.drawString(25, 730, "Complaint: synthetic coolant pump observation")
+    report.drawString(25, 700, "Evaluation: inspect component, no confirmed result")
+    report.showPage()
+    report.drawString(25, 760, "Further analysis notes, no conclusive claim")
+    report.save()
+    return out.getvalue()
+
+
+def test_supplier_pdf_is_extracted_without_claiming_ntf(tmp_path) -> None:
+    path = tmp_path / "supplier.pdf"
+    path.write_bytes(_supplier_pdf())
+    assert detect_source_type(path) == SourceType.SUPPLIER_FINDING
+    parsed = SupplierAnalysisDocumentParser().parse(path)
+    assert len(parsed.records) == 2
+    assert parsed.metadata["ntf_result_automatically_inferred"] is False
+    assert parsed.metadata["requires_manual_qec_match"] is True
+    assert all(row["fin"] is None for row in parsed.records)
+    service = _sources(tmp_path)
+    summary = LocalBatchImporter(service).import_paths([path])
+    assert summary.reference_sources == 1
+    assert len(service.store.load_cases()) == 0
+    assert SourceKnowledgeStore(service.store).summary()["supplier_analysis_document"] == 2
+
+
+def test_knowledge_only_import_opens_local_mode_and_gui_explorer(
+    tmp_path, monkeypatch,
+) -> None:
+    monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
+    monkeypatch.setenv("NTF_INSIGHT_DATA_DIR", str(tmp_path / "local-data"))
+    from PySide6.QtWidgets import QApplication
+
+    from ntf_insight.app.windows.main_window import MainWindow
+
+    app = QApplication.instance() or QApplication([])
+    window = MainWindow()
+    assert window.application_data.mode == "demo"
+
+    cdd_path = tmp_path / "example.cdd"
+    cdd_path.write_bytes(CDD)
+    import_result = LocalBatchImporter(
+        window.pages["sources"].import_service
+    ).import_paths([cdd_path])
+    assert import_result.reference_sources == 1
+    window._reload_data()
+
+    assert window.application_data.mode == "local"
+    assert window.repository.list_cases() == []
+    assert "knowledge" in window.navigation.buttons
+    page = window.pages["knowledge"]
+    assert page.table_model.rowCount() == 2
+    page.category.setCurrentIndex(page.category.findData("cdd_service"))
+    assert page.table_model.rowCount() == 2
+    page.search.setText("ClearMemory")
+    assert page.table_model.rowCount() == 1
+    page._show_detail(page.table_model.index(0, 0))
+    assert "DEFAULT-FAULT-CLEAR" in page.detail.toPlainText()
+    page.search.clear()
+    assert page.table_model.rowCount() == 2
+
+    window.close()
+    app.processEvents()
