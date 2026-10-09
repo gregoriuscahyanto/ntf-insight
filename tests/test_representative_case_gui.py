@@ -13,7 +13,6 @@ from ntf_insight.app.widgets.representative_case_panel import RepresentativeCase
 from ntf_insight.app.widgets.representative_scatter import (
     representative_mds_coordinates,
 )
-from ntf_insight.analysis.representative_clustering import select_representative_cases
 from ntf_insight.domain.case import NTFCase
 from ntf_insight.domain.events import DiagnosticEvent, PartReplacement
 from ntf_insight.domain.vehicle import Vehicle
