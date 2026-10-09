@@ -38,7 +38,7 @@ def test_different_ml_groups_can_have_common_cpc3_core_without_automatic_merge()
     assert 0 <= bridge.medoid_cosine <= 1
     assert 0 <= bridge.between_median_cosine <= 1
     assert bridge.independent_fin_pairs == bridge.between_pairs
-    assert "kein" not in bridge.note.lower() or "keine ursachen" in bridge.note.lower()
+    assert "Kein automatisches Zusammenlegen" in bridge.note
     assert "Keine bestätigten" in bridge.reviewed_mechanism_relation
     assert result.clustered_count == 12
     assert all(group.case_count == 6 for group in result.clusters)
