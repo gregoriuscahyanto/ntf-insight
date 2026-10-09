@@ -8,7 +8,6 @@ Ambiguous candidates are displayed for explicit review, not auto-linked.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime
 from uuid import NAMESPACE_URL, uuid5
 
 from ntf_insight.domain.case import NTFCase
