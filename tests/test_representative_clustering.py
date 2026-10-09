@@ -1,4 +1,4 @@
-"""Budget constrained representative-cluster tests with only synthetic QEC data."""
+"""Evidence-homogeneous clustering, without any fixed number of groups."""
 from __future__ import annotations
 
 from datetime import datetime
@@ -16,8 +16,10 @@ from ntf_insight.domain.events import (
 from ntf_insight.domain.vehicle import Vehicle
 
 
-def case(name: str, vin: str, faults: tuple[str, ...], *,
-         series: str = "214", anchored: bool = True) -> NTFCase:
+def case(
+    name: str, vin: str, faults: tuple[str, ...], *,
+    series: str = "214", anchored: bool = True,
+) -> NTFCase:
     swap = datetime(2026, 5, 5, 12)
     return NTFCase(
         case_id=name,
@@ -33,18 +35,16 @@ def case(name: str, vin: str, faults: tuple[str, ...], *,
         investigated_replacement_id=f"swap-{name}" if anchored else None,
         diagnostics=[
             DiagnosticEvent(
-                event_id=f"{name}:{index}", vin=vin,
-                ecu="CPC3", dtc_code=fault,
-                occurred_at=datetime(2026, 4, 19, 11),
+                event_id=f"{name}:{index}", vin=vin, ecu="CPC3",
+                dtc_code=fault, occurred_at=datetime(2026, 4, 19, 11),
                 source_ref=f"raw:synthetic#csv:{name}:{index}",
-            )
-            for index, fault in enumerate(faults)
+            ) for index, fault in enumerate(faults)
         ],
     )
 
 
 def sample() -> list[NTFCase]:
-    data = [
+    return [
         case("A1", "W1TTEST0000000011", ("P101", "P102", "A1")),
         case("A2", "W1TTEST0000000012", ("P101", "P102", "A2")),
         case("A3", "W1TTEST0000000013", ("P101", "P102", "A3")),
@@ -56,61 +56,108 @@ def sample() -> list[NTFCase]:
         case("MISSING", "W1TTEST0000000032", ()),
         case("UNANCHORED", "W1TTEST0000000033", ("P101", "P102"), anchored=False),
     ]
-    return data
 
 
-def test_two_real_medoid_groups_coverage_abstention_and_budget() -> None:
+def test_automatic_groups_have_no_fixed_count_and_reject_singletons() -> None:
     cases = sample()
-    limited = select_representative_cases(cases, budget=1, minimum_similarity=0.25)
-    assert len(limited.clusters) == 1
-    assert limited.clusters[0].case_count == 4
-    assert limited.covered_count == 4
-    assert len(limited.unassigned) == 6
-
-    full = select_representative_cases(cases, budget=12, minimum_similarity=0.25)
-    assert len(full.clusters) == 2  # not 12 forced clusters
-    assert full.covered_count == 7
-    assert len(full.unassigned) == 3
-    assert full.missing_pre_diagnostics == 1
-    assert full.without_swap_anchor == 1
-    assert full.coverage == 0.7
-    assert all(group.case_count >= 2 for group in full.clusters)
-    assert all(
-        rep in group.case_ids
-        for group in full.clusters
-        for rep in [group.representative_case_id]
-    )
-    assert all(
-        group.weakest_representative_similarity >= 0.25
-        for group in full.clusters
-    )
-    assert {case_id for group in full.clusters for case_id in group.case_ids} == {
-        "A1", "A2", "A3", "A4", "B1", "B2", "B3",
+    plan = select_representative_cases(cases, minimum_similarity=0.45)
+    assert len(plan.clusters) == 2
+    assert {frozenset(c.case_ids) for c in plan.clusters} == {
+        frozenset(("A1", "A2", "A3", "A4")),
+        frozenset(("B1", "B2", "B3")),
     }
-    assert select_representative_cases(list(reversed(cases)), budget=12, minimum_similarity=0.25) == full
-    assert len(full.pair_scores) == 45
+    assert plan.covered_count == 7
+    assert plan.coverage == 0.7
+    assert plan.unassigned == ("C", "MISSING", "UNANCHORED")
+    assert plan.missing_pre_diagnostics == 1
+    assert plan.without_swap_anchor == 1
+    assert plan.screening_population == 8
+    assert all(cluster.vehicle_count == cluster.case_count for cluster in plan.clusters)
+    assert all(cluster.common_faults for cluster in plan.clusters)
+    assert all(cluster.weakest_internal_similarity >= 0.45 for cluster in plan.clusters)
+    assert all(cluster.weakest_representative_similarity >= 0.45
+               for cluster in plan.clusters)
+    assert all(cluster.mean_similarity < 1 for cluster in plan.clusters)
+    assert select_representative_cases(
+        list(reversed(cases)), minimum_similarity=0.45
+    ) == plan
+    assert len(plan.pair_scores) == 45
 
 
-def test_common_high_frequency_dtc_alone_must_not_force_cluster() -> None:
+def test_complete_link_prevents_medoid_star_with_weak_internal_pair() -> None:
     cases = [
-        case(f"C{i}", f"W1TTEST0000000{i:04d}", ("COMMON", f"X{i}"))
+        case("A", "W1TTEST0000000041", ("P100", "P200")),
+        case("B", "W1TTEST0000000042", ("P100", "P200", "P300")),
+        case("C", "W1TTEST0000000043", ("P100", "P300")),
+    ]
+    plan = select_representative_cases(cases)
+    assert len(plan.clusters) == 1
+    assert plan.clusters[0].case_count == 2
+    assert plan.covered_count == 2
+    assert len(plan.unassigned) == 1
+    # A-C share only a frequent code and cannot be joined via B.
+    ac = next(p for p in plan.pair_scores
+              if {p.left_id, p.right_id} == {"A", "C"})
+    assert not ac.eligible
+    for cluster in plan.clusters:
+        pairs = [
+            p for p in plan.pair_scores
+            if p.left_id in cluster.case_ids and p.right_id in cluster.case_ids
+        ]
+        assert all(p.eligible and p.similarity >= plan.minimum_similarity
+                   for p in pairs)
+        assert min(p.similarity for p in pairs) == pytest.approx(
+            cluster.weakest_internal_similarity, abs=1e-4
+        )
+
+
+def test_high_frequency_dtc_denominator_excludes_missing_diagnoses() -> None:
+    # Five out of ten *observed* cases share U1127, even though there are
+    # 20 QEC references in total. 50%, not an artificial 25%.
+    cases = [
+        case(f"D{i}", f"W1TTEST0000000{i:04d}", ("U1127", f"P{i}"))
+        for i in range(5)
+    ] + [
+        case(f"D{i}", f"W1TTEST0000000{i:04d}", (f"P{i}",))
+        for i in range(5, 10)
+    ] + [
+        case(f"EMPTY{i}", f"W1TTEST0000010{i:03d}", ())
         for i in range(10)
     ]
-    plan = select_representative_cases(cases, budget=5, minimum_similarity=0.05)
-    assert plan.clusters == ()
-    assert len(plan.unassigned) == 10
-    assert all(
-        not pair.eligible
-        for pair in plan.pair_scores if pair.shared_faults
+    plan = select_representative_cases(
+        cases, minimum_similarity=0.05, maximum_common_frequency=0.35,
     )
-    assert any(
-        "häufige" in pair.reason for pair in plan.pair_scores
-    )
+    assert plan.screening_population == 10
+    pair = next(p for p in plan.pair_scores
+                if {p.left_id, p.right_id} == {"D0", "D1"})
+    assert not pair.eligible
+    assert "häufig" in pair.reason
+    assert not plan.clusters
 
 
-def test_duplicate_dtc_and_post_repair_outcomes_never_change_membership() -> None:
+def test_all_group_members_share_informative_dtc_core() -> None:
+    cases = [
+        case("A", "W1TTEST0000000041", ("P100", "P200")),
+        case("B", "W1TTEST0000000042", ("P100", "P200", "P300")),
+        case("C", "W1TTEST0000000043", ("P200", "P300")),
+        case("D", "W1TTEST0000000044", ("P300", "P400")),
+    ]
+    plan = select_representative_cases(cases, minimum_similarity=0.45)
+    assert all(group.common_faults for group in plan.clusters)
+    for group in plan.clusters:
+        for pair in plan.pair_scores:
+            if pair.left_id in group.case_ids and pair.right_id in group.case_ids:
+                assert pair.eligible and pair.similarity >= 0.45
+        core = set(group.common_faults)
+        for member_id in group.case_ids:
+            original = next(c for c in cases if c.case_id == member_id)
+            codes = {(e.ecu, e.dtc_code) for e in original.diagnostics}
+            assert core <= codes
+
+
+def test_post_swap_findings_may_warn_but_never_change_clusters() -> None:
     cases = sample()
-    original = select_representative_cases(cases, budget=12, minimum_similarity=0.25)
+    before = select_representative_cases(cases, minimum_similarity=0.45)
     cases[0].diagnostics.append(DiagnosticEvent(
         vin=cases[0].vin, ecu="CPC3", dtc_code="P101",
         occurred_at=datetime(2026, 4, 21),
@@ -130,36 +177,35 @@ def test_duplicate_dtc_and_post_repair_outcomes_never_change_membership() -> Non
         complaint="Synthetic complaint after swap",
         performed_actions="Changed pump",
     ))
-    changed = select_representative_cases(cases, budget=12, minimum_similarity=0.25)
-    assert original.representative_ids == changed.representative_ids
-    assert original.assigned_case_ids == changed.assigned_case_ids
-    assert original.pair_scores == changed.pair_scores
-    assert any(
-        after.review_warnings != before.review_warnings
-        for before, after in zip(original.clusters, changed.clusters)
+    after = select_representative_cases(cases, minimum_similarity=0.45)
+    assert before.representative_ids == after.representative_ids
+    assert before.assigned_case_ids == after.assigned_case_ids
+    assert before.pair_scores == after.pair_scores
+    assert any(a.review_warnings != b.review_warnings
+               for a, b in zip(before.clusters, after.clusters))
+
+
+def test_series_mismatch_and_same_fin_warning() -> None:
+    a = case("A", "W1TTEST0000000041", ("P101", "P102"))
+    b = case("B", "W1TTEST0000000041", ("P101", "P102"))
+    other = case(
+        "C", "W1TTEST0000000042", ("P101", "P102"), series="999"
     )
+    plan = select_representative_cases([a, b, other])
+    assert len(plan.clusters) == 1
+    assert plan.clusters[0].vehicle_count == 1
+    assert "Nur eine FIN" in " ".join(plan.clusters[0].review_warnings)
+    rejected = next(p for p in plan.pair_scores
+                    if {p.left_id, p.right_id} == {"A", "C"})
+    assert not rejected.eligible and "Baureihe" in rejected.reason
 
 
-def test_untrusted_same_vehicle_episode_and_model_series_never_silently_mixed() -> None:
-    left = case("A", "W1TTEST0000000041", ("P101", "P102"))
-    right = case("B", "W1TTEST0000000041", ("P101", "P102"))
-    other = case("C", "W1TTEST0000000042", ("P101", "P102"), series="999")
-    group = select_representative_cases([left, right, other], minimum_similarity=0.3)
-    assert len(group.clusters) == 1
-    assert group.clusters[0].vehicle_count == 1
-    assert "Nur eine FIN" in " ".join(group.clusters[0].review_warnings)
-    rejected = next(pair for pair in group.pair_scores
-                    if {pair.left_id, pair.right_id} == {"A", "C"})
-    assert not rejected.eligible
-    assert "Baureihe" in rejected.reason
-
-
-def test_no_forced_assignment_when_faults_or_anchors_missing() -> None:
+def test_missing_dtc_or_anchor_is_not_forcibly_assigned() -> None:
     cases = [
         case("U1", "W1TTEST0000000051", ()),
         case("U2", "W1TTEST0000000052", (), anchored=False),
     ]
-    plan = select_representative_cases(cases, budget=12)
+    plan = select_representative_cases(cases)
     assert plan.clusters == ()
     assert plan.coverage == 0
     assert plan.unassigned == ("U1", "U2")
@@ -168,18 +214,17 @@ def test_no_forced_assignment_when_faults_or_anchors_missing() -> None:
 
 @pytest.mark.parametrize(
     "kwargs",
-    [{"budget": 0}, {"budget": 101}, {"minimum_similarity": 0.0},
-     {"minimum_similarity": 1.1}, {"maximum_common_frequency": 0}],
+    [{"minimum_similarity": 0}, {"minimum_similarity": 1.1},
+     {"maximum_common_frequency": 0}, {"maximum_common_frequency": 1.1}],
 )
-def test_configuration_rejects_false_precision(kwargs) -> None:
+def test_invalid_policy_is_rejected(kwargs) -> None:
     with pytest.raises(ValueError):
         select_representative_cases(sample(), **kwargs)
 
 
-def test_comparison_with_strict_complete_link_is_separate() -> None:
+def test_original_strict_complete_link_method_is_untouched() -> None:
     cases = sample()
     strict = cluster_diagnostic_cases(cases, threshold=0.65)
-    plan = select_representative_cases(cases, budget=12, minimum_similarity=0.25)
+    plan = select_representative_cases(cases, minimum_similarity=0.45)
     assert plan.clusters
-    # The two distinct algorithms must NEVER mutate each other's signatures.
     assert strict == cluster_diagnostic_cases(cases, threshold=0.65)
