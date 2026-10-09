@@ -441,6 +441,7 @@ Die Clusterbildung beruht weiterhin auf gewichteten Jaccard-Vergleichen
 und Complete-Link. Die Gewichte und Schwellen müssen mit echten,
 fachlich geprüften Fällen validiert werden.
 
+[Repräsentative Fälle für begrenztes Untersuchungsbudget (K-Medoids)](docs/representative-clustering.md) ·
 [Warum die Fallzahlen/Cluster nach dem AutoExport anders aussehen](docs/cluster-quality-audit.md) ·
 [Neuer gemeinsamer FIN-Arbeitsbereich und Zahlenmethodik](docs/fin-workspace.md) ·
 [Clustering-Grundlagen](docs/case-clustering.md).
