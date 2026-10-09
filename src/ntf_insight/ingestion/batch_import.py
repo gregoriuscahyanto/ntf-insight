@@ -133,7 +133,12 @@ class LocalBatchImporter:
         paths = [Path(path) for path in paths]
         from_zip = set()
         summary = ImportSummary()
-        previously_archived = {artifact.sha256 for artifact in self.sources.list_artifacts()}
+        previously_archived_items = self.sources.list_artifacts()
+        previously_archived = {artifact.sha256 for artifact in previously_archived_items}
+        archived_paths = {
+            Path(artifact.archived_path).resolve(): artifact
+            for artifact in previously_archived_items
+        }
         with tempfile.TemporaryDirectory(prefix="ntf-source-import-") as temp:
             extracted = []
             zip_hashes = set()
@@ -170,12 +175,21 @@ class LocalBatchImporter:
                         "Eine Quelldatei konnte nicht automatisch erkannt werden; "
                         "sie wurde nur archiviert."
                     )
-                artifact = self.sources.import_raw(
-                    path,
-                    source_type,
-                    source_system=source_system,
-                    vin_hint=vin_hint if path not in from_zip else None,
-                )
+                archived_original = archived_paths.get(path.resolve())
+                if archived_original is not None:
+                    # Re-parse an existing raw file without overwriting its
+                    # original filename, initial import timestamp or provenance.
+                    artifact = archived_original.model_copy(
+                        update={"source_type": source_type}
+                    )
+                    self.sources.store.save_artifact(artifact)
+                else:
+                    artifact = self.sources.import_raw(
+                        path,
+                        source_type,
+                        source_system=source_system,
+                        vin_hint=vin_hint if path not in from_zip else None,
+                    )
                 if artifact.sha256 in processed:
                     summary.duplicates += 1
                     continue
