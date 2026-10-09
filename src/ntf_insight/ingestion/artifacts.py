@@ -20,6 +20,8 @@ class SourceType(StrEnum):
     WORKSHOP_HISTORY = "workshop_history"
     SMR_D = "smr_d"
     DIAGNOSTIC_DESCRIPTION = "diagnostic_description"
+    PART_HISTORY = "part_history"
+    AUTOEXPORT_SUMMARY = "autoexport_summary"
     HW_SW_CHANGE_HISTORY = "hw_sw_change_history"
     VEHICLE_SOFTWARE_HISTORY = "vehicle_software_history"
     INSTALLED_POPULATION = "installed_population"
