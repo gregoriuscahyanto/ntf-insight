@@ -23,6 +23,7 @@ LANE_LABELS = {
     "replacement": "QEC / dokumentierter Tausch",
     "replacement_candidate": "AutoExport-Reparaturdatum",
     "repair": "Werkstatt",
+    "tips": "TIPS-Vorgang",
     "software": "Softwareänderung",
     "supplier": "Lieferantenbefund",
 }
