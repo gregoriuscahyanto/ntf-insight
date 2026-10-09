@@ -12,6 +12,7 @@ from PySide6.QtWidgets import (
 from ntf_insight.analysis.case_clustering import _component_key
 from ntf_insight.analysis.cluster_review_zip import write_cluster_review_zip
 from ntf_insight.analysis.cross_cluster_bridges import build_cluster_bridges
+from ntf_insight.analysis.cluster_pilot_priority import prioritize_cluster_pilots
 from ntf_insight.analysis.recurrence_coverage_audit import audit_recurrence_coverage
 from ntf_insight.analysis.diagnostic_gap_investigation import (
     investigate_diagnostic_gaps,
@@ -61,6 +62,7 @@ class HDBSCANPanel(QWidget):
         self.latest_gap_report = None
         self.latest_recurrence_report = None
         self.latest_bridge_report = None
+        self.latest_pilot_plan = None
         self.confirmed_mechanisms: tuple[ConfirmedMechanism, ...] = ()
         self._activated = False
         layout = QVBoxLayout(self)
@@ -351,6 +353,31 @@ class HDBSCANPanel(QWidget):
         body.addWidget(self.transfer_table)
 
         body.addWidget(QLabel(
+            "Pilotprüfungen: ein Repräsentant je Cluster und unabhängige Vergleichsfälle",
+            objectName="CardTitle",
+        ))
+        self.pilot_summary = QLabel(
+            "Noch keine Priorisierung. Cluster-Diagnosewerte sind keine Ursachenbelege.",
+            objectName="PageSubtitle",
+        )
+        self.pilot_summary.setWordWrap(True)
+        body.addWidget(self.pilot_summary)
+        self.pilot_model = SimpleTableModel((
+            "Priorität", "Cluster", "Repräsentant", "QEC-Fälle", "FINs",
+            "CPC3-Kern-DTCs", "Schwache Paare", "Clusterbrücken",
+            "Unabhängige Vergleichs-FINs", "Pilotvorschläge", "Begründung",
+        ))
+        self.pilot_table = _table(self.pilot_model, 220)
+        body.addWidget(self.pilot_table)
+        self.pilot_inspection_model = SimpleTableModel((
+            "Priorität", "Cluster", "Rolle", "Fall", "Repräsentant",
+            "Cosinus zum Repräsentanten", "Gemeinsame CPC3-DTCs",
+            "Fremd-FIN", "Prüfhinweis",
+        ))
+        self.pilot_inspection_table = _table(self.pilot_inspection_model, 210)
+        body.addWidget(self.pilot_inspection_table)
+
+        body.addWidget(QLabel(
             "Fachlich bestätigte Fehlermechanismen – unabhängige Validierung",
             objectName="CardTitle",
         ))
@@ -490,6 +517,10 @@ class HDBSCANPanel(QWidget):
             self.latest_gap_report = None
             self.latest_recurrence_report = None
             self.latest_bridge_report = None
+            self.latest_pilot_plan = None
+            self.pilot_model.set_rows([])
+            self.pilot_inspection_model.set_rows([])
+            self.pilot_summary.setText("Pilotpriorisierung nicht verfügbar.")
             self.bridge_model.set_rows([])
             self.recurrence_coverage_model.set_rows([])
             self.bridge_summary.setText("CPC3-Brückenprüfung nicht verfügbar.")
@@ -1047,6 +1078,57 @@ class HDBSCANPanel(QWidget):
             ) for item in report.links
         ])
 
+    def _refresh_pilot_plan(self) -> None:
+        if self.result is None or self.evidence_audit is None:
+            self.latest_pilot_plan = None
+            self.pilot_model.set_rows([])
+            self.pilot_inspection_model.set_rows([])
+            return
+        try:
+            plan = prioritize_cluster_pilots(
+                self._subset(), self.result, self.evidence_audit,
+                confirmations=self.confirmed_mechanisms,
+                bridges=self.latest_bridge_report,
+            )
+        except ValueError as exc:
+            self.latest_pilot_plan = None
+            self.pilot_summary.setText(f"Pilotprüfung nicht verfügbar: {exc}")
+            self.pilot_model.set_rows([])
+            self.pilot_inspection_model.set_rows([])
+            return
+        self.latest_pilot_plan = plan
+        self.pilot_summary.setText(
+            f"{plan.representative_count} echte Cluster-Repräsentanten "
+            "zur unabhängigen Fachprüfung; "
+            f"{plan.independent_targets} gezielt ausgewählte "
+            "vergleichbare oder kontrastierende Ziel-Fälle. "
+            f"{plan.priority_one_groups} besonders kohärente CPC3-Pilotgruppen, "
+            f"{plan.cross_cluster_comparison_groups} Gruppen mit CPC3-Brücken. "
+            "Die Prioritäten sind transparente heuristische Prüfhilfen, "
+            "keine technischen Ursachenchancen. "
+            "Untersuche erst den Repräsentanten, dann mindestens einen "
+            "Ziel-Fall unabhängig; kein automatischer Befundtransfer."
+        )
+        self.pilot_model.set_rows([
+            (
+                row.priority, row.group, row.representative_case_id,
+                row.case_count, row.distinct_fins, row.cpc3_core_count,
+                f"{row.weak_pair_count}/{row.internal_pair_count}",
+                ", ".join(row.bridge_neighbors) or "Keine",
+                row.independent_validation_candidates,
+                row.selected_comparison_cases, row.reason,
+            ) for row in plan.groups
+        ])
+        self.pilot_inspection_model.set_rows([
+            (
+                row.priority, row.group, row.role, row.case_id,
+                row.representative_case_id,
+                f"{row.similarity_to_representative:.1%}",
+                row.shared_cpc3_with_representative,
+                "Ja" if row.independent_fin else "Repräsentant", row.note,
+            ) for row in plan.inspections
+        ])
+
     def _refresh_transfer_plan(self) -> None:
         if self.result is None:
             self.transfer_model.set_rows([])
@@ -1077,6 +1159,7 @@ class HDBSCANPanel(QWidget):
             return
         self._refresh_transfer_plan()
         self._refresh_cluster_bridges()
+        self._refresh_pilot_plan()
         review = review_cluster_mechanisms(
             self._subset(), self.result, self.confirmed_mechanisms,
         )
