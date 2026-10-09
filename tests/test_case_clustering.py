@@ -302,3 +302,14 @@ def test_cluster_profile_is_not_influenced_by_supplier_conclusion_or_repair_outc
     updated = cluster_diagnostic_cases([a, b])
     assert original.clusters == updated.clusters
     assert original.matches == updated.matches
+
+
+def test_incomparable_case_explanation_shows_na_instead_of_crashing() -> None:
+    pump = _case("PUMP", ("P1",))
+    battery = _case("BATTERY", ("P1",), component="HV Battery")
+    match = compare_diagnostic_cases(pump, battery)
+
+    assert match.score is None
+    explanation = case_match_explanation(pump, battery, match)
+    assert "Ähnlichkeit: k. A." in explanation
+    assert "Verschiedene Bauteilfamilien" in explanation
