@@ -32,6 +32,10 @@ from ntf_insight.analysis.case_clustering import (
 )
 from ntf_insight.analysis.case_projection import CaseProjection, project_diagnostic_cases
 from ntf_insight.analysis.cluster_audit import audit_case_clusters
+from ntf_insight.analysis.dtc_case_patterns import (
+    DtcCasePattern,
+    discover_case_dtc_patterns,
+)
 from ntf_insight.analysis.case_similarity_explanation import (
     FEATURE_LABELS,
     explain_case_similarity,
@@ -102,6 +106,11 @@ class CaseScatterPlot(QGraphicsView):
         result: CaseClusterResult | None,
         by_id: dict[str, NTFCase],
         focus_id: str | None,
+        *,
+        pattern_members: frozenset[str] = frozenset(),
+        pattern_label: str | None = None,
+        dtc_source: str = "all",
+        lookback_days: int | None = None,
     ) -> None:
         scene = self._scene
         new_key = tuple(
@@ -203,11 +212,16 @@ class CaseScatterPlot(QGraphicsView):
             color = color_for_cluster(cluster)
             x, y = locations[point.case_id]
             radius = 9.5 if point.case_id == focus_id else 7.0
-            outline = QColor("#172638") if point.case_id == focus_id else QColor("#ffffff")
+            highlighted = point.case_id in pattern_members
+            outline = (
+                QColor("#172638") if point.case_id == focus_id
+                else QColor("#e0a300") if highlighted else QColor("#ffffff")
+            )
             in_focus_cluster = focus_cluster is not None and cluster == focus_cluster
             pen = QPen(
                 outline,
-                3.0 if point.case_id == focus_id else 2.0 if in_focus_cluster else 1.3,
+                3.0 if point.case_id == focus_id else
+                3.2 if highlighted else 2.0 if in_focus_cluster else 1.3,
             )
 
             # Square markers explicitly flag cases without a replacement anchor.
@@ -221,7 +235,9 @@ class CaseScatterPlot(QGraphicsView):
                 )
             item.setZValue(3 if point.case_id == focus_id else 2)
             item.setData(0, point.case_id)
-            sig = signature_for(case)
+            sig = signature_for(
+                case, dtc_source=dtc_source, lookback_days=lookback_days
+            )
             preview = ", ".join(f"{ecu}:{dtc}" for ecu, dtc in sorted(sig.faults)[:8])
             if len(sig.faults) > 8:
                 preview += f" (+{len(sig.faults) - 8})"
@@ -229,7 +245,11 @@ class CaseScatterPlot(QGraphicsView):
                 f"Fall {point.case_id} · FIN {case.vin}\n"
                 f"{'Cluster ' + str(cluster) if cluster else 'Einzelfall / unzugeordnet'}\n"
                 f"Diagnostische ECU:DTCs: {preview or 'Keine'}\n"
-                f"Tauschanker: {'vorhanden' if point.has_replacement_anchor else 'fehlt'}\n"
+                + (
+                    f"Gemeinsames DTC-Muster (nur Kandidaten): {pattern_label}\n"
+                    if highlighted and pattern_label else ""
+                )
+                + f"Tauschanker: {'vorhanden' if point.has_replacement_anchor else 'fehlt'}\n"
                 f"SSL-Endbefund (nicht im Score): {qec_ssl_finding_label(case)}\n"
                 "Darstellungsabstand ist keine Ursachenwahrscheinlichkeit."
                 + (
@@ -313,6 +333,7 @@ class CaseScatterPanel(QWidget):
         self.projection = CaseProjection((), ())
         self._visible_case_ids: list[str] = []
         self._neighbour_ids: list[str] = []
+        self.patterns: tuple[DtcCasePattern, ...] = ()
         self.population_metrics = population_metrics or {}
 
         outer = QVBoxLayout(self)
@@ -392,6 +413,27 @@ class CaseScatterPanel(QWidget):
         diagnostic_options.addStretch(1)
         layout.addLayout(diagnostic_options)
 
+        # This is an exploratory search, not a second interpretation of the
+        # 0.65 Complete-Link cluster colours. A case can match multiple codes.
+        pattern_controls = QHBoxLayout()
+        pattern_controls.addWidget(QLabel("Gemeinsames DTC-Muster hervorheben"))
+        self.pattern_combo = QComboBox()
+        self.pattern_combo.setMinimumWidth(330)
+        self.pattern_combo.setSizeAdjustPolicy(
+            QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon
+        )
+        self.pattern_combo.setMinimumContentsLength(24)
+        self.pattern_combo.setToolTip(
+            "Gemeinsame exakte ECU:DTC-Meldungen vor dem Tausch; "
+            "überlappende Vergleichskandidaten, KEINE bestätigten Cluster."
+        )
+        pattern_controls.addWidget(self.pattern_combo, 1)
+        pattern_controls.addStretch(1)
+        layout.addLayout(pattern_controls)
+        self.pattern_note = QLabel(objectName="PageSubtitle")
+        self.pattern_note.setWordWrap(True)
+        layout.addWidget(self.pattern_note)
+
         self.population_summary = QLabel(objectName="PageSubtitle")
         self.population_summary.setWordWrap(True)
         layout.addWidget(self.population_summary)
@@ -413,7 +455,9 @@ class CaseScatterPanel(QWidget):
         zoom_row.addWidget(zoom_reset)
         layout.addLayout(zoom_row)
         legend = QLabel(
-            "Farbe + Cluster-Nr. = bestehende Clusterzuordnung · Grau = unzugeordnet · "
+            "Farbe + Cluster-Nr. = strenge Complete-Link-Zuordnung · "
+            "Gelber Rand = ausgewähltes DTC-Vergleichsmuster (UNBESTÄTIGT) · "
+            "Grau = ohne bestätigten Cluster · "
             "Quadrat = fehlender Tauschanker · Dunkler Rand = Fokusfall · "
             "Gestrichelte Verbindung = andere Fälle desselben Fokusclusters "
             "(keine Ähnlichkeitsdistanz) · "
@@ -430,6 +474,17 @@ class CaseScatterPanel(QWidget):
         self.cluster_note = QLabel(objectName="PageSubtitle")
         self.cluster_note.setWordWrap(True)
         layout.addWidget(self.cluster_note)
+
+        layout.addWidget(QLabel(
+            "Gemeinsame ECU:DTC-Muster (unbestätigte Vergleichskandidaten)",
+            objectName="CardTitle",
+        ))
+        self.pattern_model = SimpleTableModel((
+            "ECU:DTC", "QEC-Fälle", "unterschiedliche FINs",
+            "mit Tauschanker", "Hinweis",
+        ))
+        self.pattern_table = self._table(self.pattern_model, 225)
+        layout.addWidget(self.pattern_table)
 
         layout.addWidget(QLabel(
             "Cluster-Qualitätsprüfung: Warum so wenige Gruppen?",
@@ -558,6 +613,10 @@ class CaseScatterPanel(QWidget):
         self.threshold.valueChanged.connect(self._recluster)
         self.dtc_source.currentIndexChanged.connect(self._change_signature)
         self.lookback.currentIndexChanged.connect(self._change_signature)
+        self.pattern_combo.currentIndexChanged.connect(self._draw)
+        self.pattern_table.selectionModel().currentRowChanged.connect(
+            self._pattern_selected
+        )
         self._refresh()
 
     @staticmethod
@@ -646,13 +705,86 @@ class CaseScatterPanel(QWidget):
         self.projection = project_diagnostic_cases(
             subset, **self._signature_options()
         )
+        self.patterns = discover_case_dtc_patterns(
+            subset, **self._signature_options()
+        )
+        self.pattern_model.set_rows([
+            (
+                pattern.label, pattern.case_count, pattern.vehicle_count,
+                pattern.anchored_count,
+                "auch überlappende Gruppen, keine bestätigte Ursache",
+            )
+            for pattern in self.patterns[:200]
+        ])
+        previous_pattern = self.pattern_combo.currentData()
+        self.pattern_combo.blockSignals(True)
+        self.pattern_combo.clear()
+        self.pattern_combo.addItem("Keine DTC-Muster hervorheben", None)
+        for pattern in self.patterns:
+            self.pattern_combo.addItem(
+                f"{pattern.label}: {pattern.case_count} QEC-Fälle / "
+                f"{pattern.vehicle_count} FINs",
+                pattern.fault,
+            )
+        prior_index = self.pattern_combo.findData(previous_pattern)
+        if prior_index >= 1:
+            self.pattern_combo.setCurrentIndex(prior_index)
+        elif self.patterns:
+            # Make the exploratory evidence visible on the FIRST app view.
+            self.pattern_combo.setCurrentIndex(1)
+        self.pattern_combo.blockSignals(False)
         if self.focus_id not in self._visible_case_ids:
             self.focus_id = self._visible_case_ids[0] if self._visible_case_ids else None
         self._draw()
 
+    def _pattern_selected(self, current, _previous) -> None:
+        if not current.isValid() or current.row() >= len(self.patterns):
+            return
+        target = self.patterns[current.row()].fault
+        selection = self.pattern_combo.findData(target)
+        if selection >= 0:
+            self.pattern_combo.setCurrentIndex(selection)
+
     def _draw(self) -> None:
         projected = {p.case_id: p for p in self.projection.points}
-        self.plot.set_points(self.projection, self.result, self.by_id, self.focus_id)
+        selected_fault = self.pattern_combo.currentData()
+        pattern = next(
+            (group for group in self.patterns if group.fault == selected_fault),
+            None,
+        )
+        self.plot.set_points(
+            self.projection, self.result, self.by_id, self.focus_id,
+            pattern_members=(
+                frozenset(pattern.case_ids) if pattern is not None
+                else frozenset()
+            ),
+            pattern_label=pattern.label if pattern else None,
+            **self._signature_options(),
+        )
+        pattern_cases = set(
+            case_id for group in self.patterns for case_id in group.case_ids
+        )
+        pattern_vehicles = {
+            self.by_id[case_id].vin for case_id in pattern_cases
+        }
+        if pattern is not None:
+            chosen_note = (
+                f"Gelber Rand: {pattern.label} · "
+                f"{pattern.case_count} echte QEC-Fälle, "
+                f"{pattern.vehicle_count} unterschiedliche FINs, "
+                f"{pattern.anchored_count} mit dokumentiertem Tauschanker. "
+                "Ein gemeinsamer DTC ist ein Vergleichshinweis, kein Nachweis "
+                "derselben Fehlerursache oder wirksamen Reparatur."
+            )
+        else:
+            chosen_note = "Es ist kein gemeinsames DTC-Muster hervorgehoben."
+        self.pattern_note.setText(
+            f"Explorative DTC-Mustersuche: {len(self.patterns)} "
+            f"überlappende ECU:DTC-Muster in {len(pattern_cases)} QEC-Fällen "
+            f"und {len(pattern_vehicles)} FINs. "
+            "Die Muster sind KEINE Complete-Link-Cluster. "
+            + chosen_note
+        )
         count = len(self.projection.points)
         p = self.population_metrics
         raw_tips = p.get("autoexport_tips_rows", 0)

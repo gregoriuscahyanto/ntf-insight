@@ -89,6 +89,52 @@ Die Gewichte selbst bleiben unverändert und die Unterschiede der
 Varianten müssen anhand von fachlich bestätigten QEC-Fällen
 geprüft werden.
 
+## NEU: Explorative DTC-Muster statt nur grauer Einzelpunkte
+
+Die bisherige Complete-Link-Clusterung bleibt **unverändert und konservativ**.
+Ein hoher Jaccard-Schwellenwert bei vollständigen Fahrzeug-Fehlerspeichern
+kann Gruppen trotz identischer, womöglich relevanter ECU:DTC-Kombinationen
+ausschließen. Deshalb zeigt die App jetzt zusätzlich direkt **oberhalb des
+2D-Streudiagramms** die **überlappenden gemeinsamen ECU:DTC-Muster**.
+
+- Jedes Muster entsteht, wenn mindestens **zwei unterschiedliche QEC-Fälle**
+  eine **exakt identische ECU:DTC-Kombination vor dem Tausch** besitzen.
+  Wenn zwei QEC-Fälle dieselbe FIN betreffen, erscheinen sie getrennt,
+  die Zahl der **unterschiedlichen FINs** wird aber explizit angezeigt.
+  Die Sortierung priorisiert Muster mit mehreren FINs.
+- Die Merkmalsmenge folgt **genau der ausgewählten DTC-Quelle und dem
+  eingestellten Vor-Tausch-Zeitfenster**. Wiederholte QuickTests und
+  AutoExport-Zeilen desselben ECU:DTC-Codes erhöhen die Fallzahl nicht.
+- Ein Fall kann zu **mehreren Mustern** gehören. Die Muster werden bewusst
+  **nicht** in disjunkte Cluster oder per Single-Link zu einer großen,
+  möglicherweise falschen Gruppe zusammengefasst.
+- Ein Muster kann ausgewählt werden; dessen Punkte bekommen einen
+  **gelben Rand**, die weiterhin grauen/blauen **Füllfarben** und die
+  Zahl bestätigter Complete-Link-Cluster bleiben unverändert.
+  Die Auswahl ändert **keine SVD-Koordinaten**.
+- Die Tabelle unter dem Diagramm zeigt bis zu 200 Muster mit ECU:DTC,
+  QEC-Fallzahl, Zahl unterschiedlicher FINs und Tauschankern.
+  Die Auswahlliste bietet alle Muster.
+- Ein gleicher DTC bedeutet **nicht**, dass dieselbe Defektursache
+  vorliegt oder dieselbe Reparatur hilft. Die neue Darstellung ist ein
+  **explorativer Ähnlichkeitskandidat**, kein bestätigter Cluster.
+  Ein häufiger unspezifischer DTC kann mehrere tatsächlich unterschiedliche
+  Ursachen verbinden; solche Muster müssen fachlich bewertet werden.
+
+### Was auch nach diesem Ausbau nicht automatisch folgt
+
+Die Fallgesamtzahl bleibt die Zahl der tatsächlich archivierten QEC-Fälle.
+AutoExport-FINs und TIPS-Vorgänge sind andere Grundgesamtheiten und werden
+nicht ohne Nachweis in neue Pumpenschadteilfälle umgewandelt.
+Auch das neue Musterverfahren kann keine Fälle ohne belegte Vorher-DTCs
+automatisch in solche Muster bringen.
+
+Für ein **fachlich besseres Hauptclustering** müssen relevante
+pumpenbezogene ECU:DTC-Merkmale anhand von Beispielen und den vorhandenen
+CDD-Textbeschreibungen geprüft und im nächsten Schritt als explizite
+Relevanzdimension modelliert werden. Die bisherige Anzahl von 14 oder
+1 Clustern ist dafür **kein** Gütemaß an sich.
+
 ## Warum die Originaldaten trotzdem nicht automatisch „repariert“ werden
 
 Die Entscheidung, welche historisch gespeicherten DTCs ursächlich
