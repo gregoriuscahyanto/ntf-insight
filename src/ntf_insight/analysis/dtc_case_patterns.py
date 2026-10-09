@@ -75,10 +75,7 @@ def discover_case_dtc_patterns(
             case_ids=members,
             vehicle_count=len({case_by_id[case_id].vin for case_id in members}),
             anchored_count=sum(
-                signature_for(
-                    case_by_id[case_id],
-                    lookback_days=lookback_days, dtc_source=dtc_source,
-                ).has_replacement_anchor
+                case_by_id[case_id].investigated_replacement() is not None
                 for case_id in members
             ),
         ))
