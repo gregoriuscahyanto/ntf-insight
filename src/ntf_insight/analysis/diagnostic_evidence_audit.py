@@ -103,12 +103,14 @@ def audit_diagnostic_evidence(
             if sig.has_replacement_anchor
             and _in_diagnostic_window(event, case, lookback_days=lookback_days)
         ]
+        # Source-overlap numbers follow the *selected* diagnostic window;
+        # broader pre-history is retained separately for exclusion reasons.
         qt = {
-            event.fault_key for event in pre_events
+            event.fault_key for event in selected_events
             if _matches_dtc_source(event, "quicktest")
         }
         auto = {
-            event.fault_key for event in pre_events
+            event.fault_key for event in selected_events
             if _matches_dtc_source(event, "autoexport")
         }
         overlap = qt & auto
