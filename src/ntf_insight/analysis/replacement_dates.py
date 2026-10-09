@@ -128,7 +128,17 @@ def compare_replacement_dates(
     case: NTFCase,
     knowledge: SourceKnowledgeStore | None = None,
 ) -> ReplacementDateComparison:
-    qec = case.investigated_replacement()
+    # A manually confirmed anchor may later supersede the imported QEC
+    # anchor for recurrence. Keep comparing AutoExport with the *original*
+    # QEC date so that the disagreement remains visible and auditable.
+    original_qec = next(
+        (
+            replacement for replacement in case.replacements
+            if "Schadteile QEC" in (replacement.source_ref or "")
+        ),
+        None,
+    )
+    qec = original_qec or case.investigated_replacement()
     if qec is None:
         return ReplacementDateComparison(
             qec_anchor=None,
