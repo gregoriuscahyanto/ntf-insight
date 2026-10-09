@@ -1,28 +1,28 @@
-"""Budget-constrained, abstaining medoid selection over *real* QEC cases.
+"""Homogeneous pre-intervention diagnostic clusters with real-case medoids.
 
-Engineering screening hypothesis, not a learned diagnostic/cause probability.
-Membership uses exclusively pre-intervention diagnostic evidence; outcomes are
-added to a post-hoc quality summary and never affect scores or representatives.
+An evidence-qualified Complete-Link merger only joins groups when EVERY pair
+of members passes the same minimum similarity and the entire group retains
+informative exact ECU:DTC evidence. No chosen cluster count, no coverage-first
+star clusters, no implied common root cause or automated repair transfer.
 
-Compared to fixed Complete-Link 0.65 this method optimizes how many real,
-reasonably similar cases can be reviewed through a limited sample of *actual*
-cases, while allowing insufficient or ambiguous observations to abstain.
+QEC SSL/end findings are examined *after* clustering for review warnings only.
 """
-
 from __future__ import annotations
 
 from collections import Counter
 from dataclasses import dataclass
 from math import log
+from statistics import mean
 from typing import Mapping
 
 from ntf_insight.analysis.case_clustering import (
     DiagnosticSignature,
     FaultKey,
+    _in_diagnostic_window,
+    _matches_dtc_source,
     signature_for,
 )
 from ntf_insight.analysis.qec_findings import qec_ssl_finding
-from ntf_insight.analysis.recurrence import relative_to_replacement
 from ntf_insight.domain.case import NTFCase
 
 
@@ -78,7 +78,6 @@ class RepresentativePlan:
     unassigned: tuple[str, ...]
     eligible_cases: tuple[str, ...]
     pair_scores: tuple[RepresentativePair, ...]
-    budget: int
     minimum_similarity: float
     lookback_days: int | None
     dtc_source: str
@@ -86,11 +85,13 @@ class RepresentativePlan:
     vehicle_count: int
     missing_pre_diagnostics: int
     without_swap_anchor: int
+    common_dtc_limit: float
+    screening_population: int
 
     @property
     def assigned_case_ids(self) -> frozenset[str]:
         return frozenset(
-            case_id for group in self.clusters for case_id in group.case_ids
+            item.case_id for cluster in self.clusters for item in cluster.members
         )
 
     @property
@@ -106,20 +107,34 @@ class RepresentativePlan:
         return tuple(cluster.representative_case_id for cluster in self.clusters)
 
 
-def _jaccard(a: frozenset, b: frozenset) -> float | None:
-    if not a or not b:
+def _jaccard(left: frozenset, right: frozenset) -> float | None:
+    if not left or not right:
         return None
-    return len(a & b) / len(a | b)
+    return len(left & right) / len(left | right)
 
 
-def _source_preference(case: NTFCase, sig: DiagnosticSignature) -> int:
-    """Tie breaker only. No supplier or *post-test* evidence is consulted."""
+def _has_pre_quicktest(case: NTFCase, *, lookback_days: int | None) -> bool:
+    return any(
+        _matches_dtc_source(event, "quicktest")
+        and _in_diagnostic_window(event, case, lookback_days=lookback_days)
+        for event in case.diagnostics
+    )
+
+
+def _case_quality(
+    case: NTFCase, signature: DiagnosticSignature, *,
+    lookback_days: int | None,
+) -> tuple[int, int, int, int]:
+    """Tie-break medoids using independent *pre-intervention* documentation.
+
+    Unlike the previous prototype, more unrelated DTCs do NOT imply quality.
+    Neither supplier results nor SSL findings influence medoid selection.
+    """
     return (
-        min(len(sig.faults), 15)
-        + 2 * bool(sig.complaint_tokens)
-        + bool(sig.ecu_software)
-        + bool(case.vehicle.model_series)
-        + bool(case.vehicle.variant)
+        int(_has_pre_quicktest(case, lookback_days=lookback_days)),
+        int(bool(signature.complaint_tokens)),
+        int(bool(signature.ecu_software)),
+        int(bool(case.vehicle.model_series and case.vehicle.variant)),
     )
 
 
@@ -128,304 +143,273 @@ def _build_pairs(
     cases: Mapping[str, NTFCase],
     *,
     max_frequency: float,
-) -> dict[frozenset[str], RepresentativePair]:
+) -> tuple[dict[frozenset[str], RepresentativePair], dict[FaultKey, float]]:
+    """Use documented pre-DTC QEC cases as the rarity denominator.
+
+    Missing diagnostics are *not evidence* that a code is rare; counting them
+    was biasing a frequently reported communication DTC downward.
+    """
     from itertools import combinations
 
-    ids = sorted(cases)
-    component_counts = Counter(signatures[case_id].component_key for case_id in ids)
-    fault_df: Counter[tuple[str, FaultKey]] = Counter()
-    for case_id, sig in signatures.items():
-        fault_df.update((sig.component_key, fault) for fault in sig.faults)
-
-    idf = {
-        (comp, fault): 1.0 + log((component_counts[comp] + 1) / (df + 1))
-        for (comp, fault), df in fault_df.items()
+    eligible = [
+        case_id for case_id, sig in signatures.items()
+        if sig.has_replacement_anchor and sig.faults
+    ]
+    frequency: Counter[FaultKey] = Counter()
+    for case_id in eligible:
+        frequency.update(signatures[case_id].faults)
+    population = len(eligible)
+    rarity = {
+        fault: count / population
+        for fault, count in frequency.items()
     }
-    pairs: dict[frozenset[str], RepresentativePair] = {}
-    for left_id, right_id in combinations(ids, 2):
+    idf = {
+        fault: 1.0 + log((population + 1) / (count + 1))
+        for fault, count in frequency.items()
+    }
+    pairs = {}
+    for left_id, right_id in combinations(sorted(cases), 2):
         a, b = signatures[left_id], signatures[right_id]
         shared = tuple(sorted(a.faults & b.faults))
         score = 0.0
-        fault_sim = 0.0
-        eligible = False
+        fault_similarity = 0.0
         reason = ""
+        eligible_pair = False
         if a.component_key != b.component_key:
             reason = "Verschiedene Bauteilfamilien"
         elif not a.has_replacement_anchor or not b.has_replacement_anchor:
-            reason = "Unzureichender Tauschanker"
+            reason = "Tauschanker fehlt"
         elif not a.faults or not b.faults:
             reason = "Kein beidseitiger Vor-Tausch-ECU:DTC"
         elif not shared:
             reason = "Kein gemeinsamer ECU:DTC"
+        elif not (len(shared) >= 2 or any(
+            rarity[fault] <= max_frequency for fault in shared
+        )):
+            reason = "Nur ein häufig vorkommender gemeinsamer DTC"
         else:
-            # IDF is measured only within the current component family.
-            # A code occurring in ~42 % of all QEC cases must not by itself
-            # trigger a 72-case cluster with unverified shared root cause.
-            n = component_counts[a.component_key]
-            informative = (
-                len(shared) >= 2
-                or any(fault_df[(a.component_key, fault)] / n <= max_frequency
-                       for fault in shared)
-            )
-            if not informative:
-                reason = "Nur häufige, unspezifische gemeinsame DTCs"
+            series_a = (cases[left_id].vehicle.model_series or "").strip().casefold()
+            series_b = (cases[right_id].vehicle.model_series or "").strip().casefold()
+            if series_a and series_b and series_a != series_b:
+                reason = "Unterschiedliche bekannte Baureihe"
             else:
-                series_a = (cases[left_id].vehicle.model_series or "").strip()
-                series_b = (cases[right_id].vehicle.model_series or "").strip()
-                if series_a and series_b and series_a.casefold() != series_b.casefold():
-                    reason = "Abweichende bekannte Baureihe"
-                else:
-                    wa = sum(idf[(a.component_key, fault)] for fault in a.faults)
-                    wb = sum(idf[(b.component_key, fault)] for fault in b.faults)
-                    inter = sum(idf[(a.component_key, fault)] for fault in shared)
-                    # Mix weighted Jaccard (noise penalty) and symmetric
-                    # containment (large historical exports less punitive).
-                    fault_sim = 0.35 * inter / (wa + wb - inter) + (
-                        0.65 * inter / min(wa, wb)
-                    )
-                    extra = [
-                        (0.15, _jaccard(a.complaint_tokens, b.complaint_tokens)),
-                        (0.03, _jaccard(a.ecu_software, b.ecu_software)),
-                        (0.02, _jaccard(a.vehicle_variant, b.vehicle_variant)),
-                    ]
-                    numerator = 0.80 * fault_sim
-                    denominator = 0.80
-                    for weight, value in extra:
-                        if value is not None:
-                            numerator += weight * value
-                            denominator += weight
-                    score = max(0.0, min(1.0, numerator / denominator))
-                    eligible = True
-                    reason = "Exakte gemeinsame ECU:DTC + informative Vorher-Evidenz"
-        pairs[frozenset((left_id, right_id))] = RepresentativePair(
-            left_id=left_id,
-            right_id=right_id,
-            similarity=round(score, 6),
-            fault_similarity=round(fault_sim, 6),
-            shared_faults=shared,
-            eligible=eligible,
-            reason=reason,
+                a_weight = sum(idf[fault] for fault in a.faults)
+                b_weight = sum(idf[fault] for fault in b.faults)
+                shared_weight = sum(idf[fault] for fault in shared)
+                weighted_jaccard = shared_weight / (
+                    a_weight + b_weight - shared_weight
+                )
+                containment = shared_weight / min(a_weight, b_weight)
+                # A large DTC-history difference cannot be entirely ignored.
+                # More emphasis on symmetric Jaccard than the old 35%/65%.
+                fault_similarity = 0.60 * weighted_jaccard + 0.40 * containment
+                others = (
+                    (0.15, _jaccard(a.complaint_tokens, b.complaint_tokens)),
+                    (0.03, _jaccard(a.ecu_software, b.ecu_software)),
+                    (0.02, _jaccard(a.vehicle_variant, b.vehicle_variant)),
+                )
+                numerator = 0.80 * fault_similarity
+                denominator = 0.80
+                for weight, value in others:
+                    if value is not None:
+                        numerator += weight * value
+                        denominator += weight
+                score = max(0.0, min(1.0, numerator / denominator))
+                eligible_pair = True
+                reason = "Gemeinsame informative Vorher-ECU:DTC-Basis"
+        pair = RepresentativePair(
+            left_id, right_id, round(score, 6),
+            round(fault_similarity, 6), shared, eligible_pair, reason,
         )
-    return pairs
+        pairs[pair.key] = pair
+    return pairs, rarity
 
 
-def _assign(
-    members: tuple[str, ...],
-    medoids: tuple[str, ...],
-    accepted_pairs: Mapping[frozenset[str], RepresentativePair],
-) -> dict[str, tuple[str, float]]:
-    """Nearest selected real case, otherwise abstain; deterministic tie breaks."""
-    result = {}
-    for case_id in members:
-        if case_id in medoids:
-            result[case_id] = (case_id, 1.0)
-            continue
-        choices = [
-            (pair.similarity, medoid)
-            for medoid in medoids
-            if (pair := accepted_pairs.get(frozenset((case_id, medoid))))
-            is not None
-        ]
-        if choices:
-            value, medoid = sorted(
-                choices, key=lambda item: (-item[0], item[1])
-            )[0]
-            result[case_id] = (medoid, value)
-    return result
+def _common_core(
+    ids: tuple[str, ...],
+    signatures: Mapping[str, DiagnosticSignature],
+    rarity: Mapping[FaultKey, float],
+    max_frequency: float,
+) -> tuple[FaultKey, ...]:
+    if not ids:
+        return ()
+    common = set(signatures[ids[0]].faults)
+    for case_id in ids[1:]:
+        common.intersection_update(signatures[case_id].faults)
+        if not common:
+            break
+    if not common or not (
+        len(common) >= 2
+        or any(rarity[fault] <= max_frequency for fault in common)
+    ):
+        return ()
+    return tuple(sorted(common))
 
 
 def select_representative_cases(
     cases: list[NTFCase],
     *,
-    budget: int = 12,
-    minimum_similarity: float = 0.35,
+    minimum_similarity: float = 0.60,
     lookback_days: int | None = None,
     dtc_source: str = "all",
     maximum_common_frequency: float = 0.35,
 ) -> RepresentativePlan:
-    """Deterministic coverage-first k-medoids/facility-location screening.
+    """Automatically form homogeneous Complete-Link groups; no K/budget cap.
 
-    Not vanilla forced-partition PAM: only *qualified* edges are used, every
-    chosen medoid is a real QEC case, and dissimilar/missing observations abstain.
-    No invented groups/covered cases are created to reach a requested budget.
-    Local medoid swaps reduce average distance only after respecting coverage.
+    Pair-eligibility is mandatory for every distinct member pair. Every group
+    also has a common exact diagnostic core. Thus a weak A-to-C relationship
+    cannot be admitted merely because A and C both resemble the medoid B.
+    The medoid is the real case with the best worst-member similarity (then
+    mean member similarity, prediagnostic documentation and stable case ID).
     """
-    if not 1 <= budget <= 100:
-        raise ValueError("Untersuchungsbudget muss zwischen 1 und 100 liegen.")
     if not 0.0 < minimum_similarity <= 1.0:
         raise ValueError("Mindestähnlichkeit muss größer 0 und höchstens 1 sein.")
     if not 0.0 < maximum_common_frequency <= 1.0:
         raise ValueError("Grenze für häufige DTCs muss im Intervall (0, 1] liegen.")
     by_id = {case.case_id: case for case in cases}
     if len(by_id) != len(cases):
-        raise ValueError("Die Fall-IDs müssen eindeutig sein.")
-    signatures = {
+        raise ValueError("QEC-Fall-IDs müssen eindeutig sein.")
+    sigs = {
         case_id: signature_for(
-            by_id[case_id], lookback_days=lookback_days,
-            dtc_source=dtc_source,
+            by_id[case_id], lookback_days=lookback_days, dtc_source=dtc_source,
         )
         for case_id in sorted(by_id)
     }
-    eligible_ids = tuple(sorted(
-        case_id for case_id, sig in signatures.items()
+    eligible = tuple(
+        case_id for case_id, sig in sigs.items()
         if sig.has_replacement_anchor and sig.faults
-    ))
-    eligible_set = set(eligible_ids)
-    all_pairs = _build_pairs(
-        signatures, by_id, max_frequency=maximum_common_frequency
     )
-    accepted = {
-        key: pair for key, pair in all_pairs.items()
+    pairs, rarity = _build_pairs(
+        sigs, by_id, max_frequency=maximum_common_frequency,
+    )
+    accepted = [
+        pair for pair in pairs.values()
         if pair.eligible and pair.similarity >= minimum_similarity
-    }
-    available = tuple(sorted({
-        case_id for key in accepted for case_id in key
-    } & eligible_set))
-    selected: tuple[str, ...] = ()
-    current = _assign(eligible_ids, selected, accepted)
-
-    def objective(assignments: Mapping[str, tuple[str, float]]) -> tuple[int, float]:
-        return (
-            len(assignments),
-            round(sum(value for _, value in assignments.values()), 9),
+    ]
+    accepted.sort(
+        key=lambda pair: (-pair.similarity, pair.left_id, pair.right_id)
+    )
+    # One deterministic greedy Complete-Link agglomeration; the number of
+    # qualifying groups is determined by the data, not by a chosen K.
+    members = {case_id: (case_id,) for case_id in eligible}
+    root = {case_id: case_id for case_id in eligible}
+    for candidate in accepted:
+        a_root = root[candidate.left_id]
+        b_root = root[candidate.right_id]
+        if a_root == b_root:
+            continue
+        proposed = tuple(sorted(set(members[a_root]) | set(members[b_root])))
+        if not _common_core(
+            proposed, sigs, rarity, maximum_common_frequency
+        ):
+            continue
+        complete = all(
+            (comparison := pairs[frozenset((left, right))]).eligible
+            and comparison.similarity >= minimum_similarity
+            for i, left in enumerate(proposed)
+            for right in proposed[i + 1:]
         )
+        if not complete:
+            continue
+        kept, discarded = sorted((a_root, b_root))
+        members[kept] = proposed
+        del members[discarded]
+        for case_id in proposed:
+            root[case_id] = kept
 
-    # Coverage-first facility selection. A new representative must extend
-    # coverage; it cannot spend the investigation budget on a near-duplicate.
-    for _ in range(min(budget, len(available))):
-        best = None
-        for candidate in available:
-            if candidate in selected:
-                continue
-            proposal = _assign(
-                eligible_ids, (*selected, candidate), accepted
-            )
-            marginal = len(proposal) - len(current)
-            if marginal <= 0:
-                continue
-            cost = _source_preference(by_id[candidate], signatures[candidate])
-            key = (marginal, objective(proposal)[1], cost)
-            if best is None or key > best[0] or (
-                key == best[0] and candidate < best[1]
-            ):
-                best = (key, candidate, proposal)
-        if best is None:
-            break
-        selected = (*selected, best[1])
-        current = best[2]
-
-    # Fixed-count medoid swaps (two deterministic passes), prioritising
-    # case coverage over compactness. No case is forcibly assigned.
-    for _ in range(2):
-        improvement = None
-        baseline = objective(current)
-        for old in selected:
-            for candidate in available:
-                if candidate in selected:
-                    continue
-                proposal_medoids = tuple(
-                    candidate if item == old else item for item in selected
-                )
-                proposal = _assign(eligible_ids, proposal_medoids, accepted)
-                goal = objective(proposal)
-                if goal > baseline and (
-                    improvement is None
-                    or goal > improvement[0]
-                    or (goal == improvement[0] and proposal_medoids < improvement[1])
-                ):
-                    improvement = (goal, proposal_medoids, proposal)
-        if improvement is None:
-            break
-        selected, current = improvement[1], improvement[2]
-
-    # A reported cluster must represent >=2 real cases. If a medoid has only
-    # itself, drop it, reassign others, and do not misreport it as coverage.
-    for _ in range(len(selected)):
-        sizes = Counter(rep for rep, _ in current.values())
-        singletons = {rep for rep in selected if sizes.get(rep, 0) < 2}
-        if not singletons:
-            break
-        selected = tuple(rep for rep in selected if rep not in singletons)
-        current = _assign(eligible_ids, selected, accepted)
-
+    groups = [ids for ids in members.values() if len(ids) >= 2]
+    # Prioritize larger robust core groups, without making group size itself
+    # an evidence criterion or a constraint on total number of clusters.
+    groups.sort(key=lambda group: (-len(group), group))
     clusters = []
-    for index, representative_id in enumerate(selected, 1):
-        member_ids = tuple(sorted(
-            case_id for case_id, (rep, _) in current.items()
-            if rep == representative_id
-        ))
-        assert len(member_ids) >= 2
-        members = tuple(
+    for cluster_id, ids in enumerate(groups, 1):
+        def medoid_sort_key(case_id: str) -> tuple:
+            neighbor_values = [
+                pairs[frozenset((case_id, other))].similarity
+                for other in ids if other != case_id
+            ]
+            return (
+                -min(neighbor_values),
+                -mean(neighbor_values),
+                tuple(-q for q in _case_quality(
+                    by_id[case_id], sigs[case_id],
+                    lookback_days=lookback_days,
+                )),
+                case_id,
+            )
+
+        representative = min(ids, key=medoid_sort_key)
+        others = [
+            pairs[frozenset((representative, other))].similarity
+            for other in ids if other != representative
+        ]
+        internal = [
+            pairs[frozenset((left, right))].similarity
+            for i, left in enumerate(ids) for right in ids[i + 1:]
+        ]
+        core = _common_core(ids, sigs, rarity, maximum_common_frequency)
+        assert core and internal and min(internal) >= minimum_similarity
+        members_for_group = tuple(
             RepresentativeMember(
                 case_id=case_id,
-                representative_case_id=representative_id,
-                similarity=current[case_id][1],
-                # A representative is identical to itself; displaying its
-                # entire DTC list as a "shared" comparison is misleading.
-                shared_faults=(
-                    () if case_id == representative_id
-                    else accepted[frozenset((case_id, representative_id))].shared_faults
+                representative_case_id=representative,
+                similarity=(
+                    1.0 if case_id == representative
+                    else pairs[frozenset((case_id, representative))].similarity
                 ),
-            ) for case_id in member_ids
+                shared_faults=(
+                    () if case_id == representative
+                    else pairs[frozenset((case_id, representative))].shared_faults
+                ),
+            )
+            for case_id in ids
         )
-        common_faults = set(signatures[member_ids[0]].faults)
-        for case_id in member_ids[1:]:
-            common_faults &= signatures[case_id].faults
-
-        inner = [
-            (
-                all_pairs[frozenset((left, right))].similarity
-                if all_pairs[frozenset((left, right))].eligible else 0.0
-            )
-            for n, left in enumerate(member_ids)
-            for right in member_ids[n + 1:]
+        source_findings = [
+            qec_ssl_finding(by_id[case_id]) for case_id in ids
         ]
-        findings = [
+        documented = [
             finding.text.casefold().strip()
-            for case_id in member_ids
-            if (finding := qec_ssl_finding(by_id[case_id])) is not None
+            for finding in source_findings if finding is not None
         ]
-        warnings = []
-        if len(set(findings)) > 1:
-            warnings.append("Unterschiedliche SSL-Endbefundtexte – fachlich prüfen")
-        if not findings:
-            warnings.append("Keine SSL-Endbefunde für nachgelagerte Validierung")
-        if inner and min(inner) < minimum_similarity:
-            warnings.append(
-                "Nicht alle Fälle untereinander ausreichend ähnlich "
-                "(nur Medoid-Zuordnung, kein Complete-Link)"
+        vins = {by_id[case_id].vin for case_id in ids}
+        notes = []
+        if len(set(documented)) > 1:
+            notes.append("Unterschiedliche SSL-Rohtexte; fachlich gegenprüfen")
+        if len(documented) < len(ids):
+            notes.append(
+                f"Nur {len(documented)}/{len(ids)} Fälle mit SSL-Endbefund"
             )
-        if len({by_id[case_id].vin for case_id in member_ids}) < 2:
-            warnings.append("Nur eine FIN in der Gruppe; keine Fahrzeugreplikation")
-        if len(common_faults) == 1:
-            warnings.append("Nur ein ECU:DTC ist allen Mitgliedern gemeinsam")
-
+        if len(vins) == 1:
+            notes.append("Nur eine FIN: keine fahrzeugübergreifende Bestätigung")
+        if len(core) == 1:
+            notes.append("Nur ein gemeinsamer ECU:DTC als Kernevidenz")
+        elif all(rarity[fault] > maximum_common_frequency for fault in core):
+            notes.append("Gemeinsame Kerndiagnose nur aus häufigen DTCs")
+        if not all(
+            by_id[case_id].vehicle.model_series for case_id in ids
+        ):
+            notes.append("Baureihe nicht für alle Mitglieder dokumentiert")
+        if any(
+            not _has_pre_quicktest(by_id[case_id], lookback_days=lookback_days)
+            for case_id in ids
+        ):
+            notes.append("Nicht alle Fälle besitzen einen Vorher-QuickTest")
         clusters.append(RepresentativeCluster(
-            cluster_id=index,
-            representative_case_id=representative_id,
-            members=members,
-            vehicle_count=len({by_id[case_id].vin for case_id in member_ids}),
-            mean_similarity=round(
-                sum(member.similarity for member in members) / len(members), 4
-            ),
-            weakest_representative_similarity=round(
-                min(member.similarity for member in members), 4
-            ),
-            weakest_internal_similarity=round(min(inner), 4) if inner else None,
-            common_faults=tuple(sorted(common_faults)),
+            cluster_id=cluster_id,
+            representative_case_id=representative,
+            members=members_for_group,
+            vehicle_count=len(vins),
+            # Exclude 100% self comparison; show actual comparisons to rep.
+            mean_similarity=round(mean(others), 4),
+            weakest_representative_similarity=round(min(others), 4),
+            weakest_internal_similarity=round(min(internal), 4),
+            common_faults=core,
             with_pre_quicktest=sum(
-                any(
-                    e.session_id and "#ecu:" in (e.source_ref or "")
-                    and relative_to_replacement(
-                        e, by_id[case_id].investigated_replacement()
-                    ) == "pre"
-                    and e.fault_key in signatures[case_id].faults
-                    for e in by_id[case_id].diagnostics
-                )
-                for case_id in member_ids
+                _has_pre_quicktest(by_id[case_id], lookback_days=lookback_days)
+                for case_id in ids
             ),
-            with_qec_ssl_finding=len(findings),
-            review_warnings=tuple(warnings),
+            with_qec_ssl_finding=len(documented),
+            review_warnings=tuple(notes),
         ))
     covered = frozenset(
         case_id for group in clusters for case_id in group.case_ids
@@ -433,18 +417,19 @@ def select_representative_cases(
     return RepresentativePlan(
         clusters=tuple(clusters),
         unassigned=tuple(sorted(set(by_id) - covered)),
-        eligible_cases=eligible_ids,
-        pair_scores=tuple(
-            sorted(all_pairs.values(), key=lambda p: (p.left_id, p.right_id))
-        ),
-        budget=budget,
+        eligible_cases=eligible,
+        pair_scores=tuple(sorted(
+            pairs.values(), key=lambda pair: (pair.left_id, pair.right_id),
+        )),
         minimum_similarity=minimum_similarity,
         lookback_days=lookback_days,
         dtc_source=dtc_source,
         total_cases=len(cases),
         vehicle_count=len({case.vin for case in cases}),
-        missing_pre_diagnostics=sum(not sig.faults for sig in signatures.values()),
+        missing_pre_diagnostics=sum(not sig.faults for sig in sigs.values()),
         without_swap_anchor=sum(
-            not sig.has_replacement_anchor for sig in signatures.values()
+            not sig.has_replacement_anchor for sig in sigs.values()
         ),
+        common_dtc_limit=maximum_common_frequency,
+        screening_population=len(eligible),
     )
