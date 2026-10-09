@@ -207,3 +207,27 @@ def test_manually_entered_fin_must_match_qec_case():
     )
     with pytest.raises(ValueError, match="FIN stimmt nicht"):
         read_confirmed_mechanisms(bad, cases)
+
+
+def test_same_fin_mechanism_conflict_is_warned_but_not_independent_agreement():
+    cases, result, _, group, rep, targets = _baseline()
+    by_id = {case.case_id: case for case in cases}
+    by_id[targets[0]].vehicle = by_id[targets[0]].vehicle.model_copy(
+        update={"vin": by_id[rep].vin}
+    )
+    findings = (
+        _label(rep, code="PUMP_OPEN_CIRCUIT"),
+        _label(targets[0], code="PUMP_STUCK_ROTOR"),
+    )
+    report = validate_pilot_evidence(cases, result, findings)
+    current = next(row for row in report.groups if row.group == f"H{group.cluster_id}")
+    assert current.independently_reviewed_target_fins == 0
+    assert current.unresolved_mechanism_conflicts == 1
+    assert report.groups_with_conflict == 1
+    assert "gesperrt" in current.status
+    plan = plan_representative_transfer(cases, result, findings)
+    assert all(
+        x.status == "Clusterwiderspruch – Hypothesenübertragung gesperrt"
+        for x in plan.rows
+        if x.group == current.group and x.target_case_id != targets[0]
+    )
