@@ -355,8 +355,8 @@ def compare_signatures(left: DiagnosticSignature, right: DiagnosticSignature) ->
         reason += " · schwache diagnostische Evidenz"
     if not left.has_replacement_anchor or not right.has_replacement_anchor:
         reason += (
-            " · ohne dokumentierten Tauschanker nur Ähnlichkeitssuche, "
-            "keine automatische Clusterzuordnung"
+            " · ohne Tauschanker: kein dokumentierter Bauteiltausch; "
+            "nur Ähnlichkeitssuche, keine automatische Clusterzuordnung"
         )
 
     return CaseMatch(
