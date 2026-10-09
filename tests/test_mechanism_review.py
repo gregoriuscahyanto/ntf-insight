@@ -107,7 +107,9 @@ def test_no_ground_truth_means_no_misleading_purity_percentage() -> None:
 
 def test_same_fin_never_counts_as_independent_ground_truth_pair() -> None:
     cases = sample()
-    cases[1].vehicle.vin = cases[0].vin
+    cases[1].vehicle = cases[1].vehicle.model_copy(
+        update={"vin": cases[0].vin}
+    )
     plan = cluster_hdbscan_cases(cases)
     labels = (
         ConfirmedMechanism("A0", "MECH_ALPHA", "expert", "8D-01", date(2026, 10, 9)),
