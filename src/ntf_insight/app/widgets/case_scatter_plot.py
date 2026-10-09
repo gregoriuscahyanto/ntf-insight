@@ -661,6 +661,10 @@ class CaseScatterPanel(QWidget):
         self.population_summary.setText(
             f"FALLBEGRIFFE: {len(self.cases)} angelegte QEC-/NTF-Schadteilfälle "
             f"(aktuelle Bauteilfamilie: {len(self._visible_case_ids)}) · "
+            f"QEC-Originalzeilen über alle Excel-Blätter: "
+            f"{p.get('qec_original_rows', 0)} "
+            f"(davon {p.get('qec_primary_rows', 0)} im Hauptblatt, "
+            "Nebenblätter sind nicht automatisch weitere Fälle) · "
             f"{raw_tips} TIPS-Quellzeilen mit "
             f"{distinct_tips} unterschiedlichen TIPS-Vorgangsnummern "
             f"({linked_tips} fallbezogen verknüpft) · "
