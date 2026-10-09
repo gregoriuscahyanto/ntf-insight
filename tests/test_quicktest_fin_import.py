@@ -119,6 +119,9 @@ def test_pdf_only_is_persisted_by_fin_without_qec_case(tmp_path) -> None:
     assert reports[0]["ecu_count"] == 2
     assert quicktests.statistics()["ecus"] == 2
     assert quicktests.statistics()["dtcs"] == 1
+    assert quicktests.diagnostic_times_for_fins({FIN})[FIN] == [
+        (datetime(2026, 1, 3, 10, 12, 45), 1)
+    ]
     assert quicktests.statistics()["parameters"] == 4, quicktests.list_parameters(
         reports[0]["report_id"], 1, 1
     )
