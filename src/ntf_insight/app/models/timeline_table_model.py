@@ -58,6 +58,8 @@ class TimelineTableModel(QAbstractTableModel):
             "diagnostic_session": "Diagnosesitzung",
             "diagnostic": "DTC",
             "ecu_state": "Steuergerät HW-/SW-Stand",
+            "ecu_hw_change": "HW-Standabweichung",
+            "ecu_sw_change": "SW-Standabweichung",
             "replacement": "Tauschanker (QEC/manuell)",
             "replacement_candidate": "AutoExport-Reparaturkandidat",
             "repair": "Werkstatt",
