@@ -219,7 +219,11 @@ def cluster_hdbscan_cases(
             cluster_selection_method="eom",
             allow_single_cluster=False,
         )
-        labels = np.asarray(model.fit_predict(distance), dtype=int)
+        # sklearn's precomputed-distance backend may overwrite its input
+        # with mutual-reachability distances (including the diagonal).
+        # Keep the ORIGINAL diagnostic Euclidean matrix for medoids,
+        # numeric QA, and the MDS scatter that users interpret.
+        labels = np.asarray(model.fit_predict(distance.copy()), dtype=int)
         strengths = np.asarray(model.probabilities_, dtype=float)
 
     unsorted = []
