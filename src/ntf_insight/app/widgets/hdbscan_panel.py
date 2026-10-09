@@ -238,7 +238,8 @@ class HDBSCANPanel(QWidget):
         body.addWidget(self.bridge_summary)
         self.bridge_model = SimpleTableModel((
             "Cluster A", "Cluster B", "Gemeinsame CPC3-Kern-DTCs",
-            "CPC3-DTCs als Screening-Gewicht", "Cosinus der Repräsentanten",
+            "CPC3-DTC-Kombinationen", "CPC3-DTCs als Screening-Gewicht",
+            "Cosinus der Repräsentanten",
             "Median über Clustergrenzen", "Schwache grenzüberschreitende Paare",
             "Gleiche-FIN-Paare", "CPC3 nur in A", "CPC3 nur in B",
             "Bestätigter Befundvergleich", "Prüfhinweis",
@@ -1034,6 +1035,7 @@ class HDBSCANPanel(QWidget):
         self.bridge_model.set_rows([
             (
                 item.left, item.right, len(item.shared_cpc3),
+                ", ".join(f"{e}:{d}" for e, d in item.shared_cpc3) or "—",
                 f"{item.cpc3_idf_sum:.2f}", f"{item.medoid_cosine:.1%}",
                 f"{item.between_median_cosine:.1%}",
                 f"{item.weak_between_pairs} / {item.between_pairs}",
