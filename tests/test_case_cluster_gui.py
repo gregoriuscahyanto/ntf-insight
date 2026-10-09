@@ -121,3 +121,28 @@ def test_case_page_and_cluster_view_navigate_in_both_directions(
 
     window.close()
     app.processEvents()
+
+
+def test_keyboard_neighbour_change_updates_detail_and_disables_stale_action() -> None:
+    app = QApplication.instance() or QApplication([])
+    panel = CaseClusterPanel(build_demo_cases())
+    assert panel.focus_case("DEMO-001")
+    assert panel.neighbor_model.rowCount() >= 2
+
+    first_id = panel.neighbor_model.rows[0][0]
+    second_id = panel.neighbor_model.rows[1][0]
+
+    panel.neighbor_table.setCurrentIndex(panel.neighbor_model.index(0, 0))
+    assert panel.detail.text().startswith(f"Fall {first_id} ")
+    assert panel.open_case_button.isEnabled()
+
+    # Arrow-key navigation changes the current row without a mouse-click signal.
+    panel.neighbor_table.setCurrentIndex(panel.neighbor_model.index(1, 0))
+    assert panel.detail.text().startswith(f"Fall {second_id} ")
+    assert panel._selected_neighbor_case() == second_id
+
+    panel.neighbor_table.selectionModel().clearCurrentIndex()
+    assert not panel.open_case_button.isEnabled()
+    assert panel._selected_neighbor_case() is None
+    panel.close()
+    app.processEvents()

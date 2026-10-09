@@ -185,6 +185,10 @@ class CaseClusterPanel(QWidget):
         for col, width in enumerate((145, 110, 125, 200, 270, 370, 95)):
             self.neighbor_table.setColumnWidth(col, width)
         self.neighbor_table.clicked.connect(self._show_neighbor_detail)
+        # Update explanations for keyboard navigation as well as mouse clicks.
+        self.neighbor_table.selectionModel().currentRowChanged.connect(
+            lambda current, _previous: self._show_neighbor_detail(current)
+        )
         self.neighbor_table.doubleClicked.connect(self._open_neighbor_double_click)
         layout.addWidget(self.neighbor_table)
 
@@ -401,7 +405,12 @@ class CaseClusterPanel(QWidget):
             self._open_selected_neighbor()
 
     def _show_neighbor_detail(self, index) -> None:
-        if not index.isValid() or index.row() >= len(self._neighbours):
+        if not index.isValid() or not 0 <= index.row() < len(self._neighbours):
+            self.open_case_button.setEnabled(False)
+            self.detail.setText(
+                "Vergleichsfall auswählen, um die diagnostischen Gemeinsamkeiten "
+                "und dokumentierten Maßnahmen zu sehen."
+            )
             return
         match = self._neighbours[index.row()]
         focused = self.focus.currentData()

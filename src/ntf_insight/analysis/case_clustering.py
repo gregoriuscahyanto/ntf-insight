@@ -192,6 +192,7 @@ def case_match_explanation(
         )
         return preview + (f" (+{len(faults) - 8} weitere)" if len(faults) > 8 else "")
 
+    similarity = f"{match.score:.0%}" if match.score is not None else "k. A."
     return (
         f"Gemeinsames Diagnosebild: {shared}\n"
         f"Nur im gewählten Fall: {compact(focus_only)}\n"
@@ -200,7 +201,7 @@ def case_match_explanation(
         f"{', '.join(match.shared_complaint) or 'Keine beidseitig bekannten'}\n"
         f"Gemeinsame Softwarestände: "
         f"{', '.join(match.shared_software[:6]) or 'Keine belegten'}\n"
-        f"Ähnlichkeit: {match.score:.0%} · "
+        f"Ähnlichkeit: {similarity} · "
         f"vergleichbare Merkmalsabdeckung: {match.coverage:.0%}\n"
         f"{match.reason}\n"
         "Ähnlichkeit ist keine Ursachen- oder Reparaturwahrscheinlichkeit."

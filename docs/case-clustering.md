@@ -18,7 +18,8 @@ Die App bietet unter **Cluster & Fälle → Fall-Cluster**:
 - Gruppen ähnlicher FIN/Fall-Kombinationen mit eindeutiger Cluster-ID
 - eine einstellbare Mindestähnlichkeit (standardmäßig **0,65**)
 - eine **Ähnlichkeitsmatrix (Heatmap)** mit Hover-Begründung
-- Auswahl eines Falls und Rangliste der nächstähnlichen Fälle
+- Auswahl eines Falls und Rangliste der nächstähnlichen Fälle; die Detailbegründung
+  folgt auch der Tastaturnavigation und die Öffnen-Aktion wird bei ungültiger Auswahl deaktiviert
 - **„Ähnliche Fälle finden“** direkt aus **Fälle / FIN → FIN / Fallanalyse**,
   wobei der aktuelle echte Fall automatisch als Vergleichsfokus gewählt wird
 - **Cluster-Steckbrief** mit Fallanzahl, unterschiedlichen FINs,
@@ -33,7 +34,7 @@ Die App bietet unter **Cluster & Fälle → Fall-Cluster**:
   nach der letzten Maßnahme
 - DTC-Koauftretensnetzwerk weiterhin unter **DTC-Netzwerk**
 
-Die Matrix zeigt bei nicht vergleichbaren Paaren **„k. A.“**, nicht 0 % oder 100 %. Falls mehr als 24 Fälle existieren, wird die Matrix auf den Fokusfall und höchstens 23 weitere Fälle begrenzt; die Clusterberechnung berücksichtigt dennoch alle Fälle.
+Die Matrix und die Vergleichsbegründung zeigen bei nicht vergleichbaren Paaren **„k. A.“**, nicht 0 % oder 100 %. Falls mehr als 24 Fälle existieren, wird die Matrix auf den Fokusfall und höchstens 23 weitere Fälle begrenzt; die Clusterberechnung berücksichtigt dennoch alle Fälle.
 
 ### Diagnostische Signatur
 
