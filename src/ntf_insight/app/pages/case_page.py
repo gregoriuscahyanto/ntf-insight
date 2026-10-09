@@ -56,6 +56,7 @@ class CasePage(QWidget):
     """Inspect FIN/case combinations and edit persistent manual information."""
 
     case_saved = Signal(str)
+    similar_cases_requested = Signal(str)
 
     def __init__(
         self,
@@ -148,6 +149,15 @@ class CasePage(QWidget):
         self.add_event_button.setEnabled(self.manual_service is not None)
         self.add_event_button.clicked.connect(self._add_event)
         selector_row.addWidget(self.add_event_button)
+
+        self.find_similar_button = QPushButton("Ähnliche Fälle finden")
+        self.find_similar_button.setToolTip(
+            "Vergleicht reale NTF-/QEC-Fälle anhand des vor dem Tausch "
+            "bekannten Diagnosebilds. QuickTests ohne Schadteilfall "
+            "werden nicht als zusätzliche Fälle gezählt."
+        )
+        self.find_similar_button.clicked.connect(self._request_similar_cases)
+        selector_row.addWidget(self.find_similar_button)
 
         export_button = QPushButton("Markdown-Bericht exportieren…")
         self.export_button = export_button
@@ -435,6 +445,11 @@ class CasePage(QWidget):
         if selector_index >= 0:
             self.selector.setCurrentIndex(selector_index)
 
+    def _request_similar_cases(self) -> None:
+        case_id = self.selector.currentData()
+        if isinstance(case_id, str) and self.repository.get_case(case_id):
+            self.similar_cases_requested.emit(case_id)
+
     def _clear_view(self) -> None:
         for value in (
             self.component_value, self.replacement_value, self.autoexport_date_value,
@@ -501,6 +516,9 @@ class CasePage(QWidget):
         self.correct_button.setEnabled(editable)
         self.history_button.setEnabled(editable)
         self.export_button.setEnabled(case is not None and not is_preview)
+        self.find_similar_button.setEnabled(
+            case is not None and not is_preview
+        )
         self.confirm_swap_button.setEnabled(False)
         if case is None:
             self._clear_view()
