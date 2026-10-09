@@ -350,6 +350,26 @@ dokumentierten Tauschanker.
 
 [Methodik, Bedienung und Bedeutung von ECU-Stand/Lieferantenbefund](docs/replacement-date-comparison.md).
 
+## HW-/SW-Standabweichungen zwischen QuickTests
+
+NTF Insight erkennt jetzt je **FIN und Steuergerät**, wenn sich der
+ausgelesene **Hardware- oder Softwarestand** zwischen zwei QuickTests
+unterscheidet. In **Fälle / FIN → FIN / Fallanalyse** werden die
+alte/neue Version, beide Beobachtungszeitpunkte und Kilometerstände in
+einer Vergleichstabelle angezeigt. Im Zeitplot erscheinen **HW-Quadrate**
+und **SW-Dreiecke** sowie der mögliche Beobachtungszeitraum.
+
+In **QuickTests nach FIN** werden abweichende ECU-HW-/SW-Werte für den
+ausgewählten Bericht kontrastreich hervorgehoben. Die Markierungen
+bleiben auch beim Filtern von DTCs sichtbar und funktionieren mit beiden
+X-Achsen (**Datum** und **Kilometerstand**).
+
+**Wichtig:** Eine nachgewiesene Versionsabweichung ist **kein
+nachgewiesener Flash, Steuergerätetausch oder tatsächliches Update am
+späteren QuickTest-Tag**. Der Änderungszeitpunkt bleibt unbekannt.
+
+[Erkennung, Anzeige und fachliche Grenzen](docs/ecu-stand-vergleich.md)
+
 ## Manuelle Fallerfassung
 
 Unter **Fälle / FIN** sind **+ Neuer Fall** und **+ Ereignis** verfügbar. Kurztests (auch mit **0 DTCs**), DTCs, Tausche, Werkstattmaßnahmen, ECU-HW/SW-Stände, Software-Updates, Lieferantenbefunde und freie Notizen können ohne Parser erfasst werden.
