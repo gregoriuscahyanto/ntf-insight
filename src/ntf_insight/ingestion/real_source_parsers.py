@@ -22,6 +22,7 @@ from ntf_insight.domain.events import (
     ECUStateObservation,
     PartReplacement,
     RepairEvent,
+    TipsCaseObservation,
     SupplierFinding,
 )
 from ntf_insight.domain.vehicle import Vehicle
@@ -102,24 +103,44 @@ class ParsedSource(BaseModel):
     sessions: list[DiagnosticSession] = Field(default_factory=list)
     ecu_states: list[ECUStateObservation] = Field(default_factory=list)
     repairs: list[RepairEvent] = Field(default_factory=list)
+    tips_observations: list[TipsCaseObservation] = Field(default_factory=list)
     issues: list[str] = Field(default_factory=list)
     skipped_rows: int = 0
+    processed_rows: int = 0
+    invalid_rows: int = 0
     source_summary_count: int | None = None
     quicktest_report: dict | None = None
 
 
 def _csv_rows(path: Path):
+    """Stream quoted AutoExport CSV records, preserving duplicate field names.
+
+    Some workshop exports repeat KmReadingNum. Never let csv.DictReader silently
+    discard the first column. Suffix later duplicates with __2, __3, ...
+    """
     with path.open("r", encoding="utf-8-sig", newline="") as handle:
         for line in handle:
             if line.startswith(("Original query:", "Query Id:")) or not line.strip():
                 continue
-            # Header and body are semicolon-delimited; quoted free text may
-            # contain newlines. Do not split the data on newlines manually.
-            reader = csv.DictReader(
-                chain([line], handle), delimiter=";", quotechar='"'
-            )
-            for index, row in enumerate(reader, start=2):
-                yield index, row
+            reader = csv.reader(chain([line], handle), delimiter=";", quotechar='"')
+            header = next(reader)
+            counts: dict[str, int] = {}
+            names = []
+            for name in header:
+                counts[name] = counts.get(name, 0) + 1
+                names.append(name if counts[name] == 1 else f"{name}__{counts[name]}")
+            for index, values in enumerate(reader, start=2):
+                if not values or not any(value.strip() for value in values):
+                    continue
+                if len(values) > len(names):
+                    # Preserve rather than discard excess source fields.
+                    row_names = names + [
+                        f"__unexpected_column_{i}"
+                        for i in range(len(values) - len(names))
+                    ]
+                else:
+                    row_names = names
+                yield index, dict(zip(row_names, values + [""] * (len(row_names) - len(values))))
             return
 
 
@@ -232,8 +253,14 @@ class QECWorkbookParser:
 
 
 class AutoExportParser:
+    """Normalize FIN-related diagnostic, repair and TIPS case context.
+
+    The independent source-knowledge store retains *all* rows for all FINs,
+    including rows excluded from local QEC case attachment.
+    """
+
     name = "autoexport"
-    version = "1.0.0"
+    version = "2.0.0"
 
     def __init__(
         self,
@@ -248,10 +275,11 @@ class AutoExportParser:
     def parse(self, path: Path) -> ParsedSource:
         output = ParsedSource()
         seen_ecu_states: set[tuple] = set()
-        total = 0
         invalid = 0
+        bad_timestamps = 0
+        conflicting_odometer = 0
         for row_number, row in _csv_rows(path):
-            total += 1
+            output.processed_rows += 1
             if "C1" in row and "Fin" not in row and "EcuFaultNm" not in row:
                 output.source_summary_count = _int(row.get("C1"))
                 continue
@@ -265,7 +293,23 @@ class AutoExportParser:
                 output.skipped_rows += 1
                 continue
 
-            when = _date_event(row.get("DiagStartDt" if self.source_type == SourceType.SHORT_TEST else "RepairDt"))
+            if self.source_type == SourceType.SHORT_TEST:
+                # The real export has both a date and an exact timestamp
+                # (2026-01-02T08:09:10.123Z). Preserve the exact source clock;
+                # do not invent local time-zone conversion from a QuickTest PDF.
+                exact = _str(row.get("DiagStartTs"))
+                when = _date_event(exact) if exact else {}
+                if exact and not when:
+                    bad_timestamps += 1
+                if not when:
+                    when = _date_event(row.get("DiagStartDt"))
+            elif self.source_type == SourceType.WORKSHOP_HISTORY:
+                when = _date_event(row.get("RepairDt"))
+            elif self.source_type == SourceType.TIPS_CASE:
+                when = _date_event(row.get("CreationDate"))
+            else:
+                raise ValueError("Unsupported AutoExport CSV type.")
+
             if not when:
                 output.skipped_rows += 1
                 invalid += 1
@@ -291,9 +335,20 @@ class AutoExportParser:
                         occurrence_count=_int(row.get("FrequencyCounter")),
                         mileage_km=km,
                         freeze_frame={
-                            key: str(row[key])
-                            for key in ("FirstOdometer", "EcuFootPrintTxt")
-                            if row.get(key)
+                            **{
+                                key: str(row[key])
+                                for key in (
+                                    "FirstOdometer", "EcuFootPrintTxt",
+                                    "EcufaultMilFg", "SourceSystemNm",
+                                )
+                                if row.get(key)
+                            },
+                            **({
+                                "autoexport_diag_start_ts": exact
+                            } if exact else {}),
+                            **({
+                                "autoexport_diag_start_date": row["DiagStartDt"]
+                            } if row.get("DiagStartDt") else {}),
                         },
                         source_ref=source_ref,
                         **when,
@@ -318,24 +373,65 @@ class AutoExportParser:
                         )
                     )
             elif self.source_type == SourceType.WORKSHOP_HISTORY:
+                km = _int(row.get("KmReadingNum"))
+                alternate = _int(row.get("KmReadingNum__2"))
+                if km is not None and alternate is not None and km != alternate:
+                    conflicting_odometer += 1
+                    # Never claim one of two contradictory odometers as fact.
+                    km = None
                 output.repairs.append(
                     RepairEvent(
                         event_id=_key(self.source_sha, f"csv:{row_number}:repair"),
                         vin=fin,
-                        mileage_km=_int(row.get("KmReadingNum")),
+                        mileage_km=km,
                         complaint=_str(row.get("ComplDsc")),
                         action=_str(row.get("RepairTypeNmGerman")),
                         notes=_str(row.get("WorksVisitDsc")),
                         damaged_part_number=_str(row.get("PartLetterCd")),
                         damage_type=_str(row.get("DamageTypeNmDeu")),
+                        claim_identifier=_str(row.get("CntGukSid")),
                         source_ref=source_ref,
                         **when,
                     )
                 )
+            elif self.source_type == SourceType.TIPS_CASE:
+                output.tips_observations.append(
+                    TipsCaseObservation(
+                        event_id=_key(self.source_sha, f"csv:{row_number}:tips"),
+                        vin=fin,
+                        tips_case_id=_str(row.get("CaseId")),
+                        complaint=_str(
+                            row.get("InitialWorkshopMessageCustomerComplaint")
+                        ),
+                        workshop_findings=_str(
+                            row.get("InitialWorkshopMessageWorkshopFindings")
+                        ),
+                        performed_actions=_str(
+                            row.get("InitialWorkshopMessagePerformedActions")
+                        ),
+                        symptom=_str(
+                            row.get("SymptomName")
+                            or row.get("SymptomLevel3Name")
+                        ),
+                        source_ref=source_ref,
+                        **when,
+                    )
+                )
+        output.invalid_rows = invalid
         if invalid:
             output.issues.append(
-                f"AutoExport: {invalid} invalid rows of {total}; "
+                f"AutoExport: {invalid} invalid rows of {output.processed_rows}; "
                 f"{output.skipped_rows - invalid} rows excluded by FIN filter."
+            )
+        if bad_timestamps:
+            output.issues.append(
+                f"AutoExport: {bad_timestamps} invalid DiagStartTs timestamps; "
+                "DiagStartDt fallback was used if present."
+            )
+        if conflicting_odometer:
+            output.issues.append(
+                f"AutoExport: {conflicting_odometer} contradictory KmReadingNum "
+                "pairs; these repair observations have unknown odometer."
             )
         return output
 
