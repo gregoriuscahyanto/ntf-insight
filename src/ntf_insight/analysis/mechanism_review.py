@@ -85,7 +85,10 @@ def read_confirmed_mechanisms(
     reader = csv.DictReader(source, delimiter=";")
     if reader.fieldnames is None:
         raise ValueError("Die Prüfdatei hat keinen CSV-Header.")
-    fields = {name.strip().lstrip("\ufeff") for name in reader.fieldnames}
+    reader.fieldnames = [
+        name.strip().lstrip("\ufeff") for name in reader.fieldnames
+    ]
+    fields = set(reader.fieldnames)
     required = {
         "qec_case_id", "review_status", "mechanism_code", "reviewer",
         "evidence_ref", "confirmed_on",
