@@ -416,17 +416,33 @@ Anleitung und Grenzen: [docs/manual-entry.md](docs/manual-entry.md).
 
 ## Fallähnlichkeit und Clustering
 
-Unter **Cluster & Fälle → Fall-Cluster** vergleicht NTF Insight jetzt FIN/Fall-Kombinationen anhand ihrer **Diagnosesignatur vor dem Austausch**. Die native Desktop-App zeigt Complete-Link-Fallcluster, eine Ähnlichkeitsmatrix (Heatmap) mit Begründungen und je ausgewähltem Fall eine Rangliste vergleichbarer historischer Fälle einschließlich der dokumentierten Maßnahmen und Nachtestergebnisse.
+Die neue Oberfläche liegt vollständig unter **Fälle / FIN → 2D-Streudiagramm**.
+Sie zeigt QEC-/NTF-Fälle als farbige Punkte mit einer vollständigen
+Berechnungserklärung (Gewichte, Matrixgröße, SVD-Varianz und -Ladungen,
+Fallkoordinaten, Jaccard-Score einschließlich aller Gruppenbeiträge).
 
-**Der zusätzliche Reiter „2D-Streudiagramm“ projiziert dieselben diagnostischen Vorher-Merkmale mit TruncatedSVD. Die Farben stammen unverändert von den bestehenden Complete-Link-Clustern; die Punktabstände sind ausdrücklich keine Jaccard-Werte.** Punkte sind anklickbar, zeigen ihre FIN/Fallreferenz und verlinken zum Fallvergleich beziehungsweise zur Fallanalyse. Bauteilfamilien werden getrennt dargestellt.
+**Die Clusterfarben stammen unverändert aus der konservativen
+Complete-Link-Berechnung.** TruncatedSVD bestimmt nur die X-/Y-Position.
+Die Abstände sind keine Jaccard-Werte. Bauteilfamilien werden getrennt
+projiziert; QuickTests ohne Schadteilfall werden nicht als Clusterfall gezählt.
 
-**QuickTest und AutoExport:** Überlappende ECU:DTC-Beobachtungen werden bei identischer FIN, Datum und km (sowie Uhrzeit, soweit AutoExport sie enthält) in Ereigniszahlen und Timeline konservativ nur einmal gezählt. Die Originalzeilen und beide Quellenbelege bleiben erhalten; bei unklarer Zuordnung wird nicht zusammengefasst. Der Fall-Cluster-Score wurde bereits zuvor aus einzigartigen ECU:DTC-Mengen berechnet.
+**QuickTest und AutoExport:** Überlappende ECU:DTC-Beobachtungen werden
+bei exakt übereinstimmenden Identifikatoren, Datum und km konservativ
+in Ereigniszahlen und Timeline nur einmal gezählt. Die Originalzeilen
+und beide Quellenbelege bleiben erhalten. Die Clustersignatur verwendet
+einzigartige ECU:DTC-Mengen pro Fall.
 
-**QEC / SSL-Endbefunde:** Der originale Endbefund ist separat in Fallansicht, Clustervergleich und Cluster-Steckbrief sichtbar; er beeinflusst weder Score noch SVD. Bei fehlendem Befundabschlussdatum wird kein Ereignis mit künstlich angenommenem Tauschdatum mehr erzeugt.
+**QEC-/SSL-Endbefunde** werden nur nachgelagert angezeigt, nicht zur
+Position oder Fallähnlichkeit verwendet. Ein fehlendes
+Befundabschlussdatum wird nicht künstlich als Tauschdatum ausgegeben.
 
-**PCA wird hierfür nicht als Clusteringverfahren verwendet.** Die aktuelle Grundlage sind nachvollziehbare, gewichtete Jaccard-Ähnlichkeiten für DTCs, ECUs und weitere verfügbare Vorher-Merkmale. Post-Tausch-Rekurrenz, Lieferant und Reparaturmaßnahme fließen nicht in den diagnostischen Score ein. Ein gleiches Fehlerbild garantiert keine gleiche Abhilfe.
+**PCA/SVD werden nicht als Clusterverfahren eingesetzt.**
+Die Clusterbildung beruht weiterhin auf gewichteten Jaccard-Vergleichen
+und Complete-Link. Die Gewichte und Schwellen müssen mit echten,
+fachlich geprüften Fällen validiert werden.
 
-Methodik, aktuelle Gewichte, Grenzen und geplanter Ausbau zu HDBSCAN/UMAP: [docs/case-clustering.md](docs/case-clustering.md).
+[Neuer gemeinsamer FIN-Arbeitsbereich und Zahlenmethodik](docs/fin-workspace.md) ·
+[Clustering-Grundlagen](docs/case-clustering.md).
 
 ## Development conventions
 
