@@ -23,6 +23,7 @@ from ntf_insight.analysis.case_clustering import (
     signature_for,
 )
 from ntf_insight.analysis.case_projection import CaseProjection, project_diagnostic_cases
+from ntf_insight.analysis.qec_findings import qec_ssl_finding_label
 from ntf_insight.domain.case import NTFCase
 
 
@@ -154,6 +155,7 @@ class CaseScatterPlot(QGraphicsView):
                 f"{'Cluster ' + str(cluster) if cluster else 'Einzelfall / unzugeordnet'}\n"
                 f"Diagnostische ECU:DTCs: {preview or 'Keine'}\n"
                 f"Tauschanker: {'vorhanden' if point.has_replacement_anchor else 'fehlt'}\n"
+                f"SSL-Endbefund (nicht im Score): {qec_ssl_finding_label(case)}\n"
                 "Darstellungsabstand ist keine Ursachenwahrscheinlichkeit."
                 + (
                     "\nPunkte mit identischen Koordinaten sind zur Auswahl leicht versetzt."
@@ -317,7 +319,8 @@ class CaseScatterPanel(QWidget):
                 f"Fokus: {case.case_id} · FIN {case.vin} · "
                 + (f"Cluster {cluster}" if cluster else "Einzelfall / unzugeordnet")
                 + (" · keine 2D-Position (Diagnosebasis fehlt)" if not plotted else "")
-                + ". Für exakte Paarähnlichkeit und Merkmalsabdeckung den Fall-Cluster öffnen."
+                + ". Für exakte Paarähnlichkeit und Merkmalsabdeckung den Fall-Cluster öffnen. "
+                + "SSL-Endbefund: " + qec_ssl_finding_label(case)
             )
         self.compare_button.setEnabled(case is not None)
         self.open_button.setEnabled(case is not None)
