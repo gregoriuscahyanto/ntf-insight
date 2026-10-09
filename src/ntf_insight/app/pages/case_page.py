@@ -579,6 +579,29 @@ class CasePage(QWidget):
         # Keep selected QEC/NTF case and FIN-specific QuickTests aligned.
         if self.repository.get_case(case.case_id) is not None:
             self.scatter_panel.focus_case(case.case_id)
+        else:
+            self.scatter_panel.clear_focus()
+        # Shared dropdown selection must also highlight the analysis table.
+        for source_row in range(self.case_model.rowCount()):
+            if self.case_model.case_id_at(source_row) != case.case_id:
+                continue
+            proxy_index = self.case_proxy.mapFromSource(
+                self.case_model.index(source_row, 0)
+            )
+            if not proxy_index.isValid() and self.case_search.text():
+                self.case_search.blockSignals(True)
+                self.case_search.clear()
+                self.case_search.blockSignals(False)
+                self.case_proxy.setFilterFixedString("")
+                proxy_index = self.case_proxy.mapFromSource(
+                    self.case_model.index(source_row, 0)
+                )
+            if proxy_index.isValid():
+                selection = self.case_table.selectionModel()
+                selection.blockSignals(True)
+                self.case_table.selectRow(proxy_index.row())
+                selection.blockSignals(False)
+            break
         if self.quicktest_browser is not None:
             self._syncing_quicktest_fin = True
             try:
