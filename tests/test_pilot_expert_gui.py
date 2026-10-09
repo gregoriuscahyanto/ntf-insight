@@ -144,7 +144,9 @@ def test_loaded_labels_can_be_backed_up_and_restored_after_restart(
         lambda *args, **kwargs: (str(backup), "CSV-Dateien (*.csv)"),
     )
     restarted.import_review_button.click()
-    assert restarted.confirmed_mechanisms == initial.confirmed_mechanisms
+    assert restarted.confirmed_mechanisms == tuple(sorted(
+        initial.confirmed_mechanisms, key=lambda label: label.case_id,
+    ))
     assert restarted.latest_pilot_validation.reviewed_representatives == 2
     initial.close()
     restarted.close()
