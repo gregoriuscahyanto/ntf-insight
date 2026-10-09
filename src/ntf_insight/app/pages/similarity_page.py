@@ -52,6 +52,13 @@ class SimilarityPage(QWidget):
         layout.addWidget(tabs, 1)
         self.tabs = tabs
 
+    def focus_case(self, case_id: str) -> bool:
+        """Open the pairwise case clusters focused on a chosen case."""
+        if not self.case_cluster_panel.focus_case(case_id):
+            return False
+        self.tabs.setCurrentWidget(self.case_cluster_panel)
+        return True
+
     def _build_network_tab(self) -> QWidget:
         page = QWidget()
         layout = QVBoxLayout(page)
