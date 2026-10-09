@@ -291,6 +291,21 @@ def test_fin_case_overview_shows_readonly_quicktest_timeline_without_qec(
     assert page._selected_case() is None
     assert not page.add_event_button.isEnabled()
     assert not page.correct_button.isEnabled()
+    assert not page.export_button.isEnabled()
+    assert not page.history_button.isEnabled()
+
+    from PySide6.QtWidgets import QLabel
+
+    from ntf_insight.app.widgets.status_card import StatusCard
+
+    cards = window.pages["dashboard"].findChildren(StatusCard)
+    totals = {}
+    for card in cards:
+        labels = card.findChildren(QLabel)
+        totals[labels[0].text()] = labels[1].text()
+    assert totals["Fahrzeuge"] == "1"
+    assert totals["NTF-Fälle"] == "0"
+    assert totals["QuickTests"] == "1"
 
     page.case_search.setText("NOT-A-FIN")
     assert page.case_proxy.rowCount() == 0
@@ -358,6 +373,8 @@ def test_archived_old_sources_can_be_filtered_without_deleting_them(
     page.archive_view.setCurrentIndex(page.archive_view.findData("pending"))
     assert page.artifact_model.rowCount() == 1
     assert page._visible_artifacts[0].original_name == "old-format.dat"
+    page.artifact_table.selectRow(0)
+    assert page.retry_button.isEnabled()
     assert len(service.store.load_artifacts()) == 2
 
     window.close()
