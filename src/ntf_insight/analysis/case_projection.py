@@ -80,7 +80,13 @@ def project_diagnostic_cases(cases: list[NTFCase]) -> CaseProjection:
     components = 0
     explained_variance: tuple[float, ...] = ()
     top_features: list[tuple[int, str, float]] = []
-    if len(eligible) >= 2:
+    # Identical signatures have zero across-case variance. Do not ask SVD to
+    # estimate meaningless axes or divide by zero in explained-variance ratios.
+    has_variation = (
+        len(eligible) >= 2
+        and (matrix[1:] - matrix[:-1]).nnz > 0
+    )
+    if has_variation:
         components = min(2, matrix.shape[0] - 1, matrix.shape[1] - 1)
         if components >= 1:
             svd = TruncatedSVD(n_components=components, random_state=0)
