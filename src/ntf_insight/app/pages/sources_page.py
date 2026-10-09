@@ -14,6 +14,7 @@ from PySide6.QtWidgets import (
     QHeaderView,
     QLabel,
     QLineEdit,
+    QMessageBox,
     QPushButton,
     QSizePolicy,
     QTableView,
@@ -23,7 +24,7 @@ from PySide6.QtWidgets import (
 
 from ntf_insight.app.models.simple_table_model import SimpleTableModel
 from ntf_insight.app.widgets.file_drop_zone import FileDropZone
-from ntf_insight.ingestion.artifacts import SourceType
+from ntf_insight.ingestion.artifacts import ParseStatus, SourceType
 from ntf_insight.ingestion.batch_import import ImportSummary, LocalBatchImporter
 from ntf_insight.ingestion.source_detection import detect_source_type
 from ntf_insight.ingestion.service import SourceImportService
@@ -199,6 +200,28 @@ class SourcesPage(QWidget):
         self.archive_empty.setWordWrap(True)
         layout.addWidget(self.archive_empty)
 
+        archive_controls = QHBoxLayout()
+        archive_controls.addWidget(QLabel("Archivansicht"))
+        self.archive_view = QComboBox()
+        self.archive_view.addItem("Verarbeitete Dateien", "processed")
+        self.archive_view.addItem("Alle archivierten Dateien", "all")
+        self.archive_view.addItem("Noch nicht verarbeitet / Fehler", "pending")
+        self.archive_view.setMinimumWidth(270)
+        self.archive_view.currentIndexChanged.connect(self._refresh_all)
+        archive_controls.addWidget(self.archive_view)
+        self.archive_counts = QLabel(objectName="PageSubtitle")
+        archive_controls.addWidget(self.archive_counts, 1)
+        self.retry_button = QPushButton("Markierte Datei neu prüfen…")
+        self.retry_button.setToolTip(
+            "Eine bereits archivierte Datei erneut erkennen und parsen. "
+            "Die Originaldatei wird nicht gelöscht oder verändert."
+        )
+        self.retry_button.setEnabled(False)
+        self.retry_button.clicked.connect(self._retry_archived)
+        archive_controls.addWidget(self.retry_button)
+        layout.addLayout(archive_controls)
+        self._visible_artifacts = []
+
         self.artifact_model = SimpleTableModel(
             (
                 "Datei",
@@ -213,6 +236,7 @@ class SourcesPage(QWidget):
         )
         self.artifact_table = QTableView()
         self.artifact_table.setModel(self.artifact_model)
+        self.artifact_table.clicked.connect(self._artifact_selected)
         self.artifact_table.setAlternatingRowColors(True)
         self.artifact_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.artifact_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
@@ -229,6 +253,40 @@ class SourcesPage(QWidget):
         if filenames:
             self._archive_paths([Path(filename) for filename in filenames])
 
+    def _artifact_selected(self, index) -> None:
+        self.retry_button.setEnabled(
+            self.import_service is not None
+            and self._worker is None
+            and index.isValid()
+            and 0 <= index.row() < len(self._visible_artifacts)
+        )
+
+    def _retry_archived(self) -> None:
+        """Re-parse an original source already in the local immutable archive."""
+        index = self.artifact_table.currentIndex()
+        if not index.isValid() or index.row() >= len(self._visible_artifacts):
+            return
+        artifact = self._visible_artifacts[index.row()]
+        path = Path(artifact.archived_path)
+        if not path.is_file():
+            QMessageBox.warning(
+                self, "Originaldatei nicht gefunden",
+                "Die archivierte Quelldatei existiert nicht mehr. "
+                "Bitte das Original erneut importieren.",
+            )
+            return
+        if self.source_type.currentData() is not None:
+            decision = QMessageBox.question(
+                self, "Quellenart überschreiben?",
+                "Die ausgewählte Quellenart wird für diese Datei verwendet. "
+                "Möchtest du sie damit neu prüfen? "
+                "Für die automatische Erkennung bitte vorher "
+                "»Automatisch erkennen« auswählen.",
+            )
+            if decision != QMessageBox.StandardButton.Yes:
+                return
+        self._archive_paths([path])
+
     def _source_type_for_path(self, path: Path) -> SourceType:
         selected = self.source_type.currentData()
         if isinstance(selected, SourceType):
@@ -243,6 +301,7 @@ class SourcesPage(QWidget):
         forced_type = forced if isinstance(forced, SourceType) else None
         self.archive_button.setEnabled(False)
         self.drop_zone.setEnabled(False)
+        self.retry_button.setEnabled(False)
         self.import_status.setText(
             f"{len(paths)} Datei(en)/ZIP-Paket(e) werden lokal geprüft und importiert …"
         )
@@ -296,6 +355,7 @@ class SourcesPage(QWidget):
         self._worker = None
         if worker is not None:
             worker.deleteLater()
+        self._refresh_all()
         if self._pending_reload:
             self.sources_updated.emit(self.import_status.text(), self._quicktests_added)
 
@@ -310,31 +370,65 @@ class SourcesPage(QWidget):
         self._refresh_readiness(artifacts)
 
     def _refresh_artifacts(self, artifacts) -> None:
+        view = self.archive_view.currentData()
         rows = []
+        self._visible_artifacts = []
+        processed = 0
+        pending = 0
         for artifact in artifacts:
-            runs = self.import_service.store.load_parse_runs(artifact.sha256) if self.import_service else []
-            latest = runs[-1] if runs else None
-            parse_status = (
-                f"{latest.status} · {latest.parser_name} {latest.parser_version}"
-                if latest is not None
-                else "Nicht geparst"
+            runs = self.import_service.store.load_parse_runs(
+                artifact.sha256
+            ) if self.import_service else []
+            latest = max(
+                runs, key=lambda run: run.completed_at or run.started_at,
+                default=None,
             )
+            is_processed = bool(
+                latest is not None
+                and latest.status in {ParseStatus.SUCCESS, ParseStatus.PARTIAL}
+            )
+            if is_processed:
+                processed += 1
+            else:
+                pending += 1
+
+            if view == "processed" and not is_processed:
+                continue
+            if view == "pending" and is_processed:
+                continue
+            status = (
+                f"{latest.status} · {latest.parser_name} {latest.parser_version}"
+                if latest is not None else "Nicht geparst"
+            )
+            self._visible_artifacts.append(artifact)
             rows.append(
                 (
                     artifact.original_name,
-                    self.SOURCE_LABELS.get(artifact.source_type, str(artifact.source_type)),
+                    self.SOURCE_LABELS.get(
+                        artifact.source_type, str(artifact.source_type)
+                    ),
                     artifact.source_system,
                     artifact.vin_hint,
                     f"{artifact.size_bytes:,} B",
                     artifact.sha256,
-                    parse_status,
+                    status,
                     artifact.imported_at.astimezone().strftime("%Y-%m-%d %H:%M"),
                 )
             )
         self.artifact_model.set_rows(rows)
-        has_artifacts = bool(rows)
-        self.artifact_table.setVisible(has_artifacts)
-        self.archive_empty.setVisible(not has_artifacts)
+        self.retry_button.setEnabled(False)
+        self.archive_counts.setText(
+            f"{processed} verarbeitet · {pending} weitere im Rohdatenarchiv. "
+            "Nicht angezeigte Originale bleiben erhalten."
+        )
+        self.artifact_table.setVisible(bool(rows))
+        self.archive_empty.setVisible(not rows)
+        if not rows:
+            self.archive_empty.setText(
+                "Keine Dateien in dieser Ansicht. "
+                "Über »Alle archivierten Dateien« sind auch alte oder "
+                "nicht erkannte Originale erreichbar."
+            )
 
     def _refresh_readiness(self, artifacts) -> None:
         counts = Counter(artifact.source_type for artifact in artifacts)
