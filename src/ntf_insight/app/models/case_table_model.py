@@ -44,7 +44,9 @@ class CaseTableModel(QAbstractTableModel):
             return None
         row = self._rows[index.row()]
         values = (
-            row.case_id,
+            "Nur QuickTests (kein Fall)"
+            if row.case_id.startswith("FIN-QUICKTEST:")
+            else row.case_id,
             row.vin,
             row.component,
             row.dtc_count,
