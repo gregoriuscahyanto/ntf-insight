@@ -113,7 +113,9 @@ def test_labels_not_matching_current_scope_are_rejected():
 def test_insufficient_independent_vehicles_not_enough_for_training():
     cases, labels = _labeled_cohort(48)
     for index, case in enumerate(cases):
-        case.vehicle.vin = f"SYNTHETIC-CAR-{index % 6}"
+        case.vehicle = case.vehicle.model_copy(
+            update={"vin": f"SYNTHETIC-CAR-{index % 6}"}
+        )
     evaluation = evaluate_supervised_pairs(cases, labels)
     assert not evaluation.validated
     assert "unabhängige FIN" in evaluation.status
