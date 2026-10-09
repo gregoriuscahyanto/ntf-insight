@@ -4,6 +4,8 @@ from datetime import datetime, timedelta
 
 from ntf_insight.analysis.case_clustering import (
     all_diagnostic_matches,
+    case_match_explanation,
+    cluster_insights,
     cluster_diagnostic_cases,
     compare_diagnostic_cases,
     matches_for,
@@ -236,3 +238,67 @@ def test_last_repair_outcome_uses_followup_after_that_repair() -> None:
     assert "nicht erneut beobachtet" in result.outcome
     assert result.has_post_test
     assert "Leitung repariert" in " ".join(result.measures)
+
+
+def test_cluster_insight_shows_real_representative_and_conservative_strength() -> None:
+    a = _case("A", ("P1", "P2"))
+    b = _case("B", ("P1", "P2"))
+    c = _case("C", ("P3",))
+    result = cluster_diagnostic_cases([c, b, a], threshold=0.65)
+    profiles = cluster_insights(result, [a, b, c])
+
+    assert len(profiles) == 1
+    cluster = profiles[0]
+    assert cluster.case_count == 2
+    assert cluster.vehicle_count == 2
+    assert cluster.representative_case_id == "A"  # deterministic on ties
+    assert cluster.common_faults == (("CPC3", "P1"), ("CPC3", "P2"))
+    assert cluster.weakest_pair_similarity >= 0.65
+    assert cluster.mean_feature_coverage > 0
+    assert cluster.cases_with_pre_and_post_test == 0
+
+
+def test_neighbour_reason_lists_common_and_nonshared_dtcs() -> None:
+    a = _case("A", ("P1", "P2"))
+    b = _case("B", ("P1", "P3"))
+    match = compare_diagnostic_cases(a, b)
+    description = case_match_explanation(a, b, match)
+
+    assert "CPC3:P1" in description
+    assert "Nur im gewählten Fall: CPC3:P2" in description
+    assert "Nur im Vergleichsfall: CPC3:P3" in description
+    assert "keine Ursachen-" in description.lower() or "keine Ursachen-" in description
+
+
+def test_unanchored_case_can_be_reviewed_but_is_not_auto_clustered() -> None:
+    a = _case("A", ("P1",))
+    b = _case("B", ("P1",))
+    b.replacements.clear()
+    match = compare_diagnostic_cases(a, b)
+    assert match.score is not None and match.score >= 0.65
+    assert match.eligible_for_cluster is False
+    assert "ohne dokumentierten Tauschanker" in match.reason
+    result = cluster_diagnostic_cases([a, b])
+    assert not result.clusters
+    assert set(result.unassigned) == {"A", "B"}
+
+
+def test_cluster_profile_is_not_influenced_by_supplier_conclusion_or_repair_outcome() -> None:
+    a = _case("A", ("P1",))
+    b = _case("B", ("P1",))
+    original = cluster_diagnostic_cases([a, b])
+    b.supplier_findings.append(
+        SupplierFinding(
+            vin=b.vin, occurred_at=datetime(2026, 1, 12),
+            result=SupplierFindingResult.FAULT_FOUND,
+        )
+    )
+    b.repairs.append(
+        RepairEvent(
+            vin=b.vin, occurred_at=datetime(2026, 1, 12),
+            action="Wiring repaired",
+        )
+    )
+    updated = cluster_diagnostic_cases([a, b])
+    assert original.clusters == updated.clusters
+    assert original.matches == updated.matches
