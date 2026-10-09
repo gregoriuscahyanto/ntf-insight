@@ -28,9 +28,17 @@ from ntf_insight.ingestion.real_source_parsers import (
     QECWorkbookParser,
     QuickTestPdfParser,
 )
+from ntf_insight.ingestion.reference_source_parsers import (
+    AutoExportSummaryParser,
+    CandelaParser,
+    PartHistoryParser,
+    QECDetailsParser,
+    iter_autoexport_rows,
+)
 from ntf_insight.ingestion.service import SourceImportService
 from ntf_insight.ingestion.source_detection import detect_source_type
 from ntf_insight.storage.quicktest_store import QuickTestStore
+from ntf_insight.storage.source_knowledge_store import SourceKnowledgeStore
 
 
 MAX_ZIP_MEMBERS = 1000
@@ -50,6 +58,8 @@ class ImportSummary:
     duplicates: int = 0
     quicktests_saved: int = 0
     quicktests_without_case: int = 0
+    reference_sources: int = 0
+    reference_rows: int = 0
     issues: list[str] = field(default_factory=list)
     source_counts: dict[str, int] = field(default_factory=dict)
 
@@ -61,6 +71,7 @@ class LocalBatchImporter:
         self.sources = sources
         self.execution = ParserExecutionService(sources.store)
         self.quicktests = QuickTestStore(sources.store)
+        self.knowledge = SourceKnowledgeStore(sources.store)
 
     @staticmethod
     def _validate_zip(path: Path) -> None:
@@ -219,6 +230,22 @@ class LocalBatchImporter:
                     continue
                 summary.files_parsed += 1
                 summary.issues.extend(result.issues)
+                # Preserve all QEC sheets/columns, not just normalized cases.
+                try:
+                    detail, _ = self.execution.execute(
+                        artifact, QECDetailsParser()
+                    )
+                    summary.reference_rows += self.knowledge.save_records(
+                        artifact.sha256, detail.kind, detail.records,
+                        metadata=detail.metadata,
+                    )
+                    summary.reference_sources += 1
+                    summary.issues.extend(detail.issues)
+                except Exception as exc:
+                    summary.issues.append(
+                        f"QEC-Zusatzfelder konnten nicht gespeichert werden: "
+                        f"{type(exc).__name__}"
+                    )
                 for case in result.cases:
                     prior = existing.get(case.case_id)
                     if prior is None:
@@ -249,6 +276,55 @@ class LocalBatchImporter:
 
             for artifact in others:
                 suffix = Path(artifact.original_name).suffix.casefold()
+                # Global source knowledge is NOT a per-FIN diagnosis event.
+                reference_parser = None
+                if artifact.source_type == SourceType.DIAGNOSTIC_DESCRIPTION and suffix == ".cdd":
+                    reference_parser = CandelaParser()
+                elif artifact.source_type == SourceType.PART_HISTORY and suffix == ".pdf":
+                    reference_parser = PartHistoryParser()
+                elif artifact.source_type == SourceType.AUTOEXPORT_SUMMARY and suffix == ".csv":
+                    reference_parser = AutoExportSummaryParser()
+                if reference_parser is not None:
+                    progress(f"Referenzquelle einlesen: {reference_parser.name} …")
+                    try:
+                        catalog, _ = self.execution.execute(
+                            artifact, reference_parser
+                        )
+                        summary.reference_rows += self.knowledge.save_records(
+                            artifact.sha256, catalog.kind, catalog.records,
+                            metadata=catalog.metadata,
+                        )
+                        summary.reference_sources += 1
+                        summary.files_parsed += 1
+                        summary.issues.extend(catalog.issues)
+                    except Exception as exc:
+                        summary.issues.append(
+                            f"{artifact.original_name}: {type(exc).__name__}"
+                        )
+                    continue
+
+                if artifact.source_type in {
+                    SourceType.SHORT_TEST, SourceType.WORKSHOP_HISTORY
+                } and suffix == ".csv":
+                    # Store all export rows, including vehicles for which no
+                    # QEC case exists yet. Duplicate source columns are kept.
+                    try:
+                        rows = iter_autoexport_rows(
+                            Path(artifact.archived_path)
+                        )
+                        total = self.knowledge.save_records(
+                            artifact.sha256, "autoexport_rows", rows,
+                            metadata={
+                                "fin_independent": True,
+                                "raw_fields_preserved": True,
+                            },
+                        )
+                        summary.reference_rows += total
+                        summary.reference_sources += 1
+                    except Exception as exc:
+                        summary.issues.append(
+                            f"AutoExport-Rohzeilen: {type(exc).__name__}"
+                        )
                 parser = None
                 if artifact.source_type in {SourceType.SHORT_TEST, SourceType.WORKSHOP_HISTORY} and suffix == ".csv":
                     parser = AutoExportParser(
