@@ -223,6 +223,15 @@ class CasePage(QWidget):
         self.supplier_value = QLabel("—")
         self.confidence_value = QLabel("—")
         self.recurrence_value = QLabel("—")
+        for value in (
+            self.replacement_value, self.autoexport_date_value,
+            self.effective_swap_value, self.date_match_value,
+        ):
+            value.setWordWrap(True)
+            value.setToolTip(
+                "Belegtes Quelldatum und der für die NTF-Regeln verwendete "
+                "Tauschanker können voneinander abweichen."
+            )
 
         fields = (
             ("Bauteil", self.component_value),
