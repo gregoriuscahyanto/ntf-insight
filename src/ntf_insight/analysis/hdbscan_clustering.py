@@ -50,6 +50,10 @@ class MLCluster:
     majority_faults: tuple[tuple[FaultKey, int], ...]
     mean_to_representative: float
     weakest_internal_similarity: float
+    median_internal_similarity: float
+    p10_internal_similarity: float
+    internal_pair_count: int
+    weak_pair_count: int
     min_membership_strength: float
     ssl_finding_count: int
     warnings: tuple[str, ...]
@@ -75,6 +79,7 @@ class MLClusterResult:
     feature_count: int
     min_cluster_size: int
     min_samples: int
+    selection_method: str
     lookback_days: int | None
     dtc_source: str
     distances: tuple[tuple[float, ...], ...]
@@ -168,6 +173,7 @@ def cluster_hdbscan_cases(
     *,
     min_cluster_size: int = 3,
     min_samples: int = 2,
+    selection_method: str = "eom",
     lookback_days: int | None = None,
     dtc_source: str = "all",
 ) -> MLClusterResult:
@@ -181,6 +187,8 @@ def cluster_hdbscan_cases(
         raise ValueError("HDBSCAN-Mindestclustergröße muss 2 bis 100 sein.")
     if not 1 <= min_samples <= 100:
         raise ValueError("HDBSCAN-MinSamples muss 1 bis 100 sein.")
+    if selection_method not in {"eom", "leaf"}:
+        raise ValueError("HDBSCAN-Methode muss 'eom' oder 'leaf' sein.")
     by_id = {case.case_id: case for case in cases}
     if len(by_id) != len(cases):
         raise ValueError("QEC-Fall-IDs müssen eindeutig sein.")
@@ -216,7 +224,7 @@ def cluster_hdbscan_cases(
             min_cluster_size=min_cluster_size,
             min_samples=min(min_samples, len(eligible)-1),
             metric="precomputed",
-            cluster_selection_method="eom",
+            cluster_selection_method=selection_method,
             allow_single_cluster=False,
         )
         # sklearn's precomputed-distance backend may overwrite its input
@@ -246,6 +254,12 @@ def cluster_hdbscan_cases(
             for j in positions[idx + 1:]
         ]
         # L2 unit vectors give cosine = 1 - (euclidean^2)/2.
+        # Negative floating-point roundoff is NOT negative similarity
+        # on nonnegative TF-IDF inputs. Keep statistics in [0, 1].
+        offdiag = [float(np.clip(value, 0.0, 1.0)) for value in offdiag]
+        pair_median = float(np.median(offdiag)) if offdiag else 1.0
+        pair_p10 = float(np.percentile(offdiag, 10)) if offdiag else 1.0
+        weak_pair_count = sum(value < 0.45 for value in offdiag)
         core = set(sigs[group_ids[0]].faults)
         frequencies: Counter[FaultKey] = Counter()
         for cid in group_ids:
@@ -256,7 +270,9 @@ def cluster_hdbscan_cases(
             MLMember(
                 case_id=eligible[i],
                 similarity_to_representative=round(
-                    max(0, 1.0 - distance[i, rep_pos] ** 2 / 2.0), 4
+                    float(np.clip(
+                        1.0 - distance[i, rep_pos] ** 2 / 2.0, 0.0, 1.0,
+                    )), 4
                 ),
                 membership_strength=round(float(strengths[i]), 4),
                 shared_faults=tuple(sorted(
@@ -275,9 +291,15 @@ def cluster_hdbscan_cases(
             warnings.append("Kein ECU:DTC in allen Fällen gemeinsam")
         elif len(core) == 1:
             warnings.append("Nur ein ECU:DTC als gemeinsame Kernevidenz")
-        if offdiag and min(offdiag) < 0.45:
+        if weak_pair_count:
             warnings.append(
-                "Heterogen: schwächstes Fallpaar unter 45 % Cosinusindex"
+                f"Heterogen: {weak_pair_count}/{len(offdiag)} Fallpaare "
+                "mit Cosinusindex unter 45 %"
+            )
+        if not core:
+            warnings.append(
+                "Keine gemeinsame DTC-Kernevidenz: "
+                "nur explorative Dichtegruppe, nicht für Ursachenübertragung"
             )
         if len(set(documented)) > 1:
             warnings.append("SSL-Endbefundtexte weichen voneinander ab")
@@ -308,6 +330,10 @@ def cluster_hdbscan_cases(
                  if m.case_id != representative]
             )), 4),
             round(min(offdiag), 4) if offdiag else 1.0,
+            round(pair_median, 4),
+            round(pair_p10, 4),
+            len(offdiag),
+            weak_pair_count,
             round(float(min(strengths[i] for i in positions)), 4),
             len(documented),
             tuple(warnings),
@@ -324,12 +350,17 @@ def cluster_hdbscan_cases(
             majority_faults=majority,
             mean_to_representative=avg,
             weakest_internal_similarity=weakest,
+            median_internal_similarity=median,
+            p10_internal_similarity=p10,
+            internal_pair_count=pair_count,
+            weak_pair_count=weak_count,
             min_membership_strength=min_strength,
             ssl_finding_count=ssl_count,
             warnings=warnings,
         )
         for k, (ids, rep, members, core, majority, avg, weakest,
-                min_strength, ssl_count, warnings) in enumerate(unsorted, 1)
+                median, p10, pair_count, weak_count, min_strength,
+                ssl_count, warnings) in enumerate(unsorted, 1)
     )
     noise = tuple(
         eligible[i] for i, label in enumerate(labels) if label == -1
@@ -345,6 +376,7 @@ def cluster_hdbscan_cases(
         feature_count=dimension_count,
         min_cluster_size=min_cluster_size,
         min_samples=min_samples,
+        selection_method=selection_method,
         lookback_days=lookback_days,
         dtc_source=dtc_source,
         distances=tuple(tuple(float(val) for val in row) for row in distance),
