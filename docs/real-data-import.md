@@ -90,6 +90,14 @@ Diese Grenzen sind keine validierten physikalischen Fehlerfenster und müssen
 anhand realer Fälle geprüft werden. Beim Import wird kein Lieferant als
 Verursacher klassifiziert.
 
+**Upload-Reihenfolge:** AutoExport kann auch **vor** der QEC-Liste importiert
+werden. Sobald neue QEC-Fälle hinzukommen, verarbeitet die App die bereits
+archivierten AutoExport-CSV-Dateien für die eindeutige Fallzuordnung erneut;
+das ursprüngliche AutoExport-ZIP muss nicht nochmal hochgeladen werden.
+Eine vollständig gespeicherte Rohdatenhistorie wird dabei nicht erneut
+geschrieben. Frühere Versionen ohne die aktuellen zeitlichen Metadaten werden
+einmalig neu indexiert. Reine FIN-Zeilen ohne QEC-Fall bleiben recherchierbar.
+
 **TIPS-Quellenlogik:** TIPS-Fall-IDs sind eigenständige
 Werkstattvorgänge, keine QEC-Schadteilreferenzen. Eine passende FIN allein
 reicht für die Verbindung bei mehreren QEC-Fällen nicht aus: Ohne eindeutig
