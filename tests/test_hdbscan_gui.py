@@ -205,3 +205,123 @@ def test_large_clusters_no_misleading_star_and_leaf_method_propagated() -> None:
     assert panel.result.distances == original
     panel.close()
     app.processEvents()
+
+
+
+def test_ml_evidence_audit_and_common_dtc_sensitivity_mode_are_visible() -> None:
+    app = QApplication.instance() or QApplication([])
+    panel = HDBSCANPanel(sample())
+    panel.run_analysis()
+    assert panel.evidence_audit is not None
+    assert panel.evidence_audit.scoped_cases == 15
+    assert panel.evidence_audit.eligible_cases == 13
+    assert "QuickTest und AutoExport" in panel.evidence_summary.text()
+    assert panel.frequency_model.rowCount() >= 6
+    assert not panel.filter_common.isChecked()
+    assert panel.result.common_dtc_cutoff is None
+    original = panel.result.distances
+    panel.filter_common.setChecked(True)
+    panel.run_analysis()
+    assert panel.result.common_dtc_cutoff == 0.35
+    assert panel.result.distances != original
+    assert panel.evidence_audit.eligible_cases == 13
+    assert "Häufigkeitsfilter: an" in panel.summary.text()
+    panel.compare_button.click()
+    assert panel.comparison.common_dtc_cutoff == 0.35
+    assert panel.comparison.eligible_case_count == len(panel.result.eligible_case_ids)
+    panel.close()
+    app.processEvents()
+
+
+def test_expert_label_template_is_local_and_manual_review_is_distinct_from_ml(
+    tmp_path, monkeypatch,
+) -> None:
+    import csv
+    from PySide6.QtWidgets import QMessageBox
+
+    app = QApplication.instance() or QApplication([])
+    cases = sample()
+    cases[0].qec_ssl_end_finding = "Synthetic QEC SSL text ONLY"
+    panel = HDBSCANPanel(cases)
+    panel.run_analysis()
+    baseline = panel.result
+    confidential = tmp_path / "review_with_fin_and_ssl.csv"
+    monkeypatch.setattr(
+        QFileDialog, "getSaveFileName",
+        lambda *args, **kwargs: (str(confidential), "CSV-Dateien (*.csv)"),
+    )
+    panel.template_button.click()
+    review = confidential.read_text(encoding="utf-8-sig")
+    assert "W1TTEST" in review
+    assert "Synthetic QEC SSL text ONLY" in review
+    assert ";pending;" in review
+    assert not panel.confirmed_mechanisms
+    assert not panel.pair_test_button.isEnabled()
+    # Human, independent test evidence is supplied explicitly.
+    with confidential.open(encoding="utf-8-sig", newline="") as stream:
+        rows = list(csv.DictReader(stream, delimiter=";"))
+    for row in rows:
+        if row["qec_case_id"] in {"A0", "A1", "B0"}:
+            row["review_status"] = "confirmed"
+            row["mechanism_code"] = (
+                "PCB_SHORT" if row["qec_case_id"].startswith("A")
+                else "CORROSION_CONTACT"
+            )
+            row["reviewer"] = "Expert-TEST"
+            row["evidence_ref"] = "Synthetic-8D-TEST"
+            row["confirmed_on"] = "2026-10-09"
+    with confidential.open("w", encoding="utf-8-sig", newline="") as stream:
+        writer = csv.DictWriter(stream, fieldnames=rows[0], delimiter=";")
+        writer.writeheader()
+        writer.writerows(rows)
+    monkeypatch.setattr(
+        QFileDialog, "getOpenFileName",
+        lambda *args, **kwargs: (str(confidential), "CSV-Dateien (*.csv)"),
+    )
+    panel.import_review_button.click()
+    assert len(panel.confirmed_mechanisms) == 3
+    assert panel.pair_test_button.isEnabled()
+    assert panel.mechanism_model.rowCount() == len(panel.result.clusters)
+    assert "3/15" in panel.mechanism_summary.text()
+    assert panel.result == baseline  # posthoc labels never modify HDBSCAN
+    panel.pair_test_button.click()
+    assert "Kein Modell" in panel.pair_test_summary.text() or "keine belastbare" in panel.pair_test_summary.text()
+
+    # An invalid edited file must not silently replace valid confirmations.
+    confidential.write_text("invalid;csv\n", encoding="utf-8-sig")
+    warnings = []
+    monkeypatch.setattr(
+        QMessageBox, "warning",
+        lambda _parent, title, detail: warnings.append((title, detail)),
+    )
+    panel.import_review_button.click()
+    assert warnings
+    assert len(panel.confirmed_mechanisms) == 3
+    panel.close()
+    app.processEvents()
+
+
+def test_aggregate_only_comparison_export_contains_no_dtc_or_ssl_or_fin(
+    tmp_path, monkeypatch,
+) -> None:
+    app = QApplication.instance() or QApplication([])
+    cases = sample()
+    cases[0].qec_ssl_end_finding = "Synthetic sensitive reason"
+    panel = HDBSCANPanel(cases)
+    panel.filter_common.setChecked(True)
+    panel.compare_button.click()
+    target = tmp_path / "aggregate_only.csv"
+    monkeypatch.setattr(
+        QFileDialog, "getSaveFileName",
+        lambda *args, **kwargs: (str(target), "CSV-Dateien (*.csv)"),
+    )
+    panel.quality_button.click()
+    content = target.read_text(encoding="utf-8-sig")
+    assert "W1TTEST" not in content
+    assert "QEC-A0" not in content
+    assert "CODE-A-ROOT-A" not in content
+    assert "Synthetic sensitive reason" not in content
+    assert "Häufigkeitsfilter ECU:DTC" in content
+    assert "Ab 35%" in content
+    panel.close()
+    app.processEvents()
