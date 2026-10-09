@@ -352,3 +352,49 @@ class AutoExportSummaryParser:
         if len(out.records) != 1 or out.records[0]["category"] != "autoexport_aggregate":
             raise ValueError("Kein unterstützter AutoExport-Zählwert (C1).")
         return out
+
+
+class SupplierAnalysisDocumentParser:
+    """Safely preserve supplier analysis text without inventing an NTF finding.
+
+    A returned-part analysis must be matched to an explicit QEC reference
+    and reviewed before its conclusion affects supplier responsibility.
+    """
+
+    name = "supplier_analysis_document"
+    version = "1.0.0"
+
+    def parse(self, path: Path) -> KnowledgeResult:
+        from pypdf import PdfReader
+
+        if path.stat().st_size > 50_000_000:
+            raise ValueError("Analysebericht überschreitet die Größenbegrenzung.")
+        pdf = PdfReader(path, strict=False)
+        if pdf.is_encrypted or not 1 <= len(pdf.pages) <= 100:
+            raise ValueError("Analysebericht verschlüsselt oder Seitenzahl ungültig.")
+        first = pdf.pages[0].extract_text() or ""
+        if not ("ANALYSIS" in first.upper() and "Complaint" in first):
+            raise ValueError("Unbekanntes Format des Lieferanten-Analyseberichts.")
+        output = KnowledgeResult(
+            kind="supplier_analysis_document",
+            metadata={
+                "page_count": len(pdf.pages),
+                "ntf_result_automatically_inferred": False,
+                "requires_manual_qec_match": True,
+            },
+        )
+        for page_number, page in enumerate(pdf.pages, start=1):
+            text = page.extract_text() or ""
+            output.records.append({
+                "category": "supplier_analysis_page",
+                "record_number": page_number,
+                "source_location": f"pdf:page:{page_number}",
+                "fin": None,  # a number in a report is not a validated case link
+                "reference": None,
+                "label": f"Lieferanten-Analysebericht, Seite {page_number}",
+                "data": {
+                    "page_number": page_number,
+                    "raw_text": text,
+                },
+            })
+        return output
