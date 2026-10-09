@@ -78,24 +78,33 @@ def plan_representative_transfer(
             elif existing:
                 status = "Bereits unabhängig bestätigt"
                 explanation = "Mechanismus am Ziel bereits bestätigt; keine Übertragung nötig."
-            elif (
-                cluster.screening_status == "Diagnostischer Prüfkandidat – Ursache unbestätigt"
-                and shared > 0
-                and cosine >= 0.45
-            ):
-                status = "Prüfhypothese – keine automatische Übertragung"
-                explanation = (
-                    "Diagnostische Mindestprüfung erfüllt, aber technische Ursache "
-                    "des Zielfalls weiter unabhängig nachzuweisen."
-                )
+            elif shared > 0 and cosine >= 0.45:
+                # A mixed cluster does not invalidate a strong *individual*
+                # comparison to its medoid, but it requires a stronger warning.
+                # This is NOT a calibrated same-cause probability.
+                if cluster.screening_status == (
+                    "Diagnostischer Prüfkandidat – Ursache unbestätigt"
+                ):
+                    status = "Prüfhypothese – keine automatische Übertragung"
+                    explanation = (
+                        "Diagnostische Übereinstimmung mit dem Medoid; Ursache "
+                        "des Zielfalls unabhängig nachzuweisen."
+                    )
+                else:
+                    status = "Prüfhypothese mit Clusterwarnung – besonders prüfen"
+                    explanation = (
+                        "Individuell ähnlich zum Medoid, aber die Gesamtgruppe "
+                        "ist uneinheitlich. Keine gruppenweite Ursachenzuweisung; "
+                        "technische Unterschiede zuerst ausschließen."
+                    )
                 candidates += 1
             else:
                 status = "Zurückgestellt – unzureichende Cluster-Evidenz"
                 explanation = (
-                    "Heterogene Gruppe, schwache Repräsentantenähnlichkeit oder "
-                    "kein gemeinsamer ECU:DTC. Keine Ursache zuweisen."
+                    "Keine ausreichende individuelle Ähnlichkeit zum Medoid "
+                    "oder kein gemeinsamer ECU:DTC. Keine Ursache zuweisen."
                 )
-            if status != "Prüfhypothese – keine automatische Übertragung":
+            if not status.startswith("Prüfhypothese"):
                 withheld += 1
             rows.append(RepresentativeTransfer(
                 group=f"H{cluster.cluster_id}",
