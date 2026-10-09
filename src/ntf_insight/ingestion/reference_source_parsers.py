@@ -335,3 +335,20 @@ def iter_autoexport_rows(path: Path) -> Iterator[dict]:
                 "label": when or "",
                 "data": row,
             }
+
+
+class AutoExportSummaryParser:
+    """Archive a published aggregate without claiming it is a failure-rate denominator."""
+
+    name = "autoexport_aggregate"
+    version = "1.0.0"
+
+    def parse(self, path: Path) -> KnowledgeResult:
+        out = KnowledgeResult(
+            kind="autoexport_summary",
+            metadata={"not_an_installed_population_denominator": True},
+        )
+        out.records.extend(iter_autoexport_rows(path))
+        if len(out.records) != 1 or out.records[0]["category"] != "autoexport_aggregate":
+            raise ValueError("Kein unterstützter AutoExport-Zählwert (C1).")
+        return out
