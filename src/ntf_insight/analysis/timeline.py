@@ -231,7 +231,7 @@ def build_timeline(
                 ("Kunde: " + event.complaint[:350]) if event.complaint else None,
                 ("Werkstattbefund: " + event.workshop_findings[:350])
                 if event.workshop_findings else None,
-                ("Maßnahmen (historisch): " + event.performed_actions[:350])
+                ("Maßnahmen (ohne Einzeldatum): " + event.performed_actions[:350])
                 if event.performed_actions else None,
             ) if value
         )
@@ -239,7 +239,7 @@ def build_timeline(
             occurred_at=event.occurred_at,
             mileage_km=event.mileage_km,
             kind="tips",
-            title="TIPS-Vorgang" + (
+            title="TIPS-Vorgang (Erstellungsdatum)" + (
                 f" · {event.tips_case_id}" if event.tips_case_id else ""
             ),
             detail=detail or event.symptom or "TIPS-Quellenmeldung",
