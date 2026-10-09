@@ -33,9 +33,8 @@ nicht verändert. Alle Tests und öffentlichen GitHub-Daten sind synthetisch.
   bestätigte Repräsentanten unterschiedliche Mechanismen besitzen.
   Keine unbestätigte SSL-Benennung wird als Mechanismus übernommen.
 
-Es werden nur Clusterpaare mit wenigstens einem gemeinsamem CPC3-Kern-DTC
-angezeigt, keine künstlichen Clusterfusionen. Beispielsweise könnten
-H6/H14/H19 in einem konkreten Datensatz zu prüfen sein. Die
+Es werden nur Clusterpaare mit wenigstens einem gemeinsamen CPC3-Kern-DTC
+angezeigt, keine künstlichen Clusterfusionen. Die
 Clusterkennungen sind **laufbezogen** und nicht dauerhaft stabil.
 
 ## Neue Tabelle: Diagnosesitzungen und Wiederauftreten
