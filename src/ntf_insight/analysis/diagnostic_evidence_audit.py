@@ -122,10 +122,13 @@ def audit_diagnostic_evidence(
             event.fault_key for event in selected_events
             if _matches_dtc_source(event, dtc_source)
         }
-        if not sig.has_replacement_anchor:
-            reason = "Tauschanker fehlt"
-        elif not all_events:
+        # Report one *primary* exclusion reason per case. If there are no
+        # DTC rows at all, that is the most immediately actionable barrier,
+        # even if the replacement anchor is also missing.
+        if not all_events:
             reason = "Kein QEC-zugeordneter DTC dokumentiert"
+        elif not sig.has_replacement_anchor:
+            reason = "Tauschanker fehlt"
         elif not pre_keys:
             reason = "DTC vorhanden, aber nicht sicher vor dem Tausch"
         elif not selected_keys:
