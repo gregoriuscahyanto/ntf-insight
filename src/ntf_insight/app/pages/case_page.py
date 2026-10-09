@@ -30,6 +30,7 @@ from ntf_insight.analysis.fin_diagnostics import (
     build_fin_only_previews,
 )
 from ntf_insight.analysis.recurrence import analyze_recurrence, format_faults
+from ntf_insight.analysis.replacement_dates import compare_replacement_dates
 from ntf_insight.analysis.timeline import build_timeline
 from ntf_insight.app.dialogs.manual_entry_dialogs import (
     ManualEventDialog,
@@ -46,6 +47,7 @@ from ntf_insight.reporting.markdown import save_case_report
 from ntf_insight.storage.reference_repositories import ReferenceRepository
 from ntf_insight.storage.repositories import CaseRepository
 from ntf_insight.storage.quicktest_store import QuickTestStore
+from ntf_insight.storage.source_knowledge_store import SourceKnowledgeStore
 
 
 class CasePage(QWidget):
@@ -63,6 +65,10 @@ class CasePage(QWidget):
         self.repository = repository
         self.references = references
         self.manual_service = manual_service
+        self.source_knowledge = (
+            SourceKnowledgeStore(manual_service.store)
+            if manual_service is not None else None
+        )
         self.fin_only_previews = (
             build_fin_only_previews(
                 QuickTestStore(manual_service.store),
@@ -209,6 +215,8 @@ class CasePage(QWidget):
 
         self.component_value = QLabel("—")
         self.replacement_value = QLabel("—")
+        self.autoexport_date_value = QLabel("—")
+        self.date_match_value = QLabel("—")
         self.root_cause_value = QLabel("—")
         self.supplier_value = QLabel("—")
         self.confidence_value = QLabel("—")
@@ -216,7 +224,9 @@ class CasePage(QWidget):
 
         fields = (
             ("Bauteil", self.component_value),
-            ("Tausch", self.replacement_value),
+            ("QEC-/dokumentiertes Tauschdatum", self.replacement_value),
+            ("AutoExport-Reparaturdatum", self.autoexport_date_value),
+            ("Datumsabgleich", self.date_match_value),
             ("Aktuelle Bewertung", self.root_cause_value),
             ("Lieferantenbeteiligung", self.supplier_value),
             ("Konfidenz", self.confidence_value),
@@ -229,6 +239,10 @@ class CasePage(QWidget):
             summary.addWidget(value, index // 3 * 2 + 1, index % 3)
         layout.addLayout(summary)
 
+        self.date_comparison_note = QLabel("—", objectName="PageSubtitle")
+        self.date_comparison_note.setWordWrap(True)
+        layout.addWidget(self.date_comparison_note)
+
         self.assessment_text = QLabel("—", objectName="PageSubtitle")
         self.assessment_text.setWordWrap(True)
         layout.addWidget(self.assessment_text)
@@ -239,22 +253,46 @@ class CasePage(QWidget):
 
         layout.addWidget(QLabel("Zeitliches Auftreten", objectName="CardTitle"))
         time_hint = QLabel(
-            "Diagnoseereignisse über die Zeit. Eine gestrichelte Linie markiert "
-            "den Bauteiltausch, sofern einer dokumentiert ist.",
+            "QEC-Tauschanker (gestrichelt) und AutoExport-Reparaturkandidat "
+            "(gepunktet) werden getrennt gezeigt. Beide Daten können abweichen. "
+            "ECU-Stand = beobachtete HW-/SW-Version eines Steuergeräts; "
+            "Lieferantenbefund = Ergebnis einer Schadteilprüfung, keine Schuldzuweisung.",
             objectName="PageSubtitle",
         )
         time_hint.setWordWrap(True)
         layout.addWidget(time_hint)
 
+        plot_controls = QHBoxLayout()
         time_filter = QLineEdit()
+        self.time_filter = time_filter
         time_filter.setPlaceholderText(
-            "Zeitplot filtern, z. B. P26F100, CPC3, Tausch, Software oder Werkstatt …"
+            "Nur DTCs filtern: Steuergerät (z. B. CPC3) oder DTC (z. B. P26F100) …"
+        )
+        time_filter.setToolTip(
+            "Filtert ausschließlich DTC-Beobachtungen. Kurztests, "
+            "Steuergeräte-HW-/SW-Stände, Tausch-/Reparaturdaten, "
+            "Werkstatt und Lieferantenbefunde bleiben sichtbar."
         )
         time_filter.setClearButtonEnabled(True)
-        layout.addWidget(time_filter)
+        plot_controls.addWidget(time_filter, 1)
+        plot_controls.addWidget(QLabel("X-Achse:"))
+        self.axis_selector = QComboBox()
+        self.axis_selector.addItem("Datum / Uhrzeit", "date")
+        self.axis_selector.addItem("Kilometerstand", "mileage")
+        self.axis_selector.setToolTip(
+            "Kilometerpositionen stammen aus den importierten Daten; "
+            "fehlende km werden rechts als 'km unbekannt' gezeigt."
+        )
+        plot_controls.addWidget(self.axis_selector)
+        layout.addLayout(plot_controls)
 
         self.time_plot = EventTimePlot()
         time_filter.textChanged.connect(self.time_plot.set_filter_text)
+        self.axis_selector.currentIndexChanged.connect(
+            lambda _index: self.time_plot.set_axis_mode(
+                self.axis_selector.currentData()
+            )
+        )
         layout.addWidget(self.time_plot)
 
         layout.addWidget(QLabel("Generierte Evidenz", objectName="CardTitle"))
@@ -337,7 +375,8 @@ class CasePage(QWidget):
 
     def _clear_view(self) -> None:
         for value in (
-            self.component_value, self.replacement_value, self.root_cause_value,
+            self.component_value, self.replacement_value, self.autoexport_date_value,
+            self.date_match_value, self.date_comparison_note, self.root_cause_value,
             self.supplier_value, self.confidence_value, self.recurrence_value,
             self.assessment_text, self.recurrence_text, self.evidence_balance,
         ):
@@ -369,6 +408,12 @@ class CasePage(QWidget):
             entries = build_timeline(case)
             self.component_value.setText("Noch keinem Schadteilfall zugeordnet")
             self.replacement_value.setText("Nicht dokumentiert")
+            self.autoexport_date_value.setText("Noch kein Fallbezug")
+            self.date_match_value.setText("Nicht beurteilbar")
+            self.date_comparison_note.setText(
+                "AutoExport-Reparaturen werden erst nach eindeutiger FIN-/Fall- "
+                "und Teilenummernzuordnung als mögliche Tauschkandidaten gezeigt."
+            )
             self.root_cause_value.setText("Nicht bestimmbar")
             self.supplier_value.setText("Nicht bestimmbar")
             self.confidence_value.setText("—")
@@ -398,11 +443,39 @@ class CasePage(QWidget):
         recurrence = analyze_recurrence(case)
         assessment = case.assessment
         generated = generate_case_evidence(case, self.references)
-        timeline_entries = build_timeline(case)
+        date_comparison = compare_replacement_dates(
+            case, self.source_knowledge
+        )
+        timeline_entries = build_timeline(
+            case, date_comparison=date_comparison
+        )
 
         self.component_value.setText(case.component_type)
         self.replacement_value.setText(
-            replacement.occurred_at.strftime("%Y-%m-%d") if replacement else "Fehlt"
+            replacement.occurred_at.strftime("%d.%m.%Y")
+            if replacement else "Fehlt"
+        )
+        if date_comparison.preferred_candidate is not None:
+            auto_repair = date_comparison.preferred_candidate.repair
+            self.autoexport_date_value.setText(
+                auto_repair.occurred_at.strftime("%d.%m.%Y")
+                + " (Kandidat)"
+            )
+        elif date_comparison.candidates:
+            dates = sorted({
+                candidate.repair.occurred_at.strftime("%d.%m.%Y")
+                for candidate in date_comparison.candidates
+            })
+            self.autoexport_date_value.setText(
+                f"{len(date_comparison.candidates)} Kandidaten: "
+                + ", ".join(dates[:4])
+                + (" …" if len(dates) > 4 else "")
+            )
+        else:
+            self.autoexport_date_value.setText("Kein passender Eintrag")
+        self.date_match_value.setText(date_comparison.status)
+        self.date_comparison_note.setText(
+            "Quellenabgleich: " + date_comparison.note
         )
         self.root_cause_value.setText(str(assessment.root_cause) if assessment else "Nicht bewertet")
         self.supplier_value.setText(
