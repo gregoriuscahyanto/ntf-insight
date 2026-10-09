@@ -578,20 +578,45 @@ class CaseScatterPanel(QWidget):
         return table
 
     def set_result(self, result: CaseClusterResult | None) -> None:
-        """Compatibility hook for callers using a precomputed cluster result."""
+        """Update all controls from a precomputed cluster result."""
         self.result = result
-        if result is not None and self.threshold.value() != result.threshold:
+        if result is not None:
+            for combo, value in (
+                (self.dtc_source, result.dtc_source),
+                (self.lookback, result.lookback_days),
+            ):
+                idx = combo.findData(value)
+                if idx >= 0:
+                    combo.blockSignals(True)
+                    combo.setCurrentIndex(idx)
+                    combo.blockSignals(False)
             self.threshold.blockSignals(True)
             self.threshold.setValue(result.threshold)
             self.threshold.blockSignals(False)
-        self._draw()
+        self._refresh()
+
+    def _signature_options(self) -> dict:
+        return {
+            "dtc_source": self.dtc_source.currentData() or "all",
+            "lookback_days": self.lookback.currentData(),
+        }
+
+    def _compute_clusters(self) -> None:
+        self.result = (
+            cluster_diagnostic_cases(
+                self.cases, threshold=self.threshold.value(),
+                **self._signature_options(),
+            ) if self.cases else None
+        )
+
+    def _change_signature(self) -> None:
+        """A new source or lookback changes BOTH Jaccard and the SVD matrix."""
+        self._compute_clusters()
+        self._refresh()
 
     def _recluster(self) -> None:
-        self.result = (
-            cluster_diagnostic_cases(self.cases, threshold=self.threshold.value())
-            if self.cases else None
-        )
-        # Recompute only visible labels/tables, never SVD positions.
+        self._compute_clusters()
+        # Threshold changes cluster labels ONLY, not SVD coordinates.
         self._draw()
 
     def clear_focus(self) -> None:
@@ -618,7 +643,9 @@ class CaseScatterPanel(QWidget):
             if self._component_of[case.case_id] == family
         ]
         subset = [self.by_id[case_id] for case_id in self._visible_case_ids]
-        self.projection = project_diagnostic_cases(subset)
+        self.projection = project_diagnostic_cases(
+            subset, **self._signature_options()
+        )
         if self.focus_id not in self._visible_case_ids:
             self.focus_id = self._visible_case_ids[0] if self._visible_case_ids else None
         self._draw()
@@ -695,7 +722,9 @@ class CaseScatterPanel(QWidget):
         rows = []
         for case_id in self._visible_case_ids:
             case = self.by_id[case_id]
-            signature = signature_for(case)
+            signature = signature_for(
+                case, **self._signature_options()
+            )
             point = projected.get(case_id)
             cluster = self.result.cluster_for(case_id) if self.result else None
             rows.append((
@@ -732,7 +761,7 @@ class CaseScatterPanel(QWidget):
             self.comparison_note.setText("Kein Fallvergleich verfügbar.")
             return
 
-        signature = signature_for(case)
+        signature = signature_for(case, **self._signature_options())
         point = projected.get(case.case_id)
         cluster = self.result.cluster_for(case.case_id) if self.result else None
         if cluster is not None and self.result is not None:
@@ -863,7 +892,8 @@ class CaseScatterPanel(QWidget):
         if self.focus_id not in self.by_id or other_id not in self.by_id:
             return
         explanation = explain_case_similarity(
-            self.by_id[self.focus_id], self.by_id[other_id]
+            self.by_id[self.focus_id], self.by_id[other_id],
+            **self._signature_options(),
         )
         match = explanation.match
         self.breakdown_model.set_rows([
