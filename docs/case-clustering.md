@@ -19,7 +19,18 @@ Die App bietet unter **Cluster & Fälle → Fall-Cluster**:
 - eine einstellbare Mindestähnlichkeit (standardmäßig **0,65**)
 - eine **Ähnlichkeitsmatrix (Heatmap)** mit Hover-Begründung
 - Auswahl eines Falls und Rangliste der nächstähnlichen Fälle
-- gemeinsame DTCs, Merkmalsabdeckung, dokumentierte Maßnahmen und den beobachteten Verlauf nach der letzten Maßnahme
+- **„Ähnliche Fälle finden“** direkt aus **Fälle / FIN → FIN / Fallanalyse**,
+  wobei der aktuelle echte Fall automatisch als Vergleichsfokus gewählt wird
+- **Cluster-Steckbrief** mit Fallanzahl, unterschiedlichen FINs,
+  repräsentativem realem Fall, gemeinsamem ECU:DTC-Muster,
+  **schwächster Paarähnlichkeit**, Merkmalsabdeckung und
+  Zahl dokumentierter Vorher-/Nachtests
+- ein **Doppelklick oder „Vergleichsfall öffnen“** führt aus dem Vergleich
+  direkt in die vollständige FIN-/Fallanalyse zurück
+- für jeden ausgewählten Vergleichsfall sowohl **gemeinsame als auch
+  abweichende DTCs**, gemeinsame Beanstandungen/Softwarestände,
+  Merkmalsabdeckung, dokumentierte Maßnahmen und den beobachteten Verlauf
+  nach der letzten Maßnahme
 - DTC-Koauftretensnetzwerk weiterhin unter **DTC-Netzwerk**
 
 Die Matrix zeigt bei nicht vergleichbaren Paaren **„k. A.“**, nicht 0 % oder 100 %. Falls mehr als 24 Fälle existieren, wird die Matrix auf den Fokusfall und höchstens 23 weitere Fälle begrenzt; die Clusterberechnung berücksichtigt dennoch alle Fälle.
@@ -57,12 +68,48 @@ Die Rangliste ähnlicher Fälle sortiert nach Score × Merkmalsabdeckung, damit 
 
 - Alle Paarvergleiche innerhalb eines Clusters müssen die Mindestähnlichkeit erfüllen.
 - Für den MVP ist mindestens ein gemeinsamer vollständiger ECU:DTC-Code und ausreichende Merkmalsabdeckung nötig.
+- **Ohne untersuchten Tauschanker keine automatische Gruppenzugehörigkeit**:
+  diese Fälle dürfen weiterhin zur vorsichtigen Fallähnlichkeitssuche
+  verwendet werden, aber es ist unklar, welche Beobachtungen wirklich
+  vor dem Eingriff lagen.
 - Fälle ohne robuste Gruppenzugehörigkeit bleiben als **Einzelfall / unzugeordnet** sichtbar.
 - Keine „Clusterung“ allein aufgrund gleicher Baureihe, ECU oder fehlender DTCs.
 
 Hierarchische Cluster mit dieser konservativen Paarbedingung sind für erste manuell geprüfte Stichproben nachvollziehbarer als ein unkalibriertes ML-Modell.
 
-### Beobachtete Wirkung
+### Cluster-Steckbrief und Auswahl
+
+Der **repräsentative Fall** ist einer der tatsächlich vorhandenen
+Clusterfälle, dessen gewichtete durchschnittliche Übereinstimmung
+(`Ähnlichkeit × Merkmalsabdeckung`) mit den anderen Mitgliedern
+am höchsten ausfällt. Er ist **kein synthetischer Fall** und
+**keine empfohlene Reparatur**.
+
+Ein streng konservativer Cluster zeigt zusätzlich die
+**schwächste diagnostische Paarähnlichkeit** zwischen
+seinen Mitgliedern. So lassen sich auch größere Gruppen
+auf fragwürdige Zuordnungen prüfen.
+
+Mehrere Fälle können zur **gleichen FIN** gehören: Der Steckbrief
+zeigt daher neben der Fallzahl ausdrücklich die Anzahl
+unterschiedlicher FINs. Im Paarvergleich erscheint bei
+gleicher FIN ein Hinweis auf möglicherweise nicht unabhängige
+Beobachtungen.
+
+### Kein QEC-/NTF-Fall vorhanden
+
+Mehrere QuickTests derselben FIN sind **keine separaten Schadteilfälle**.
+Eine FIN mit 18 QuickTests darf nicht als 18 ähnliche NTF-Fälle
+ausgegeben werden. Die Fallcluster berücksichtigen nur tatsächlich
+angelegte bzw. importierte Fälle. Ohne mindestens zwei Fälle
+erscheint ein Hinweis, dass zunächst echte QEC-/NTF-Fälle oder
+fachlich erfasste Fälle benötigt werden.
+
+Der **Paarvergleich (Basis)** zeigt **„k. A.“** bei
+nicht vergleichbaren Fällen statt einer irreführenden
+0-%-Ähnlichkeit. Die Begründung bleibt sichtbar.
+
+## Beobachtete Wirkung
 
 Die App zeigt getrennt dokumentierte Maßnahmen (Bauteiltausch, Werkstattaktion, Softwareupdate) und den Verlauf in Kurztests **nach der letzten dokumentierten Maßnahme**:
 
