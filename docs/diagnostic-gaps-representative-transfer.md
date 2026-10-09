@@ -47,3 +47,34 @@ automatisch auswertbaren Fall.
 
 Der Bestand von 336 QEC-Fällen liegt nur lokal; synthetische CI-Tests sind
 kein Nachweis einer tatsächlichen Ursachenübertragbarkeit.
+
+## Ablauf in der Desktop-App
+
+1. Im Reiter **Fälle / FIN → ML-Cluster (HDBSCAN)** die gewünschten
+   Parameter wählen und auf **HDBSCAN berechnen** klicken.
+2. Auf **Nur Cluster-Repräsentanten zur Fachprüfung exportieren** klicken:
+   Die lokale vertrauliche CSV enthält **genau einen realen Medoid pro
+   aktuellem Cluster** (und dessen SSL-Text ausschließlich als Quelle
+   für die unabhängige Prüfung).
+3. Bei bereits technisch unabhängig belegten Mechanismen pro
+   Repräsentant `review_status=confirmed`, spezifischen `mechanism_code`,
+   Prüfer, separate Evidenzreferenz und Bestätigungsdatum ausfüllen;
+   sonst `pending` belassen. Keine Ursachen aus SSL-Text ableiten.
+4. Mit **Bestätigte Fehlermechanismen lokal einlesen** die Datei einlesen.
+   Andere QEC-Fälle werden dadurch **nicht** bestätigt und das
+   HDBSCAN-Ergebnis bleibt unverändert.
+5. Unter **Repräsentantenbefund: Übertragbarkeit als Prüfhypothese**
+   Ziel-Fälle und gesperrte Übertragungen nachvollziehen.
+   Mit **Befundhypothesen lokal als CSV exportieren** die lokalen
+   Prüfhinweise mit Bestätigungsnachweis des Repräsentanten,
+   Modellparametern, Ziel-FIN und offenem Zielevidenz-Feld speichern.
+6. Fachprüfung der einzelnen Zielfälle priorisieren. Nur technisch
+   bestätigte Zielbefunde dürfen als bestätigte Fehlermechanismen
+   gekennzeichnet werden. CSV-Hypothesen werden nicht automatisch
+   wieder als Fachlabels importiert.
+
+**Achtung:** HDBSCAN-Medoids und -Gruppen hängen von den Parametern und
+der Eingabedatenbasis ab. Prüfdateien gelten immer nur für das
+angegebene Szenario; Parameter-/Datenänderungen machen eine neue
+Clusterübertragungsprüfung erforderlich. Sensible CSV-Dateien dürfen
+nur in der freigegebenen lokalen Umgebung gespeichert werden.
