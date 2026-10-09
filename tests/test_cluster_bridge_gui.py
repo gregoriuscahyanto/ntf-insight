@@ -22,6 +22,7 @@ def test_bridge_panel_and_recursion_audit_reflect_synthetic_case_evidence():
     assert panel.result is not None
     assert panel.bridge_model.rowCount() == 1
     assert panel.bridge_model.rows[0][2] == 1
+    assert "CPC3:SHARED_TEST_SIGNAL" in panel.bridge_model.rows[0][3]
     assert "CPC3" in panel.bridge_summary.text()
     assert panel.recurrence_coverage_model.rowCount() == len(cases)
     assert "ohne belegte Vorher-Sitzung" in panel.recurrence_coverage_summary.text()
