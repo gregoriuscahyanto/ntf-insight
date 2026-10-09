@@ -197,6 +197,57 @@ class SourceKnowledgeStore:
             for row in rows
         ]
 
+    def fin_history_counts(self, fin: str) -> dict[str, int]:
+        """Counts of immutable original AutoExport rows for a FIN (not DTC rates)."""
+        with self.store.connect() as con:
+            rows = con.execute(
+                """
+                SELECT category, COUNT(*)
+                FROM source_knowledge_rows
+                WHERE fin = ?
+                  AND category IN (
+                    'autoexport_dtc', 'autoexport_repair', 'autoexport_tips'
+                  )
+                GROUP BY category
+                """,
+                [fin],
+            ).fetchall()
+        return {kind: int(count) for kind, count in rows}
+
+    def list_fin_history(
+        self, fin: str, *, limit: int = 200, offset: int = 0
+    ) -> list[dict[str, Any]]:
+        """Bounded, newest-first VIN/FIN history without requiring a QEC case.
+
+        The source label is DiagStartTs if available, otherwise a date. Both
+        source SHA and CSV record positions remain available for audit. These
+        are individual raw source rows, *not* de-duplicated diagnostic sessions.
+        """
+        with self.store.connect() as con:
+            rows = con.execute(
+                """
+                SELECT source_sha256, category, source_location,
+                       fin, reference, label, payload_json
+                FROM source_knowledge_rows
+                WHERE fin = ?
+                  AND category IN (
+                    'autoexport_dtc', 'autoexport_repair', 'autoexport_tips'
+                  )
+                ORDER BY label DESC, source_sha256, record_number DESC
+                LIMIT ? OFFSET ?
+                """,
+                [fin, min(max(limit, 1), 500), max(offset, 0)],
+            ).fetchall()
+        return [
+            {
+                "source_sha256": row[0], "category": row[1],
+                "source_location": row[2], "fin": row[3],
+                "reference": row[4], "label": row[5],
+                "data": json.loads(row[6]),
+            }
+            for row in rows
+        ]
+
     def count_rows(self, category: str | None = None) -> int:
         with self.store.connect() as con:
             if category is None:
