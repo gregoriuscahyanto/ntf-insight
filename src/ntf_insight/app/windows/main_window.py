@@ -10,7 +10,6 @@ from ntf_insight.app.pages.case_page import CasePage
 from ntf_insight.app.pages.dashboard_page import DashboardPage
 from ntf_insight.app.pages.data_quality_page import DataQualityPage
 from ntf_insight.app.pages.dtc_page import DTCExplorerPage
-from ntf_insight.app.pages.similarity_page import SimilarityPage
 from ntf_insight.app.pages.prediction_page import PredictionPage
 from ntf_insight.app.pages.sources_page import SourcesPage
 from ntf_insight.app.pages.source_knowledge_page import SourceKnowledgePage
@@ -78,28 +77,13 @@ class MainWindow(QMainWindow):
                 self.repository, self.reference_repository, self.manual_service
             ),
             "dtcs": DTCExplorerPage(self.repository, self.reference_repository),
-            "clusters": SimilarityPage(self.repository),
             "suppliers": SupplierPage(self.repository),
             "prediction": PredictionPage(self.repository, str(self.application_data.paths.database_path), self.application_data.mode),
             "quality": DataQualityPage(self.repository, self.reference_repository),
         }
         pages["cases"].case_saved.connect(self._reload_after_manual_change)
-        pages["cases"].similar_cases_requested.connect(self._show_case_similarities)
-        pages["clusters"].case_cluster_panel.case_requested.connect(
-            self._open_case_from_cluster
-        )
         pages["sources"].sources_updated.connect(self._reload_after_source_import)
         return pages
-
-    def _show_case_similarities(self, case_id: str) -> None:
-        if self.pages["clusters"].focus_case(case_id):
-            self.navigation.select_page("clusters")
-
-    def _open_case_from_cluster(self, case_id: str) -> None:
-        if self.repository.get_case(case_id) is None:
-            return
-        self.pages["cases"].select_case(case_id)
-        self.navigation.select_page("cases")
 
     def _reload_after_source_import(self, summary: str, quicktests_saved: int = 0) -> None:
         """Refresh all views after an archived ZIP created or updated real cases."""
