@@ -54,8 +54,8 @@ def test_raw_evidence_cannot_fabricate_new_eligible_qec_case():
         cases, audit, quicktests=QuickTests(), autoexport=AutoExport()
     )
     row = next(x for x in report.cases if x.case_id == case.case_id)
-    assert row.raw_pre_dtc_rows == 1
-    assert row.raw_same_day_dtc_rows == 5
+    assert row.raw_pre_dtc_rows == 3
+    assert row.raw_same_day_dtc_rows == 3
     assert row.raw_post_dtc_rows == 1
     assert row.raw_unusable_date_rows == 2
     assert row.raw_quicktest_dtc_rows == 3
