@@ -304,3 +304,14 @@ def test_unknown_selection_methods_are_rejected(wrong_method: str) -> None:
         cluster_hdbscan_cases(
             sample(), selection_method=wrong_method
         )
+
+
+
+def test_method_comparison_with_no_groups_does_not_claim_100_percent() -> None:
+    result = compare_hdbscan_methods([])
+    assert result.eom.group_count == 0
+    assert result.leaf.group_count == 0
+    assert result.positive_pair_union_count == 0
+    assert result.pair_coassignment_jaccard is None
+    assert result.eom.median_of_group_medians is None
+    assert result.leaf.median_of_group_medians is None
