@@ -142,7 +142,7 @@ class CasePage(QWidget):
             self.representative_panel, "Repräsentative Cluster"
         )
         self.representative_panel.case_requested.connect(self.select_case)
-        self.representative_panel.tips_linked.connect(self.case_saved.emit)
+        self.representative_panel.tips_linked.connect(self._relay_tips_link)
 
         layout = QVBoxLayout(content)
         layout.setContentsMargins(32, 28, 32, 28)
@@ -566,6 +566,10 @@ class CasePage(QWidget):
         selector_index = self.selector.findData(case_id)
         if selector_index >= 0:
             self.selector.setCurrentIndex(selector_index)
+
+    def _relay_tips_link(self, case_id: str) -> None:
+        """Emit through a CasePage slot owned by Qt, not a shared emitter."""
+        self.case_saved.emit(case_id)
 
     def _request_similar_cases(self) -> None:
         """Show the selected true QEC/NTF case in the local scatter tab."""
