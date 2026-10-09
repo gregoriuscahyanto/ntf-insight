@@ -84,8 +84,22 @@ class MainWindow(QMainWindow):
             "quality": DataQualityPage(self.repository, self.reference_repository),
         }
         pages["cases"].case_saved.connect(self._reload_after_manual_change)
+        pages["cases"].similar_cases_requested.connect(self._show_case_similarities)
+        pages["clusters"].case_cluster_panel.case_requested.connect(
+            self._open_case_from_cluster
+        )
         pages["sources"].sources_updated.connect(self._reload_after_source_import)
         return pages
+
+    def _show_case_similarities(self, case_id: str) -> None:
+        if self.pages["clusters"].focus_case(case_id):
+            self.navigation.select_page("clusters")
+
+    def _open_case_from_cluster(self, case_id: str) -> None:
+        if self.repository.get_case(case_id) is None:
+            return
+        self.pages["cases"].select_case(case_id)
+        self.navigation.select_page("cases")
 
     def _reload_after_source_import(self, summary: str, quicktests_saved: int = 0) -> None:
         """Refresh all views after an archived ZIP created or updated real cases."""
