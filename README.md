@@ -370,6 +370,32 @@ späteren QuickTest-Tag**. Der Änderungszeitpunkt bleibt unbekannt.
 
 [Erkennung, Anzeige und fachliche Grenzen](docs/ecu-stand-vergleich.md)
 
+## Ähnliche FIN-/NTF-Fälle finden
+
+Unter **Fälle / FIN → FIN / Fallanalyse** einen tatsächlichen
+QEC-/NTF-Fall auswählen und **„Ähnliche Fälle finden“** anklicken.
+NTF Insight wechselt zu **Cluster & Fälle → Fall-Cluster**
+und zeigt den gewählten Fall als Vergleichsfokus.
+
+Dort siehst du neben Ähnlichkeitsmatrix und Rangliste auch
+**Cluster-Steckbriefe** mit einem repräsentativen Fall, der
+schwächsten Ähnlichkeit innerhalb des Clusters und den
+verfügbaren Vorher-/Nachtests. Im Vergleich werden **gemeinsame
+und abweichende ECU:DTC-Kombinationen**, Dokumentationsgrad,
+historische Maßnahmen und der beobachtete Nachtest getrennt gezeigt.
+**„Vergleichsfall öffnen“** führt zurück zur vollständigen Analyse.
+
+Ähnlichkeit beruht auf den Diagnosemerkmalen **vor** dem
+untersuchten Bauteiltausch; Lieferantenbefunde und Reparaturerfolge
+beeinflussen den Score nicht. Eine ähnliche Reparatur ist nur
+ein **fachlicher Prüfkandidat**, keine bestätigte Lösung.
+
+**Hinweis:** Mehrere QuickTests derselben FIN erzeugen
+**keine erfundenen NTF-Fälle**. Für die Fall-Clusterung werden
+mindestens zwei real angelegte oder importierte Fälle benötigt.
+
+[Methodik und nächste Schritte der Fallclusterung](docs/case-clustering.md)
+
 ## Manuelle Fallerfassung
 
 Unter **Fälle / FIN** sind **+ Neuer Fall** und **+ Ereignis** verfügbar. Kurztests (auch mit **0 DTCs**), DTCs, Tausche, Werkstattmaßnahmen, ECU-HW/SW-Stände, Software-Updates, Lieferantenbefunde und freie Notizen können ohne Parser erfasst werden.
