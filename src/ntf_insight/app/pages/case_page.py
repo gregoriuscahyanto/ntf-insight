@@ -29,6 +29,7 @@ from ntf_insight.analysis.fin_diagnostics import (
     FIN_ONLY_PREFIX,
     build_fin_only_previews,
 )
+from ntf_insight.analysis.ecu_version_changes import detect_ecu_version_changes
 from ntf_insight.analysis.recurrence import analyze_recurrence, format_faults
 from ntf_insight.analysis.replacement_dates import compare_replacement_dates
 from ntf_insight.analysis.timeline import build_timeline
@@ -318,6 +319,44 @@ class CasePage(QWidget):
         )
         layout.addWidget(self.time_plot)
 
+        layout.addWidget(QLabel(
+            "Erkannte HW-/SW-Standabweichungen", objectName="CardTitle"
+        ))
+        self.version_change_summary = QLabel(
+            "Noch keine Versionsvergleiche", objectName="PageSubtitle"
+        )
+        self.version_change_summary.setWordWrap(True)
+        self.version_change_summary.setToolTip(
+            "Vergleich jeweils derselben ECU zwischen QuickTests. "
+            "Eine andere Version belegt kein tatsächliches Flash-Datum "
+            "und keinen Hardwaretausch."
+        )
+        layout.addWidget(self.version_change_summary)
+
+        self.version_change_model = SimpleTableModel((
+            "ECU", "Art", "Vorher", "Nachher",
+            "Letzter alter Stand", "Erster neuer Stand",
+            "km vorher", "km nachher", "Quelle (neu)",
+        ))
+        self.version_change_table = QTableView()
+        self.version_change_table.setModel(self.version_change_model)
+        self.version_change_table.setMaximumHeight(205)
+        self.version_change_table.setMinimumHeight(90)
+        self.version_change_table.setAlternatingRowColors(True)
+        self.version_change_table.setEditTriggers(
+            QAbstractItemView.EditTrigger.NoEditTriggers
+        )
+        self.version_change_table.setSelectionBehavior(
+            QAbstractItemView.SelectionBehavior.SelectRows
+        )
+        self.version_change_table.verticalHeader().setVisible(False)
+        change_header = self.version_change_table.horizontalHeader()
+        change_header.setSectionResizeMode(
+            QHeaderView.ResizeMode.ResizeToContents
+        )
+        change_header.setStretchLastSection(True)
+        layout.addWidget(self.version_change_table)
+
         layout.addWidget(QLabel("Generierte Evidenz", objectName="CardTitle"))
         self.evidence_model = SimpleTableModel(
             ("Signal", "Kategoriehinweis", "Richtung", "Vorläufiges Gewicht", "Beschreibung")
@@ -408,6 +447,44 @@ class CasePage(QWidget):
         self.evidence_model.set_rows([])
         self.timeline_model.set_entries([])
         self.time_plot.set_entries([])
+        self.version_change_model.set_rows([])
+        self.version_change_summary.setText("Keine FIN / kein Fall ausgewählt.")
+
+    def _display_version_changes(self, case) -> None:
+        changes = detect_ecu_version_changes(case.ecu_states)
+        count_hw = sum(item.kind == "hw" for item in changes)
+        count_sw = sum(item.kind == "sw" for item in changes)
+        if changes:
+            self.version_change_summary.setText(
+                f"{count_hw} HW- und {count_sw} SW-Standabweichung(en) "
+                f"in {len(case.ecu_states)} ECU-Beobachtungen erkannt. "
+                "Der geänderte Stand wurde beim späteren QuickTest festgestellt; "
+                "der genaue Änderungszeitpunkt ist unbekannt."
+            )
+        elif not case.ecu_states:
+            self.version_change_summary.setText(
+                "Noch keine HW-/SW-Stände aus QuickTests vorhanden."
+            )
+        else:
+            self.version_change_summary.setText(
+                "Keine belegte HW-/SW-Standabweichung zwischen "
+                "vergleichbaren QuickTests. Fehlende oder widersprüchliche "
+                "Versionsangaben werden nicht als Änderung gewertet."
+            )
+        self.version_change_model.set_rows([
+            (
+                change.ecu,
+                "Hardware" if change.kind == "hw" else "Software",
+                change.previous_version,
+                change.new_version,
+                change.previous.occurred_at.strftime("%d.%m.%Y %H:%M"),
+                change.current.occurred_at.strftime("%d.%m.%Y %H:%M"),
+                change.previous.mileage_km,
+                change.current.mileage_km,
+                change.current.source_ref,
+            )
+            for change in changes
+        ])
 
     def _refresh(self) -> None:
         case_id = self.selector.currentData()
@@ -428,6 +505,8 @@ class CasePage(QWidget):
         if case is None:
             self._clear_view()
             return
+
+        self._display_version_changes(case)
 
         if is_preview:
             entries = build_timeline(case)
@@ -745,6 +824,18 @@ class CasePage(QWidget):
             QMessageBox.information(
                 self, "Ereignis wählen",
                 "Bitte zuerst eine Zeile in der Ereignistabelle markieren.",
+            )
+            return
+
+        if entry.kind in {"ecu_hw_change", "ecu_sw_change"}:
+            QMessageBox.information(
+                self,
+                "Automatisch erkannte Standabweichung",
+                "Diese Zeile ist ein abgeleiteter Vergleich aus zwei "
+                "unveränderten QuickTest-Beobachtungen. "
+                "Bitte gegebenenfalls die Originalquelle prüfen. "
+                "Ein tatsächliches Update kann separat als "
+                "HW-/SW-Ereignis dokumentiert werden.",
             )
             return
 
