@@ -84,6 +84,10 @@ def test_zip_one_real_medoid_per_cluster_with_no_sensitive_source_fields(tmp_pat
         assert len(internal_pairs) == sum(g.internal_pair_count for g in result.clusters)
         gap_rows = _csv(archive, "ausgeschlossene_faelle.csv")
         assert len(gap_rows) == audited.excluded_count
+        recurrence = _csv(archive, "wiederauftreten.csv")
+        assert len(recurrence) == len(cases)
+        assert all(r["Wiederauftreten beurteilbar"] == "0" for r in recurrence)
+        assert all(r["Bewertung"] == "Nicht beurteilbar" for r in recurrence)
         assert len(_csv(archive, "methodenvergleich.csv")) == 2
 
 
