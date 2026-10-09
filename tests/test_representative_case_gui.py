@@ -3,11 +3,12 @@ from __future__ import annotations
 
 import os
 from datetime import datetime
+import csv
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PySide6.QtCore import QPoint
-from PySide6.QtWidgets import QApplication, QMessageBox
+from PySide6.QtWidgets import QApplication, QFileDialog, QMessageBox
 
 from ntf_insight.app.widgets.representative_case_panel import RepresentativeCasePanel
 from ntf_insight.app.widgets.representative_scatter import (
@@ -171,4 +172,30 @@ def test_case_workspace_has_distinct_representative_tab(tmp_path, monkeypatch) -
     # The original strict cluster and scatter remain separate implementations.
     assert cases.scatter_panel is tabs.widget(0)
     window.close()
+    app.processEvents()
+
+
+
+def test_local_investigation_plan_csv_contains_real_medoid_and_members(
+    tmp_path, monkeypatch,
+) -> None:
+    app = QApplication.instance() or QApplication([])
+    cases = fixtures()
+    panel = RepresentativeCasePanel(cases)
+    panel.run_analysis()
+    assert panel.export_button.isEnabled()
+    target = tmp_path / "medoid_plan.csv"
+    monkeypatch.setattr(
+        QFileDialog, "getSaveFileName",
+        lambda *args, **kwargs: (str(target), "CSV-Dateien (*.csv)"),
+    )
+    panel.export_button.click()
+    with target.open(encoding="utf-8-sig", newline="") as stream:
+        result = list(csv.DictReader(stream, delimiter=";"))
+    assert len(result) == panel.plan.covered_count
+    reps = set(panel.plan.representative_ids)
+    assert reps and reps <= {row["QEC-Fall"] for row in result}
+    assert all(row["Repräsentant"] in reps for row in result)
+    assert all(row["Hinweis"].startswith("Ähnlichkeit") for row in result)
+    panel.close()
     app.processEvents()
