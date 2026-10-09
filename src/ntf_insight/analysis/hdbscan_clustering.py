@@ -279,8 +279,14 @@ def cluster_hdbscan_cases(
             warnings.append("SSL-Endbefundtexte weichen voneinander ab")
         if len(documented) < len(group_ids):
             warnings.append("Nicht alle QEC-Fälle haben einen SSL-Endbefund")
-        if len({by_id[cid].vin for cid in group_ids}) < 2:
+        distinct_vins = {by_id[cid].vin for cid in group_ids}
+        if len(distinct_vins) < 2:
             warnings.append("Nur eine FIN; keine fahrzeugübergreifende Replikation")
+        elif len(distinct_vins) < len(group_ids):
+            warnings.append(
+                "Mehrere QEC-Fälle derselben FIN: "
+                "geteilte Fahrzeughistorie fachlich prüfen"
+            )
         if any(strengths[i] < 0.5 for i in positions):
             warnings.append("Mindestens eine schwache HDBSCAN-Zugehörigkeitsstärke")
         unsorted.append((
