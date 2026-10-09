@@ -21,6 +21,10 @@ from pathlib import Path
 from zipfile import ZIP_DEFLATED, ZipFile, ZipInfo
 
 from ntf_insight.analysis.case_clustering import signature_for
+from ntf_insight.analysis.cross_cluster_bridges import build_cluster_bridges
+from ntf_insight.analysis.recurrence_coverage_audit import (
+    RecurrenceCoverageReport, audit_recurrence_coverage,
+)
 from ntf_insight.analysis.diagnostic_evidence_audit import DiagnosticEvidenceAudit
 from ntf_insight.analysis.diagnostic_gap_investigation import DiagnosticGapReport
 from ntf_insight.analysis.hdbscan_clustering import HDBSCANMethodComparison, MLClusterResult
@@ -42,6 +46,8 @@ PACKAGE_FILES = (
     "diagnosequalitaet.csv",
     "ausgeschlossene_faelle.csv",
     "wiederauftreten.csv",
+    "cluster_bruecken.csv",
+    "diagnosesitzungs_pruefung.csv",
     "methodenvergleich.csv",
 )
 
@@ -143,6 +149,7 @@ def write_cluster_review_zip(
     confirmations: tuple[ConfirmedMechanism, ...] = (),
     gaps: DiagnosticGapReport | None = None,
     comparison: HDBSCANMethodComparison | None = None,
+    recurrence_coverage: RecurrenceCoverageReport | None = None,
 ) -> ClusterZipExport:
     """Write a self-contained, pseudonymized analysis ZIP and TWO private mappings.
 
@@ -206,6 +213,12 @@ def write_cluster_review_zip(
     )
     confirmed = {label.case_id: label for label in confirmations}
     transfer = plan_representative_transfer(cases, result, confirmations)
+    bridges = build_cluster_bridges(
+        cases, result, audit, confirmations=confirmations,
+    )
+    coverage = recurrence_coverage or audit_recurrence_coverage(cases)
+    if {row.case_id for row in coverage.cases} != set(by_id):
+        raise ValueError("Diagnosesitzungsprüfung enthält andere QEC-Fälle.")
     transfer_for = {(item.group, item.target_case_id): item for item in transfer.rows}
     positions = {cid: i for i, cid in enumerate(result.eligible_case_ids)}
 
@@ -339,6 +352,39 @@ def write_cluster_review_zip(
             ),
         ))
 
+    bridge_rows = []
+    for link in bridges.links:
+        bridge_rows.append((
+            link.left, link.right,
+            aliases[link.left_representative],
+            aliases[link.right_representative],
+            len(link.shared_cpc3),
+            ", ".join(fault_aliases[fault] for fault in link.shared_cpc3),
+            ", ".join(fault_aliases[fault] for fault in link.left_only_cpc3),
+            ", ".join(fault_aliases[fault] for fault in link.right_only_cpc3),
+            link.cpc3_idf_sum, link.medoid_cosine,
+            link.between_median_cosine, link.between_p10_cosine,
+            link.weak_between_pairs, link.between_pairs,
+            link.same_fin_between_pairs,
+            link.reviewed_mechanism_relation,
+            link.note,
+        ))
+    session_rows = [
+        (
+            aliases[row.case_id], vin_aliases[row.vin],
+            group_for.get(row.case_id, "NICHT_GRUPPIERT"),
+            row.before_dtc_count, row.after_dtc_count,
+            row.same_day_or_unknown_dtc_count,
+            row.before_session_count, row.after_session_count,
+            row.before_complete_qt_count, row.after_complete_qt_count,
+            int(row.recurrence_assessable),
+            row.raw_qt_before if row.raw_qt_before is not None else "",
+            row.raw_qt_same_day if row.raw_qt_same_day is not None else "",
+            row.raw_qt_after if row.raw_qt_after is not None else "",
+            int(row.multiple_qec_same_fin), row.missing_evidence_reason,
+        ) for row in coverage.cases
+    ]
+
     comparison_rows = []
     if comparison is not None and comparison.eligible_case_count:
         if (
@@ -358,7 +404,7 @@ def write_cluster_review_zip(
 
     metadata = {
         "format": "ntf-insight-cluster-review",
-        "version": 1,
+        "version": 2,
         "pseudonymisiert": True,
         "enthält": "Nur abgeleitete Diagnosetabellen und Prüfhypothesen",
         "freie_ssl_texte": False,
@@ -383,6 +429,10 @@ def write_cluster_review_zip(
         },
         "schwelle_45_prozent_nicht_kalibriert": True,
         "befundtransfer_nur_hypothese": True,
+        "clusterbruecken_mit_cpc3_kern_dtc": bridges.cpc3_bridge_pairs,
+        "wiederauftreten_beurteilbar": coverage.assessable_qec,
+        "vorher_dtc_ohne_vorher_sitzung": coverage.pre_dtc_but_no_pre_session,
+        "rohe_fin_quicktests_keine_qec_zuordnung": True,
         "fachliche_ursache_aus_clusters_allein": False,
     }
     readme = (
@@ -395,6 +445,9 @@ def write_cluster_review_zip(
         "eine identische ECU:DTC-Kombination innerhalb DIESES Pakets.\n"
         "Dxxxx ist KEIN auswertbarer Original-DTC-Code. CPC3 wird als\n"
         "boolesches Merkmal ausgewiesen. Gleiche Dxxxx sind vergleichbar.\n"
+        "Clusterbruecken sind nur Diagnosemuster, KEINE gemeinsame Ursache.\n"
+        "Vorher-DTC-Zeilen sind keine komplette Vorher-Diagnosesitzung.\n"
+        "FIN-Roh-QuickTests sind keine automatisch zugeordneten QEC-Sitzungen.\n"
         "Die Zuordnungstabellen mit echten Schlüsseln liegen SEPARAT\n"
         "neben der ZIP und dürfen NICHT hochgeladen werden.\n"
         "Wichtig: Pseudonymisierung bedeutet nicht automatische Freigabe\n"
@@ -459,6 +512,26 @@ def write_cluster_review_zip(
             "Gleiche ECU:DTC vor/nach Tausch", "Nur neue ECU:DTC nach Tausch",
             "Vorher-ECU:DTC nicht mehr beobachtet", "Bewertung",
         ), recurrence_rows),
+        "cluster_bruecken.csv": _csv_bytes((
+            "Cluster A", "Cluster B", "Repräsentant A", "Repräsentant B",
+            "Gemeinsame CPC3-Kern-DTC Anzahl", "Gemeinsame CPC3-DTC-Aliasse",
+            "Nur-A-CPC3-Aliasse", "Nur-B-CPC3-Aliasse",
+            "CPC3 IDF-Screening", "Cosinus Repräsentanten",
+            "Median Cross-Cluster-Cosinus", "10%-Quantil Cross-Cluster-Cosinus",
+            "Schwache Cross-Cluster-Fallpaare", "Alle Cross-Cluster-Fallpaare",
+            "Gleiche-FIN-Cross-Cluster-Fallpaare",
+            "Unabhängige Befundprüfung", "Warnung – keine automatische Ursache",
+        ), bridge_rows),
+        "diagnosesitzungs_pruefung.csv": _csv_bytes((
+            "Fall", "Fahrzeug", "Gruppe",
+            "Vorher-DTC-Zeilen", "Nachher-DTC-Zeilen",
+            "DTC zeitlich unklar", "QEC-Vorher-Sitzungen",
+            "QEC-Nachher-Sitzungen", "Vollständige Vorher-QuickTests",
+            "Vollständige Nachher-QuickTests", "Wiederauftreten beurteilbar",
+            "FIN-Roh-QuickTests vor Tausch", "FIN-Roh-QuickTests am Tauschtag",
+            "FIN-Roh-QuickTests nach Tausch", "Mehrere QEC je FIN",
+            "Fehlende Evidenz",
+        ), session_rows),
         "methodenvergleich.csv": _csv_bytes((
             "Methode", "Cluster", "Gruppierte Fälle", "Ausreißer",
             "Schwache Fallpaare Anteil", "Median Cluster-Paarmediane",
