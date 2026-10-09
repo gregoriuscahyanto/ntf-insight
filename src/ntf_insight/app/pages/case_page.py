@@ -103,8 +103,9 @@ class CasePage(QWidget):
 
         layout.addWidget(QLabel("Fälle / FIN", objectName="PageTitle"))
         intro = QLabel(
-            "Die Analyseeinheit ist die Kombination aus FIN/VIN und Fall. "
-            "Eine FIN kann mehrere Fälle oder Austausche enthalten.",
+            "FINs mit QuickTests werden auch ohne NTF-/QEC-Fall angezeigt. "
+            "Mit einem Schadteilfall werden Diagnose, Tausch und Befund "
+            "für die Vorher-/Nachher-Analyse verknüpft.",
             objectName="PageSubtitle",
         )
         intro.setWordWrap(True)
@@ -237,7 +238,8 @@ class CasePage(QWidget):
 
         layout.addWidget(QLabel("Zeitliches Auftreten", objectName="CardTitle"))
         time_hint = QLabel(
-            "DTCs und relevante Ereignisse über die Zeit; die gestrichelte Linie markiert den Bauteiltausch.",
+            "Diagnoseereignisse über die Zeit. Eine gestrichelte Linie markiert "
+            "den Bauteiltausch, sofern einer dokumentiert ist.",
             objectName="PageSubtitle",
         )
         time_hint.setWordWrap(True)
