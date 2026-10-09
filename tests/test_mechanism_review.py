@@ -17,12 +17,6 @@ from test_hdbscan_clustering import sample
 def _review_csv(cases, statuses) -> StringIO:
     stream = StringIO()
     write_review_template(stream, cases)
-    rows = stream.getvalue().splitlines()
-    for i, line in enumerate(rows[1:], 1):
-        case_id = line.split(";")[0]
-        if case_id in statuses:
-            mechanism = statuses[case_id]
-            # SSL may contain semicolons; rewrite using csv.DictReader/Writer
     import csv
     stream.seek(0)
     parsed = list(csv.DictReader(stream, delimiter=";"))
