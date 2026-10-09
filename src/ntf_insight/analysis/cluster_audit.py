@@ -89,7 +89,6 @@ def audit_case_clusters(
             case, lookback_days=lookback_days, dtc_source=dtc_source
         ) for case in cases
     }
-    scoped_pre = {}
     before_qt = set()
     before_auto = set()
     for case in cases:
@@ -111,8 +110,6 @@ def audit_case_clusters(
                 before_qt.add(case.case_id)
             elif _matches_dtc_source(event, "autoexport"):
                 before_auto.add(case.case_id)
-        scoped_pre[case.case_id] = events
-
     scoped_pairs = [
         match for match in result.matches
         if match.left_case_id in ids and match.right_case_id in ids
