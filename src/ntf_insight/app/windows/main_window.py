@@ -13,11 +13,13 @@ from ntf_insight.app.pages.dtc_page import DTCExplorerPage
 from ntf_insight.app.pages.similarity_page import SimilarityPage
 from ntf_insight.app.pages.prediction_page import PredictionPage
 from ntf_insight.app.pages.sources_page import SourcesPage
+from ntf_insight.app.pages.source_knowledge_page import SourceKnowledgePage
 from ntf_insight.app.pages.supplier_page import SupplierPage
 from ntf_insight.app.widgets.navigation import NavigationPanel
 from ntf_insight.ingestion.manual_entry import ManualCaseService
 from ntf_insight.storage.duckdb_store import DuckDBStore
 from ntf_insight.storage.quicktest_store import QuickTestStore
+from ntf_insight.storage.source_knowledge_store import SourceKnowledgeStore
 
 
 class MainWindow(QMainWindow):
@@ -68,6 +70,9 @@ class MainWindow(QMainWindow):
                 str(self.application_data.paths.data_dir),
                 str(self.application_data.paths.raw_dir),
                 str(self.application_data.paths.database_path),
+            ),
+            "knowledge": SourceKnowledgePage(
+                SourceKnowledgeStore(self.manual_service.store)
             ),
             "cases": CasePage(
                 self.repository, self.reference_repository, self.manual_service
