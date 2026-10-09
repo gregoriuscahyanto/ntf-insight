@@ -1,4 +1,4 @@
-# Lokaler Import echter Quellen (QEC, AutoExport, QuickTest)
+# Lokaler Import echter Quellen (QuickTest, QEC, AutoExport, CDD, Part History)
 
 Diese Anleitung beschreibt **nur die Softwarefunktion**. Originale Mercedes-Benz
 Fahrzeug-, Werkstatt-, Lieferanten- und Diagnoseinformationen dürfen nicht in
@@ -18,8 +18,9 @@ diesem öffentlichen GitHub-Repository gespeichert werden.
 3. Quellenart auf **„Automatisch erkennen (empfohlen)“** belassen.
 4. ZIP-Datei auf die Drop-Zone ziehen oder über **„Dateien auswählen…“** öffnen.
 5. Hintergrundimport abwarten. Die GUI zeigt den Fortschritt an.
-6. Archiv-/Parse-Status kontrollieren; anschließend **Fälle / FIN**, **Zeitplot**,
-   **DTC-Explorer** oder **Cluster & Fälle** öffnen.
+6. Archiv-/Parse-Status kontrollieren. Die neuen globalen Referenzdaten
+   findest du unter **Quellenwissen**, fahrzeugbezogene Ereignisse unter
+   **Fälle / FIN**, **Zeitplot** oder **DTC-Explorer**.
 
 Mehrere einzelne Dateien können ebenfalls zusammen ausgewählt werden. Bei
 Einzeldateien darf die Quellart manuell überschrieben werden; innerhalb eines
@@ -51,14 +52,14 @@ Rollenprüfung** bieten.
 
 | Quelle | Verarbeitung | Status |
 |---|---|---|
-| QEC-Schadteilliste (.xlsx) | Eindeutige QEC-Fall-IDs, FIN, Tauschdatum, Laufleistung, Produktdaten und expliziter Endbefund | Parser bereit |
-| AutoExport Diagnose (.csv) | CPC3-DTCs mit Zeit/Status/Zähler/ECU-HW-/SW-Stand | Parser bereit |
-| AutoExport Werkstatt/Claim (.csv) | Beanstandung, Reparaturaktion, Werkstatttext und Datum | Parser bereit |
-| QuickTest (.pdf) | FIN, Datum, km, ECU-Diagnosestände, DTCs und Zähler über alle enthaltenen ECUs | Parser bereit |
-| AutoExport-Aggregat (.csv) | Aggregat wird archiviert; daraus werden **keine** FINs konstruiert | Nur Archiv |
-| CDD/Candela (.cdd) | Original archiviert, getrennt von SMR-D | CDD-Semantikparser offen |
-| Lieferanten-Analysebericht (.pdf) | Original archiviert; kein automatisches „Fehler gefunden“ aus unstrukturiertem PDF | Befundparser offen |
-| Teilehistorie (.pdf) | Original archiviert | Parser offen |
+| QEC-Schadteilliste (.xlsx) | QEC-Fälle und Tauschanker; zusätzlich **alle Quellspalten und -blätter** mit Referenznr. | Struktur- und Fallparser |
+| AutoExport Diagnose (.csv) | Vollständige CSV-Rohfelder für alle FINs sowie fallbezogene DTCs/ECU-Stände bei eindeutiger Zuordnung | Parser bereit |
+| AutoExport Werkstatt/Claim (.csv) | Alle Werkstatt-/Claim-Zeilen (einschließlich doppelt benannter Spalten), fallbezogene Aktionen bei eindeutiger Zuordnung | Parser bereit |
+| QuickTest (.pdf) | FIN, Datum, km, ECU-Diagnosestände, DTCs, Snapshots, vollständige auslesbare PDF-Texte | Parser bereit |
+| AutoExport-Aggregat (.csv) | Separat gespeichert, **kein** Ersatz für verbaute Population / Ausfallraten-Nenner | Parser bereit |
+| CDD/Candela (.cdd) | Diagnoseklassen, Serviceinstanzen, Qualifier, Semantik und Beschreibungen | CDD-Serviceparser bereit; **keine validierte SMR-D-Triggerlogik** |
+| Part History (.pdf) | Produktbezogene Änderungen, Revisionsstände, Referenzen, Tages- bzw. Kalenderwochenzeiträume | Strukturparser bereit; **nicht FIN-spezifisch** |
+| Lieferanten-Analysebericht (.pdf) | Original archiviert; keine automatische Fehlerursachenzuordnung aus Freitext | Befundparser offen |
 | SMR-D | Separater Format-/Fachparser notwendig; CDD ersetzt die Triggerlogik **nicht** | Ausstehend |
 | ECU-HW-/SW-Releaseänderungen | Release-Wissen benötigt eigene Datei; QuickTest-ECU-Stände sind **keine Release-Änderungsliste** | Ausstehend |
 
@@ -82,6 +83,21 @@ Als **vorläufige technische Importgrenzen** gelten:
 Diese Grenzen sind keine validierten physikalischen Fehlerfenster und müssen
 anhand realer Fälle geprüft werden. Beim Import wird kein Lieferant als
 Verursacher klassifiziert.
+
+**QEC-Quellblatt-Logik:** Die NTF-Clusterblätter im QEC-Export können
+Teilansichten derselben Schadteilreferenzen enthalten. Sie werden in der
+Quellenablage separat nachvollziehbar gespeichert, aber **nicht als neue
+Schadteilfälle doppelt angelegt**.
+
+**Part History:** Fertigungs-/Lieferantenänderungen betreffen zunächst
+ein Bauteil bzw. eine Produktionslinie, **nicht** die FIN im QuickTest.
+Kalenderwochen werden mit Präzision `calendar_week` und Zeitraum
+gespeichert, nicht auf einen frei erfundenen Ereignistag reduziert.
+
+**CDD:** Candela-Diagnoseinstanzen sind Service- und
+Steuergerätedefinitionen. Derzeit extrahiert NTF Insight noch keine
+validierten Fehlerbedingungen (Set/Enable/Healing). Sie benötigen die
+passende SMR-D-Triggerliste und eine fachliche Interpretation.
 
 **Wichtig zur Zeitsemantik:** Für AutoExport-Diagnosen liegt gegebenenfalls
 nur das Datum vor. Ein solcher DTC wird als *am Tag beobachtet* gespeichert.
@@ -118,3 +134,26 @@ abgenommen werden. Insbesondere fehlen noch:
 - DTC-Trigger/Set/Enable/Healing aus echten SMR-D-Dateien
 - HW-/SW-Release-/Änderungsliste und Variante/Version-Gültigkeit
 - Diagnose-Historien aus externen Systemen mit exakter Erst-/Letztauftrittszeit
+
+
+## Neue Datenbanktabellen und Anzeige
+
+Die **lokale DuckDB** besitzt die Tabellen `source_knowledge_documents`
+und `source_knowledge_rows` mit Quellen-SHA-256, Parsertyp, Quellfundstelle,
+sofern vorhanden FIN, Kurzbeschreibung und sämtlichen extrahierten
+Feldern als JSON. Wiederholte Importe derselben Originaldatei ersetzen ihre
+abgeleiteten Quellzeilen transaktional und erzeugen keine Doppelzeilen.
+
+Die neue Desktop-Seite **Quellenwissen** zeigt diese Daten mit Volltextsuche,
+Quellentypfiltern, Seitennavigation und vollständig lesbaren Quellfeldern.
+Die ursprünglichen PDF-/Excel-/CDD-/CSV-Dateien bleiben im geschützten
+Rohdatenarchiv und gelangen nicht nach GitHub.
+
+Zur Nachverarbeitung bereits archivierter CDD-, Part-History- oder QEC-Dateien:
+**Datenquellen → Archivansicht → Alle archivierten Dateien → Datei markieren
+→ Markierte Datei neu prüfen**. Bei ZIP-Paketen die ZIP erneut importieren.
+
+Die CDD-Serviceinstanzen und globalen Part-History-Änderungen werden
+**nicht automatisch als DTC-/Tauschereignis unter einer FIN** abgelegt.
+Die technische Referenz muss erst mit Fahrzeugsoftware,
+Bauteilnummer/Revision oder einer eindeutigen Fallreferenz verknüpft werden.
