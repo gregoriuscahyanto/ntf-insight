@@ -31,7 +31,7 @@ from ntf_insight.analysis.diagnostic_evidence_audit import (
 )
 from ntf_insight.analysis.mechanism_review import (
     ConfirmedMechanism, read_confirmed_mechanisms, review_cluster_mechanisms,
-    safe_spreadsheet_cell, write_review_template,
+    safe_spreadsheet_cell, write_review_template, write_confirmed_review_backup,
 )
 from ntf_insight.analysis.supervised_pair_validation import (
     evaluate_supervised_pairs,
@@ -456,6 +456,17 @@ class HDBSCANPanel(QWidget):
         self.pair_test_button.clicked.connect(self.test_supervised_pairs)
         review_controls.addWidget(self.pair_test_button)
         body.addLayout(review_controls)
+        self.expert_backup_button = QPushButton(
+            "Alle geladenen Fachbestätigungen lokal sichern (NICHT HOCHLADEN)"
+        )
+        self.expert_backup_button.setEnabled(False)
+        self.expert_backup_button.setToolTip(
+            "Erzeugt eine vertrauliche, später wieder einlesbare CSV "
+            "aller bestätigten QEC-Mechanismen einschließlich Evidenzreferenzen. "
+            "Niemals extern teilen; keine SSL-Freitexte in der Sicherung."
+        )
+        self.expert_backup_button.clicked.connect(self.export_expert_backup)
+        body.addWidget(self.expert_backup_button)
         representative_controls = QHBoxLayout()
         self.representative_template_button = QPushButton(
             "Nur Cluster-Repräsentanten zur Fachprüfung exportieren"
@@ -580,6 +591,7 @@ class HDBSCANPanel(QWidget):
             self.bridge_summary.setText("CPC3-Brückenprüfung nicht verfügbar.")
             self.recurrence_coverage_summary.setText("Sitzungsprüfung nicht verfügbar.")
             self.chat_zip_button.setEnabled(False)
+            self.expert_backup_button.setEnabled(False)
             self.gap_model.set_rows([])
             self.transfer_model.set_rows([])
             self.representative_template_button.setEnabled(False)
@@ -593,6 +605,7 @@ class HDBSCANPanel(QWidget):
         self.evidence_audit = audit
         self.chat_zip_button.setEnabled(bool(result.clusters))
         self.pilot_review_button.setEnabled(bool(result.clusters))
+        self.expert_backup_button.setEnabled(bool(self.confirmed_mechanisms))
         self.representative_template_button.setEnabled(bool(result.clusters))
         self.transfer_export_button.setEnabled(bool(result.clusters))
         if not {review.case_id for review in self.confirmed_mechanisms}.issubset(
@@ -882,6 +895,28 @@ class HDBSCANPanel(QWidget):
             "Ein Cluster ist kein technischer Ursachennachweis.",
         )
 
+    def export_expert_backup(self) -> None:
+        """Re-importable, local-only file holding all confirmed case labels."""
+        if not self.confirmed_mechanisms:
+            return
+        target, _ = QFileDialog.getSaveFileName(
+            self,
+            "Alle bestätigten Fachlabels VERTRAULICH LOKAL sichern",
+            "NTF_Fachlabels_Sicherung_NICHT_HOCHLADEN.csv",
+            "CSV-Dateien (*.csv)",
+        )
+        if not target:
+            return
+        try:
+            with open(target, "w", encoding="utf-8-sig", newline="") as stream:
+                write_confirmed_review_backup(
+                    stream, self._subset(), self.confirmed_mechanisms,
+                )
+        except (ValueError, OSError) as exc:
+            QMessageBox.warning(
+                self, "Fachlabels nicht gesichert", str(exc),
+            )
+
     def export_pilot_review_template(self) -> None:
         """Local-only editable review of a medoid and selected target FINs."""
         if self.latest_pilot_plan is None or self.result is None:
@@ -1026,6 +1061,7 @@ class HDBSCANPanel(QWidget):
             )
             return
         self.confirmed_mechanisms = merged
+        self.expert_backup_button.setEnabled(bool(merged))
         self.pair_test_button.setEnabled(bool(merged))
         self.pair_test_summary.setText(
             "Noch kein trainiertes Paarmodell. Geladene Fachbestätigungen "
