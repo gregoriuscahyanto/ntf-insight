@@ -35,6 +35,7 @@ class SourceKnowledgePage(QWidget):
         ("AutoExport · Werkstatt / Claim", "autoexport_repair"),
         ("AutoExport · Aggregat", "autoexport_aggregate"),
         ("AutoExport · andere", "autoexport_other"),
+        ("Lieferanten-Analysebericht · Originaltext", "supplier_analysis_page"),
     )
 
     def __init__(self, store: SourceKnowledgeStore) -> None:
@@ -166,7 +167,8 @@ class SourceKnowledgePage(QWidget):
             f"Part History: {totals.get('part_history', 0)} Änderungen · "
             f"QEC: {totals.get('qec_details', 0)} Tabellenzeilen · "
             f"AutoExport: {totals.get('autoexport_rows', 0)} Datenzeilen · "
-            f"Aggregate: {totals.get('autoexport_summary', 0)}"
+            f"Aggregate: {totals.get('autoexport_summary', 0)} · "
+            f"Analysebericht-Seiten: {totals.get('supplier_analysis_document', 0)}"
         )
         self.detail.clear()
 
