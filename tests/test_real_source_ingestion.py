@@ -87,7 +87,7 @@ def _tips_csv() -> bytes:
         '"Kuehlmittelpumpe ohne Durchfluss";'
         '"Teststand: keine Foerderung";"Diagnose angefordert";'
         '"Kuehlmittelkreislauf"\n'
-        "W1TOTHER000000001;TIPS-002;2026-01-03;"
+        "W1TTEST0000000002;TIPS-002;2026-01-03;"
         '"Anderes Fahrzeug";"Test";"Ohne";"Pumpe"\n'
     ).encode("utf-8")
 
@@ -414,8 +414,8 @@ def test_tips_source_and_full_vin_history_without_qec_case(tmp_path) -> None:
     assert summary.files_parsed == 1
     assert summary.tips_unassigned == 0  # no allowed QEC FINs; only raw rows
     assert store.count_rows("autoexport_tips") == 2
-    assert store.fin_history_counts("W1TOTHER000000001") == {"autoexport_tips": 1}
-    history = store.list_fin_history("W1TOTHER000000001")
+    assert store.fin_history_counts("W1TTEST0000000002") == {"autoexport_tips": 1}
+    history = store.list_fin_history("W1TTEST0000000002")
     assert len(history) == 1
     assert history[0]["data"]["CaseId"] == "TIPS-002"
 
