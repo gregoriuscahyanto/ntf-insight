@@ -13,6 +13,7 @@ from ntf_insight.domain.events import (
     RepairEvent,
     SoftwareEvent,
     SupplierFinding,
+    TipsCaseObservation,
 )
 from ntf_insight.domain.vehicle import Vehicle
 
@@ -31,6 +32,7 @@ class NTFCase(BaseModel):
     diagnostics: list[DiagnosticEvent] = Field(default_factory=list)
     ecu_states: list[ECUStateObservation] = Field(default_factory=list)
     repairs: list[RepairEvent] = Field(default_factory=list)
+    tips_observations: list[TipsCaseObservation] = Field(default_factory=list)
     replacements: list[PartReplacement] = Field(default_factory=list)
     software_events: list[SoftwareEvent] = Field(default_factory=list)
     supplier_findings: list[SupplierFinding] = Field(default_factory=list)

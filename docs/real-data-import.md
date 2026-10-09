@@ -54,7 +54,8 @@ Rollenprüfung** bieten.
 |---|---|---|
 | QEC-Schadteilliste (.xlsx) | QEC-Fälle und Tauschanker; zusätzlich **alle Quellspalten und -blätter** mit Referenznr. | Struktur- und Fallparser |
 | AutoExport Diagnose (.csv) | Vollständige CSV-Rohfelder für alle FINs sowie fallbezogene DTCs/ECU-Stände bei eindeutiger Zuordnung | Parser bereit |
-| AutoExport Werkstatt/Claim (.csv) | Alle Werkstatt-/Claim-Zeilen (einschließlich doppelt benannter Spalten), fallbezogene Aktionen bei eindeutiger Zuordnung | Parser bereit |
+| AutoExport Werkstatt/Claim (.csv) | Alle Werkstatt-/Claim-Zeilen (einschließlich doppelt benannter Spalten), fallbezogene Aktionen bei eindeutiger Zuordnung; widersprüchliche Kilometerangaben werden gekennzeichnet | Parser bereit |
+| AutoExport TIPS (.csv) | TIPS-Referenz, Erstellungsdatum, Erst-Beanstandung, Werkstattbefund und Maßnahmen; Rohzeilen für alle FINs, konservative QEC-Zuordnung | Parser bereit |
 | QuickTest (.pdf) | FIN, Datum, km, ECU-Diagnosestände, DTCs, Snapshots, vollständige auslesbare PDF-Texte | Parser bereit |
 | AutoExport-Aggregat (.csv) | Separat gespeichert, **kein** Ersatz für verbaute Population / Ausfallraten-Nenner | Parser bereit |
 | CDD/Candela (.cdd) | Diagnoseklassen, Serviceinstanzen, Qualifier, Semantik und Beschreibungen | CDD-Serviceparser bereit; **keine validierte SMR-D-Triggerlogik** |
@@ -79,10 +80,30 @@ Als **vorläufige technische Importgrenzen** gelten:
 
 - DTC/ECU-Stand/Kurztest: 365 Tage vor bis 180 Tage nach Tausch
 - Werkstatteintrag: 30 Tage vor bis 30 Tage nach Tausch
+- TIPS-Erstmeldung: 365 Tage vor bis 180 Tage nach Tausch (nur
+  **vor dem Tausch** datierte initiale Beanstandungen können als
+  Beanstandungsbegriffe in die diagnostische Fallähnlichkeit einfließen).
+  Werkstattbefunde, durchgeführte Maßnahmen, SSL-Endbefunde und
+  Reparaturergebnisse beeinflussen **nie** den Ähnlichkeitswert.
 
 Diese Grenzen sind keine validierten physikalischen Fehlerfenster und müssen
 anhand realer Fälle geprüft werden. Beim Import wird kein Lieferant als
 Verursacher klassifiziert.
+
+**Upload-Reihenfolge:** AutoExport kann auch **vor** der QEC-Liste importiert
+werden. Sobald neue QEC-Fälle hinzukommen, verarbeitet die App die bereits
+archivierten AutoExport-CSV-Dateien für die eindeutige Fallzuordnung erneut;
+das ursprüngliche AutoExport-ZIP muss nicht nochmal hochgeladen werden.
+Eine vollständig gespeicherte Rohdatenhistorie wird dabei nicht erneut
+geschrieben. Frühere Versionen ohne die aktuellen zeitlichen Metadaten werden
+einmalig neu indexiert. Reine FIN-Zeilen ohne QEC-Fall bleiben recherchierbar.
+
+**TIPS-Quellenlogik:** TIPS-Fall-IDs sind eigenständige
+Werkstattvorgänge, keine QEC-Schadteilreferenzen. Eine passende FIN allein
+reicht für die Verbindung bei mehreren QEC-Fällen nicht aus: Ohne eindeutig
+nächsten Tauschanker im zulässigen Zeitraum bleibt die TIPS-Zeile als
+FIN-weite Quelle unzugeordnet. Die `CreationDate` datiert den
+TIPS-Vorgang und ist kein belegtes Reparaturdatum.
 
 **QEC-Quellblatt-Logik:** Die NTF-Clusterblätter im QEC-Export können
 Teilansichten derselben Schadteilreferenzen enthalten. Sie werden in der
@@ -99,12 +120,42 @@ Steuergerätedefinitionen. Derzeit extrahiert NTF Insight noch keine
 validierten Fehlerbedingungen (Set/Enable/Healing). Sie benötigen die
 passende SMR-D-Triggerliste und eine fachliche Interpretation.
 
-**Wichtig zur Zeitsemantik:** Für AutoExport-Diagnosen liegt gegebenenfalls
-nur das Datum vor. Ein solcher DTC wird als *am Tag beobachtet* gespeichert.
+**Wichtig zur Zeitsemantik:** Bei AutoExport-Diagnosen wird das präzise
+Quellfeld `DiagStartTs` verwendet, **sofern es vorhanden und lesbar ist**.
+Das ursprüngliche `DiagStartDt` wird ebenfalls als Rohfeld behalten.
+Die ISO-UTC-Zeichenkette (`Z`) bleibt als Quellreferenz erhalten; eine
+nicht belegte Übertragung in die lokale QuickTest-Zeitzone findet nicht statt.
+Fehlt `DiagStartTs`, wird auf das Datum zurückgefallen und die
+Uhrzeitpräzision entsprechend gekennzeichnet. Ein solcher DTC wird nur
+als *am Tag beobachtet* gespeichert.
 Daraus wird **kein vollständiger fehlerfreier Kurztest** und keine exakte
 Erstauftretenszeit konstruiert. Im QuickTest-PDF kennzeichnet die
 Diagnosezeit ebenfalls den Beobachtungs-/Reportzeitpunkt; historische
 Fehlerspeicher-Kilometerwerte bleiben als Metadaten erhalten.
+
+## FIN-Historie und Importqualität
+
+Unter **Fälle / FIN → FIN / Fallanalyse → AutoExport-Gesamthistorie nach FIN**
+können beliebige gültige FINs direkt gesucht werden, **auch wenn noch kein
+QEC-/NTF-Fall und kein PDF-QuickTest existiert**. Die Tabelle lädt jeweils
+maximal 200 Zeilen und bietet Seitennavigation. DTCs, Werkstattzeilen und
+TIPS-Vorgänge bleiben als eigenständige Quellenzeilen erhalten; alle Originalfelder
+sind unter **Quellenwissen** abrufbar. Die angezeigte Quellzeit wird nicht
+stillschweigend in die Ortszeit umgerechnet. Wiederholte DTC-Meldungen
+sind nicht automatisch verschiedene Schadensfälle.
+
+Die ZIP-Historie mit mehr als 423.000 DTC-Rohzeilen ist technisch durch
+die Streaming-Ablage mit bis zu **1.000.000 Zeilen je AutoExport-Quelldatei**
+unterstützt. Bei Überschreitung wird **nicht** stillschweigend abgeschnitten:
+Die Transaktion wird zurückgerollt, das Original bleibt archiviert und
+der Import meldet den Fehler. Ausreichend lokaler Speicher und Importzeit
+sind erforderlich.
+
+Nach dem Import werden gescannte CSV-Zeilen, ungeeignete/ungültige Zeilen,
+unzugeordnete Ereignisse und verknüpfte TIPS-Datensätze separat ausgewiesen.
+Ein erheblicher Teil nicht fallbezogen verwendbarer Zeilen ist bei wenigen
+QEC-Fällen normal: Die vollständige, unabhängige FIN-Quellenhistorie bleibt
+davon unberührt.
 
 ## Schutzmaßnahmen und Wiederholbarkeit
 
@@ -133,7 +184,9 @@ abgenommen werden. Insbesondere fehlen noch:
 - strukturierter Lieferanten-PDF-Befund mit referenzierter Zuordnung
 - DTC-Trigger/Set/Enable/Healing aus echten SMR-D-Dateien
 - HW-/SW-Release-/Änderungsliste und Variante/Version-Gültigkeit
-- Diagnose-Historien aus externen Systemen mit exakter Erst-/Letztauftrittszeit
+- Ableitung der **tatsächlichen** Fehler-Erst-/Letztauftrittszeit aus
+  den Diagnose-Snapshotfeldern (der Export enthält Diagnosezeitpunkte,
+  nicht zwangsläufig die ursprüngliche Fehlerentstehung)
 
 
 ## Neue Datenbanktabellen und Anzeige

@@ -31,6 +31,8 @@ def detect_source_type(path: Path) -> SourceType:
                     continue
                 names = next(csv.reader([line], delimiter=";"))
                 headers = set(names)
+                if {"Fin", "CaseId", "CreationDate", "InitialWorkshopMessageCustomerComplaint"} <= headers:
+                    return SourceType.TIPS_CASE
                 if {"DiagStartDt", "EcuFaultNm", "Fin"} <= headers:
                     return SourceType.SHORT_TEST
                 if {"RepairDt", "Fin", "PartLetterCd"} <= headers:

@@ -76,6 +76,22 @@ def _claim_csv() -> bytes:
     return text.encode("utf-8")
 
 
+
+def _tips_csv() -> bytes:
+    """Synthetic TIPS fixture; no customer or real vehicle data."""
+    return (
+        "Fin;CaseId;CreationDate;InitialWorkshopMessageCustomerComplaint;"
+        "InitialWorkshopMessageWorkshopFindings;"
+        "InitialWorkshopMessagePerformedActions;SymptomName\n"
+        f'{SYNTHETIC_FIN};TIPS-001;2026-01-03;'
+        '"Kuehlmittelpumpe ohne Durchfluss";'
+        '"Teststand: keine Foerderung";"Diagnose angefordert";'
+        '"Kuehlmittelkreislauf"\n'
+        "W1TTEST0000000002;TIPS-002;2026-01-03;"
+        '"Anderes Fahrzeug";"Test";"Ohne";"Pumpe"\n'
+    ).encode("utf-8")
+
+
 def _quicktest_bytes(when: str, code: str) -> bytes:
     target = io.BytesIO()
     pdf = canvas.Canvas(target)
@@ -116,6 +132,7 @@ def _bundle(path: Path) -> None:
         z.writestr("bundle/cases.xlsx", _workbook_bytes())
         z.writestr("bundle/diag.csv", _autoexport_csv())
         z.writestr("bundle/workshop.csv", _claim_csv())
+        z.writestr("bundle/tips.csv", _tips_csv())
         before = _quicktest_bytes("2026-01-03 12:00:00", "P26F100")
         after = _quicktest_bytes("2026-01-10 12:00:00", "P26F100")
         z.writestr("bundle/report_pre.pdf", before)
@@ -152,6 +169,9 @@ def test_content_detection_and_cdd_not_smr_d(tmp_path) -> None:
     assert detect_source_type(workbook) == SourceType.VEHICLE_CASE_LIST
     assert detect_source_type(diag) == SourceType.SHORT_TEST
     assert detect_source_type(claim) == SourceType.WORKSHOP_HISTORY
+    tips = tmp_path / "tips.csv"
+    tips.write_bytes(_tips_csv())
+    assert detect_source_type(tips) == SourceType.TIPS_CASE
     assert detect_source_type(pdf) == SourceType.SHORT_TEST
     assert detect_source_type(cdd) == SourceType.DIAGNOSTIC_DESCRIPTION
     assert canonical_fin("MBC" + SYNTHETIC_FIN) == SYNTHETIC_FIN
@@ -219,12 +239,14 @@ def test_zip_import_is_local_linked_and_idempotent(tmp_path) -> None:
     saved = source.store.load_cases()
     assert first.cases_created == 1
     assert len(saved) == 1
-    assert first.files_parsed == 7
+    assert first.files_parsed == 8
+    assert first.tips_linked == 1
     assert first.duplicates == 2
     assert len(saved[0].diagnostic_sessions) == 2
     assert len(saved[0].diagnostics) == 4
     assert len(saved[0].replacements) == 1
     assert len(saved[0].repairs) == 1
+    assert len(saved[0].tips_observations) == 1
     assert saved[0].investigated_replacement() is not None
     assert source.store.load_artifacts()
 
@@ -233,6 +255,7 @@ def test_zip_import_is_local_linked_and_idempotent(tmp_path) -> None:
     assert second.cases_created == 0
     assert len(repeated[0].diagnostics) == len(saved[0].diagnostics)
     assert len(repeated[0].diagnostic_sessions) == 2
+    assert len(repeated[0].tips_observations) == 1
 
 
 def test_zip_rejects_path_traversal_without_extracting(tmp_path) -> None:
@@ -329,3 +352,217 @@ def test_qec_ssl_end_finding_without_date_is_not_backdated_to_swap(tmp_path) -> 
 
     from ntf_insight.analysis.qec_findings import qec_ssl_finding_label
     assert "Befundabschlussdatum unbekannt" in qec_ssl_finding_label(case)
+
+
+
+def test_real_autoexport_timestamp_and_duplicate_mileage_columns(tmp_path) -> None:
+    """Exact UTC source wall-time is kept, not replaced with invented noon."""
+    diagnostic = tmp_path / "detailed.csv"
+    diagnostic.write_text(
+        "DiagStartDt;DiagStartTs;Fin;EcuNm;EcuFaultNm;KmReadingNum;"
+        "EcuFaultTxt;FrequencyCounter\n"
+        f"{'2026-01-02'};2026-01-02T06:10:11.123Z;{SYNTHETIC_FIN};"
+        "CPC3;P26F100;12345;Pump diagnosis;2\n"
+        f"{'2026-01-02'};2026-01-02T07:10:11.123Z;{SYNTHETIC_FIN};"
+        "CPC3;P26F100;12345;Pump diagnosis;3\n",
+        encoding="utf-8",
+    )
+    parsed = AutoExportParser(
+        "b" * 64, SourceType.SHORT_TEST, {SYNTHETIC_FIN}
+    ).parse(diagnostic)
+    assert parsed.processed_rows == 2
+    assert parsed.invalid_rows == 0
+    assert len(parsed.diagnostics) == 2
+    assert parsed.diagnostics[0].occurred_at == datetime(2026, 1, 2, 6, 10, 11, 123000)
+    assert getattr(parsed.diagnostics[0], "time_precision", "datetime") == "datetime"
+    assert parsed.diagnostics[0].freeze_frame["autoexport_diag_start_ts"] == (
+        "2026-01-02T06:10:11.123Z"
+    )
+    assert parsed.diagnostics[1].occurred_at.hour == 7
+
+    claim = tmp_path / "claim_duplicate.csv"
+    claim.write_text(
+        "Fin;RepairDt;PartLetterCd;KmReadingNum;KmReadingNum;RepairTypeNmGerman\n"
+        f"{SYNTHETIC_FIN};2026-01-05;A123;12340;12350;Tausch\n",
+        encoding="utf-8",
+    )
+    repairs = AutoExportParser(
+        "c" * 64, SourceType.WORKSHOP_HISTORY, {SYNTHETIC_FIN}
+    ).parse(claim)
+    assert len(repairs.repairs) == 1
+    assert repairs.repairs[0].mileage_km is None
+    assert "contradictory KmReadingNum" in repairs.issues[0]
+
+
+def test_tips_source_and_full_vin_history_without_qec_case(tmp_path) -> None:
+    """All FINs are kept in the raw knowledge store, not only QEC-linked FINs."""
+    from ntf_insight.storage.source_knowledge_store import SourceKnowledgeStore
+
+    tips = tmp_path / "tips.csv"
+    tips.write_bytes(_tips_csv())
+    parsed = AutoExportParser(
+        "e" * 64, SourceType.TIPS_CASE, {SYNTHETIC_FIN}
+    ).parse(tips)
+    assert len(parsed.tips_observations) == 1
+    assert parsed.skipped_rows == 1
+    assert parsed.tips_observations[0].complaint == "Kuehlmittelpumpe ohne Durchfluss"
+    assert parsed.tips_observations[0].performed_actions == "Diagnose angefordert"
+
+    source = SourceImportService(tmp_path / "raw", tmp_path / "cases.duckdb")
+    summary = LocalBatchImporter(source).import_paths([tips])
+    store = SourceKnowledgeStore(source.store)
+    assert summary.files_parsed == 1
+    assert summary.tips_unassigned == 2  # both raw TIPS rows await QEC association
+    assert store.count_rows("autoexport_tips") == 2
+    assert store.fin_history_counts("W1TTEST0000000002") == {"autoexport_tips": 1}
+    history = store.list_fin_history("W1TTEST0000000002")
+    assert len(history) == 1
+    assert history[0]["data"]["CaseId"] == "TIPS-002"
+
+
+def test_tips_complaint_only_before_replacement_affects_signature(tmp_path) -> None:
+    from ntf_insight.analysis.case_clustering import signature_for
+
+    qec = tmp_path / "qec.xlsx"
+    qec.write_bytes(_workbook_bytes())
+    tips = tmp_path / "tips.csv"
+    tips.write_bytes(_tips_csv())
+    source = SourceImportService(tmp_path / "raw", tmp_path / "cases.duckdb")
+    LocalBatchImporter(source).import_paths([qec, tips])
+    case = source.store.load_cases()[0]
+    assert len(case.tips_observations) == 1
+    assert "durchfluss" in signature_for(case).complaint_tokens
+    original_faults = signature_for(case).faults
+
+    # A later workshop note may be displayed, but never leaks a diagnosis
+    # conclusion or post-replacement complaint into the similarity score.
+    case.tips_observations[0].occurred_at = datetime(2026, 2, 1)
+    assert "durchfluss" not in signature_for(case).complaint_tokens
+    assert signature_for(case).faults == original_faults
+
+
+def test_fin_history_streaming_paging_and_atomic_limit(tmp_path) -> None:
+    from ntf_insight.storage.duckdb_store import DuckDBStore
+    from ntf_insight.storage.source_knowledge_store import SourceKnowledgeStore
+
+    store = SourceKnowledgeStore(DuckDBStore(tmp_path / "records.duckdb"))
+    records = (
+        {
+            "category": "autoexport_dtc",
+            "fin": SYNTHETIC_FIN,
+            "reference": "P26F100",
+            "label": f"2026-02-{(index % 28) + 1:02d}T10:10:00Z",
+            "source_location": f"csv:row:{index + 1}",
+            "data": {
+                "DiagStartTs": f"2026-02-{(index % 28) + 1:02d}T10:10:00Z",
+                "EcuNm": "CPC3", "EcuFaultNm": "P26F100",
+            },
+        }
+        for index in range(230)
+    )
+    assert store.save_records("a" * 64, "autoexport_rows", records, maximum_rows=500) == 230
+    assert store.fin_history_counts(SYNTHETIC_FIN) == {"autoexport_dtc": 230}
+    assert len(store.list_fin_history(SYNTHETIC_FIN, limit=200)) == 200
+    assert len(store.list_fin_history(SYNTHETIC_FIN, limit=200, offset=200)) == 30
+    assert store.list_fin_history(SYNTHETIC_FIN, limit=1)[0]["label"].startswith("2026-02-28")
+
+    with pytest.raises(ValueError, match="mehr Datenzeilen"):
+        store.save_records(
+            "a" * 64, "autoexport_rows",
+            (
+                {
+                    "category": "autoexport_dtc", "fin": SYNTHETIC_FIN,
+                    "data": {}, "source_location": str(i),
+                }
+                for i in range(6)
+            ),
+            maximum_rows=5,
+        )
+    # Atomic rollback preserves all existing historic records.
+    assert store.fin_history_counts(SYNTHETIC_FIN) == {"autoexport_dtc": 230}
+
+
+def test_large_archive_rows_can_exceed_original_250k_limit_in_import(tmp_path, monkeypatch) -> None:
+    """Verify configured capacity without storing 250k synthetic rows in CI."""
+    from ntf_insight.storage.source_knowledge_store import SourceKnowledgeStore
+
+    raw = tmp_path / "diag.csv"
+    raw.write_bytes(_autoexport_csv())
+    seen = []
+    real_save = SourceKnowledgeStore.save_records
+
+    def recording(self, source_sha, source_kind, records, **kwargs):
+        seen.append(kwargs.get("maximum_rows"))
+        return real_save(self, source_sha, source_kind, records, **kwargs)
+
+    monkeypatch.setattr(SourceKnowledgeStore, "save_records", recording)
+    source = SourceImportService(tmp_path / "raw", tmp_path / "cases.duckdb")
+    result = LocalBatchImporter(source).import_paths([raw])
+    assert result.reference_rows == 2
+    assert seen == [1_000_000]
+
+
+
+def test_failed_raw_history_write_is_not_reported_as_success(tmp_path, monkeypatch) -> None:
+    """Do not silently drop a large DTC CSV from indexed source knowledge."""
+    from ntf_insight.storage.source_knowledge_store import SourceKnowledgeStore
+
+    def fail(self, *args, **kwargs):
+        raise ValueError("Synthetische Kapazitätsgrenze")
+
+    monkeypatch.setattr(SourceKnowledgeStore, "save_records", fail)
+    diagnostic = tmp_path / "diagnostic.csv"
+    diagnostic.write_bytes(_autoexport_csv())
+    source = SourceImportService(tmp_path / "raw", tmp_path / "cases.duckdb")
+    summary = LocalBatchImporter(source).import_paths([diagnostic])
+
+    assert summary.files_pending == 1
+    assert summary.files_parsed == 0
+    assert summary.reference_rows == 0
+    assert summary.events_linked == 0
+    assert any("nicht vollstaendig" in issue for issue in summary.issues)
+    assert len(source.store.load_artifacts()) == 1
+
+
+
+def test_qec_import_relinks_older_autoexport_sources_without_reupload(tmp_path) -> None:
+    """Upload order may not cause historical DTCs and TIPS to disappear."""
+    from ntf_insight.storage.source_knowledge_store import SourceKnowledgeStore
+
+    diagnostics = tmp_path / "diagnostics.csv"
+    diagnostics.write_bytes(_autoexport_csv())
+    tips = tmp_path / "tips.csv"
+    tips.write_bytes(_tips_csv())
+    qec = tmp_path / "qec.xlsx"
+    qec.write_bytes(_workbook_bytes())
+
+    service = SourceImportService(tmp_path / "raw", tmp_path / "cases.duckdb")
+    importer = LocalBatchImporter(service)
+    first = importer.import_paths([diagnostics, tips])
+    assert first.cases_created == 0
+    assert first.events_linked == 0
+    assert service.store.load_cases() == []
+
+    history = SourceKnowledgeStore(service.store)
+    assert history.fin_history_counts(SYNTHETIC_FIN) == {
+        "autoexport_dtc": 2, "autoexport_tips": 1,
+    }
+
+    # A newly supplied QEC case automatically replays old archived AutoExport
+    # CSVs. It does not re-index the already complete original row history.
+    second = importer.import_paths([qec])
+    assert second.cases_created == 1
+    assert second.tips_linked == 1
+    assert second.tips_unassigned == 1  # other FIN still has no QEC case
+    assert second.reference_rows >= 1  # QEC original sheets, not replayed CSVs
+    case = service.store.load_cases()[0]
+    assert len(case.diagnostics) == 2
+    assert len(case.tips_observations) == 1
+    assert history.fin_history_counts(SYNTHETIC_FIN) == {
+        "autoexport_dtc": 2, "autoexport_tips": 1,
+    }
+
+    importer.import_paths([qec])
+    case = service.store.load_cases()[0]
+    assert len(case.diagnostics) == 2
+    assert len(case.tips_observations) == 1

@@ -56,6 +56,11 @@ class ImportSummary:
     cases_created: int = 0
     events_linked: int = 0
     events_unassigned: int = 0
+    rows_scanned: int = 0
+    rows_skipped: int = 0
+    rows_invalid: int = 0
+    tips_linked: int = 0
+    tips_unassigned: int = 0
     duplicates: int = 0
     quicktests_saved: int = 0
     quicktests_without_case: int = 0
@@ -260,7 +265,8 @@ class LocalBatchImporter:
                     # manually corrected events take precedence.
                     for attr in (
                         "diagnostic_sessions", "diagnostics", "ecu_states",
-                        "repairs", "replacements", "software_events", "supplier_findings",
+                        "repairs", "tips_observations", "replacements",
+                        "software_events", "supplier_findings",
                     ):
                         ids = {event.event_id for event in getattr(prior, attr)}
                         for event in getattr(case, attr):
@@ -278,6 +284,35 @@ class LocalBatchImporter:
                     ):
                         prior.qec_ssl_end_finding = case.qec_ssl_end_finding
                         prior.qec_ssl_end_date = getattr(case, "qec_ssl_end_date", None)
+
+            # Import order must not decide whether historical AutoExport data
+            # reaches new QEC cases: revisit already archived CSVs when a new
+            # investigated case was created. Original raw rows are retained;
+            # never index the complete 423k-row source a second time merely
+            # to attach matching FIN events to a newly added QEC case.
+            replay_shas: set[str] = set()
+            indexed_raw_shas = {
+                doc["source_sha256"]
+                for doc in self.knowledge.documents()
+                if (
+                    doc["source_kind"] == "autoexport_rows"
+                    and doc["metadata"].get("raw_schema_version") == 2
+                )
+            }
+            if summary.cases_created:
+                current_shas = {artifact.sha256 for artifact in artifacts}
+                for archived in previously_archived_items:
+                    if (
+                        archived.sha256 not in current_shas
+                        and archived.source_type in {
+                            SourceType.SHORT_TEST,
+                            SourceType.WORKSHOP_HISTORY,
+                            SourceType.TIPS_CASE,
+                        }
+                        and Path(archived.original_name).suffix.casefold() == ".csv"
+                    ):
+                        others.append(archived)
+                        replay_shas.add(archived.sha256)
 
             case_fin: dict[str, list[NTFCase]] = defaultdict(list)
             for case in existing.values():
@@ -316,29 +351,48 @@ class LocalBatchImporter:
                     continue
 
                 if artifact.source_type in {
-                    SourceType.SHORT_TEST, SourceType.WORKSHOP_HISTORY
+                    SourceType.SHORT_TEST, SourceType.WORKSHOP_HISTORY,
+                    SourceType.TIPS_CASE,
                 } and suffix == ".csv":
-                    # Store all export rows, including vehicles for which no
-                    # QEC case exists yet. Duplicate source columns are kept.
-                    try:
-                        rows = iter_autoexport_rows(
-                            Path(artifact.archived_path)
-                        )
-                        total = self.knowledge.save_records(
-                            artifact.sha256, "autoexport_rows", rows,
-                            metadata={
-                                "fin_independent": True,
-                                "raw_fields_preserved": True,
-                            },
-                        )
-                        summary.reference_rows += total
-                        summary.reference_sources += 1
-                    except Exception as exc:
-                        summary.issues.append(
-                            f"AutoExport-Rohzeilen: {type(exc).__name__}"
-                        )
+                    # Store all FINs, not only those with QEC. When QEC
+                    # is uploaded later, previously indexed AutoExport CSVs
+                    # are re-parsed for case association WITHOUT deleting and
+                    # re-inserting the large immutable raw history.
+                    if not (
+                        artifact.sha256 in replay_shas
+                        and artifact.sha256 in indexed_raw_shas
+                    ):
+                        try:
+                            rows = iter_autoexport_rows(
+                                Path(artifact.archived_path)
+                            )
+                            total = self.knowledge.save_records(
+                                artifact.sha256, "autoexport_rows", rows,
+                                metadata={
+                                    "fin_independent": True,
+                                    "raw_fields_preserved": True,
+                                    "source_type": str(artifact.source_type),
+                                    "raw_schema_version": 2,
+                                },
+                                # Handle the actual 423k-row diagnosis export.
+                                maximum_rows=1_000_000,
+                            )
+                            summary.reference_rows += total
+                            summary.reference_sources += 1
+                        except Exception as exc:
+                            # No false "parsed" state after incomplete archival.
+                            summary.files_pending += 1
+                            summary.issues.append(
+                                "AutoExport-Rohzeilen konnten nicht vollstaendig "
+                                f"gespeichert werden: {type(exc).__name__}. "
+                                "Quelle bleibt archiviert und muss neu verarbeitet werden."
+                            )
+                            continue
                 parser = None
-                if artifact.source_type in {SourceType.SHORT_TEST, SourceType.WORKSHOP_HISTORY} and suffix == ".csv":
+                if artifact.source_type in {
+                    SourceType.SHORT_TEST, SourceType.WORKSHOP_HISTORY,
+                    SourceType.TIPS_CASE,
+                } and suffix == ".csv":
                     parser = AutoExportParser(
                         artifact.sha256, artifact.source_type, allowed_fins
                     )
@@ -356,6 +410,9 @@ class LocalBatchImporter:
                     continue
                 summary.files_parsed += 1
                 summary.issues.extend(result.issues)
+                summary.rows_scanned += result.processed_rows
+                summary.rows_skipped += result.skipped_rows
+                summary.rows_invalid += result.invalid_rows
                 if isinstance(parser, QuickTestPdfParser):
                     if result.quicktest_report is None:
                         summary.issues.append(
@@ -380,11 +437,14 @@ class LocalBatchImporter:
                     ("diagnostics", document.diagnostics),
                     ("ecu_states", document.ecu_states),
                     ("repairs", document.repairs),
+                    ("tips_observations", document.tips_observations),
                 ):
                     for event in events:
                         case = self._case_for_event(event, case_fin, attr)
                         if case is None:
                             summary.events_unassigned += 1
+                            if attr == "tips_observations":
+                                summary.tips_unassigned += 1
                             continue
                         existing_ids = {
                             current.event_id for current in getattr(case, attr)
@@ -393,6 +453,8 @@ class LocalBatchImporter:
                             continue
                         getattr(case, attr).append(event)
                         summary.events_linked += 1
+                        if attr == "tips_observations":
+                            summary.tips_linked += 1
 
             # Associate FIN-scoped QuickTests with suitable cases as a *derived
             # projection*. This also picks up PDFs uploaded before their QEC case.
@@ -421,6 +483,17 @@ class LocalBatchImporter:
                             continue
                         getattr(case, attr).append(event)
                         summary.events_linked += 1
+
+            # Count all independent raw TIPS records without a QEC association,
+            # including FINs excluded from the normalized case-event parser.
+            # This is a persistent coverage figure, not just this file batch.
+            raw_tips = self.knowledge.count_rows("autoexport_tips")
+            linked_tips_ids = {
+                event.event_id
+                for case in existing.values()
+                for event in case.tips_observations
+            }
+            summary.tips_unassigned = max(0, raw_tips - len(linked_tips_ids))
 
             progress("Verknüpfte Fälle dauerhaft speichern …")
             self.sources.store.save_cases(list(existing.values()))

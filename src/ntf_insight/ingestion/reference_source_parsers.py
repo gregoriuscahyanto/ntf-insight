@@ -319,9 +319,13 @@ def iter_autoexport_rows(path: Path) -> Iterator[dict]:
             values += [""] * max(0, len(names) - len(values))
             row = dict(zip(names, values))
             fin = row.get("Fin") or None
-            when = row.get("DiagStartDt") or row.get("RepairDt") or None
+            when = (
+                row.get("DiagStartTs") or row.get("DiagStartDt")
+                or row.get("RepairDt") or row.get("CreationDate") or None
+            )
             kind = (
-                "autoexport_dtc" if "EcuFaultNm" in row
+                "autoexport_tips" if "CaseId" in row and "CreationDate" in row
+                else "autoexport_dtc" if "EcuFaultNm" in row
                 else "autoexport_repair" if "RepairDt" in row
                 else "autoexport_aggregate" if names == ["C1"]
                 else "autoexport_other"
@@ -331,7 +335,10 @@ def iter_autoexport_rows(path: Path) -> Iterator[dict]:
                 "record_number": index,
                 "source_location": f"csv:row:{index}",
                 "fin": fin,
-                "reference": row.get("EcuFaultNm") or row.get("CntGukSid") or None,
+                "reference": (
+                    row.get("EcuFaultNm") or row.get("CaseId")
+                    or row.get("CntGukSid") or None
+                ),
                 "label": when or "",
                 "data": row,
             }

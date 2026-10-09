@@ -16,6 +16,7 @@ from ntf_insight.domain.events import (
     ECUStateObservation,
     PartReplacement,
     RepairEvent,
+    TipsCaseObservation,
     SoftwareEvent,
     SupplierFinding,
 )
@@ -29,6 +30,7 @@ TimelineKind = Literal[
     "replacement",
     "replacement_candidate",
     "repair",
+    "tips",
     "software",
     "supplier",
 ]
@@ -38,6 +40,7 @@ TimelineEvent = (
     | ECUStateObservation
     | PartReplacement
     | RepairEvent
+    | TipsCaseObservation
     | SoftwareEvent
     | SupplierFinding
 )
@@ -220,6 +223,29 @@ def build_timeline(
                 event=event,
             )
         )
+
+    for event in case.tips_observations:
+        # CreationDate is the TIPS record date, not a proven repair date.
+        detail = " · ".join(
+            value for value in (
+                ("Kunde: " + event.complaint[:350]) if event.complaint else None,
+                ("Werkstattbefund: " + event.workshop_findings[:350])
+                if event.workshop_findings else None,
+                ("Maßnahmen (ohne Einzeldatum): " + event.performed_actions[:350])
+                if event.performed_actions else None,
+            ) if value
+        )
+        entries.append(TimelineEntry(
+            occurred_at=event.occurred_at,
+            mileage_km=event.mileage_km,
+            kind="tips",
+            title="TIPS-Vorgang (Erstellungsdatum)" + (
+                f" · {event.tips_case_id}" if event.tips_case_id else ""
+            ),
+            detail=detail or event.symptom or "TIPS-Quellenmeldung",
+            source_ref=event.source_ref,
+            event=event,
+        ))
 
     for event in case.software_events:
         entries.append(

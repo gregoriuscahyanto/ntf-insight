@@ -48,6 +48,7 @@ from ntf_insight.app.widgets.event_time_plot import EventTimePlot
 from ntf_insight.app.widgets.quicktest_browser import QuickTestBrowser
 from ntf_insight.app.widgets.case_scatter_plot import CaseScatterPanel
 from ntf_insight.ingestion.manual_entry import ManualCaseService, ManualEntryError
+from ntf_insight.ingestion.real_source_parsers import canonical_fin
 from ntf_insight.domain.events import PartReplacement
 from ntf_insight.reporting.markdown import save_case_report
 from ntf_insight.storage.reference_repositories import ReferenceRepository
@@ -101,6 +102,10 @@ class CasePage(QWidget):
         self.scatter_panel = CaseScatterPanel(
             self.real_cases,
             cluster_diagnostic_cases(self.real_cases) if self.real_cases else None,
+            population_metrics=(
+                self.source_knowledge.autoexport_population()
+                if self.source_knowledge is not None else {}
+            ),
         )
         self.detail_tabs.addTab(self.scatter_panel, "2D-Streudiagramm")
         self.scatter_panel.case_focused.connect(
@@ -446,6 +451,73 @@ class CasePage(QWidget):
         header.setStretchLastSection(True)
         layout.addWidget(self.timeline, 1)
 
+        layout.addWidget(QLabel(
+            "AutoExport-Gesamthistorie nach FIN (auch ohne QEC-Fall)",
+            objectName="CardTitle",
+        ))
+        self.autoexport_history_note = QLabel(
+            "Rohdaten aller bekannten DTC-, Werkstatt- und TIPS-Quellen. "
+            "Sie sind keine zusätzlichen Schadteilfälle und keine bestätigten Ursachen.",
+            objectName="PageSubtitle",
+        )
+        self.autoexport_history_note.setWordWrap(True)
+        layout.addWidget(self.autoexport_history_note)
+
+        fin_query = QHBoxLayout()
+        fin_query.addWidget(QLabel("FIN:"))
+        self.autoexport_fin_lookup = QLineEdit()
+        self.autoexport_fin_lookup.setPlaceholderText(
+            "17-stellige FIN eingeben; kein QEC-Fall erforderlich"
+        )
+        self.autoexport_fin_lookup.setMaximumWidth(340)
+        fin_query.addWidget(self.autoexport_fin_lookup)
+        self.autoexport_history_button = QPushButton("FIN-Historie suchen")
+        self.autoexport_history_button.clicked.connect(
+            lambda: self._load_autoexport_history(reset=True)
+        )
+        self.autoexport_fin_lookup.returnPressed.connect(
+            lambda: self._load_autoexport_history(reset=True)
+        )
+        fin_query.addWidget(self.autoexport_history_button)
+        fin_query.addStretch(1)
+        layout.addLayout(fin_query)
+
+        self.autoexport_history_model = SimpleTableModel((
+            "Quellzeit (UTC falls Z)", "Typ", "DTC / Fallreferenz",
+            "km", "Originaldiagnose / Eintrag", "Quellfundstelle",
+        ))
+        self.autoexport_history_table = QTableView()
+        self.autoexport_history_table.setModel(self.autoexport_history_model)
+        self.autoexport_history_table.setMinimumHeight(175)
+        self.autoexport_history_table.setMaximumHeight(260)
+        self.autoexport_history_table.setAlternatingRowColors(True)
+        self.autoexport_history_table.setSelectionBehavior(
+            QAbstractItemView.SelectionBehavior.SelectRows
+        )
+        self.autoexport_history_table.setEditTriggers(
+            QAbstractItemView.EditTrigger.NoEditTriggers
+        )
+        self.autoexport_history_table.verticalHeader().setVisible(False)
+        self.autoexport_history_table.horizontalHeader().setSectionResizeMode(
+            QHeaderView.ResizeMode.ResizeToContents
+        )
+        self.autoexport_history_table.horizontalHeader().setStretchLastSection(True)
+        layout.addWidget(self.autoexport_history_table)
+
+        history_footer = QHBoxLayout()
+        self.autoexport_history_count = QLabel(objectName="PageSubtitle")
+        self.autoexport_history_count.setWordWrap(True)
+        history_footer.addWidget(self.autoexport_history_count, 1)
+        self.autoexport_history_more = QPushButton("Weitere 200")
+        self.autoexport_history_more.clicked.connect(
+            lambda: self._load_autoexport_history(reset=False)
+        )
+        history_footer.addWidget(self.autoexport_history_more)
+        layout.addLayout(history_footer)
+        self._autoexport_history_offset = 0
+        self.autoexport_history_button.setEnabled(self.source_knowledge is not None)
+        self.autoexport_history_more.setEnabled(False)
+
         if self.quicktest_browser is not None:
             self.quicktest_browser.fin_selector.currentIndexChanged.connect(
                 lambda _index: self._on_quicktest_fin_changed()
@@ -516,6 +588,98 @@ class CasePage(QWidget):
         self.time_plot.set_entries([])
         self.version_change_model.set_rows([])
         self.version_change_summary.setText("Keine FIN / kein Fall ausgewählt.")
+        self.autoexport_history_model.set_rows([])
+        self.autoexport_history_note.setText("Keine FIN ausgewählt.")
+        self.autoexport_history_count.setText("—")
+        self.autoexport_history_more.setEnabled(False)
+
+    def _load_autoexport_history(self, *, reset: bool = False) -> None:
+        """Read bounded FIN-wide raw observations, never infer an NTF case."""
+        if reset:
+            self._autoexport_history_offset = 0
+        if self.source_knowledge is None:
+            self.autoexport_history_note.setText(
+                "Keine lokale AutoExport-Datenbank angeschlossen."
+            )
+            self.autoexport_history_model.set_rows([])
+            self.autoexport_history_more.setEnabled(False)
+            return
+        fin = canonical_fin(self.autoexport_fin_lookup.text())
+        if fin is None:
+            self.autoexport_history_note.setText(
+                "Bitte eine gültige 17-stellige FIN eingeben."
+            )
+            self.autoexport_history_model.set_rows([])
+            self.autoexport_history_more.setEnabled(False)
+            self.autoexport_history_count.setText("Keine FIN ausgewählt.")
+            return
+        counts = self.source_knowledge.fin_history_counts(fin)
+        total = sum(counts.values())
+        entries = self.source_knowledge.list_fin_history(
+            fin, limit=200, offset=self._autoexport_history_offset
+        )
+        rows = []
+        for item in entries:
+            data = item["data"]
+            kind = item["category"]
+            if kind == "autoexport_dtc":
+                title = (data.get("EcuNm") or "") + ":" + (
+                    data.get("EcuFaultNm") or ""
+                )
+                detail = (data.get("EcuFaultTxt") or "") + (
+                    " · Status: " + str(data["EcuFaultStateTxt"])
+                    if data.get("EcuFaultStateTxt") else ""
+                ) + (
+                    " · Häufigkeit: " + str(data["FrequencyCounter"])
+                    if data.get("FrequencyCounter") else ""
+                )
+            elif kind == "autoexport_tips":
+                title = "TIPS " + (data.get("CaseId") or "ohne ID")
+                detail = data.get(
+                    "InitialWorkshopMessageCustomerComplaint"
+                ) or data.get("InitialWorkshopMessageWorkshopFindings") or ""
+            else:
+                title = data.get("PartLetterCd") or "Werkstatt"
+                detail = " · ".join(
+                    str(s) for s in (
+                        data.get("RepairTypeNmGerman"),
+                        data.get("ComplDsc"),
+                    ) if s
+                )
+            rows.append((
+                item["label"] or "Uhrzeit unbekannt",
+                {"autoexport_dtc": "DTC", "autoexport_tips": "TIPS",
+                 "autoexport_repair": "Werkstatt"}.get(kind, kind),
+                title,
+                data.get("KmReadingNum") or "—",
+                (detail[:220] + "…" if len(detail) > 220 else detail) or "—",
+                item["source_location"] + " · " + item["source_sha256"][:10],
+            ))
+        if reset:
+            self.autoexport_history_model.set_rows(rows)
+        else:
+            # Preserve the first rows and append the next source page.
+            self.autoexport_history_model.set_rows([
+                *self.autoexport_history_model.rows, *rows
+            ])
+        self._autoexport_history_offset += len(entries)
+        self.autoexport_history_more.setEnabled(
+            self._autoexport_history_offset < total
+        )
+        self.autoexport_history_note.setText(
+            "FIN " + fin + ": "
+            f"{counts.get('autoexport_dtc', 0)} historische DTC-Rohzeilen, "
+            f"{counts.get('autoexport_repair', 0)} Werkstattzeilen, "
+            f"{counts.get('autoexport_tips', 0)} TIPS-Vorgänge. "
+            "Quelleinträge bleiben vollständig und einzeln erhalten; "
+            "Datum/Uhrzeit im Export werden nicht als lokale Uhrzeit umgerechnet. "
+            "Gleicher DTC-Code in mehreren Zeilen bedeutet nicht automatisch "
+            "eine neue Ursache oder einen neuen NTF-Fall."
+        )
+        self.autoexport_history_count.setText(
+            f"{self._autoexport_history_offset} / {total} Rohzeilen geladen "
+            "(Details aller Quellfelder unter »Quellenwissen«)."
+        )
 
     def _display_version_changes(self, case) -> None:
         changes = detect_ecu_version_changes(case.ecu_states)
@@ -610,6 +774,10 @@ class CasePage(QWidget):
                 self._syncing_quicktest_fin = False
 
         self._display_version_changes(case)
+        # Case change refreshes the corresponding VIN-wide history; an
+        # independent direct FIN lookup remains possible without a case.
+        self.autoexport_fin_lookup.setText(case.vin)
+        self._load_autoexport_history(reset=True)
 
         if is_preview:
             entries = build_timeline(case)

@@ -63,6 +63,16 @@ class ECUStateObservation(CaseEvent):
     coding: str | None = None
 
 
+class TipsCaseObservation(CaseEvent):
+    """Original TIPS complaint and workshop context; not a confirmed repair outcome."""
+
+    tips_case_id: str | None = None
+    complaint: str | None = None
+    workshop_findings: str | None = None
+    performed_actions: str | None = None
+    symptom: str | None = None
+
+
 class RepairEvent(CaseEvent):
     """Workshop/customer event relevant to the NTF investigation."""
 

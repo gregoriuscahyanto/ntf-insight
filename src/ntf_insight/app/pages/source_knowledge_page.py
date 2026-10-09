@@ -33,6 +33,7 @@ class SourceKnowledgePage(QWidget):
         ("QEC · alle Tabellenzeilen", "qec_row"),
         ("AutoExport · DTC-Export", "autoexport_dtc"),
         ("AutoExport · Werkstatt / Claim", "autoexport_repair"),
+        ("AutoExport · TIPS-Fall", "autoexport_tips"),
         ("AutoExport · Aggregat", "autoexport_aggregate"),
         ("AutoExport · andere", "autoexport_other"),
         ("Lieferanten-Analysebericht · Originaltext", "supplier_analysis_page"),
@@ -166,7 +167,7 @@ class SourceKnowledgePage(QWidget):
             f"CDD: {totals.get('candela_services', 0)} Services · "
             f"Part History: {totals.get('part_history', 0)} Änderungen · "
             f"QEC: {totals.get('qec_details', 0)} Tabellenzeilen · "
-            f"AutoExport: {totals.get('autoexport_rows', 0)} Datenzeilen · "
+            f"AutoExport (DTC/Werkstatt/TIPS): {totals.get('autoexport_rows', 0)} Datenzeilen · "
             f"Aggregate: {totals.get('autoexport_summary', 0)} · "
             f"Analysebericht-Seiten: {totals.get('supplier_analysis_document', 0)}"
         )
