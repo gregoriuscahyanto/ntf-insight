@@ -245,7 +245,7 @@ Set `NTF_INSIGHT_DATA_DIR` to override that location. If neither real cases nor 
 
 ## Desktop views
 
-The current prototype includes Overview, Data Sources, a combined FIN/Case workspace, DTC Explorer, **Case clusters & DTC-Cluster visualization**, Suppliers and Data Quality. The FIN/Case workspace treats the FIN + case combination as the analysis unit and includes a chronological time plot for DTCs, diagnostic sessions, ECU states, replacements, software, workshop and supplier events. Data Sources supports multiple files and ZIP packages with local Drag & Drop, automatic format detection and asynchronous ingestion into DuckDB. The Case view can export a deterministic Markdown analysis report.
+The current prototype includes Overview, Data Sources, the unified **FIN / Case / 2D scatter / QuickTest** workspace, DTC Explorer, Suppliers and Data Quality. The FIN/Case workspace treats the FIN + case combination as the analysis unit and includes a chronological time plot for DTCs, diagnostic sessions, ECU states, replacements, software, workshop and supplier events. Data Sources supports multiple files and ZIP packages with local Drag & Drop, automatic format detection and asynchronous ingestion into DuckDB. The Case view can export a deterministic Markdown analysis report.
 
 ## Echte Quelldateien lokal laden
 
@@ -370,31 +370,39 @@ späteren QuickTest-Tag**. Der Änderungszeitpunkt bleibt unbekannt.
 
 [Erkennung, Anzeige und fachliche Grenzen](docs/ecu-stand-vergleich.md)
 
-## Ähnliche FIN-/NTF-Fälle finden
+## Ein gemeinsamer Arbeitsbereich: Streudiagramm, FIN/Fallanalyse, QuickTests
 
-Unter **Fälle / FIN → FIN / Fallanalyse** einen tatsächlichen
-QEC-/NTF-Fall auswählen und **„Ähnliche Fälle finden“** anklicken.
-NTF Insight wechselt zu **Cluster & Fälle → Fall-Cluster**
-und zeigt den gewählten Fall als Vergleichsfokus.
+Unter **Fälle / FIN** gibt es jetzt genau drei zusammengehörige Register:
+**2D-Streudiagramm**, **FIN / Fallanalyse** und **QuickTests nach FIN**.
+Eine gemeinsame Fall-/FIN-Auswahl verbindet die Informationen.
+Punkt- und Tabellenklicks im Scatter wählen denselben echten QEC-/NTF-Fall
+wie die Fallanalyse; der QuickTest-Reiter übernimmt dessen FIN.
+QuickTest-FINs ohne Schadteilfall bleiben als eigene, read-only
+FIN-Vorschau sichtbar und erscheinen **nicht als zusätzliche Scatter-Punkte**.
 
-Dort siehst du neben Ähnlichkeitsmatrix und Rangliste auch
-**Cluster-Steckbriefe** mit einem repräsentativen Fall, der
-schwächsten Ähnlichkeit innerhalb des Clusters und den
-verfügbaren Vorher-/Nachtests. Im Vergleich werden **gemeinsame
-und abweichende ECU:DTC-Kombinationen**, Dokumentationsgrad,
-historische Maßnahmen und der beobachtete Nachtest getrennt gezeigt.
-**„Vergleichsfall öffnen“** führt zurück zur vollständigen Analyse.
+Das **2D-Streudiagramm** enthält unmittelbar unter dem Plot die
+Berechnungsgrundlage (sechs Gruppen, Gewichte, SVD-Transformation),
+die Anzahl der Matrixspalten, erklärte Varianz, wichtigste
+Achsenladungen, alle Fallkoordinaten, sowie **tatsächliche
+gewichtete Jaccard-Paarähnlichkeiten** mit Merkmalsabdeckung,
+Gruppenwerten und vollständig nachvollziehbarer Summenformel.
 
-Ähnlichkeit beruht auf den Diagnosemerkmalen **vor** dem
-untersuchten Bauteiltausch; Lieferantenbefunde und Reparaturerfolge
-beeinflussen den Score nicht. Eine ähnliche Reparatur ist nur
-ein **fachlicher Prüfkandidat**, keine bestätigte Lösung.
+Die konservative Complete-Link-Clusterung bleibt unverändert für
+die Farben und Zuordnungen erhalten. Die früheren eigenständigen
+Oberflächen **Fall-Cluster**, **DTC-Netzwerk** und
+**Paarvergleich (Basis)** entfallen aus der Navigation.
+Die SVD-Punktabstände sind keine Ursachenwahrscheinlichkeiten
+und keine Jaccard-Werte. QEC-/SSL-Endbefundtexte werden nur
+**nachgelagert** eingeblendet, nie als Diagnosemerkmale verwendet.
 
-**Hinweis:** Mehrere QuickTests derselben FIN erzeugen
-**keine erfundenen NTF-Fälle**. Für die Fall-Clusterung werden
-mindestens zwei real angelegte oder importierte Fälle benötigt.
+**QuickTest und AutoExport** können dieselbe DTC-Beobachtung enthalten:
+die Originalquellen bleiben nachvollziehbar erhalten, und
+DTC-Ansichten konsolidieren eindeutige Querquellenüberlappungen
+vorsichtig. Die Scatter-/Cluster-Signatur verwendet ohnehin
+je Fall einzigartige ECU:DTC-Merkmale.
 
-[Methodik und nächste Schritte der Fallclusterung](docs/case-clustering.md)
+[Bedienung und komplette numerische Methodik](docs/fin-workspace.md) ·
+[Clustering-Grundlagen und fachliche Grenzen](docs/case-clustering.md)
 
 ## Manuelle Fallerfassung
 
