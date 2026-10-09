@@ -414,6 +414,8 @@ Unter **Cluster & Fälle → Fall-Cluster** vergleicht NTF Insight jetzt FIN/Fal
 
 **QuickTest und AutoExport:** Überlappende ECU:DTC-Beobachtungen werden bei identischer FIN, Datum und km (sowie Uhrzeit, soweit AutoExport sie enthält) in Ereigniszahlen und Timeline konservativ nur einmal gezählt. Die Originalzeilen und beide Quellenbelege bleiben erhalten; bei unklarer Zuordnung wird nicht zusammengefasst. Der Fall-Cluster-Score wurde bereits zuvor aus einzigartigen ECU:DTC-Mengen berechnet.
 
+**QEC / SSL-Endbefunde:** Der originale Endbefund ist separat in Fallansicht, Clustervergleich und Cluster-Steckbrief sichtbar; er beeinflusst weder Score noch SVD. Bei fehlendem Befundabschlussdatum wird kein Ereignis mit künstlich angenommenem Tauschdatum mehr erzeugt.
+
 **PCA wird hierfür nicht als Clusteringverfahren verwendet.** Die aktuelle Grundlage sind nachvollziehbare, gewichtete Jaccard-Ähnlichkeiten für DTCs, ECUs und weitere verfügbare Vorher-Merkmale. Post-Tausch-Rekurrenz, Lieferant und Reparaturmaßnahme fließen nicht in den diagnostischen Score ein. Ein gleiches Fehlerbild garantiert keine gleiche Abhilfe.
 
 Methodik, aktuelle Gewichte, Grenzen und geplanter Ausbau zu HDBSCAN/UMAP: [docs/case-clustering.md](docs/case-clustering.md).
