@@ -542,8 +542,8 @@ class SourcesPage(QWidget):
             (
                 "Lieferantenbefunde",
                 "Rückläuferbefund / NTF-Evidenz",
-                "Schnittstelle bereit; konkretes Format ausstehend",
-                current(SourceType.SUPPLIER_FINDING, "Keine Originaldatei"),
+                "PDF-Analysebericht: lokaler Seitentext, kein automatisches NTF",
+                f"{knowledge_counts.get('supplier_analysis_document', 0)} Seiten in DuckDB",
             ),
             (
                 "SMR-D",
