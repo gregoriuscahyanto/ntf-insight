@@ -265,3 +265,45 @@ def test_zip_rejects_windows_unsafe_member_names(tmp_path, member_name) -> None:
     source = SourceImportService(tmp_path / "raw", tmp_path / "cases.duckdb")
     with pytest.raises(ValueError, match="ZIP"):
         LocalBatchImporter(source).import_paths([path])
+
+
+
+def test_quicktest_and_autoexport_same_reading_counts_once_but_keeps_sources(
+    tmp_path,
+) -> None:
+    """One QEC case, both uploads, and repeat import keep independent evidence."""
+    from ntf_insight.analysis.diagnostic_observations import unique_diagnostic_observations
+    from ntf_insight.analysis.dtc_clusters import build_dtc_network
+    from ntf_insight.analysis.timeline import build_timeline
+
+    qec = tmp_path / "qec.xlsx"
+    qec.write_bytes(_workbook_bytes())
+    quicktest = tmp_path / "quicktest.pdf"
+    quicktest.write_bytes(_quicktest_bytes("2026-01-03 12:00:00", "P26F100"))
+    auto = tmp_path / "diagnostics.csv"
+    auto.write_bytes(
+        _autoexport_csv()
+        .replace(b"2026-01-02", b"2026-01-03")
+        .replace(b"12000", b"12345")
+    )
+    source = SourceImportService(tmp_path / "raw", tmp_path / "cases.duckdb")
+    importer = LocalBatchImporter(source)
+
+    importer.import_paths([qec, quicktest, auto])
+    saved = source.store.load_cases()
+    assert len(saved) == 1
+    case = saved[0]
+    assert len(case.diagnostics) == 3  # two AutoExport rows + one QuickTest row
+    observations = unique_diagnostic_observations(case.diagnostics)
+    assert len(observations) == 2
+    combined = next(o for o in observations if o.event.dtc_code == "P26F100")
+    assert combined.has_cross_source_confirmation
+    assert len(combined.source_refs) == 2
+    assert len([item for item in build_timeline(case) if item.kind == "diagnostic"]) == 2
+    nodes = build_dtc_network([case]).nodes
+    assert next(node for node in nodes if node.key == ("CPC3", "P26F100")).event_count == 1
+
+    importer.import_paths([qec, quicktest, auto])
+    repeated = source.store.load_cases()[0]
+    assert len(repeated.diagnostics) == 3
+    assert len(unique_diagnostic_observations(repeated.diagnostics)) == 2
