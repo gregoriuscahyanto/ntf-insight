@@ -63,6 +63,7 @@ class TimelineTableModel(QAbstractTableModel):
             "replacement": "Tauschanker (QEC/manuell)",
             "replacement_candidate": "AutoExport-Reparaturkandidat",
             "repair": "Werkstatt",
+            "tips": "TIPS-Meldung (Quelle)",
             "software": "Software",
             "supplier": "Lieferantenbefund",
         }
