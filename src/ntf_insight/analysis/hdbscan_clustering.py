@@ -296,11 +296,14 @@ def cluster_hdbscan_cases(
         pair_median = float(np.median(offdiag)) if offdiag else 1.0
         pair_p10 = float(np.percentile(offdiag, 10)) if offdiag else 1.0
         weak_pair_count = sum(value < 0.45 for value in offdiag)
-        core = set(sigs[group_ids[0]].faults)
+        # Report the precise DTC features that entered this model run.
+        # Unsuppressed raw source frequencies remain visible separately
+        # in the diagnostic evidence audit.
+        core = set(screened_signatures[group_ids[0]].faults)
         frequencies: Counter[FaultKey] = Counter()
         for cid in group_ids:
-            core.intersection_update(sigs[cid].faults)
-            frequencies.update(sigs[cid].faults)
+            core.intersection_update(screened_signatures[cid].faults)
+            frequencies.update(screened_signatures[cid].faults)
 
         members = tuple(
             MLMember(
@@ -312,7 +315,8 @@ def cluster_hdbscan_cases(
                 ),
                 membership_strength=round(float(strengths[i]), 4),
                 shared_faults=tuple(sorted(
-                    sigs[eligible[i]].faults & sigs[representative].faults
+                    screened_signatures[eligible[i]].faults
+                    & screened_signatures[representative].faults
                 )),
             )
             for i in positions
