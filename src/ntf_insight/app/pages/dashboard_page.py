@@ -8,15 +8,26 @@ from ntf_insight.analysis.recurrence import analyze_recurrence
 from ntf_insight.app.widgets.status_card import StatusCard
 from ntf_insight.domain.enums import RootCauseCategory
 from ntf_insight.storage.repositories import CaseRepository
+from ntf_insight.storage.quicktest_store import QuickTestStore
 
 
 class DashboardPage(QWidget):
     """Overview page backed by the current case repository."""
 
-    def __init__(self, repository: CaseRepository, mode: str = "demo") -> None:
+    def __init__(
+        self,
+        repository: CaseRepository,
+        mode: str = "demo",
+        quicktests: QuickTestStore | None = None,
+    ) -> None:
         super().__init__()
 
         cases = repository.list_cases()
+        fin_ids = {case.vin for case in cases}
+        fin_ids.update(quicktests.list_fins() if quicktests is not None else [])
+        quicktest_total = (
+            quicktests.statistics()["reports"] if quicktests is not None else 0
+        )
         recurrence_results = [analyze_recurrence(case) for case in cases]
         recurrence_count = sum(
             result.assessable and result.has_recurrence for result in recurrence_results
@@ -47,10 +58,17 @@ class DashboardPage(QWidget):
         cards = QGridLayout()
         cards.setHorizontalSpacing(14)
         cards.setVerticalSpacing(14)
-        cards.addWidget(StatusCard("Fahrzeuge", str(len({case.vin for case in cases})), "Geladene Fahrzeuge"), 0, 0)
+        cards.addWidget(StatusCard("Fahrzeuge", str(len(fin_ids)), "FIN mit Diagnosen oder NTF-Fall"), 0, 0)
         cards.addWidget(StatusCard("NTF-Fälle", str(len(cases)), "Aktueller Analyseumfang"), 0, 1)
         cards.addWidget(StatusCard("Wiederholungen", str(recurrence_count), "Gleicher DTC nach Tausch"), 0, 2)
         cards.addWidget(StatusCard("Ungeklärt", str(unresolved_count), "Weitere Evidenz erforderlich"), 0, 3)
+        cards.addWidget(
+            StatusCard(
+                "QuickTests", str(quicktest_total),
+                "FIN-basierte Diagnoseberichte (auch ohne QEC-Fall)"
+            ),
+            1, 0,
+        )
         layout.addLayout(cards)
 
         next_title = QLabel("Pipeline-Status", objectName="PageTitle")
@@ -59,8 +77,9 @@ class DashboardPage(QWidget):
 
         next_steps = QLabel(
             "Domänenmodell, Fall-Timeline und Vorher-/Nachher-Analyse sind in die Desktop-App integriert. "
-            "Der nächste quellenabhängige Schritt ist der Kurztest-Parser. Sobald echte Dateien "
-            "vorliegen, werden die Demo-Fälle schrittweise durch normalisierte reale Fälle ersetzt.",
+            "Der QuickTest-Parser liest FIN-Diagnosen auch ohne Schadteilfall. "
+            "QEC-Fälle, Werkstattdaten und weitere Quellen ergänzen die "
+            "Vorher-/Nachher-Analyse, sobald eine eindeutige Zuordnung vorliegt.",
             objectName="PageSubtitle",
         )
         next_steps.setWordWrap(True)
