@@ -33,6 +33,7 @@ from ntf_insight.ingestion.reference_source_parsers import (
     CandelaParser,
     PartHistoryParser,
     QECDetailsParser,
+    SupplierAnalysisDocumentParser,
     iter_autoexport_rows,
 )
 from ntf_insight.ingestion.service import SourceImportService
@@ -282,6 +283,8 @@ class LocalBatchImporter:
                     reference_parser = CandelaParser()
                 elif artifact.source_type == SourceType.PART_HISTORY and suffix == ".pdf":
                     reference_parser = PartHistoryParser()
+                elif artifact.source_type == SourceType.SUPPLIER_FINDING and suffix == ".pdf":
+                    reference_parser = SupplierAnalysisDocumentParser()
                 elif artifact.source_type == SourceType.AUTOEXPORT_SUMMARY and suffix == ".csv":
                     reference_parser = AutoExportSummaryParser()
                 if reference_parser is not None:
