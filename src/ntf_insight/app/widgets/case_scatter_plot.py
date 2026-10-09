@@ -245,7 +245,7 @@ class CaseScatterPlot(QGraphicsView):
                 f"Fall {point.case_id} · FIN {case.vin}\n"
                 f"{'Cluster ' + str(cluster) if cluster else 'Einzelfall / unzugeordnet'}\n"
                 f"Diagnostische ECU:DTCs: {preview or 'Keine'}\n"
-                (
+                + (
                     f"Gemeinsames DTC-Muster (nur Kandidaten): {pattern_label}\n"
                     if highlighted and pattern_label else ""
                 )
