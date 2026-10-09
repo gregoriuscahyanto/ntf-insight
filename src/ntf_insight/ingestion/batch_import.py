@@ -484,6 +484,17 @@ class LocalBatchImporter:
                         getattr(case, attr).append(event)
                         summary.events_linked += 1
 
+            # Count all independent raw TIPS records without a QEC association,
+            # including FINs excluded from the normalized case-event parser.
+            # This is a persistent coverage figure, not just this file batch.
+            raw_tips = self.knowledge.count_rows("autoexport_tips")
+            linked_tips_ids = {
+                event.event_id
+                for case in existing.values()
+                for event in case.tips_observations
+            }
+            summary.tips_unassigned = max(0, raw_tips - len(linked_tips_ids))
+
             progress("Verknüpfte Fälle dauerhaft speichern …")
             self.sources.store.save_cases(list(existing.values()))
             if summary.quicktests_without_case:
