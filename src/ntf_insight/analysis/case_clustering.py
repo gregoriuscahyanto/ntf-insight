@@ -261,6 +261,14 @@ def signature_for(case: NTFCase) -> DiagnosticSignature:
         for repair in case.repairs
         if repair.complaint and _in_diagnostic_window(repair, case)
     ]
+    # Use the *initial customer complaint* only when it was recorded before
+    # the investigated replacement. Workshop findings, performed actions and
+    # supplier conclusions are deliberately NOT similarity features.
+    complaints.extend(
+        report.complaint
+        for report in case.tips_observations
+        if report.complaint and _in_diagnostic_window(report, case)
+    )
     ecu_software = frozenset(
         f"{state.ecu.strip().upper()}:{state.software_version.strip().upper()}"
         for state in case.ecu_states
