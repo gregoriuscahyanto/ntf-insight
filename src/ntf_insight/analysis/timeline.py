@@ -7,6 +7,7 @@ from datetime import datetime
 from typing import Literal
 
 from ntf_insight.domain.case import NTFCase
+from ntf_insight.analysis.ecu_version_changes import detect_ecu_version_changes
 from ntf_insight.analysis.replacement_dates import ReplacementDateComparison
 from ntf_insight.domain.events import (
     DiagnosticEvent,
@@ -22,6 +23,8 @@ TimelineKind = Literal[
     "diagnostic_session",
     "diagnostic",
     "ecu_state",
+    "ecu_hw_change",
+    "ecu_sw_change",
     "replacement",
     "replacement_candidate",
     "repair",
@@ -48,6 +51,8 @@ class TimelineEntry:
     detail: str
     source_ref: str | None
     event: TimelineEvent
+    interval_start_at: datetime | None = None
+    interval_start_mileage_km: int | None = None
 
 
 def build_timeline(
@@ -110,6 +115,32 @@ def build_timeline(
                 detail=" · ".join(state_parts),
                 source_ref=event.source_ref,
                 event=event,
+            )
+        )
+
+    # Read-only differences between *observed* versions. A marker at the
+    # later QuickTest is not a known software flash/hardware exchange date.
+    for change in detect_ecu_version_changes(case.ecu_states):
+        label = "HW" if change.kind == "hw" else "SW"
+        entries.append(
+            TimelineEntry(
+                occurred_at=change.first_observed_at,
+                mileage_km=change.current.mileage_km,
+                kind=(
+                    "ecu_hw_change"
+                    if change.kind == "hw" else "ecu_sw_change"
+                ),
+                title=f"{label}-Standabweichung · {change.ecu}",
+                detail=(
+                    f"{label} {change.previous_version} → "
+                    f"{change.new_version} · zwischen "
+                    f"{change.observation_interval} beobachtet. "
+                    "Tatsächliches Änderungs-/Updatedatum unbekannt."
+                ),
+                source_ref=change.current.source_ref,
+                event=change.current,
+                interval_start_at=change.last_previous_at,
+                interval_start_mileage_km=change.previous.mileage_km,
             )
         )
 
