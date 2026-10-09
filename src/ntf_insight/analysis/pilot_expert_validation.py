@@ -60,6 +60,7 @@ class PilotValidationGroup:
     same_fin_excluded: int
     shared_evidence_excluded: int
     repeated_fin_excluded: int
+    unresolved_mechanism_conflicts: int
     open_target_fins: int
     status: str
 
@@ -214,7 +215,7 @@ def validate_pilot_evidence(
                 ref_to_fins.setdefault(ref, set()).add(vin)
         same_fin = shared_evidence = repeated_fin = 0
         concordant = discordant = screened_agree = screened_disagree = 0
-        outside_agree = outside_disagree = 0
+        outside_agree = outside_disagree = unresolved_conflicts = 0
         for member in members:
             cid = member.case_id
             target_label = labels.get(cid)
@@ -260,6 +261,15 @@ def validate_pilot_evidence(
                     screened_disagree += 1
                 else:
                     outside_disagree += 1
+            if (
+                rep_label is not None
+                and target_label is not None
+                and target_label.mechanism_code != rep_label.mechanism_code
+                and status != "Widerspruch: anderer bestätigter Mechanismus"
+            ):
+                # Conflicting confirmed cases block broader transfer even
+                # if they cannot be counted as independent FIN evidence.
+                unresolved_conflicts += 1
             target_rows.append(PilotValidationTarget(
                 group=group_name,
                 representative_case_id=rep,
@@ -276,6 +286,11 @@ def validate_pilot_evidence(
             state = "Repräsentant noch nicht bestätigt – keine Validierung"
         elif discordant:
             state = "Widerspruch – weitere Ursachenübertragung gesperrt"
+        elif unresolved_conflicts:
+            state = (
+                "Widerspruch mit unklarer Unabhängigkeit – "
+                "weitere Ursachenübertragung gesperrt"
+            )
         elif concordant:
             state = (
                 "Übereinstimmung nur in der geprüften Teilmenge – "
@@ -302,6 +317,7 @@ def validate_pilot_evidence(
             same_fin_excluded=same_fin,
             shared_evidence_excluded=shared_evidence,
             repeated_fin_excluded=repeated_fin,
+            unresolved_mechanism_conflicts=unresolved_conflicts,
             open_target_fins=len(target_fins) - confirmed_fin_count,
             status=state,
         ))
@@ -313,5 +329,8 @@ def validate_pilot_evidence(
         ),
         concordant_target_fins=sum(row.concordant_target_fins for row in group_rows),
         discordant_target_fins=sum(row.discordant_target_fins for row in group_rows),
-        groups_with_conflict=sum(bool(row.discordant_target_fins) for row in group_rows),
+        groups_with_conflict=sum(
+            bool(row.discordant_target_fins or row.unresolved_mechanism_conflicts)
+            for row in group_rows
+        ),
     )
