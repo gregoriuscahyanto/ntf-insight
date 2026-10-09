@@ -31,6 +31,7 @@ from ntf_insight.ingestion.service import SourceImportService
 from ntf_insight.storage.reference_repositories import ReferenceRepository
 from ntf_insight.storage.repositories import CaseRepository
 from ntf_insight.storage.quicktest_store import QuickTestStore
+from ntf_insight.storage.source_knowledge_store import SourceKnowledgeStore
 
 
 class _SourceImportWorker(QThread):
@@ -78,6 +79,8 @@ class SourcesPage(QWidget):
         SourceType.WORKSHOP_HISTORY: "Werkstatt-/Claim-Historie",
         SourceType.SMR_D: "SMR-D",
         SourceType.DIAGNOSTIC_DESCRIPTION: "CDD-Diagnosebeschreibung",
+        SourceType.PART_HISTORY: "Part History / Produktänderungen",
+        SourceType.AUTOEXPORT_SUMMARY: "AutoExport-Zählwert",
         SourceType.HW_SW_CHANGE_HISTORY: "HW-/SW-Änderungshistorie",
         SourceType.VEHICLE_SOFTWARE_HISTORY: "Fahrzeug-SW-Historie",
         SourceType.INSTALLED_POPULATION: "Verbaute Population",
@@ -186,7 +189,8 @@ class SourcesPage(QWidget):
         self.import_status = QLabel(
             "ZIP oder Dateien hineinziehen. Unterstützte Formate werden archiviert, "
             "geparst und bei eindeutiger FIN/Fall-Zuordnung übernommen. "
-            "CDD, SMR-D und unbekannte PDFs bleiben vorerst im Rohdatenarchiv.",
+            "CDD, Part History, QEC und AutoExport werden als durchsuchbare Daten gespeichert; "
+            "nicht unterstützte Dateien bleiben im Rohdatenarchiv.",
             objectName="PageSubtitle",
         )
         self.import_status.setWordWrap(True)
@@ -329,7 +333,9 @@ class SourcesPage(QWidget):
             f"{summary.files_parsed} geparst, {summary.files_pending} noch ohne Parser · "
             f"{summary.cases_created} neue Fälle, "
             f"{summary.quicktests_saved} QuickTest(s) dauerhaft nach FIN gespeichert, "
-            f"{summary.events_linked} zugeordnete Ereignisse"
+            f"{summary.events_linked} zugeordnete Ereignisse · "
+            f"{summary.reference_sources} Referenzquellen, "
+            f"{summary.reference_rows} strukturierte Quellzeilen"
         )
         if summary.issues:
             text += (
@@ -341,6 +347,7 @@ class SourcesPage(QWidget):
         self._quicktests_added = summary.quicktests_saved
         self._pending_reload = bool(
             summary.cases_created or summary.events_linked or summary.quicktests_saved
+            or summary.reference_sources
         )
         self._refresh_all()
 
@@ -450,6 +457,10 @@ class SourcesPage(QWidget):
             len(quicktest_store.list_fins())
             if quicktest_store is not None else 0
         )
+        knowledge_counts = (
+            SourceKnowledgeStore(self.import_service.store).summary()
+            if self.import_service is not None else {}
+        )
         repair_count = sum(len(case.repairs) for case in all_cases)
         trigger_count = len(self.references.list_triggers())
         change_count = len(self.references.list_changes())
@@ -482,16 +493,28 @@ class SourcesPage(QWidget):
             (
                 "CDD-Diagnosebeschreibung",
                 "Candela-Steuergerätebeschreibung, keine SMR-D-Triggerlogik",
-                "Sichere Archivierung; Semantikparser ausstehend",
-                current(SourceType.DIAGNOSTIC_DESCRIPTION, "Keine Originaldatei"),
+                "Candela-Diagnoseservices extrahiert; keine SMR-D-Trigger",
+                f"{knowledge_counts.get('candela_services', 0)} Services in DuckDB",
+            ),
+            (
+                "Part History",
+                "Bauteilbezogene Revisions- und Fertigungsänderungen",
+                "PDF-Historienparser bereit; globale Produktinformation",
+                f"{knowledge_counts.get('part_history', 0)} Änderungen in DuckDB",
+            ),
+            (
+                "AutoExport-Gesamtdaten",
+                "DTC-/Werkstattzeilen auch ohne QEC-Fall",
+                "CSV-Rohfelder und FIN-Bezug in DuckDB",
+                f"{knowledge_counts.get('autoexport_rows', 0)} Zeilen gespeichert",
             ),
             (
                 "Fall-/FIN-Liste",
                 "Fallumfang und Fahrzeugidentität",
-                "QEC-Excel-Parser bereit",
+                "QEC-Fallparser + alle Excel-Blätter/Spalten",
                 (
                     f"{counts[SourceType.VEHICLE_CASE_LIST]} Datei(en) · "
-                    f"{case_count} Fälle · {quicktest_fin_count} FIN mit QuickTests"
+                    f"{case_count} Fälle · {knowledge_counts.get('qec_details', 0)} Quellzeilen"
                     if counts[SourceType.VEHICLE_CASE_LIST]
                     else demo_case
                 ),
