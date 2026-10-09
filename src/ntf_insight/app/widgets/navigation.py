@@ -21,6 +21,7 @@ class NavigationPanel(QFrame):
     ITEMS = (
         ("dashboard", "Übersicht"),
         ("sources", "Datenquellen"),
+        ("knowledge", "Quellenwissen"),
         ("cases", "Fälle / FIN"),
         ("dtcs", "DTC-Explorer"),
         ("clusters", "Cluster & Fälle"),
