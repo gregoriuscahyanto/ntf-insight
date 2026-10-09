@@ -881,6 +881,29 @@ class HDBSCANPanel(QWidget):
             "Ein Cluster ist kein technischer Ursachennachweis.",
         )
 
+    def export_pilot_review_template(self) -> None:
+        """Local-only editable review of a medoid and selected target FINs."""
+        if self.latest_pilot_plan is None or self.result is None:
+            return
+        target, _ = QFileDialog.getSaveFileName(
+            self,
+            "Vertrauliche Pilotfachprüfung LOKAL speichern (FIN / SSL)",
+            "NTF_Pilotfaelle_Fachpruefung_NICHT_HOCHLADEN.csv",
+            "CSV-Dateien (*.csv)",
+        )
+        if not target:
+            return
+        try:
+            with open(target, "w", encoding="utf-8-sig", newline="") as stream:
+                write_pilot_review_template(
+                    stream, self._subset(), self.latest_pilot_plan,
+                    confirmations=self.confirmed_mechanisms,
+                )
+        except (ValueError, OSError) as exc:
+            QMessageBox.warning(
+                self, "Pilotfachprüfung nicht gespeichert", str(exc),
+            )
+
     def export_representative_template(self) -> None:
         """Export exactly one real ML medoid per group, local and confidential."""
         if self.result is None or not self.result.clusters:
@@ -992,8 +1015,17 @@ class HDBSCANPanel(QWidget):
                 self, "Fachbestätigungen nicht übernommen", str(exc),
             )
             return
-        self.confirmed_mechanisms = confirmed
-        self.pair_test_button.setEnabled(bool(confirmed))
+        try:
+            merged = merge_confirmed_mechanisms(
+                self.confirmed_mechanisms, confirmed,
+            )
+        except ValueError as exc:
+            QMessageBox.warning(
+                self, "Widersprechende Fachbestätigung nicht übernommen", str(exc),
+            )
+            return
+        self.confirmed_mechanisms = merged
+        self.pair_test_button.setEnabled(bool(merged))
         self.pair_test_summary.setText(
             "Noch kein trainiertes Paarmodell. Geladene Fachbestätigungen "
             "werden nur für die NACHGELAGERTE Prüfung angezeigt."
@@ -1183,6 +1215,59 @@ class HDBSCANPanel(QWidget):
             ) for row in plan.inspections
         ])
 
+    def _refresh_pilot_validation(self) -> None:
+        if self.result is None:
+            self.latest_pilot_validation = None
+            self.pilot_validation_model.set_rows([])
+            self.pilot_validation_target_model.set_rows([])
+            return
+        try:
+            report = validate_pilot_evidence(
+                self._subset(), self.result, self.confirmed_mechanisms,
+            )
+        except ValueError as exc:
+            self.latest_pilot_validation = None
+            self.pilot_validation_summary.setText(
+                f"Pilotfachvalidierung nicht möglich: {exc}"
+            )
+            self.pilot_validation_model.set_rows([])
+            self.pilot_validation_target_model.set_rows([])
+            return
+        self.latest_pilot_validation = report
+        self.pilot_validation_summary.setText(
+            f"{report.reviewed_representatives} von {len(report.groups)} "
+            "Repräsentanten fachlich bestätigt; "
+            f"{report.comparable_target_fins} getrennt belegte Ziel-FINs: "
+            f"{report.concordant_target_fins} übereinstimmend und "
+            f"{report.discordant_target_fins} widersprechend. "
+            f"{report.groups_with_conflict} Cluster mit bestätigtem Widerspruch. "
+            "Mehrfach bestätigte FINs oder wiederverwendete Evidenzreferenzen "
+            "werden nicht als unabhängige Prüfungen gezählt. "
+            "Selektiv geprüfte Fallpaare erlauben KEINE Hochrechnung auf "
+            "alle Cluster-Mitglieder oder automatische Ursachenübertragung."
+        )
+        self.pilot_validation_model.set_rows([
+            (
+                row.group, row.representative_case_id,
+                "Ja" if row.representative_confirmed else "Nein",
+                row.independently_reviewed_target_fins,
+                row.concordant_target_fins, row.discordant_target_fins,
+                row.screened_agree, row.screened_disagree,
+                row.shared_evidence_excluded,
+                row.repeated_fin_excluded, row.open_target_fins, row.status,
+            ) for row in report.groups
+        ])
+        self.pilot_validation_target_model.set_rows([
+            (
+                row.group, row.representative_case_id, row.target_case_id,
+                row.representative_mechanism or "Nicht bestätigt",
+                row.target_mechanism or "Nicht bestätigt",
+                f"{row.similarity_to_representative:.1%}",
+                "Ja" if row.screened_45 else "Nein",
+                "Ja" if row.same_fin else "Nein", row.status, row.note,
+            ) for row in report.targets
+        ])
+
     def _refresh_transfer_plan(self) -> None:
         if self.result is None:
             self.transfer_model.set_rows([])
@@ -1214,6 +1299,7 @@ class HDBSCANPanel(QWidget):
         self._refresh_transfer_plan()
         self._refresh_cluster_bridges()
         self._refresh_pilot_plan()
+        self._refresh_pilot_validation()
         review = review_cluster_mechanisms(
             self._subset(), self.result, self.confirmed_mechanisms,
         )
