@@ -307,3 +307,25 @@ def test_quicktest_and_autoexport_same_reading_counts_once_but_keeps_sources(
     repeated = source.store.load_cases()[0]
     assert len(repeated.diagnostics) == 3
     assert len(unique_diagnostic_observations(repeated.diagnostics)) == 2
+
+
+
+def test_qec_ssl_end_finding_without_date_is_not_backdated_to_swap(tmp_path) -> None:
+    from openpyxl import load_workbook
+
+    path = tmp_path / "undated_qec.xlsx"
+    path.write_bytes(_workbook_bytes())
+    book = load_workbook(path)
+    book["Schadteile QEC"]["K2"] = None  # Bef.abschl.datum unknown
+    book.save(path)
+    book.close()
+
+    parsed = QECWorkbookParser("f" * 64).parse(path)
+    case = parsed.cases[0]
+    assert case.qec_ssl_end_finding == "Elektrischer Fehler - NTF"
+    assert case.qec_ssl_end_date is None
+    assert case.supplier_findings == []  # no invented supplier event at swap
+    assert case.investigated_replacement() is not None
+
+    from ntf_insight.analysis.qec_findings import qec_ssl_finding_label
+    assert "Befundabschlussdatum unbekannt" in qec_ssl_finding_label(case)
