@@ -144,3 +144,51 @@ unterschiedlichen geprüften technischen Fehlermechanismen**
 bezeichnet und anschließend zur externen Cluster-Validierung benutzt
 werden. Allein mehr HDBSCAN-Gruppen oder eine höhere
 HDBSCAN-Mitgliedschaftsstärke beweisen noch keine ursächliche Gleichheit.
+
+
+## Lokaler Echtdaten-Test ohne Self-hosted Runner
+
+Zum Entwickeln und für synthetische Linux-/Windows-Regressionen genügt
+der reguläre GitHub-gehostete Actions-Runner. Auf einem Windows-Rechner,
+der vertrauliche QEC-, FIN-, AutoExport-, TIPS- und QuickTest-Originale
+enthält, sollte man **keinen unbeschränkt erreichbaren Self-hosted Runner**
+registrieren: Ein Workflow kann dort prinzipiell lokale Programme ausführen
+und erreichbare Dateien lesen. Besonders PR-Code und fremde Actions
+dürfen niemals ungeprüft darauf ausgeführt werden.
+
+Stattdessen NTF Insight manuell **lokal** starten:
+
+```powershell
+git fetch origin
+git switch feature/experimental-hdbscan-clustering
+git pull --ff-only
+python -m ntf_insight
+```
+
+Dann im Reiter **ML-Cluster (HDBSCAN)** mindestens `Leaf`
+gegen `EOM` vergleichen, bei denselben Quellen und Parametern.
+Mit *Qualitätsbericht ohne FIN* ausschließlich die **aggregierten**
+Zahlen exportieren. Der Detail-CSV-Export **enthält** QEC-IDs, FINs,
+DTCs und SSL-Rohtexte und ist vertraulich; er bleibt für interne
+Untersuchungen lokal. Keine Dateien oder Datenbanken in Git committen.
+
+Auch aggregierte Berichte können Rückschlüsse erlauben, etwa bei
+kleinen Gruppen, und sollten die interne Datennutzungsfreigabe
+beachten.
+
+## Noch nicht automatisiert und bewusst nicht erfunden
+
+Die CDD/Candela-Quelle enthält derzeit vor allem Diagnose-Services,
+aber keine fachlich validierte, verbindliche Zuordnung
+**ECU:DTC → pumpenrelevanter Fehlermechanismus**.
+Solange ein solches Mapping nicht bestätigt ist, werden DTCs
+nur als Diagnosemerkmale verwendet. Eine künstliche Relevanzwertung
+auf Basis des Steuergerätenamens würde die Gruppen verfälschen.
+
+Ebenso sind freie QEC-SSL-Rohtexte **keine normierten Ursache-Labels**.
+Die App zeigt sie daher für die **nachgelagerte** Validierung und
+warnt vor Abweichungen. Ein fachlich abgestimmter
+Kategorienkatalog und geprüfte Beispielpaare wären die nächsten
+Schritte, um tatsächlich gleiche und unterschiedliche technische
+Fehlerursachen zu unterscheiden. Es wird vorerst **keine automatische
+Ursachenübertragung** freigegeben.
