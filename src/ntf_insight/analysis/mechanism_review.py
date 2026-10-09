@@ -90,7 +90,7 @@ def read_confirmed_mechanisms(
     date) must be present. Duplicate QEC IDs are rejected instead of
     silently overwriting earlier manual decisions.
     """
-    available = {case.case_id for case in cases}
+    available = {case.case_id: case.vin for case in cases}
     if len(available) != len(cases):
         raise ValueError("QEC-Fall-IDs im Bestand nicht eindeutig.")
     reader = csv.DictReader(source, delimiter=";")
@@ -123,6 +123,13 @@ def read_confirmed_mechanisms(
             )
         if case_id in found:
             raise ValueError(f"Zeile {line}: QEC-ID ist mehrfach vorhanden.")
+        if "fin" in fields:
+            stated_fin = (row.get("fin") or "").strip()
+            if stated_fin and stated_fin != available[case_id]:
+                raise ValueError(
+                    f"Zeile {line}: FIN stimmt nicht mit der QEC-ID überein. "
+                    "Prüfdatei und Fallbestand kontrollieren."
+                )
         found.add(case_id)
         status = (row.get("review_status") or "").strip().casefold()
         if status in {"", "pending", "unknown"}:
