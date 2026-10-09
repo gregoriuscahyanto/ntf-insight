@@ -59,7 +59,7 @@ Rollenprüfung** bieten.
 | AutoExport-Aggregat (.csv) | Separat gespeichert, **kein** Ersatz für verbaute Population / Ausfallraten-Nenner | Parser bereit |
 | CDD/Candela (.cdd) | Diagnoseklassen, Serviceinstanzen, Qualifier, Semantik und Beschreibungen | CDD-Serviceparser bereit; **keine validierte SMR-D-Triggerlogik** |
 | Part History (.pdf) | Produktbezogene Änderungen, Revisionsstände, Referenzen, Tages- bzw. Kalenderwochenzeiträume | Strukturparser bereit; **nicht FIN-spezifisch** |
-| Lieferanten-Analysebericht (.pdf) | Original archiviert; keine automatische Fehlerursachenzuordnung aus Freitext | Befundparser offen |
+| Lieferanten-Analysebericht (.pdf) | Alle maschinenlesbaren PDF-Seitentexte lokal gespeichert; keine unbelegte NTF- oder Schuldzuordnung | Quelltextparser bereit; fachliche Befundinterpretation offen |
 | SMR-D | Separater Format-/Fachparser notwendig; CDD ersetzt die Triggerlogik **nicht** | Ausstehend |
 | ECU-HW-/SW-Releaseänderungen | Release-Wissen benötigt eigene Datei; QuickTest-ECU-Stände sind **keine Release-Änderungsliste** | Ausstehend |
 
