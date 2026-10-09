@@ -273,3 +273,30 @@ def test_unassigned_explains_missing_vs_weak_vs_incohesive() -> None:
     assert candidate.nearest_similarity is not None
     assert candidate.nearest_similarity >= plan.minimum_similarity
     assert "keine homogene Gruppe" in candidate.reason
+
+
+
+def test_dtc_frequency_is_scoped_per_component_family() -> None:
+    """The same common DTC in other components cannot mask a pump-specific code."""
+    pumps = [
+        case("P0", "W1TTEST0000000200", ("X-RARE",)),
+        case("P1", "W1TTEST0000000201", ("X-RARE",)),
+    ] + [
+        case(f"P{i}", f"W1TTEST00000002{i:02d}", (f"PUMP-{i}",))
+        for i in range(2, 10)
+    ]
+    batteries = [
+        case(f"H{i}", f"W1TTEST00000003{i:02d}", ("X-RARE",))
+        for i in range(10)
+    ]
+    for hv in batteries:
+        hv.component_type = "HV Battery"
+        hv.component_profile_id = "hv_battery"
+    plan = select_representative_cases(pumps + batteries)
+    assert len(plan.clusters) == 1
+    assert set(plan.clusters[0].case_ids) == {"P0", "P1"}
+    assert plan.screening_population == 20
+    assert not any(
+        "H" in member.case_id
+        for cluster in plan.clusters for member in cluster.members
+    )
