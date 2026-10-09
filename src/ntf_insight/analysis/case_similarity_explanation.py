@@ -55,14 +55,21 @@ class SimilarityExplanation:
         return self.weighted_sum / self.covered_weight
 
 
-def explain_case_similarity(left: NTFCase, right: NTFCase) -> SimilarityExplanation:
+def explain_case_similarity(
+    left: NTFCase, right: NTFCase, *,
+    lookback_days: int | None = None, dtc_source: str = "all",
+) -> SimilarityExplanation:
     """Show numerator, denominator and per-feature Jaccard used by the MVP.
 
     Incompatible components may have matching words/DTCs, but must never get
     a computed cross-component similarity score.
     """
-    left_sig = signature_for(left)
-    right_sig = signature_for(right)
+    left_sig = signature_for(
+        left, lookback_days=lookback_days, dtc_source=dtc_source
+    )
+    right_sig = signature_for(
+        right, lookback_days=lookback_days, dtc_source=dtc_source
+    )
     match = compare_signatures(left_sig, right_sig)
     compatible = left_sig.component_key == right_sig.component_key
     paired = [
