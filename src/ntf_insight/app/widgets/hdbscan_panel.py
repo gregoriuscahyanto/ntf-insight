@@ -332,11 +332,18 @@ class HDBSCANPanel(QWidget):
     def run_analysis(self) -> None:
         subset = self._subset()
         try:
+            audit = audit_diagnostic_evidence(
+                subset,
+                dtc_source=self.source.currentData() or "all",
+                lookback_days=self.lookback.currentData(),
+                common_cutoff=0.35,
+            )
             result = cluster_hdbscan_cases(
                 subset,
                 min_cluster_size=self.min_cluster_size.value(),
                 min_samples=self.min_samples.value(),
                 selection_method=self.selection_method.currentData(),
+                common_dtc_cutoff=0.35 if self.filter_common.isChecked() else None,
                 dtc_source=self.source.currentData() or "all",
                 lookback_days=self.lookback.currentData(),
             )
@@ -346,9 +353,20 @@ class HDBSCANPanel(QWidget):
             self.member_model.set_rows([])
             self.noise_model.set_rows([])
             self.result = None
+            self.evidence_audit = None
             self.export_button.setEnabled(False)
+            self.evidence_summary.setText(f"Diagnosedaten nicht auswertbar: {exc}")
             return
         self.result = result
+        self.evidence_audit = audit
+        if not {review.case_id for review in self.confirmed_mechanisms}.issubset(
+            {case.case_id for case in subset}
+        ):
+            self.confirmed_mechanisms = ()
+            self.pair_test_button.setEnabled(False)
+            self.pair_test_summary.setText(
+                "Fachbestätigungen zurückgesetzt: andere Bauteilfamilie."
+            )
         self.comparison = None
         self.comparison_model.set_rows([])
         self.quality_button.setEnabled(False)
@@ -359,7 +377,9 @@ class HDBSCANPanel(QWidget):
         self.summary.setText(
             f"{result.case_count} QEC-Fälle / {result.vehicle_count} FINs · "
             f"{len(result.eligible_case_ids)} mit Tauschanker und Vorher-DTC · "
-            f"{len(result.excluded_case_ids)} ohne geeignete Diagnosebasis · "
+            f"{len(result.excluded_case_ids)} nicht projizierbar "
+            f"(davon {len(result.frequency_filtered_case_ids)} durch "
+            "experimentellen DTC-Häufigkeitsfilter) · "
             f"{result.feature_count} TF-IDF-Merkmalsspalten · "
             f"{len(result.clusters)} HDBSCAN-Gruppen (automatisch) · "
             f"{result.clustered_count} Fälle ({result.coverage:.1%}) "
@@ -369,7 +389,8 @@ class HDBSCANPanel(QWidget):
             f"min_cluster_size={result.min_cluster_size}, "
             f"min_samples={result.min_samples}; "
             f"Quelle: {self.source.currentText()}; "
-            f"Zeitfenster: {self.lookback.currentText()}. "
+            f"Zeitfenster: {self.lookback.currentText()}; "
+            f"Häufigkeitsfilter: {'an (35 %)' if result.common_dtc_cutoff is not None else 'aus'}. "
             "Die Gruppenanzahl ist keine Gütebewertung."
         )
         self.group_model.set_rows([
@@ -393,12 +414,31 @@ class HDBSCANPanel(QWidget):
                 "; ".join(group.warnings) or "Fachliche Ursachenprüfung erforderlich",
             ) for group in result.clusters
         ])
-        sigs = {
-            c.case_id: signature_for(
-                c, dtc_source=result.dtc_source,
-                lookback_days=result.lookback_days,
-            ) for c in subset
-        }
+        availability = {row.case_id: row for row in audit.cases}
+        self.evidence_summary.setText(
+            f"QEC-Grundgesamtheit {audit.scoped_cases}, davon "
+            f"{audit.eligible_cases} mit geeigneter Vor-Tausch-Diagnose · "
+            f"{audit.without_anchor} ohne Tauschanker · "
+            f"{audit.without_any_dtc} ohne QEC-DTC-Zeilen · "
+            f"{audit.only_after_swap_or_undated} mit DTC, aber nicht sicher vorher · "
+            f"{audit.no_selected_source} ohne Vorher-DTC aus gewählter Quelle · "
+            f"{audit.outside_lookback} außerhalb des gewählten Vorher-Fensters. "
+            f"{audit.with_source_overlap} QEC-Fälle zeigen dieselbe ECU:DTC-"
+            f"Kombination in QuickTest und AutoExport "
+            f"({audit.overlapping_fault_occurrences} Fall-DTC-Überlappungen; "
+            "als Mengenmerkmale nicht doppelt gezählt). "
+            f"{len(audit.high_prevalence_faults)} ECU:DTC erreichen mindestens "
+            "35 % der auswertbaren QEC-Fälle. Hohe Häufigkeit bedeutet "
+            "NICHT technisch irrelevant."
+        )
+        self.frequency_model.set_rows([
+            (
+                item.fault[0], item.fault[1], item.case_count,
+                f"{item.proportion:.1%}",
+                "Häufig, fachliche Relevanz ungeklärt"
+                if item.screened_common else "Unter Screening-Grenze",
+            ) for item in audit.frequencies[:30]
+        ])
         self.noise_model.set_rows([
             (
                 cid, self.by_id[cid].vin,
@@ -407,14 +447,23 @@ class HDBSCANPanel(QWidget):
         ] + [
             (
                 cid, self.by_id[cid].vin,
-                "Tauschanker fehlt" if not sigs[cid].has_replacement_anchor
-                else "Keine belegte Vor-Tausch-ECU:DTC-Diagnose",
+                (
+                    "Nur häufige DTCs nach experimentellem Screening"
+                    if cid in result.frequency_filtered_case_ids
+                    else availability[cid].reason
+                ),
             ) for cid in result.excluded_case_ids
         ])
         self.member_model.set_rows([])
         self.open_button.setEnabled(bool(result.clusters))
         self.export_button.setEnabled(bool(result.clusters))
         self.map.set_result(result, subset)
+        self._refresh_mechanism_review()
+        self.pair_test_summary.setText(
+            "Kein neues Paarmodell geprüft. "
+            "Für eine FIN-getrennte Bewertung Fachbestätigungen laden "
+            "und auf 'Paarmodell prüfen' klicken."
+        )
         if result.clusters:
             self.group_table.selectRow(0)
             self._group_changed(self.group_model.index(0, 0), None)
@@ -438,6 +487,7 @@ class HDBSCANPanel(QWidget):
                 min_samples=self.min_samples.value(),
                 dtc_source=self.source.currentData() or "all",
                 lookback_days=self.lookback.currentData(),
+                common_dtc_cutoff=0.35 if self.filter_common.isChecked() else None,
             )
         except ValueError as exc:
             self.comparison_summary.setText(f"Vergleich nicht berechenbar: {exc}")
@@ -462,7 +512,8 @@ class HDBSCANPanel(QWidget):
         ])
         self.comparison_summary.setText(
             f"EOM/Leaf-Vergleich auf identischen "
-            f"{report.eligible_case_count} diagnostizierbaren QEC-Fällen · "
+            f"{report.eligible_case_count} für diese Merkmalsvariante "
+            "auswertbaren QEC-Fällen · "
             f"{report.both_grouped_cases} Fälle in beiden Verfahren gruppiert · "
             f"{'Paar-Zuordnungs-Übereinstimmung: ' + format(report.pair_coassignment_jaccard, '.1%') if report.pair_coassignment_jaccard is not None else 'Keine gruppierten Paare in beiden Varianten'}. "
             "Dabei werden echte Fallpaare verglichen, nicht willkürliche "
@@ -497,7 +548,8 @@ class HDBSCANPanel(QWidget):
                     "Paar-Zuordnungs-Übereinstimmung EOM/Leaf",
                     "In beiden Methoden gruppierte Fälle",
                     "min_cluster_size", "min_samples",
-                    "DTC-Quellen", "Vor-Tausch-Tage", "Methodenstatus",
+                    "DTC-Quellen", "Vor-Tausch-Tage",
+                    "Häufigkeitsfilter ECU:DTC", "Methodenstatus",
                 ))
                 for line in report.rows:
                     writer.writerow((
@@ -526,6 +578,10 @@ class HDBSCANPanel(QWidget):
                         report.min_samples,
                         report.dtc_source,
                         report.lookback_days or "gesamte Vorher-Historie",
+                        (
+                            f"Ab {report.common_dtc_cutoff:.0%}"
+                            if report.common_dtc_cutoff is not None else "Aus"
+                        ),
                         "ML explorativ; keinerlei Ursache bestätigt",
                     ))
         except OSError as exc:
@@ -615,7 +671,7 @@ class HDBSCANPanel(QWidget):
                     "DTC-Quelle", "Vor-Tausch-Zeitraum",
                     "min_cluster_size", "min_samples", "HDBSCAN-Methode",
                     "10%-Quantil interne Paare", "Schwache Paare",
-                    "Bewertung", "Methodenstatus",
+                    "Bewertung", "Häufigkeitsfilter ECU:DTC", "Methodenstatus",
                 ))
                 for group in self.result.clusters:
                     for member in group.members:
@@ -637,6 +693,10 @@ class HDBSCANPanel(QWidget):
                             group.p10_internal_similarity,
                             group.weak_pair_count,
                             group.screening_status,
+                            (
+                                f"Ab {self.result.common_dtc_cutoff:.0%}"
+                                if self.result.common_dtc_cutoff is not None else "Aus"
+                            ),
                             "Exploratives ML – gleiche Fehlerursache NICHT bestätigt",
                         ))
         except OSError as exc:
