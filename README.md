@@ -241,7 +241,7 @@ The desktop app stores local working data outside the Git repository by default:
 └── raw/
 ```
 
-Set `NTF_INSIGHT_DATA_DIR` to override that location. If the database contains no imported cases, the app starts in clearly labelled **demo mode** with fictional data. The Data Sources page archives arbitrary original files with SHA-256 provenance. Known QEC, AutoExport and QuickTest formats are now also parsed locally; unsupported sources remain archived with an explicit pending state.
+Set `NTF_INSIGHT_DATA_DIR` to override that location. If neither real cases nor FIN-scoped QuickTests exist in the database, the app starts in clearly labelled **demo mode** with fictional data. The Data Sources page archives arbitrary original files with SHA-256 provenance. Known QEC, AutoExport and QuickTest formats are now also parsed locally; unsupported sources remain archived with an explicit pending state.
 
 ## Desktop views
 
@@ -287,6 +287,24 @@ erforderlich. Die PDF-Originale und die Fahrzeugdaten werden nicht nach
 GitHub übertragen.
 
 [QuickTest-Import: Bedienung, Datenbanktabellen und Grenzen](docs/quicktest-fin-import.md)
+
+## FIN-Diagnose auch ohne QEC-Fall
+
+Bereits ein erfolgreich importierter QuickTest erscheint im Tab
+**Fälle / FIN → FIN / Fallanalyse** mit der Kennzeichnung
+**„Nur QuickTests (kein Fall)“**. Die DTCs und Diagnosesitzungen
+sind im **Zeitplot und der Ereignistabelle** sichtbar. Es wird
+**kein künstlicher NTF-Fall** erzeugt, weshalb noch keine
+Vorher-/Nachher-Bewertung oder Lieferantenursache behauptet wird.
+
+Im Tab **Datenquellen** zeigt das Rohdatenarchiv standardmäßig
+**verarbeitete Dateien**. Für alte, noch nicht geparste Originale:
+**„Alle archivierten Dateien“** oder **„Noch nicht verarbeitet / Fehler“**
+auswählen, den Eintrag markieren und über
+**„Markierte Datei neu prüfen…“** erneut einlesen.
+Die Originale werden dadurch **weder gelöscht noch überschrieben**.
+
+[Mehr zur FIN-Diagnose und Archivbereinigung](docs/quicktest-fin-import.md)
 
 ## Manuelle Fallerfassung
 
