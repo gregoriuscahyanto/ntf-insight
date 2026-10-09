@@ -654,11 +654,31 @@ class CaseScatterPanel(QWidget):
         projected = {p.case_id: p for p in self.projection.points}
         self.plot.set_points(self.projection, self.result, self.by_id, self.focus_id)
         count = len(self.projection.points)
+        p = self.population_metrics
+        raw_tips = p.get("autoexport_tips_rows", 0)
+        distinct_tips = p.get("tips_distinct_case_ids", 0)
+        linked_tips = sum(len(case.tips_observations) for case in self.cases)
+        self.population_summary.setText(
+            f"FALLBEGRIFFE: {len(self.cases)} angelegte QEC-/NTF-Schadteilfälle "
+            f"(aktuelle Bauteilfamilie: {len(self._visible_case_ids)}) · "
+            f"{raw_tips} TIPS-Quellzeilen mit "
+            f"{distinct_tips} unterschiedlichen TIPS-Vorgangsnummern "
+            f"({linked_tips} fallbezogen verknüpft) · "
+            f"{p.get('autoexport_dtc_fins', 0)} FIN mit AutoExport-Diagnosen "
+            f"({p.get('autoexport_dtc_rows', 0)} DTC-Quellzeilen) · "
+            f"{p.get('autoexport_repair_fins', 0)} FIN mit Werkstattdaten. "
+            "FIN, DTC-Zeilen und TIPS-Vorgänge sind nicht automatisch "
+            "bestätigte Schadteilfälle."
+        )
+        visible_clusters = sum(
+            len(set(group.case_ids) & set(self._visible_case_ids)) >= 2
+            for group in (self.result.clusters if self.result else ())
+        )
         self.summary.setText(
-            f"{len(self._visible_case_ids)} echte Fälle · {count} projiziert · "
-            f"{len(self.projection.omitted_case_ids)} ohne Diagnosebasis · "
+            f"{len(self._visible_case_ids)} QEC-/NTF-Fälle · {count} projiziert · "
+            f"{len(self.projection.omitted_case_ids)} ohne Vorher-Diagnosebasis · "
             f"{self.projection.feature_count} gewichtete Matrixspalten · "
-            f"{len(self.result.clusters) if self.result else 0} Cluster (alle Bauteile)"
+            f"{visible_clusters} bestätigte Cluster in dieser Bauteilfamilie"
         )
         visible_ids = set(projected)
         color_keys = []
@@ -684,6 +704,67 @@ class CaseScatterPanel(QWidget):
             "Cluster-Legende (nur geplottete Fälle): "
             + (" · ".join(color_keys) if color_keys else "Keine Clusterpunkte")
         )
+
+        if self.result is not None:
+            audit, candidates = audit_case_clusters(
+                [self.by_id[case_id] for case_id in self._visible_case_ids],
+                self.result, **self._signature_options(),
+            )
+            audit_rows = [
+                ("QEC-Schadteilfälle", audit.cases,
+                 "Original-QEC-Fallreferenzen der ausgewählten Bauteilfamilie"),
+                ("Mit Tauschanker", audit.anchored,
+                 "Notwendig für eine automatische Clusterbestätigung"),
+                ("Mit ECU:DTC vor Tausch", audit.pre_fault_cases,
+                 "Vorher-Signatur aus gewählter DTC-Quelle und Zeitspanne"),
+                ("Nur Beanstandung vor Tausch", audit.complaint_only_cases,
+                 "Plottbar, aber nicht als DTC-Cluster bestätigt"),
+                ("Ohne diagnostische Signatur", audit.no_diagnostic_basis,
+                 "Kein Punkt; weder Vorher-DTC noch vorherige Beanstandung"),
+                ("Ohne irgendein DTC-Ereignis", audit.without_any_dtc,
+                 "Auch nach dem Tausch keine DTC-Zeile"),
+                ("Mit DTC, aber ohne passenden Vorher-DTC",
+                 audit.with_dtc_but_no_pre_fault,
+                 "Nur nach Tausch, außerhalb Fenster oder aus anderer Quelle"),
+                ("Vorher-DTC aus QuickTest", audit.with_pre_quicktest_dtc,
+                 "Quellenbeleg unabhängig vom aktuellen Quellfilter"),
+                ("Vorher-DTC aus AutoExport", audit.with_pre_autoexport_dtc,
+                 "Quellenbeleg unabhängig vom aktuellen Quellfilter"),
+                ("Paarvergleiche insgesamt", audit.total_pairs,
+                 "Alle QEC-Fallpaare der aktuellen Bauteilfamilie"),
+                ("Davon vergleichbar", audit.comparable_pairs,
+                 "Ähnlichkeitswert mathematisch definiert"),
+                ("Davon mit gemeinsamer ECU:DTC", audit.pairs_with_shared_dtc,
+                 "Gemeinsame ECU:DTC-Kombination zwingend erforderlich"),
+                ("Davon mit beiden Tauschankern", audit.pairs_with_both_anchors,
+                 "Zusätzlich gemeinsame ECU:DTC-Kombination"),
+                ("Davon mit Merkmalsabdeckung ≥ 50 %", audit.pairs_covered,
+                 "Gemeinsame ECU:DTC plus verfügbare Merkmalsbasis"),
+                ("Davon mit Jaccard ≥ gewählter Schwelle", audit.pairs_above_threshold,
+                 "Gemeinsamer DTC + Abdeckung, ohne Tauschankerprüfung"),
+                ("Paare mit allen Kriterien", audit.eligible_pairs,
+                 "Complete-Link benötigt zusätzlich alle Paare der Gruppe"),
+                ("Fälle in bestätigten Clustern", audit.assigned,
+                 "Nicht mit der Anzahl projizierter Punkte verwechseln"),
+                ("Cluster mit mindestens zwei Fällen", audit.clusters,
+                 "Bestätigte vollständige Complete-Link-Gruppen"),
+            ]
+            self.audit_model.set_rows(audit_rows)
+            self.rejected_model.set_rows([
+                (c.left_id, c.right_id, f"{c.score:.1%}",
+                 f"{c.coverage:.0%}", c.shared_faults, c.reason)
+                for c in candidates
+            ])
+            self.audit_note.setText(
+                f"Prüfbasis: {audit.cases} Fälle · "
+                f"{self.dtc_source.currentText()} · "
+                f"{self.lookback.currentText()} · "
+                f"Median ECU:DTC vor Tausch: {audit.median_pre_faults:g}. "
+                "Jede Stufe erklärt den Ausschluss von Fällen oder Paaren. "
+                "Ein Quell- oder Zeitwechsel verändert die Jaccard-Vergleiche "
+                "UND die SVD-Positionen auf derselben Merkmalsgrundlage; "
+                "nur der Schwellenwechsel verändert ausschließlich die Clusterfarben."
+            )
 
         if self.projection.components > 0:
             percentages = ", ".join(
