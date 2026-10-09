@@ -228,3 +228,48 @@ def test_original_strict_complete_link_method_is_untouched() -> None:
     plan = select_representative_cases(cases, minimum_similarity=0.45)
     assert plan.clusters
     assert strict == cluster_diagnostic_cases(cases, threshold=0.65)
+
+
+
+def test_member_mean_excludes_100_percent_self_comparison() -> None:
+    first = case("A", "W1TTEST0000000081", ("P101", "P102"))
+    second = case("B", "W1TTEST0000000082", ("P101", "P102", "P103"))
+    plan = select_representative_cases([first, second], minimum_similarity=0.50)
+    assert len(plan.clusters) == 1
+    group = plan.clusters[0]
+    pair = plan.pair_scores[0]
+    assert pair.similarity < 1
+    assert group.mean_similarity == pytest.approx(pair.similarity, abs=1e-4)
+    assert group.weakest_internal_similarity == pytest.approx(
+        pair.similarity, abs=1e-4
+    )
+    assert group.weakest_representative_similarity == pytest.approx(
+        pair.similarity, abs=1e-4
+    )
+    assert sum(member.similarity == 1.0 for member in group.members) == 1
+    assert group.mean_similarity != pytest.approx(
+        (1 + pair.similarity) / 2
+    )
+
+
+def test_unassigned_explains_missing_vs_weak_vs_incohesive() -> None:
+    cases = [
+        case("A", "W1TTEST0000000081", ("P100", "P200")),
+        case("B", "W1TTEST0000000082", ("P100", "P200", "P300")),
+        case("C", "W1TTEST0000000083", ("P100", "P300")),
+        case("D", "W1TTEST0000000084", ()),
+        case("E", "W1TTEST0000000085", ("Q1",), anchored=False),
+    ]
+    plan = select_representative_cases(cases)
+    assert len(plan.unassigned_reasons) == len(plan.unassigned)
+    reasons = {entry.case_id: entry for entry in plan.unassigned_reasons}
+    assert "Vor-Tausch" in reasons["D"].reason
+    assert "Tauschanker" in reasons["E"].reason
+    assert len(plan.clusters) == 1
+    assert len({"A", "B", "C"} & set(plan.unassigned)) == 1
+    candidate = next(entry for entry in plan.unassigned_reasons
+                     if entry.case_id in {"A", "B", "C"})
+    assert candidate.nearest_diagnostic_case_id in {"A", "B", "C"}
+    assert candidate.nearest_similarity is not None
+    assert candidate.nearest_similarity >= plan.minimum_similarity
+    assert "keine homogene Gruppe" in candidate.reason
