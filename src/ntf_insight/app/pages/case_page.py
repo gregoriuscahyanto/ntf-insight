@@ -639,6 +639,17 @@ class CasePage(QWidget):
             )
             return
 
+        if entry.kind == "replacement_candidate":
+            QMessageBox.information(
+                self,
+                "AutoExport-Quelldatum",
+                "Dies ist ein automatisch erkannter Reparaturkandidat aus "
+                "AutoExport und kein bestätigtes Tauschevent. "
+                "Für eine Korrektur bitte den tatsächlichen Tausch als "
+                "separates Ereignis mit dokumentierter Quelle erfassen.",
+            )
+            return
+
         dialog = ManualEventDialog(case, self, kind=entry.kind, existing=entry.event)
         if dialog.exec() != dialog.DialogCode.Accepted:
             return
