@@ -40,6 +40,13 @@ Die App zeigt je Bauteilfamilie, Quellenfilter und Vor-Tausch-Zeitfenster:
 - Fälle mit Vorher-DTC, aber nicht aus den gewählten Quellen;
 - Fälle mit Vorher-DTC außerhalb des gewählten Zeitfensters.
 
+Die Kategorien sind **jeweils ein vorrangiger Ausschlussgrund**,
+damit sie sich zu 336 (bzw. zur gewählten Bauteilfamilie) addieren.
+Falls bei einem Fall sowohl ein Tauschanker als auch alle
+QEC-DTC-Zeilen fehlen, wird zuerst „kein QEC-DTC“
+ausgewiesen; das bedeutet nicht, dass alle anderen Daten
+vollständig vorliegen.
+
 Auch ein und derselbe ECU:DTC aus QuickTest und AutoExport wird als
 **ein Mengenmerkmal pro QEC-Fall** bewertet und im Diagnoseaudit
 als Quellüberschneidung ausgewiesen. Originale und Ereigniszeilen
