@@ -333,6 +333,7 @@ class CaseScatterPanel(QWidget):
         self.projection = CaseProjection((), ())
         self._visible_case_ids: list[str] = []
         self._neighbour_ids: list[str] = []
+        self.patterns: tuple[DtcCasePattern, ...] = ()
         self.population_metrics = population_metrics or {}
 
         outer = QVBoxLayout(self)
@@ -412,6 +413,23 @@ class CaseScatterPanel(QWidget):
         diagnostic_options.addStretch(1)
         layout.addLayout(diagnostic_options)
 
+        # This is an exploratory search, not a second interpretation of the
+        # 0.65 Complete-Link cluster colours. A case can match multiple codes.
+        pattern_controls = QHBoxLayout()
+        pattern_controls.addWidget(QLabel("Gemeinsames DTC-Muster hervorheben"))
+        self.pattern_combo = QComboBox()
+        self.pattern_combo.setMinimumWidth(330)
+        self.pattern_combo.setToolTip(
+            "Gemeinsame exakte ECU:DTC-Meldungen vor dem Tausch; "
+            "überlappende Vergleichskandidaten, KEINE bestätigten Cluster."
+        )
+        pattern_controls.addWidget(self.pattern_combo, 1)
+        pattern_controls.addStretch(1)
+        layout.addLayout(pattern_controls)
+        self.pattern_note = QLabel(objectName="PageSubtitle")
+        self.pattern_note.setWordWrap(True)
+        layout.addWidget(self.pattern_note)
+
         self.population_summary = QLabel(objectName="PageSubtitle")
         self.population_summary.setWordWrap(True)
         layout.addWidget(self.population_summary)
@@ -450,6 +468,17 @@ class CaseScatterPanel(QWidget):
         self.cluster_note = QLabel(objectName="PageSubtitle")
         self.cluster_note.setWordWrap(True)
         layout.addWidget(self.cluster_note)
+
+        layout.addWidget(QLabel(
+            "Gemeinsame ECU:DTC-Muster (unbestätigte Vergleichskandidaten)",
+            objectName="CardTitle",
+        ))
+        self.pattern_model = SimpleTableModel((
+            "ECU:DTC", "QEC-Fälle", "unterschiedliche FINs",
+            "mit Tauschanker", "Hinweis",
+        ))
+        self.pattern_table = self._table(self.pattern_model, 225)
+        layout.addWidget(self.pattern_table)
 
         layout.addWidget(QLabel(
             "Cluster-Qualitätsprüfung: Warum so wenige Gruppen?",
@@ -578,6 +607,10 @@ class CaseScatterPanel(QWidget):
         self.threshold.valueChanged.connect(self._recluster)
         self.dtc_source.currentIndexChanged.connect(self._change_signature)
         self.lookback.currentIndexChanged.connect(self._change_signature)
+        self.pattern_combo.currentIndexChanged.connect(self._draw)
+        self.pattern_table.selectionModel().currentRowChanged.connect(
+            self._pattern_selected
+        )
         self._refresh()
 
     @staticmethod
@@ -666,6 +699,26 @@ class CaseScatterPanel(QWidget):
         self.projection = project_diagnostic_cases(
             subset, **self._signature_options()
         )
+        self.patterns = discover_case_dtc_patterns(
+            subset, **self._signature_options()
+        )
+        previous_pattern = self.pattern_combo.currentData()
+        self.pattern_combo.blockSignals(True)
+        self.pattern_combo.clear()
+        self.pattern_combo.addItem("Keine DTC-Muster hervorheben", None)
+        for pattern in self.patterns:
+            self.pattern_combo.addItem(
+                f"{pattern.label}: {pattern.case_count} QEC-Fälle / "
+                f"{pattern.vehicle_count} FINs",
+                pattern.fault,
+            )
+        prior_index = self.pattern_combo.findData(previous_pattern)
+        if prior_index >= 1:
+            self.pattern_combo.setCurrentIndex(prior_index)
+        elif self.patterns:
+            # Make the exploratory evidence visible on the FIRST app view.
+            self.pattern_combo.setCurrentIndex(1)
+        self.pattern_combo.blockSignals(False)
         if self.focus_id not in self._visible_case_ids:
             self.focus_id = self._visible_case_ids[0] if self._visible_case_ids else None
         self._draw()
