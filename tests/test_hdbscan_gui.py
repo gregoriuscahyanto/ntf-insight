@@ -18,6 +18,10 @@ def test_hdbscan_panel_groups_members_noise_and_navigation() -> None:
     app = QApplication.instance() or QApplication([])
     cases = sample()
     panel = HDBSCANPanel(cases)
+    assert panel.selection_method.currentData() == "leaf"
+    panel.selection_method.setCurrentIndex(
+        panel.selection_method.findData("eom")
+    )
     panel.run_analysis()
     assert panel.result is not None
     assert len(panel.result.clusters) == 2
@@ -92,6 +96,9 @@ def test_hdbscan_panel_parameter_change_recalculates_both_plot_and_grouping() ->
 def test_local_hdbscan_csv_contains_only_real_qec_members(tmp_path, monkeypatch) -> None:
     app = QApplication.instance() or QApplication([])
     panel = HDBSCANPanel(sample())
+    panel.selection_method.setCurrentIndex(
+        panel.selection_method.findData("eom")
+    )
     panel.run_analysis()
     target = tmp_path / "hdbscan.csv"
     monkeypatch.setattr(
@@ -128,4 +135,73 @@ def test_hdbscan_tab_lives_alongside_existing_case_and_strict_cluster_tabs(
     assert page.detail_tabs.widget(3) is page.representative_panel
     assert page.detail_tabs.widget(0) is page.scatter_panel
     window.close()
+    app.processEvents()
+
+
+
+def test_method_comparison_shows_both_on_same_cases_and_export_only_aggregates(
+    tmp_path, monkeypatch,
+) -> None:
+    app = QApplication.instance() or QApplication([])
+    panel = HDBSCANPanel(sample())
+    assert panel.selection_method.currentData() == "leaf"
+    panel.compare_button.click()
+    report = panel.comparison
+    assert report is not None
+    assert report.eom.selection_method == "eom"
+    assert report.leaf.selection_method == "leaf"
+    assert panel.comparison_model.rowCount() == 2
+    assert panel.comparison_model.rows[0][0] == "EOM"
+    assert panel.comparison_model.rows[1][0] == "LEAF"
+    assert "Paar-Zuordnungs" in panel.comparison_summary.text()
+    assert "13" in panel.comparison_summary.text()
+    assert panel.quality_button.isEnabled()
+    assert panel.result is not None
+    assert panel.result.selection_method == "leaf"
+    target = tmp_path / "aggregate_only.csv"
+    monkeypatch.setattr(
+        QFileDialog, "getSaveFileName",
+        lambda *args, **kwargs: (str(target), "CSV-Dateien (*.csv)"),
+    )
+    panel.quality_button.click()
+    content = target.read_text(encoding="utf-8-sig")
+    assert "W1TTEST" not in content
+    assert "CPC3" not in content
+    assert "A0" not in content
+    assert "CaseId" not in content
+    with target.open(encoding="utf-8-sig", newline="") as stream:
+        lines = list(csv.DictReader(stream, delimiter=";"))
+    assert len(lines) == 2
+    assert {line["Methode"] for line in lines} == {"eom", "leaf"}
+    assert all(line["QEC mit Diagnosedaten"] == "13" for line in lines)
+    assert all("Fallpaare unter 45 Prozent" in line for line in lines)
+    panel.close()
+    app.processEvents()
+
+
+def test_large_clusters_no_misleading_star_and_leaf_method_propagated() -> None:
+    app = QApplication.instance() or QApplication([])
+    panel = HDBSCANPanel(sample())
+    panel.selection_method.setCurrentIndex(
+        panel.selection_method.findData("eom")
+    )
+    panel.run_analysis()
+    assert panel.result.selection_method == "eom"
+    # No connector lines for unselected clusters.
+    panel.map.set_result(panel.result, panel.cases)
+    assert panel.map.connector_count == 0
+    group = panel.result.clusters[0]
+    panel.map.set_result(
+        panel.result, panel.cases, highlighted_cluster=group.cluster_id
+    )
+    assert panel.map.connector_count <= group.case_count - 1
+    # Recalculation with Leaf changes method, never old plotted scores.
+    original = panel.result.distances
+    panel.selection_method.setCurrentIndex(
+        panel.selection_method.findData("leaf")
+    )
+    panel.run_analysis()
+    assert panel.result.selection_method == "leaf"
+    assert panel.result.distances == original
+    panel.close()
     app.processEvents()
