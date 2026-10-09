@@ -339,6 +339,109 @@ class HDBSCANPanel(QWidget):
                 "ist eine Sensitivitätsprüfung, keine nachträgliche Beweisführung."
             )
 
+    def compare_methods(self) -> None:
+        """Compare EOM and Leaf on the exact current cohort and parameters."""
+        self.run_analysis()
+        if self.result is None:
+            return
+        try:
+            report = compare_hdbscan_methods(
+                self._subset(),
+                min_cluster_size=self.min_cluster_size.value(),
+                min_samples=self.min_samples.value(),
+                dtc_source=self.source.currentData() or "all",
+                lookback_days=self.lookback.currentData(),
+            )
+        except ValueError as exc:
+            self.comparison_summary.setText(f"Vergleich nicht berechenbar: {exc}")
+            self.quality_button.setEnabled(False)
+            return
+        self.comparison = report
+        self.comparison_model.set_rows([
+            (
+                line.selection_method.upper(),
+                line.group_count,
+                line.clustered_cases,
+                line.noise_cases,
+                line.largest_cluster_size,
+                line.groups_with_common_faults,
+                line.groups_without_weak_pairs,
+                f"{line.weak_pair_count} / {line.all_internal_pair_count} "
+                f"({line.weak_pair_fraction:.1%})",
+                f"{line.median_of_group_medians:.1%}"
+                if line.median_of_group_medians is not None else "Keine Gruppen",
+            )
+            for line in report.rows
+        ])
+        self.comparison_summary.setText(
+            f"EOM/Leaf-Vergleich auf identischen "
+            f"{report.eligible_case_count} diagnostizierbaren QEC-Fällen · "
+            f"{report.both_grouped_cases} Fälle in beiden Verfahren gruppiert · "
+            f"{'Paar-Zuordnungs-Übereinstimmung: ' + format(report.pair_coassignment_jaccard, '.1%') if (report.eom.all_internal_pair_count or report.leaf.all_internal_pair_count) else 'Keine gruppierten Paare in beiden Varianten'}. "
+            "Dabei werden echte Fallpaare verglichen, nicht willkürliche "
+            "Cluster-IDs H1/H2. Ein hoher Wert bestätigt keine gleiche Ursache. "
+            "Prüfe zusätzlich gemeinsame ECU:DTC und SSL-Endbefunde."
+        )
+        self.quality_button.setEnabled(True)
+
+    def export_quality_report(self) -> None:
+        """Export purely aggregate counts and scores; no QEC IDs, FINs or DTCs."""
+        report = self.comparison
+        if report is None:
+            return
+        target, _ = QFileDialog.getSaveFileName(
+            self, "Anonymisierte HDBSCAN-Methodenqualität exportieren",
+            "NTF_HDBSCAN_Methodenvergleich_aggregiert.csv",
+            "CSV-Dateien (*.csv)",
+        )
+        if not target:
+            return
+        try:
+            with open(target, "w", encoding="utf-8-sig", newline="") as output:
+                writer = csv.writer(output, delimiter=";")
+                writer.writerow((
+                    "Methode", "QEC mit Diagnosedaten", "Cluster",
+                    "Gruppierte Fälle", "Ausreißer", "Größter Cluster",
+                    "Gruppen mit durchgehendem ECU:DTC",
+                    "Gruppen ohne schwache Fallpaare",
+                    "Fallpaare unter 45 Prozent", "Alle internen Fallpaare",
+                    "Anteil schwacher Paare",
+                    "Median aller Gruppen-Paarmediane",
+                    "Paar-Zuordnungs-Übereinstimmung EOM/Leaf",
+                    "In beiden Methoden gruppierte Fälle",
+                    "min_cluster_size", "min_samples",
+                    "DTC-Quellen", "Vor-Tausch-Tage", "Methodenstatus",
+                ))
+                for line in report.rows:
+                    writer.writerow((
+                        line.selection_method,
+                        report.eligible_case_count,
+                        line.group_count,
+                        line.clustered_cases,
+                        line.noise_cases,
+                        line.largest_cluster_size,
+                        line.groups_with_common_faults,
+                        line.groups_without_weak_pairs,
+                        line.weak_pair_count,
+                        line.all_internal_pair_count,
+                        f"{line.weak_pair_fraction:.6f}",
+                        (
+                            f"{line.median_of_group_medians:.6f}"
+                            if line.median_of_group_medians is not None else ""
+                        ),
+                        f"{report.pair_coassignment_jaccard:.6f}",
+                        report.both_grouped_cases,
+                        report.min_cluster_size,
+                        report.min_samples,
+                        report.dtc_source,
+                        report.lookback_days or "gesamte Vorher-Historie",
+                        "ML explorativ; keinerlei Ursache bestätigt",
+                    ))
+        except OSError as exc:
+            QMessageBox.warning(
+                self, "Aggregierter Qualitätsbericht nicht gespeichert", str(exc),
+            )
+
     def _group_changed(self, index, _previous) -> None:
         if not index or not index.isValid() or self.result is None:
             return
