@@ -19,6 +19,7 @@ from ntf_insight.analysis.hdbscan_clustering import (
     cluster_hdbscan_cases, compare_hdbscan_methods,
 )
 from ntf_insight.analysis.mechanism_review import read_confirmed_mechanisms
+from ntf_insight.analysis.recurrence_coverage_audit import audit_recurrence_coverage
 from ntf_insight.app.settings import AppPaths
 from ntf_insight.storage.duckdb_store import DuckDBStore
 from ntf_insight.storage.quicktest_store import QuickTestStore
@@ -104,10 +105,14 @@ def main(argv: list[str] | None = None) -> int:
             lookback_days=options.vorher_tage,
             common_dtc_cutoff=0.35 if options.haeufigkeitsfilter else None,
         )
+        raw_quicktests = QuickTestStore(db)
         gaps = investigate_diagnostic_gaps(
             cases, audit,
-            quicktests=QuickTestStore(db),
+            quicktests=raw_quicktests,
             autoexport=SourceKnowledgeStore(db),
+        )
+        session_coverage = audit_recurrence_coverage(
+            cases, quicktests=raw_quicktests,
         )
         comparison = None
         if options.vergleich:
@@ -122,6 +127,7 @@ def main(argv: list[str] | None = None) -> int:
         exported = write_cluster_review_zip(
             options.ausgabe, cases, result, audit,
             confirmations=confirmations, gaps=gaps, comparison=comparison,
+            recurrence_coverage=session_coverage,
         )
     except (OSError, ValueError) as exc:
         parser.error(str(exc))
