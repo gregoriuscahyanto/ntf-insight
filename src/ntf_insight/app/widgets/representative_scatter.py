@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import numpy as np
 from PySide6.QtCore import Qt, QRectF, Signal
-from PySide6.QtGui import QColor, QPen
+from PySide6.QtGui import QBrush, QColor, QPainter, QPen
 from PySide6.QtWidgets import QFrame, QGraphicsScene, QGraphicsView
 
 from ntf_insight.analysis.representative_clustering import RepresentativePlan
@@ -40,9 +40,10 @@ def representative_mds_coordinates(
             )
             distances[i, j] = distances[j, i] = max(0, distance)
     squared = distances ** 2
-    centered = squared - squared.mean(axis=0)[None, :]
-    centered -= squared.mean(axis=1)[:, None]
-    centered += squared.mean()
+    centered = (
+        squared - squared.mean(axis=0)[None, :]
+        - squared.mean(axis=1)[:, None] + squared.mean()
+    )
     eigenvalues, eigenvectors = np.linalg.eigh(-0.5 * centered)
     order = np.argsort(eigenvalues)[::-1][:2]
     result = np.zeros((n, 2))
@@ -71,7 +72,7 @@ class RepresentativeScatter(QGraphicsView):
         self.setScene(self._scene)
         self.setMinimumHeight(340)
         self.setFrameShape(QFrame.Shape.StyledPanel)
-        self.setRenderHints(self.renderHints())
+        self.setRenderHint(QPainter.RenderHint.Antialiasing)
         self.setDragMode(QGraphicsView.DragMode.ScrollHandDrag)
         self._zoom = 1.0
         self.items_by_case = {}
@@ -141,7 +142,7 @@ class RepresentativeScatter(QGraphicsView):
             item = self._scene.addEllipse(
                 x - radius, y - radius, radius * 2, radius * 2,
                 QPen(border, 2.4 if is_rep else 1.1),
-                color_for_cluster(group_id),
+                QBrush(color_for_cluster(group_id)),
             )
             item.setZValue(2 if is_rep else 1)
             item.setData(0, case_id)
