@@ -5,11 +5,21 @@ import csv
 
 from PySide6.QtCore import Signal
 from PySide6.QtWidgets import (
-    QComboBox, QFileDialog, QGridLayout, QHBoxLayout, QLabel, QMessageBox,
+    QCheckBox, QComboBox, QFileDialog, QGridLayout, QHBoxLayout, QLabel, QMessageBox,
     QPushButton, QScrollArea, QSpinBox, QVBoxLayout, QWidget,
 )
 
 from ntf_insight.analysis.case_clustering import _component_key, signature_for
+from ntf_insight.analysis.diagnostic_evidence_audit import (
+    DiagnosticEvidenceAudit, audit_diagnostic_evidence,
+)
+from ntf_insight.analysis.mechanism_review import (
+    ConfirmedMechanism, read_confirmed_mechanisms, review_cluster_mechanisms,
+    write_review_template,
+)
+from ntf_insight.analysis.supervised_pair_validation import (
+    evaluate_supervised_pairs,
+)
 from ntf_insight.analysis.hdbscan_clustering import (
     HDBSCANMethodComparison, MLClusterResult, cluster_hdbscan_cases,
     compare_hdbscan_methods,
@@ -35,6 +45,8 @@ class HDBSCANPanel(QWidget):
         }
         self.result: MLClusterResult | None = None
         self.comparison: HDBSCANMethodComparison | None = None
+        self.evidence_audit: DiagnosticEvidenceAudit | None = None
+        self.confirmed_mechanisms: tuple[ConfirmedMechanism, ...] = ()
         self._activated = False
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -113,6 +125,16 @@ class HDBSCANPanel(QWidget):
             "Beide benutzen dieselben diagnostischen Vektoren."
         )
         grid.addWidget(self.selection_method, 1, 5)
+        self.filter_common = QCheckBox(
+            "Häufige ECU:DTC ab 35 % testweise aus ML-Merkmalen ausschließen"
+        )
+        self.filter_common.setChecked(False)
+        self.filter_common.setToolTip(
+            "Experimenteller Sensitivitätsvergleich. Nicht behaupten, "
+            "dass häufige Kommunikations-DTCs technisch irrelevant sind. "
+            "Fälle ohne verbleibenden DTC werden getrennt ausgewiesen."
+        )
+        grid.addWidget(self.filter_common, 2, 0, 1, 6)
         body.addLayout(grid)
 
         actions = QHBoxLayout()
@@ -216,6 +238,71 @@ class HDBSCANPanel(QWidget):
         self.noise_table = _table(self.noise_model, 260)
         self.noise_table.doubleClicked.connect(self._open_noise_case)
         body.addWidget(self.noise_table)
+
+        body.addWidget(QLabel(
+            "Diagnosebasis prüfen: warum werden Fälle ausgeschlossen?",
+            objectName="CardTitle",
+        ))
+        self.evidence_summary = QLabel(objectName="PageSubtitle")
+        self.evidence_summary.setWordWrap(True)
+        body.addWidget(self.evidence_summary)
+        self.frequency_model = SimpleTableModel((
+            "ECU", "DTC", "QEC-Fälle mit DTC", "Anteil an Fällen mit Vorher-DTC",
+            "Häufigkeitsprüfung (KEIN Ursachenurteil)",
+        ))
+        self.frequency_table = _table(self.frequency_model, 210)
+        body.addWidget(self.frequency_table)
+
+        body.addWidget(QLabel(
+            "Fachlich bestätigte Fehlermechanismen – unabhängige Validierung",
+            objectName="CardTitle",
+        ))
+        instructions = QLabel(
+            "Die QEC-SSL-Endbefunde erscheinen nur als Referenz in einer "
+            "lokalen Prüfvorlage. Nicht als bestätigte Fehlerursache "
+            "übernehmen! Ein Fachprüfer muss einen spezifischen Mechanismus "
+            "mit unabhängiger Evidenz und Datum ausdrücklich bestätigen. "
+            "Diese Labels ändern NIEMALS die HDBSCAN-Zuordnung.",
+            objectName="PageSubtitle",
+        )
+        instructions.setWordWrap(True)
+        body.addWidget(instructions)
+        review_controls = QHBoxLayout()
+        self.template_button = QPushButton(
+            "Fachprüfvorlage lokal exportieren (mit FIN und SSL)"
+        )
+        self.template_button.clicked.connect(self.export_review_template)
+        review_controls.addWidget(self.template_button)
+        self.import_review_button = QPushButton(
+            "Bestätigte Fehlermechanismen lokal einlesen"
+        )
+        self.import_review_button.clicked.connect(self.import_mechanism_labels)
+        review_controls.addWidget(self.import_review_button)
+        self.pair_test_button = QPushButton("FIN-getrenntes Paarmodell prüfen")
+        self.pair_test_button.setEnabled(False)
+        self.pair_test_button.clicked.connect(self.test_supervised_pairs)
+        review_controls.addWidget(self.pair_test_button)
+        body.addLayout(review_controls)
+        self.mechanism_summary = QLabel(
+            "Noch keine Fachbestätigungen geladen. "
+            "Alle Cluster sind unvalidierte Diagnostik-Vergleichsgruppen.",
+            objectName="PageSubtitle",
+        )
+        self.mechanism_summary.setWordWrap(True)
+        body.addWidget(self.mechanism_summary)
+        self.mechanism_model = SimpleTableModel((
+            "ML-Gruppe", "QEC-Fälle", "Fachlich bestätigt", "Bestätigte FINs",
+            "Gleiche Ursachenpaare", "Abweichende Ursachenpaare",
+            "Übereinstimmung NUR auf geprüften Paaren", "Fachliche Bewertung",
+        ))
+        self.mechanism_table = _table(self.mechanism_model, 220)
+        body.addWidget(self.mechanism_table)
+        self.pair_test_summary = QLabel(
+            "Kein Paarmodell trainiert. Erst unabhängige Fachlabels laden.",
+            objectName="PageSubtitle",
+        )
+        self.pair_test_summary.setWordWrap(True)
+        body.addWidget(self.pair_test_summary)
         footer = QLabel(
             "Interpretation: Dichtecluster können Fälle mit unterschiedlichen "
             "technischen Fehlerursachen enthalten. Besonders problematisch sind "
