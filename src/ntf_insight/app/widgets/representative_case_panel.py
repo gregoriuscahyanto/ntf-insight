@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 from collections import Counter
+import csv
 
 from PySide6.QtCore import Signal
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QComboBox,
     QDoubleSpinBox,
+    QFileDialog,
     QGridLayout,
     QHBoxLayout,
     QHeaderView,
@@ -159,6 +161,10 @@ class RepresentativeCasePanel(QWidget):
         self.run_button = QPushButton("Repräsentanten berechnen")
         self.run_button.clicked.connect(self.run_analysis)
         action.addWidget(self.run_button)
+        self.export_button = QPushButton("Untersuchungsplan als CSV exportieren")
+        self.export_button.setEnabled(False)
+        self.export_button.clicked.connect(self.export_plan)
+        action.addWidget(self.export_button)
         self.reset_button = QPushButton("MDS-Zoom zurücksetzen")
         self.reset_button.clicked.connect(lambda: self.map.reset_zoom())
         action.addWidget(self.reset_button)
@@ -320,6 +326,7 @@ class RepresentativeCasePanel(QWidget):
         ])
         self._group_ids = [group.cluster_id for group in plan.clusters]
         self.open_case_button.setEnabled(bool(plan.clusters))
+        self.export_button.setEnabled(bool(plan.clusters))
         self.group_note.setText(
             "Wähle eine Gruppe für ihre QEC-/FIN-Mitglieder und "
             "den realen Repräsentanten. "
@@ -330,6 +337,46 @@ class RepresentativeCasePanel(QWidget):
         if plan.clusters:
             self.group_table.selectRow(0)
             self._group_changed(self.group_model.index(0, 0), None)
+
+    def export_plan(self) -> None:
+        """Export only after explicit local file selection; never upload VINs."""
+        if self.plan is None or not self.plan.clusters:
+            return
+        target, _filter = QFileDialog.getSaveFileName(
+            self, "Repräsentative QEC-Untersuchungsfälle exportieren",
+            "NTF_Representative_Investigation_Plan.csv",
+            "CSV-Dateien (*.csv)",
+        )
+        if not target:
+            return
+        try:
+            with open(target, "w", newline="", encoding="utf-8-sig") as output:
+                writer = csv.writer(output, delimiter=";")
+                writer.writerow([
+                    "Gruppe", "Repräsentant", "QEC-Fall", "FIN",
+                    "Diagnostischer Index (0-1)", "ECU:DTC gemeinsam",
+                    "Repräsentierter Fallzahl", "Gruppen-FINs",
+                    "Schwächstes internes Paar", "SSL-Prüfwarnungen",
+                    "DTC-Datenbasis", "Vorher-Tage", "Mindestindex",
+                    "Hinweis",
+                ])
+                for group in self.plan.clusters:
+                    for member in group.members:
+                        writer.writerow([
+                            f"R{group.cluster_id}", group.representative_case_id,
+                            member.case_id, self.by_id[member.case_id].vin,
+                            f"{member.similarity:.6f}",
+                            ", ".join(f"{ecu}:{code}" for ecu, code in member.shared_faults),
+                            group.case_count, group.vehicle_count,
+                            group.weakest_internal_similarity,
+                            "; ".join(group.review_warnings),
+                            self.plan.dtc_source,
+                            self.plan.lookback_days or "Vollhistorie",
+                            self.plan.minimum_similarity,
+                            "Ähnlichkeit ist keine bestätigte Reparaturursache",
+                        ])
+        except OSError as exc:
+            QMessageBox.warning(self, "Export nicht möglich", str(exc))
 
     def _group_changed(self, current, _previous) -> None:
         if self.plan is None or current is None or not current.isValid():
