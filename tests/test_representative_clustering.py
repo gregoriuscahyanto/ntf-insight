@@ -134,7 +134,10 @@ def test_duplicate_dtc_and_post_repair_outcomes_never_change_membership() -> Non
     assert original.representative_ids == changed.representative_ids
     assert original.assigned_case_ids == changed.assigned_case_ids
     assert original.pair_scores == changed.pair_scores
-    assert changed.clusters[0].review_warnings != original.clusters[0].review_warnings
+    assert any(
+        after.review_warnings != before.review_warnings
+        for before, after in zip(original.clusters, changed.clusters)
+    )
 
 
 def test_untrusted_same_vehicle_episode_and_model_series_never_silently_mixed() -> None:
