@@ -54,8 +54,8 @@ def test_representatives_render_actual_qec_ids_budget_and_mds() -> None:
     app = QApplication.instance() or QApplication([])
     cases = fixtures()
     panel = RepresentativeCasePanel(cases)
-    panel.budget.setValue(12)
-    panel.minimum.setValue(0.30)
+    assert not hasattr(panel, "budget")
+    assert panel.minimum.value() == 0.60
     panel.run_analysis()
     assert panel.plan is not None
     assert len(panel.plan.clusters) == 2
@@ -63,6 +63,10 @@ def test_representatives_render_actual_qec_ids_budget_and_mds() -> None:
     assert "80.0%" in panel.summary.text()
     assert "nicht zugeordnet" in panel.summary.text()
     assert panel.group_model.rowCount() == 2
+    assert "keine feste Obergrenze" in panel.summary.text()
+    assert "ohne Selbst" in panel.group_model.headers[4]
+    assert all(group.weakest_internal_similarity >= 0.60
+               for group in panel.plan.clusters)
     assert panel.member_model.rowCount() == 2
     assert panel.map.items_by_case
     assert set(panel.map.items_by_case) == {"A", "B", "C", "D"}
