@@ -18,13 +18,13 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QPushButton,
     QScrollArea,
-    QSpinBox,
     QTableView,
     QVBoxLayout,
     QWidget,
 )
 
 from ntf_insight.analysis.case_clustering import _component_key
+from ntf_insight.analysis.qec_findings import qec_ssl_finding_label
 from ntf_insight.analysis.representative_clustering import (
     RepresentativePlan,
     select_representative_cases,
@@ -95,15 +95,16 @@ class RepresentativeCasePanel(QWidget):
         layout.setSpacing(11)
 
         layout.addWidget(QLabel(
-            "Repräsentative Fallauswahl für die Entwicklung",
+            "Diagnostisch homogene Cluster und repräsentative QEC-Fälle",
             objectName="PageTitle",
         ))
         explanation = QLabel(
-            "Ziel: mit einem begrenzten Untersuchungsbudget möglichst viele "
-            "hinreichend ähnliche, echte QEC-Fälle abdecken. Die Zahlen unten "
-            "sind diagnostische ÄhnlichkeitsINDIZES, keine Ursachen- oder "
-            "Reparaturwahrscheinlichkeiten. Nicht passende Fälle werden "
-            "ausdrücklich NICHT zwangsweise einem Cluster zugeordnet.",
+            "Automatische Clusteranzahl: Jede Gruppe muss eine gemeinsame "
+            "ECU:DTC-Kernmenge besitzen, und JEDES Mitgliedspaar muss den "
+            "eingestellten Mindestindex erfüllen. Der reale repräsentative "
+            "QEC-Fall wird erst danach als zentralster Fall ausgewählt. "
+            "Nicht vergleichbare Fälle bleiben unzugeordnet. "
+            "Ähnlichkeit ist keine bestätigte gleiche Fehlerursache.",
             objectName="PageSubtitle",
         )
         explanation.setWordWrap(True)
@@ -122,17 +123,18 @@ class RepresentativeCasePanel(QWidget):
                 f"{family_label[family]} ({family_counts[family]})", family
             )
         controls.addWidget(self.family, 0, 1)
-        controls.addWidget(QLabel("Max. Untersuchungsfälle"), 0, 2)
-        self.budget = QSpinBox()
-        self.budget.setRange(1, 100)
-        self.budget.setValue(12)
-        controls.addWidget(self.budget, 0, 3)
-        controls.addWidget(QLabel("Mind. Index zum Repräsentanten"), 0, 4)
+        controls.addWidget(QLabel("Clusteranzahl"), 0, 2)
+        controls.addWidget(QLabel("Automatisch · keine Begrenzung"), 0, 3)
+        controls.addWidget(QLabel("Mindestindex ALLER Fallpaare"), 0, 4)
         self.minimum = QDoubleSpinBox()
         self.minimum.setRange(0.05, 1.0)
         self.minimum.setSingleStep(0.05)
         self.minimum.setDecimals(2)
-        self.minimum.setValue(0.35)
+        self.minimum.setValue(0.60)
+        self.minimum.setToolTip(
+            "Jedes der gegenseitigen Fallpaare muss diesen Index erfüllen. "
+            "Unkalibrierter Screening-Index; kein Nachweis derselben Fehlerursache."
+        )
         controls.addWidget(self.minimum, 0, 5)
 
         controls.addWidget(QLabel("DTC-Quellen"), 1, 0)
@@ -151,14 +153,14 @@ class RepresentativeCasePanel(QWidget):
         self.frequency = QComboBox()
         for value in (0.25, 0.35, 0.50, 1.0):
             self.frequency.addItem(
-                f"{value:.0%} aller QEC-Fälle der Bauteilfamilie", value
+                f"{value:.0%} der QEC-Fälle MIT Vorher-DTC", value
             )
         self.frequency.setCurrentIndex(1)
         controls.addWidget(self.frequency, 1, 5)
         layout.addLayout(controls)
 
         action = QHBoxLayout()
-        self.run_button = QPushButton("Repräsentanten berechnen")
+        self.run_button = QPushButton("Homogene Cluster berechnen")
         self.run_button.clicked.connect(self.run_analysis)
         action.addWidget(self.run_button)
         self.export_button = QPushButton("Untersuchungsplan als CSV exportieren")
@@ -178,12 +180,12 @@ class RepresentativeCasePanel(QWidget):
         self.map.case_picked.connect(self._select_case_from_plot)
         layout.addWidget(self.map)
         geometry_note = QLabel(
-            "Farbe = explorative Repräsentanten-Gruppe R1, R2, … · "
+            "Farbe = diagnostisch homogene Complete-Link-Gruppe R1, R2, … · "
             "Großer, nummerierter Punkt = tatsächlicher ausgewählter "
             "Untersuchungsfall (Medoid) · Grau = nicht zugeordnet. "
             "MDS stellt die verwendete Screening-Distanz zweidimensional "
             "NUR näherungsweise dar; maßgeblich sind die Zahlen der Tabelle. "
-            "Die blauen Complete-Link-Cluster im anderen Reiter bleiben unverändert.",
+            "Die ältere Clusterberechnung im anderen Reiter bleibt unverändert.",
             objectName="PageSubtitle",
         )
         geometry_note.setWordWrap(True)
@@ -195,7 +197,7 @@ class RepresentativeCasePanel(QWidget):
         ))
         self.group_model = SimpleTableModel((
             "Gruppe", "Repräsentativer QEC-Fall", "Fälle", "FINs",
-            "Ø Index", "Niedrigster Index",
+            "Ø zu Rep. (ohne Selbst)", "Niedrigster Index zu Rep.",
             "Schwächstes internes Paar", "Gemeinsame ECU:DTC",
             "SSL-Befunde", "Prüfwarnungen",
         ))
@@ -288,7 +290,6 @@ class RepresentativeCasePanel(QWidget):
         ]
         self.plan = select_representative_cases(
             subset,
-            budget=self.budget.value(),
             minimum_similarity=self.minimum.value(),
             lookback_days=self.lookback.currentData(),
             dtc_source=self.source.currentData(),
@@ -298,12 +299,15 @@ class RepresentativeCasePanel(QWidget):
         self.summary.setText(
             f"{plan.total_cases} echte QEC-/NTF-Fälle / "
             f"{plan.vehicle_count} verschiedene FINs in dieser Bauteilfamilie · "
-            f"Untersuchungsbudget: maximal {plan.budget} Fälle · "
-            f"{len(plan.clusters)} Repräsentanten ausgewählt · "
-            f"{plan.covered_count} Fälle ({plan.coverage:.1%}) vorläufig "
-            f"diagnostisch abgedeckt · {len(plan.unassigned)} nicht zugeordnet · "
+            f"{len(plan.clusters)} datenbasiert gebildete homogene Cluster "
+            f"(keine feste Obergrenze), {len(plan.representative_ids)} echte "
+            f"QEC-Repräsentanten · "
+            f"{plan.covered_count} Fälle ({plan.coverage:.1%}) "
+            f"diagnostisch gruppiert · {len(plan.unassigned)} nicht zugeordnet · "
             f"{plan.missing_pre_diagnostics} ohne Vorher-DTC · "
-            f"{plan.without_swap_anchor} ohne Tauschanker. "
+            f"{plan.without_swap_anchor} ohne Tauschanker · "
+            f"DTC-Häufigkeitsbasis: {plan.screening_population} Fälle "
+            "mit belegten Vorher-DTCs. "
             "Eine Auswahl deckt keine gesicherte Fehlerursache ab. "
             "Die Kriterien sind vorläufig und müssen mit QEC-Fachfällen validiert werden."
         )
@@ -328,9 +332,10 @@ class RepresentativeCasePanel(QWidget):
         self.open_case_button.setEnabled(bool(plan.clusters))
         self.export_button.setEnabled(bool(plan.clusters))
         self.group_note.setText(
-            "Wähle eine Gruppe für ihre QEC-/FIN-Mitglieder und "
-            "den realen Repräsentanten. "
-            "Nicht zugeordnete Fälle werden NICHT als ähnlich ausgegeben."
+            "Jedes Paar innerhalb einer Gruppe besteht die Ähnlichkeitsschwelle. "
+            "Ein Repräsentant ist der zentrale reale QEC-Fall der Gruppe, "
+            "keine aus Befunden abgeleitete bestätigte gemeinsame Ursache. "
+            "Nicht zugeordnete Fälle werden getrennt gehalten."
         )
         self.member_model.set_rows([])
         self.map.set_plan(plan, subset)
@@ -354,7 +359,7 @@ class RepresentativeCasePanel(QWidget):
                 writer = csv.writer(output, delimiter=";")
                 writer.writerow([
                     "Gruppe", "Repräsentant", "QEC-Fall", "FIN",
-                    "Diagnostischer Index (0-1)", "ECU:DTC gemeinsam",
+                    "Index zu Repräsentant (1,0=selbst)", "ECU:DTC gemeinsam",
                     "Repräsentierter Fallzahl", "Gruppen-FINs",
                     "Schwächstes internes Paar", "SSL-Prüfwarnungen",
                     "DTC-Datenbasis", "Vorher-Tage", "Mindestindex",
@@ -392,21 +397,22 @@ class RepresentativeCasePanel(QWidget):
                 f"{member.similarity:.1%}",
                 ", ".join(f"{ecu}:{dtc}" for ecu, dtc in member.shared_faults[:8])
                 or "—",
-                str(getattr(self.by_id[member.case_id], "qec_ssl_end_finding", "")
-                    or "nicht dokumentiert")[:180],
+                qec_ssl_finding_label(self.by_id[member.case_id])[:180],
             )
             for member in group.members
         ])
         self.group_note.setText(
             f"R{group.cluster_id} · Repräsentant "
             f"{group.representative_case_id} · "
-            f"{group.case_count} QEC-Fälle / {group.vehicle_count} FINs. "
-            f"Schwächste Ähnlichkeit zum Repräsentanten: "
-            f"{group.weakest_representative_similarity:.1%}; "
-            f"schwächstes Paar innerhalb der Gruppe: "
-            f"{group.weakest_internal_similarity:.1%}"
-            if group.weakest_internal_similarity is not None
-            else "Keine interne Paarähnlichkeit berechenbar."
+            f"{group.case_count} QEC-Fälle / {group.vehicle_count} FINs · "
+            f"Ø zu Repräsentant ohne 100%-Selbstvergleich: "
+            f"{group.mean_similarity:.1%} · "
+            f"Schwächster Index zum Repräsentanten: "
+            f"{group.weakest_representative_similarity:.1%} · "
+            f"Schwächstes internes Paar: "
+            f"{group.weakest_internal_similarity:.1%}. "
+            "Alle Paare bestehen den gewählten Mindestindex; "
+            "gleiche technische Fehlerursache ist NICHT bestätigt."
         )
         self.map.set_plan(
             self.plan,
