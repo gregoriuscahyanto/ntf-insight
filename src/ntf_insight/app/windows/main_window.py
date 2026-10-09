@@ -17,6 +17,7 @@ from ntf_insight.app.pages.supplier_page import SupplierPage
 from ntf_insight.app.widgets.navigation import NavigationPanel
 from ntf_insight.ingestion.manual_entry import ManualCaseService
 from ntf_insight.storage.duckdb_store import DuckDBStore
+from ntf_insight.storage.quicktest_store import QuickTestStore
 
 
 class MainWindow(QMainWindow):
@@ -55,7 +56,11 @@ class MainWindow(QMainWindow):
 
     def _create_pages(self) -> dict[str, QWidget]:
         pages = {
-            "dashboard": DashboardPage(self.repository, self.application_data.mode),
+            "dashboard": DashboardPage(
+                self.repository,
+                self.application_data.mode,
+                QuickTestStore(self.manual_service.store),
+            ),
             "sources": SourcesPage(
                 self.repository,
                 self.reference_repository,
