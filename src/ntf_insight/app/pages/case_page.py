@@ -48,6 +48,7 @@ from ntf_insight.app.widgets.event_time_plot import EventTimePlot
 from ntf_insight.app.widgets.quicktest_browser import QuickTestBrowser
 from ntf_insight.app.widgets.case_scatter_plot import CaseScatterPanel
 from ntf_insight.app.widgets.representative_case_panel import RepresentativeCasePanel
+from ntf_insight.app.widgets.hdbscan_panel import HDBSCANPanel
 from ntf_insight.ingestion.manual_entry import ManualCaseService, ManualEntryError
 from ntf_insight.ingestion.real_source_parsers import canonical_fin
 from ntf_insight.domain.events import PartReplacement
@@ -143,6 +144,13 @@ class CasePage(QWidget):
         )
         self.representative_panel.case_requested.connect(self.select_case)
         self.representative_panel.tips_linked.connect(self._relay_tips_link)
+
+        # Experiment, never silently replace/overwrite strict QEC clusters.
+        self.hdbscan_panel = HDBSCANPanel(self.real_cases)
+        self.detail_tabs.addTab(
+            self.hdbscan_panel, "ML-Cluster (HDBSCAN)"
+        )
+        self.hdbscan_panel.case_requested.connect(self.select_case)
 
         layout = QVBoxLayout(content)
         layout.setContentsMargins(32, 28, 32, 28)
