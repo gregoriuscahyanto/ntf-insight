@@ -26,6 +26,7 @@ from ntf_insight.analysis.diagnostic_gap_investigation import DiagnosticGapRepor
 from ntf_insight.analysis.hdbscan_clustering import HDBSCANMethodComparison, MLClusterResult
 from ntf_insight.analysis.mechanism_review import ConfirmedMechanism, safe_spreadsheet_cell
 from ntf_insight.analysis.representative_transfer import plan_representative_transfer
+from ntf_insight.analysis.recurrence import analyze_recurrence
 from ntf_insight.domain.case import NTFCase
 
 
@@ -40,6 +41,7 @@ PACKAGE_FILES = (
     "dtc_haeufigkeiten.csv",
     "diagnosequalitaet.csv",
     "ausgeschlossene_faelle.csv",
+    "wiederauftreten.csv",
     "methodenvergleich.csv",
 )
 
@@ -319,6 +321,24 @@ def write_cluster_review_zip(
             gap.raw_unusable_date_rows if gap else "",
         ))
 
+    recurrence_rows = []
+    for cid in case_ids:
+        recurrence = analyze_recurrence(by_id[cid])
+        recurrence_rows.append((
+            aliases[cid], group_for.get(cid, "NICHT_GRUPPIERT"),
+            int(recurrence.has_pre_test), int(recurrence.has_post_test),
+            int(recurrence.assessable),
+            len(recurrence.same_faults) if recurrence.assessable else "",
+            len(recurrence.new_faults) if recurrence.assessable else "",
+            len(recurrence.disappeared_faults) if recurrence.assessable else "",
+            (
+                "Gleiche ECU:DTC nach Tausch erneut beobachtet"
+                if recurrence.assessable and recurrence.has_recurrence
+                else "Keine gleichen ECU:DTC in verfügbaren Vorher/Nachher-Tests"
+                if recurrence.assessable else "Nicht beurteilbar"
+            ),
+        ))
+
     comparison_rows = []
     if comparison is not None and comparison.eligible_case_count:
         if (
@@ -433,6 +453,12 @@ def write_cluster_review_zip(
             "FIN-Roh-DTC vor Tausch", "Roh-DTC gleicher Tag",
             "FIN-Roh-DTC nach Tausch", "Roh-DTC ohne Zeit",
         ), excluded_rows),
+        "wiederauftreten.csv": _csv_bytes((
+            "Fall", "Gruppe", "Vorher-Diagnosesitzung vorhanden",
+            "Nachher-Diagnosesitzung vorhanden", "Wiederauftreten beurteilbar",
+            "Gleiche ECU:DTC vor/nach Tausch", "Nur neue ECU:DTC nach Tausch",
+            "Vorher-ECU:DTC nicht mehr beobachtet", "Bewertung",
+        ), recurrence_rows),
         "methodenvergleich.csv": _csv_bytes((
             "Methode", "Cluster", "Gruppierte Fälle", "Ausreißer",
             "Schwache Fallpaare Anteil", "Median Cluster-Paarmediane",
