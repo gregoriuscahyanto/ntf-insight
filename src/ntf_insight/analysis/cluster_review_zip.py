@@ -410,7 +410,8 @@ def write_cluster_review_zip(
             item.screened_agree, item.screened_disagree,
             item.outside_screen_agree, item.outside_screen_disagree,
             item.same_fin_excluded, item.shared_evidence_excluded,
-            item.repeated_fin_excluded, item.open_target_fins, item.status,
+            item.repeated_fin_excluded, item.unresolved_mechanism_conflicts,
+            item.open_target_fins, item.status,
         ) for item in pilot_validation.groups
     ]
     pilot_validation_targets = [
@@ -621,6 +622,7 @@ def write_cluster_review_zip(
             "Außerhalb Screening Widersprüche",
             "Gleiche-FIN-Ausschlüsse", "Wiederverwendete Evidenz",
             "Mehrfache QEC je bestätigte Ziel-FIN",
+            "Widersprüche ohne unabhängige Zielfallevidenz",
             "Noch nicht unabhängig geprüfte Ziel-FINs",
             "Fachbewertung – KEINE automatische Übertragung",
         ), pilot_validation_groups),
