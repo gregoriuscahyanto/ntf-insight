@@ -213,6 +213,14 @@ Current PySide6 views:
 - [x] Data Sources + raw archive
 - [x] Combined FIN + case explorer
 - [x] read-only FIN-only QuickTest previews in case table, timeline and time plot (no fabricated NTF case)
+- [x] erklärbare, gewichtete Fallähnlichkeit mit vollständigen ECU:DTC-Kombinationen
+- [x] konservative Complete-Link-Fallcluster mit expliziter Mindestähnlichkeit
+- [x] Cluster-Steckbriefe, repräsentativer Fall, schwächster Paarwert und FIN-Anzahl
+- [x] direkter Wechsel zwischen FIN/Fallanalyse und ähnlichen realen Fällen
+- [x] gemeinsame und abweichende DTCs sowie historische Maßnahmen/Nachtests getrennt
+- [x] kein künstlicher Fall aus mehreren QuickTests einer FIN; k. A. bei fehlender Vergleichsbasis
+- [ ] 20–50 fachlich gelabelte Fälle für Gewichts- und Schwellenvalidierung
+- [ ] HDBSCAN/UMAP nur nach Qualitätsprüfung und aussagekräftigen Trainingsdaten
 - [x] QEC-/AutoExport-Datumsabgleich nach FIN, Teilenummer und Kilometerstand
 - [x] separate Tausch- und Reparaturkandidaten im Zeitplot
 - [x] umschaltbare X-Achse (Datum / Kilometerstand), fehlende km sichtbar
