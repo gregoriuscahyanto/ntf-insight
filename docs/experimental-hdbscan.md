@@ -62,12 +62,33 @@ ausreichender fachlicher Textqualität später ergänzt werden.
 - **Min. Clustergröße** (Standard 3): kleinste dichte Fallgruppe.
 - **MinSamples** (Standard 2, inklusive Punkt selbst):
   erforderliche Nachbarschaftsdichte. Größer kann mehr Ausreißer ergeben.
+- **HDBSCAN-Gruppenauswahl**: `Leaf` (neuer GUI-Standard)
+  bevorzugt die kleineren Blattgruppen der HDBSCAN-Dichtehierarchie;
+  `EOM` (*Excess of Mass*) wählt persistente Hauptgruppen und
+  kann bei höherer Mindestclustergröße breite, heterogene Gruppen bilden.
+  Beide Verfahren verwenden dieselbe hochdimensionale Eingangsmatrix.
 - **DTC-Quellen**: QuickTest, AutoExport oder beide.
 - **Vor-Tausch-Zeitraum**: vollständige bisherige Historie oder
   letzte 30, 90, 180, 365 Tage.
 
 Der Vergleich von Einstellungen ist eine Sensitivitätsanalyse,
 keine nachträgliche Optimierung auf eine gewünschte Clusteranzahl.
+
+**EOM / Leaf vergleichen** berechnet beide Auswahlverfahren auf
+*exakt denselben* aktuellen Fällen, mit denselben Quellen, demselben
+Zeitfenster, `min_cluster_size` und `min_samples`. Die GUI zeigt
+Clusterzahl, gruppierte Fälle, Ausreißer, größte Gruppe, Gruppen
+mit gemeinsamem ECU:DTC, Gruppen ohne schwache Fallpaare,
+Anteil schwacher Fallpaare und Median der Paarmediane. Die
+**Paar-Zuordnungs-Übereinstimmung** ist der Jaccard-Index
+der echten positiven Gruppen-Fallpaare beider Ergebnisse.
+Dabei werden willkürliche Labels H1/H2 *nicht* gleichgesetzt.
+Kein solcher Vergleich bestätigt gleiche Fehlerursachen.
+
+Mit **Qualitätsbericht ohne FIN** kann man die zwei *aggregierten*
+Vergleichszeilen lokal als CSV speichern: keine QEC-ID, FIN, DTC-Werte,
+Kundenbeanstandungen oder SSL-Rohtexte. Vor einer externen Weitergabe
+ist trotzdem eine organisationsinterne Freigabe sinnvoll.
 
 ## Interpretation und Qualitätsprüfung
 
@@ -81,6 +102,21 @@ Außerdem erscheinen gemeinsame exakte ECU:DTC-Kombinationen,
 häufige DTCs einschließlich ihrer Fallzahl, HDBSCAN-Stabilität,
 QEC-SSL-Befunde **ausschließlich post hoc** und Warnungen.
 
+Neben dem **schwächsten** Fallpaar werden der Median aller
+unterschiedlichen internen Fallpaare, das **untere 10-%-Quantil**,
+die Zahl der Paare unter der vorläufigen 45-%-Cosinus-Schwelle
+sowie eine vorsichtige Bewertung angezeigt. Identitätsvergleiche
+mit 100 % zählen nicht in diese Statistik. Numerische
+Rundungsreste am Nullpunkt werden auf 0 geklemmt; ein künstliches
+`-0,0 %` soll nicht erscheinen.
+
+Eine Gruppe ohne durchgängige ECU:DTC-Kernmenge oder mit einem
+unteren 10-%-Quantil unter 45 % wird als **heterogen**
+gekennzeichnet. Auch eine diagnostisch weniger heterogene Gruppe
+bleibt ein *unbestätigter Prüfkandidat*, kein Ursache-/Reparaturlabel.
+Die 45-%-Grenze ist vorläufig und nicht anhand überprüfter
+gleicher/ungleicher Defekte kalibriert.
+
 HDBSCAN-Zugehörigkeitsstärke ist eine Dichte-/Stabilitätskennzahl,
 **keine Wahrscheinlichkeit derselben Fehlerursache**.
 
@@ -93,6 +129,11 @@ Solche Fälle dürfen nicht einfach dieselbe Reparatur erhalten.
 Einzelne Fälle ohne stabile HDBSCAN-Gruppe bleiben als
 **Rauschen** sichtbar, Fälle ohne Eingangsdaten in einer gesonderten
 Tabelle. Ein CSV-Export ermöglicht eine lokale Dokumentation.
+Um irreführende Großgruppen-Sterne zu vermeiden, zeichnet das
+2D-Diagramm nur für die *ausgewählte* Gruppe und höchstens 12
+Mitglieder mit mindestens 45 % Ähnlichkeit zum Repräsentanten
+gestrichelte Verbindungslinien. Die übrigen Punkte bleiben im
+Plot sichtbar und können angeklickt werden.
 Es werden keine echten QEC-/FIN-Daten nach GitHub übertragen.
 
 ## Nächster fachlicher Schritt
