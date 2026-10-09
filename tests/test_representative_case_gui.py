@@ -79,7 +79,7 @@ def test_representatives_render_actual_qec_ids_budget_and_mds() -> None:
     assert "ohne 100%-Selbstvergleich" in panel.group_note.text()
     assert panel.unassigned_model.rowCount() == 1
     assert panel.unassigned_model.rows[0][0] == "E"
-    assert "Vor-Tausch" in panel.unassigned_model.rows[0][2]
+    assert "vor Tausch" in panel.unassigned_model.rows[0][2]
 
     panel.group_table.selectRow(1)
     assert panel.group_note.text().startswith("R2")
@@ -233,6 +233,6 @@ def test_ssl_fallback_is_displayed_consistently_in_group_and_members() -> None:
     recorded = next(values for values in panel.member_model.rows
                     if values[0] == "A")
     assert "Synthetic SSL end finding" in recorded[4]
-    assert "1/2 Fälle mit SSL-Endbefund" in group.review_warnings
+    assert "Nur 1/2 Fälle mit SSL-Endbefund" in group.review_warnings
     panel.close()
     app.processEvents()
