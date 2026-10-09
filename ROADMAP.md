@@ -213,6 +213,11 @@ Current PySide6 views:
 - [x] Data Sources + raw archive
 - [x] Combined FIN + case explorer
 - [x] read-only FIN-only QuickTest previews in case table, timeline and time plot (no fabricated NTF case)
+- [x] QEC-/AutoExport-Datumsabgleich nach FIN, Teilenummer und Kilometerstand
+- [x] separate Tausch- und Reparaturkandidaten im Zeitplot
+- [x] umschaltbare X-Achse (Datum / Kilometerstand), fehlende km sichtbar
+- [x] DTC-Filter mit stets sichtbaren Kurztest-, ECU-, Tausch- und Lieferantenereignissen
+- [x] manuelle Bestätigung eines Tauschankers mit Audit-Trail
 - [x] dashboard vehicle/QuickTest counts independent of existing QEC cases
 - [x] Manually create FIN/case combinations in persistent DuckDB
 - [x] Manually add short tests, DTCs, replacements, repairs, software/ECU state, supplier findings and notes
