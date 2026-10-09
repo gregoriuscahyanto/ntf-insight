@@ -15,7 +15,9 @@ from ntf_insight.app.widgets.representative_scatter import (
     representative_mds_coordinates,
 )
 from ntf_insight.domain.case import NTFCase
-from ntf_insight.domain.events import DiagnosticEvent, PartReplacement
+from ntf_insight.domain.events import (
+    DiagnosticEvent, PartReplacement, SupplierFinding,
+)
 from ntf_insight.domain.vehicle import Vehicle
 from ntf_insight.storage.duckdb_store import DuckDBStore
 from ntf_insight.storage.source_knowledge_store import SourceKnowledgeStore
@@ -74,6 +76,10 @@ def test_representatives_render_actual_qec_ids_budget_and_mds() -> None:
     assert coords == representative_mds_coordinates(panel.plan)
     assert all(len(value) == 2 for value in coords.values())
     assert panel.group_note.text().startswith("R1")
+    assert "ohne 100%-Selbstvergleich" in panel.group_note.text()
+    assert panel.unassigned_model.rowCount() == 1
+    assert panel.unassigned_model.rows[0][0] == "E"
+    assert "Vor-Tausch" in panel.unassigned_model.rows[0][2]
 
     panel.group_table.selectRow(1)
     assert panel.group_note.text().startswith("R2")
@@ -201,5 +207,32 @@ def test_local_investigation_plan_csv_contains_real_medoid_and_members(
     assert reps and reps <= {row["QEC-Fall"] for row in result}
     assert all(row["Repräsentant"] in reps for row in result)
     assert all(row["Hinweis"].startswith("Ähnlichkeit") for row in result)
+    panel.close()
+    app.processEvents()
+
+
+
+def test_ssl_fallback_is_displayed_consistently_in_group_and_members() -> None:
+    app = QApplication.instance() or QApplication([])
+    cases = fixtures()
+    cases[0].supplier_findings.append(SupplierFinding(
+        vin=cases[0].vin, occurred_at=datetime(2026, 5, 20),
+        failure_mode="Synthetic SSL end finding from QEC event",
+        source_ref="Schadteile QEC!5",
+    ))
+    panel = RepresentativeCasePanel(cases)
+    panel.run_analysis()
+    group = next(
+        item for item in panel.plan.clusters
+        if "A" in item.case_ids
+    )
+    assert group.with_qec_ssl_finding == 1
+    row = next(index for index, item in enumerate(panel.plan.clusters)
+               if item.cluster_id == group.cluster_id)
+    panel.group_table.selectRow(row)
+    recorded = next(values for values in panel.member_model.rows
+                    if values[0] == "A")
+    assert "Synthetic SSL end finding" in recorded[4]
+    assert "1/2 Fälle mit SSL-Endbefund" in group.review_warnings
     panel.close()
     app.processEvents()
