@@ -360,9 +360,10 @@ def select_representative_cases(
                 case_id=case_id,
                 representative_case_id=representative_id,
                 similarity=current[case_id][1],
+                # A representative is identical to itself; displaying its
+                # entire DTC list as a "shared" comparison is misleading.
                 shared_faults=(
-                    tuple(sorted(signatures[case_id].faults))
-                    if case_id == representative_id
+                    () if case_id == representative_id
                     else accepted[frozenset((case_id, representative_id))].shared_faults
                 ),
             ) for case_id in member_ids
