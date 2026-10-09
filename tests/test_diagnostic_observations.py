@@ -7,6 +7,7 @@ from ntf_insight.analysis.case_clustering import (
 )
 from ntf_insight.analysis.diagnostic_observations import unique_diagnostic_observations
 from ntf_insight.analysis.dtc_clusters import build_dtc_network
+from ntf_insight.analysis.features import extract_case_features
 from ntf_insight.analysis.timeline import build_timeline
 from ntf_insight.domain.case import NTFCase
 from ntf_insight.domain.events import DiagnosticEvent, PartReplacement
@@ -59,6 +60,7 @@ def test_overlap_collapses_to_one_display_observation_with_both_sources() -> Non
     assert "AutoExport" in next(row.detail for row in build_timeline(case) if row.kind == "diagnostic")
     node = next(n for n in build_dtc_network([case]).nodes if n.key == qt.fault_key)
     assert node.event_count == 1
+    assert extract_case_features(case).diagnostic_event_count == 1
 
 
 def test_same_dtc_at_other_mileage_or_day_is_real_new_observation() -> None:
