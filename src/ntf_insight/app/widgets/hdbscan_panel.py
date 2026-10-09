@@ -11,7 +11,8 @@ from PySide6.QtWidgets import (
 
 from ntf_insight.analysis.case_clustering import _component_key, signature_for
 from ntf_insight.analysis.hdbscan_clustering import (
-    MLClusterResult, cluster_hdbscan_cases,
+    HDBSCANMethodComparison, MLClusterResult, cluster_hdbscan_cases,
+    compare_hdbscan_methods,
 )
 from ntf_insight.analysis.qec_findings import qec_ssl_finding_label
 from ntf_insight.app.models.simple_table_model import SimpleTableModel
@@ -33,6 +34,7 @@ class HDBSCANPanel(QWidget):
             case.case_id: _component_key(case) for case in self.cases
         }
         self.result: MLClusterResult | None = None
+        self.comparison: HDBSCANMethodComparison | None = None
         self._activated = False
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -101,12 +103,29 @@ class HDBSCANPanel(QWidget):
         for days in (30, 90, 180, 365):
             self.lookback.addItem(f"Letzte {days} Tage", days)
         grid.addWidget(self.lookback, 1, 3)
+        grid.addWidget(QLabel("HDBSCAN-Gruppenauswahl"), 1, 4)
+        self.selection_method = QComboBox()
+        self.selection_method.addItem("Leaf – kleinere Dichtegruppen", "leaf")
+        self.selection_method.addItem("EOM – persistente Hauptgruppen", "eom")
+        self.selection_method.setToolTip(
+            "Leaf bevorzugt Blätter der Dichtehierarchie; EOM kann "
+            "große, diagnostisch heterogene Gruppen bilden. "
+            "Beide benutzen dieselben diagnostischen Vektoren."
+        )
+        grid.addWidget(self.selection_method, 1, 5)
         body.addLayout(grid)
 
         actions = QHBoxLayout()
         self.run_button = QPushButton("HDBSCAN berechnen")
         self.run_button.clicked.connect(self.run_analysis)
         actions.addWidget(self.run_button)
+        self.compare_button = QPushButton("EOM / Leaf vergleichen")
+        self.compare_button.clicked.connect(self.compare_methods)
+        actions.addWidget(self.compare_button)
+        self.quality_button = QPushButton("Qualitätsbericht ohne FIN")
+        self.quality_button.setEnabled(False)
+        self.quality_button.clicked.connect(self.export_quality_report)
+        actions.addWidget(self.quality_button)
         self.export_button = QPushButton("ML-Gruppen lokal als CSV exportieren")
         self.export_button.setEnabled(False)
         self.export_button.clicked.connect(self.export_csv)
@@ -119,17 +138,35 @@ class HDBSCANPanel(QWidget):
         self.summary = QLabel(objectName="PageSubtitle")
         self.summary.setWordWrap(True)
         body.addWidget(self.summary)
+        self.comparison_summary = QLabel(
+            "EOM/Leaf-Vergleich: noch nicht berechnet. "
+            "Der Vergleich nutzt beide Methoden auf demselben Datenbestand "
+            "mit identischen DTC-Quellen und Zeitraum.",
+            objectName="PageSubtitle",
+        )
+        self.comparison_summary.setWordWrap(True)
+        body.addWidget(self.comparison_summary)
+        self.comparison_model = SimpleTableModel((
+            "Methode", "Cluster", "Fälle", "Ausreißer", "Größte Gruppe",
+            "Gruppen mit gemeinsamem DTC", "Gruppen ohne schwache Paare",
+            "Fallpaare <45 % / alle", "Median der Gruppenmediane",
+        ))
+        self.comparison_table = _table(self.comparison_model, 110)
+        body.addWidget(self.comparison_table)
         self.map = HDBSCANScatter()
         self.map.case_picked.connect(self._picked)
         self.zoom_button.clicked.connect(self.map.reset_zoom)
         body.addWidget(self.map)
         note = QLabel(
-            "2D-MDS aus EXAKT der hochdimensionalen Distanzmatrix, auf der "
-            "HDBSCAN arbeitet (keine Clusterung der 2D-Pixel). "
+            "2D-MDS aus derselben hochdimensionalen Distanzmatrix wie "
+            "HDBSCAN (keine Clusterung der 2D-Pixel). "
             "Großes Symbol H1/H2 = ausgewählter echter QEC-Medoid; "
             "graue Punkte = HDBSCAN-Rauschen. Nicht darstellbare Fälle "
             "ohne Vorher-Diagnose bleiben ausdrücklich außerhalb des Plots. "
-            "Die 2D-Entfernung und die HDBSCAN-Zugehörigkeitsstärke sind "
+            "Verbindungslinien erscheinen nur bei einer ausgewählten, "
+            "kleinen Gruppe und hinreichender Paarähnlichkeit; dadurch "
+            "bilden heterogene Großgruppen keine irreführenden Sterne. "
+            "2D-Entfernung und HDBSCAN-Zugehörigkeitsstärke sind "
             "KEINE Wahrscheinlichkeit gleicher Fehlerursachen.",
             objectName="PageSubtitle",
         )
@@ -142,7 +179,8 @@ class HDBSCANPanel(QWidget):
         self.group_model = SimpleTableModel((
             "Gruppe", "QEC-Repräsentant", "Fälle", "FINs",
             "Ø Cosinus zu Rep. (ohne Selbst)", "Schwächstes internes Paar",
-            "Min. HDBSCAN-Zugehörigkeit", "Gemeinsame ECU:DTC",
+            "Median aller Paare", "Unteres 10%-Quantil", "Paare <45 % / alle",
+            "Bewertung", "Min. HDBSCAN-Zugehörigkeit", "Gemeinsame ECU:DTC",
             "Häufige ECU:DTC", "QEC SSL-Endbefunde", "Prüfwarnungen",
         ))
         self.group_table = _table(self.group_model, 275)
@@ -211,6 +249,7 @@ class HDBSCANPanel(QWidget):
                 subset,
                 min_cluster_size=self.min_cluster_size.value(),
                 min_samples=self.min_samples.value(),
+                selection_method=self.selection_method.currentData(),
                 dtc_source=self.source.currentData() or "all",
                 lookback_days=self.lookback.currentData(),
             )
@@ -223,6 +262,13 @@ class HDBSCANPanel(QWidget):
             self.export_button.setEnabled(False)
             return
         self.result = result
+        self.comparison = None
+        self.comparison_model.set_rows([])
+        self.quality_button.setEnabled(False)
+        self.comparison_summary.setText(
+            "EOM/Leaf-Vergleich noch nicht berechnet. "
+            "Vergleiche dieselben QEC-Fälle, bevor du eine Clusteranzahl bewertest."
+        )
         self.summary.setText(
             f"{result.case_count} QEC-Fälle / {result.vehicle_count} FINs · "
             f"{len(result.eligible_case_ids)} mit Tauschanker und Vorher-DTC · "
@@ -232,7 +278,8 @@ class HDBSCANPanel(QWidget):
             f"{result.clustered_count} Fälle ({result.coverage:.1%}) "
             f"explorativ gruppiert · "
             f"{len(result.noise_case_ids)} HDBSCAN-Ausreißer. "
-            f"Parameter: min_cluster_size={result.min_cluster_size}, "
+            f"Parameter: Auswahl={result.selection_method.upper()}, "
+            f"min_cluster_size={result.min_cluster_size}, "
             f"min_samples={result.min_samples}; "
             f"Quelle: {self.source.currentText()}; "
             f"Zeitfenster: {self.lookback.currentText()}. "
@@ -244,6 +291,10 @@ class HDBSCANPanel(QWidget):
                 group.case_count, group.vehicle_count,
                 f"{group.mean_to_representative:.1%}",
                 f"{group.weakest_internal_similarity:.1%}",
+                f"{group.median_internal_similarity:.1%}",
+                f"{group.p10_internal_similarity:.1%}",
+                f"{group.weak_pair_count} / {group.internal_pair_count}",
+                group.screening_status,
                 f"{group.min_membership_strength:.1%}",
                 ", ".join(f"{e}:{d}" for e, d in group.common_faults[:8])
                 or "Kein durchgehender gemeinsamer DTC",
@@ -310,7 +361,12 @@ class HDBSCANPanel(QWidget):
             f"H{group.cluster_id}: {group.case_count} QEC-Fälle / "
             f"{group.vehicle_count} FINs · Repräsentant: "
             f"{group.representative_case_id} · schwächstes internes "
-            f"Cosinus-Paar: {group.weakest_internal_similarity:.1%} · "
+            f"Cosinus-Paar: {group.weakest_internal_similarity:.1%}, "
+            f"Median: {group.median_internal_similarity:.1%}, "
+            f"10%-Quantil: {group.p10_internal_similarity:.1%} · "
+            f"{group.weak_pair_count} von {group.internal_pair_count} "
+            "Fallpaaren unter 45 % · "
+            f"Bewertung: {group.screening_status} · "
             f"kleinste Dichtestabilität: "
             f"{group.min_membership_strength:.1%}. "
             "Diese Kennzahlen sind keine Ursachenwahrscheinlichkeit. "
@@ -363,7 +419,9 @@ class HDBSCANPanel(QWidget):
                     "Schwächstes internes Cosinus-Paar",
                     "SSL-Endbefund nur zur Validierung", "Warnungen",
                     "DTC-Quelle", "Vor-Tausch-Zeitraum",
-                    "min_cluster_size", "min_samples", "Methodenstatus",
+                    "min_cluster_size", "min_samples", "HDBSCAN-Methode",
+                    "10%-Quantil interne Paare", "Schwache Paare",
+                    "Bewertung", "Methodenstatus",
                 ))
                 for group in self.result.clusters:
                     for member in group.members:
@@ -381,6 +439,10 @@ class HDBSCANPanel(QWidget):
                             self.result.lookback_days or "gesamte Vorher-Historie",
                             self.result.min_cluster_size,
                             self.result.min_samples,
+                            self.result.selection_method,
+                            group.p10_internal_similarity,
+                            group.weak_pair_count,
+                            group.screening_status,
                             "Exploratives ML – gleiche Fehlerursache NICHT bestätigt",
                         ))
         except OSError as exc:
