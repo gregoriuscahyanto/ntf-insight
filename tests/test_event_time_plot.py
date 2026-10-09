@@ -33,5 +33,14 @@ def test_event_time_plot_filters_specific_dtc() -> None:
     visible = plot._visible_entries()
 
     assert visible
-    assert all("P26F100" in entry.title for entry in visible)
+    assert any(
+        entry.kind == "diagnostic" and "P26F100" in entry.title
+        for entry in visible
+    )
+    assert all(
+        "P26F100" in entry.title
+        for entry in visible if entry.kind == "diagnostic"
+    )
+    assert any(entry.kind == "diagnostic_session" for entry in visible)
+    assert any(entry.kind == "replacement" for entry in visible)
     app.processEvents()
