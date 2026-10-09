@@ -44,9 +44,24 @@ kompatibel. Vorhandene Fachlabels sind bei einem erneuten Export
 vorausgefüllt, unbestätigte Ziele bleiben `pending`.
 Ein `pending` in einer späteren Teil-Datei entfernt **keine**
 bereits bestätigte und in der laufenden App geladene Ursache
-(keine stille Löschung). Beim Neustart müssen bestätigte CSV-Dateien
-erneut geladen werden, bis eine separat sichere lokale Speicherung
-implementiert ist. Die App verändert weder QEC-Originale noch SSL-Texte.
+(keine stille Löschung).
+
+**Wichtig für mehrtägige Pilotprüfungen:** Nach dem Einlesen von Fachlabels
+über **Alle geladenen Fachbestätigungen lokal sichern (NICHT HOCHLADEN)**
+eine vollständige lokale Backup-CSV erstellen. Sie enthält **alle**
+bislang geladenen bestätigten QEC-Mechanismen (nicht nur die aktuell
+noch offenen Pilotfälle), mit FIN, Evidenzreferenz und Prüfer, aber
+ohne SSL-Originaltext. Nach einem Neustart diese Datei über
+**Bestätigte Fehlermechanismen lokal einlesen** wieder laden.
+
+Die Pilot-Prüfvorlage wird als offene Prüfliste laufend neu priorisiert.
+Bereits bestätigte Ziel-FINs können deshalb bei späterem Export aus der
+aktuellen Auswahl verschwinden; die gesonderte **Fachlabel-Sicherung**
+verhindert den Verlust solcher Ergebnisse.
+
+Die Anwendung speichert die Labels weiterhin nicht automatisch in einer
+dauerhaften Datenbank. Original-QEC-, SSL- und Laborquellen bleiben
+durch den ganzen Vorgang unverändert.
 
 ## Konservative Validierungsregeln
 
