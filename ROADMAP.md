@@ -65,6 +65,11 @@ Pending real files/systems:
 - [x] QuickTest PDF diagnostic sessions with all-ECU DTC and HW/SW states
 - [x] AutoExport DTC CSV parser (date-only observations, no invented clean sessions)
 - [x] AutoExport workshop/claim CSV parser
+- [x] all-FIN AutoExport raw-record persistence, including duplicated header fields
+- [x] QEC workbook all-sheet/all-column source records without duplicate NTF cases
+- [x] Candela CDD diagnostic class/service/qualifier parser (no invented SMR-D rules)
+- [x] product Part History PDF change and calendar-week granularity parser
+- [x] source knowledge explorer with local DB search, filters and pagination
 - [x] safe ZIP expansion, automatic format recognition, SHA-256 archive
 - [x] idempotent FIN/fall attachment and asynchronous desktop import
 - [x] FIN-scoped QuickTest storage without an existing QEC case
@@ -97,6 +102,8 @@ Pending source-grounded knowledge:
 - [ ] DTC-to-symptom/failure-mode mappings
 - [ ] SMR-D trigger/enable/healing logic
 - [ ] applicable CPC3 HW/SW change records
+- [ ] verify applicability of product Part History to individual serial numbers and FINs
+- [ ] map CDD service definitions to actual CPC3 diagnostic applicability
 - [ ] part/supplier metadata mappings
 - [ ] validated recurrence windows
 - [ ] component-specific root-cause rules
@@ -258,8 +265,8 @@ With representative QEC, AutoExport and QuickTest structures now available:
 
 1. run the new local ZIP importer on an authorized machine and check case/FIN links,
 2. manually validate completeness and before/after evidence for selected cases,
-3. add structured supplier-return report parsing and part-history interpretation,
-4. obtain actual SMR-D triggers and implement the condition/healing parser,
-5. obtain CPC3 HW/SW release/change history and validate version applicability,
-6. validate recurrence/evidence rules against reviewed cases,
-7. calibrate clustering and only then automated root-cause proposals.
+3. validate product Part History / Candela reference rows and implement applicability matching,\n4. add structured supplier-return report parsing,
+5. obtain actual SMR-D triggers and implement the condition/healing parser,
+6. obtain CPC3 HW/SW release/change history and validate version applicability,
+7. validate recurrence/evidence rules against reviewed cases,
+8. calibrate clustering and only then automated root-cause proposals.
