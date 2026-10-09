@@ -97,7 +97,7 @@ def test_zip_one_real_medoid_per_cluster_with_no_sensitive_source_fields(tmp_pat
             int(row["QEC-Vorher-Sitzungen"] != "0") for row in session_review
         ) == 0
         assert _csv(archive, "cluster_bruecken.csv") == []
-        assert manifest["version"] == 2
+        assert manifest["version"] == 3
         assert manifest["vorher_dtc_ohne_vorher_sitzung"] == 13
         assert len(_csv(archive, "methodenvergleich.csv")) == 2
 
@@ -220,3 +220,71 @@ def test_zip_pilot_plan_contains_only_aliases_and_one_rep_per_group(tmp_path):
         assert b"W1TTEST" not in data
         assert b"VERY-PRIVATE-CUSTOMER-SSL-RESULT" not in data
         assert b"CODE-A-ROOT" not in data
+
+
+def test_expert_pilot_validation_zip_exposes_only_pseudonyms_and_counts(tmp_path):
+    from datetime import date
+
+    cases = sample()
+    result = cluster_hdbscan_cases(cases)
+    audit = audit_diagnostic_evidence(cases)
+    group = result.clusters[0]
+    rep = group.representative_case_id
+    target = next(cid for cid in group.case_ids if cid != rep)
+    findings = (
+        ConfirmedMechanism(
+            case_id=rep, mechanism_code="PUMP_SYNTHETIC_COIL",
+            reviewer="CONFIDENTIAL_REVIEWER", evidence_ref="PRIVATE-EVIDENCE-1",
+            confirmed_on=date(2026, 10, 9),
+        ),
+        ConfirmedMechanism(
+            case_id=target, mechanism_code="PUMP_SYNTHETIC_COIL",
+            reviewer="ANOTHER_PRIVATE_REVIEWER", evidence_ref="PRIVATE-EVIDENCE-2",
+            confirmed_on=date(2026, 10, 9),
+        ),
+    )
+    exported = write_cluster_review_zip(
+        tmp_path / "expert_review.zip", cases, result, audit,
+        confirmations=findings,
+    )
+    with ZipFile(exported.zip_path) as archive:
+        manifest = json.loads(archive.read("manifest.json"))
+        assert manifest["version"] == 3
+        assert manifest["pilot_bestaetigte_repraesentanten"] == 1
+        assert manifest["pilot_bewertbare_zielfins"] == 1
+        assert manifest["pilot_gepruefte_uebereinstimmungen"] == 1
+        assert manifest["pilot_gepruefte_widersprueche"] == 0
+        assert manifest["pilot_kein_statistisch_valider_ursachentransfer"] is True
+        groups = _csv(archive, "pilot_fachvalidierung.csv")
+        assert len(groups) == len(result.clusters)
+        assert sum(int(row["Repräsentant bestätigt"]) for row in groups) == 1
+        targets = _csv(archive, "pilot_gepruefte_zielpaare.csv")
+        assert len(targets) == result.clustered_count - len(result.clusters)
+        observed = [
+            row for row in targets
+            if row["Prüfstatus"] == "Getrennte Evidenz: Mechanismus übereinstimmend"
+        ]
+        assert len(observed) == 1
+        assert observed[0]["Zielfall-Alias"].startswith("F")
+        all_zip_bytes = b"".join(
+            archive.read(name) for name in archive.namelist()
+        )
+        assert b"PRIVATE-EVIDENCE" not in all_zip_bytes
+        assert b"CONFIDENTIAL_REVIEWER" not in all_zip_bytes
+        assert b"ANOTHER_PRIVATE_REVIEWER" not in all_zip_bytes
+        assert rep.encode() not in all_zip_bytes
+        assert target.encode() not in all_zip_bytes
+
+
+def test_zip_without_expert_labels_has_no_fake_transfer_accuracy(tmp_path):
+    cases = sample()
+    result = cluster_hdbscan_cases(cases)
+    audit = audit_diagnostic_evidence(cases)
+    export = write_cluster_review_zip(tmp_path / "unverified.zip", cases, result, audit)
+    with ZipFile(export.zip_path) as archive:
+        manifest = json.loads(archive.read("manifest.json"))
+        assert manifest["pilot_bestaetigte_repraesentanten"] == 0
+        assert manifest["pilot_bewertbare_zielfins"] == 0
+        for row in _csv(archive, "pilot_fachvalidierung.csv"):
+            assert row["Separat geprüfte Ziel-FINs"] == "0"
+            assert "keine Validierung" in row["Fachbewertung – KEINE automatische Übertragung"]
