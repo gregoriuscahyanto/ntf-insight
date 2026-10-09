@@ -8,6 +8,7 @@ from typing import Literal
 
 from ntf_insight.domain.case import NTFCase
 from ntf_insight.analysis.ecu_version_changes import detect_ecu_version_changes
+from ntf_insight.analysis.diagnostic_observations import unique_diagnostic_observations
 from ntf_insight.analysis.replacement_dates import ReplacementDateComparison
 from ntf_insight.domain.events import (
     DiagnosticEvent,
@@ -81,8 +82,14 @@ def build_timeline(
             )
         )
 
-    for event in case.diagnostics:
+    for observation in unique_diagnostic_observations(case.diagnostics):
+        event = observation.event
         detail_parts = [part for part in (event.dtc_text, event.status) if part]
+        if observation.has_cross_source_confirmation:
+            detail_parts.append(
+                "Zusätzlich in AutoExport belegt (gleiche FIN, ECU:DTC, Datum und km)"
+            )
+            detail_parts.append("Quellen: " + "; ".join(observation.source_refs))
         entries.append(
             TimelineEntry(
                 occurred_at=event.occurred_at,

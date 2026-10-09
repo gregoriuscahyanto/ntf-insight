@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass
 
 from ntf_insight.analysis.recurrence import analyze_recurrence
+from ntf_insight.analysis.diagnostic_observations import unique_diagnostic_observations
 from ntf_insight.domain.case import NTFCase
 from ntf_insight.domain.enums import SupplierFindingResult
 from ntf_insight.storage.reference_repositories import ReferenceRepository
@@ -39,8 +40,9 @@ def extract_case_features(
     references: ReferenceRepository | None = None,
 ) -> CaseFeatures:
     recurrence = analyze_recurrence(case)
-    unique_faults = {event.fault_key for event in case.diagnostics}
-    ecus = {event.ecu.strip().upper() for event in case.diagnostics}
+    diagnostics = [obs.event for obs in unique_diagnostic_observations(case.diagnostics)]
+    unique_faults = {event.fault_key for event in diagnostics}
+    ecus = {event.ecu.strip().upper() for event in diagnostics}
 
     trigger_ratio: float | None = None
     related_change_ids: set[str] = set()
@@ -63,7 +65,7 @@ def extract_case_features(
 
     return CaseFeatures(
         diagnostic_session_count=len(case.diagnostic_sessions),
-        diagnostic_event_count=len(case.diagnostics),
+        diagnostic_event_count=len(diagnostics),
         unique_fault_count=len(unique_faults),
         ecu_count=len(ecus),
         has_replacement=recurrence.replacement is not None,

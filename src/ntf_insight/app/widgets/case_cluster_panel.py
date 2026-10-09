@@ -19,6 +19,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from ntf_insight.analysis.qec_findings import qec_ssl_finding_label
 from ntf_insight.analysis.case_clustering import (
     CaseClusterResult,
     CaseMatch,
@@ -112,13 +113,13 @@ class CaseClusterPanel(QWidget):
                 "Cluster", "Fälle", "Versch. FINs",
                 "Repräsentativer Fall", "Gemeinsame ECU:DTCs",
                 "Schwächstes Paar", "Merkmalsabdeckung",
-                "Fälle mit Vor-/Nachtest",
+                "Fälle mit Vor-/Nachtest", "QEC SSL-Endbefunde",
             )
         )
         self.cluster_profile_table = QTableView()
         self.cluster_profile_table.setModel(self.cluster_profile_model)
         self._configure_table(self.cluster_profile_table, 170, stretch=False)
-        for col, width in enumerate((90, 55, 85, 155, 240, 110, 130, 180)):
+        for col, width in enumerate((90, 55, 85, 155, 240, 110, 130, 180, 160)):
             self.cluster_profile_table.setColumnWidth(col, width)
         self.cluster_profile_table.clicked.connect(self._focus_cluster_representative)
         layout.addWidget(self.cluster_profile_table)
@@ -177,12 +178,13 @@ class CaseClusterPanel(QWidget):
 
         self.neighbor_model = SimpleTableModel(
             ("Vergleichsfall", "Ähnlichkeit", "Datengrundlage", "Gemeinsame DTCs",
-             "Dokumentierte Maßnahmen", "Nachtest / Beobachtung", "Cluster")
+             "Dokumentierte Maßnahmen", "Nachtest / Beobachtung", "Cluster",
+             "QEC SSL-Endbefund")
         )
         self.neighbor_table = QTableView()
         self.neighbor_table.setModel(self.neighbor_model)
         self._configure_table(self.neighbor_table, 230, stretch=False)
-        for col, width in enumerate((145, 110, 125, 200, 270, 370, 95)):
+        for col, width in enumerate((145, 110, 125, 200, 270, 370, 95, 340)):
             self.neighbor_table.setColumnWidth(col, width)
         self.neighbor_table.clicked.connect(self._show_neighbor_detail)
         # Update explanations for keyboard navigation as well as mouse clicks.
@@ -250,6 +252,7 @@ class CaseClusterPanel(QWidget):
                 f"{profile.weakest_pair_similarity:.0%}",
                 f"{profile.mean_feature_coverage:.0%}",
                 f"{profile.cases_with_pre_and_post_test}/{profile.case_count}",
+                f"{profile.cases_with_qec_ssl_finding}/{profile.case_count}",
             )
             for profile in profiles
         ])
@@ -318,6 +321,7 @@ class CaseClusterPanel(QWidget):
                 measures,
                 observed.outcome,
                 f"Cluster {cluster_number}" if cluster_number else "Einzelfall",
+                qec_ssl_finding_label(candidate),
             ))
         self.neighbor_model.set_rows(rows)
         if not rows:
@@ -434,6 +438,7 @@ class CaseClusterPanel(QWidget):
             )
             + "\nDokumentierte Maßnahmen: " + measures
             + "\nBeobachteter Verlauf nach letzter Maßnahme: " + observed.outcome
+            + "\nQEC SSL-Endbefund (nicht im Score): " + qec_ssl_finding_label(self.by_id[other_id])
             + related_fin
         )
         self.open_case_button.setEnabled(True)

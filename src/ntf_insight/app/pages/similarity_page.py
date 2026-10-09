@@ -19,6 +19,7 @@ from ntf_insight.analysis.dtc_clusters import build_dtc_network
 from ntf_insight.analysis.case_clustering import all_diagnostic_matches
 from ntf_insight.app.models.simple_table_model import SimpleTableModel
 from ntf_insight.app.widgets.case_cluster_panel import CaseClusterPanel
+from ntf_insight.app.widgets.case_scatter_plot import CaseScatterPanel
 from ntf_insight.app.widgets.dtc_cluster_graph import DTCClusterGraph
 from ntf_insight.storage.repositories import CaseRepository
 
@@ -47,10 +48,32 @@ class SimilarityPage(QWidget):
         tabs = QTabWidget()
         self.case_cluster_panel = CaseClusterPanel(repository.list_cases())
         tabs.addTab(self.case_cluster_panel, "Fall-Cluster")
+        self.case_scatter_panel = CaseScatterPanel(
+            repository.list_cases(), self.case_cluster_panel.result
+        )
+        tabs.addTab(self.case_scatter_panel, "2D-Streudiagramm")
         tabs.addTab(self._build_network_tab(), "DTC-Netzwerk")
         tabs.addTab(self._build_similarity_tab(), "Paarvergleich (Basis)")
         layout.addWidget(tabs, 1)
         self.tabs = tabs
+        # One shared complete-link result: projection never creates new clusters.
+        self.case_cluster_panel.threshold.valueChanged.connect(
+            lambda _value: self.case_scatter_panel.set_result(self.case_cluster_panel.result)
+        )
+        self.case_cluster_panel.focus.currentIndexChanged.connect(
+            lambda _index: self._sync_scatter_focus()
+        )
+        self.case_scatter_panel.case_focused.connect(self.case_cluster_panel.focus_case)
+        self.case_scatter_panel.compare_requested.connect(self.focus_case)
+        self.case_scatter_panel.case_requested.connect(
+            self.case_cluster_panel.case_requested.emit
+        )
+        self._sync_scatter_focus()
+
+    def _sync_scatter_focus(self) -> None:
+        case_id = self.case_cluster_panel.focus.currentData()
+        if isinstance(case_id, str):
+            self.case_scatter_panel.focus_case(case_id)
 
     def focus_case(self, case_id: str) -> bool:
         """Open the pairwise case clusters focused on a chosen case."""

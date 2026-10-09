@@ -269,6 +269,15 @@ class LocalBatchImporter:
                                 ids.add(event.event_id)
                     if not prior.investigated_replacement_id:
                         prior.investigated_replacement_id = case.investigated_replacement_id
+                    # SSL findings are post-case reference labels, not inferred
+                    # diagnostic observations. Preserve original QEC wording even
+                    # when its completion date was absent.
+                    if (
+                        getattr(case, "qec_ssl_end_finding", None)
+                        and not getattr(prior, "qec_ssl_end_finding", None)
+                    ):
+                        prior.qec_ssl_end_finding = case.qec_ssl_end_finding
+                        prior.qec_ssl_end_date = getattr(case, "qec_ssl_end_date", None)
 
             case_fin: dict[str, list[NTFCase]] = defaultdict(list)
             for case in existing.values():

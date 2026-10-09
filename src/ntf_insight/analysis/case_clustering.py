@@ -12,6 +12,7 @@ from dataclasses import dataclass
 from typing import Iterable
 
 from ntf_insight.analysis.recurrence import relative_to_replacement
+from ntf_insight.analysis.qec_findings import qec_ssl_finding
 from ntf_insight.components.registry import list_component_profiles
 from ntf_insight.domain.case import NTFCase
 
@@ -108,6 +109,7 @@ class ClusterInsight:
     mean_similarity: float
     mean_feature_coverage: float
     cases_with_pre_and_post_test: int
+    cases_with_qec_ssl_finding: int
 
 
 def cluster_insights(
@@ -166,6 +168,9 @@ def cluster_insights(
                 sum(pair.coverage for pair in pair_matches) / len(pair_matches), 4
             ),
             cases_with_pre_and_post_test=followup,
+            cases_with_qec_ssl_finding=sum(
+                qec_ssl_finding(by_id[case_id]) is not None for case_id in members
+            ),
         ))
     return tuple(insights)
 

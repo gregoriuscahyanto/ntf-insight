@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from itertools import combinations
 
 from ntf_insight.domain.case import NTFCase
+from ntf_insight.analysis.diagnostic_observations import unique_diagnostic_observations
 
 FaultKey = tuple[str, str]
 
@@ -67,8 +68,9 @@ def build_dtc_network(cases: list[NTFCase]) -> DTCNetwork:
     edge_cases: dict[tuple[FaultKey, FaultKey], set[str]] = defaultdict(set)
 
     for case in cases:
-        case_faults = {event.fault_key for event in case.diagnostics}
-        for event in case.diagnostics:
+        distinct_events = [record.event for record in unique_diagnostic_observations(case.diagnostics)]
+        case_faults = {event.fault_key for event in distinct_events}
+        for event in distinct_events:
             event_counts[event.fault_key] += 1
             node_cases[event.fault_key].add(case.case_id)
 

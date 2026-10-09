@@ -26,6 +26,9 @@ Die App bietet unter **Cluster & Fälle → Fall-Cluster**:
   repräsentativem realem Fall, gemeinsamem ECU:DTC-Muster,
   **schwächster Paarähnlichkeit**, Merkmalsabdeckung und
   Zahl dokumentierter Vorher-/Nachtests
+- Der Cluster-Steckbrief zeigt zusätzlich die Zahl der Fälle mit
+  dokumentiertem QEC-SSL-Endbefund; das ist eine **Auswertung nach** der
+  Clusterbildung und niemals Teil des Ähnlichkeits-Scores.
 - ein **Doppelklick oder „Vergleichsfall öffnen“** führt aus dem Vergleich
   direkt in die vollständige FIN-/Fallanalyse zurück
 - für jeden ausgewählten Vergleichsfall sowohl **gemeinsame als auch
@@ -33,6 +36,8 @@ Die App bietet unter **Cluster & Fälle → Fall-Cluster**:
   Merkmalsabdeckung, dokumentierte Maßnahmen und den beobachteten Verlauf
   nach der letzten Maßnahme
 - DTC-Koauftretensnetzwerk weiterhin unter **DTC-Netzwerk**
+- **2D-Streudiagramm** mit TruncatedSVD aus den gleichen Vorher-Merkmalen,
+  interaktiver Fallauswahl und den **unveränderten** Complete-Link-Clusterfarben
 
 Die Matrix und die Vergleichsbegründung zeigen bei nicht vergleichbaren Paaren **„k. A.“**, nicht 0 % oder 100 %. Falls mehr als 24 Fälle existieren, wird die Matrix auf den Fokusfall und höchstens 23 weitere Fälle begrenzt; die Clusterberechnung berücksichtigt dennoch alle Fälle.
 
@@ -77,6 +82,69 @@ Die Rangliste ähnlicher Fälle sortiert nach Score × Merkmalsabdeckung, damit 
 - Keine „Clusterung“ allein aufgrund gleicher Baureihe, ECU oder fehlender DTCs.
 
 Hierarchische Cluster mit dieser konservativen Paarbedingung sind für erste manuell geprüfte Stichproben nachvollziehbarer als ein unkalibriertes ML-Modell.
+
+### 2D-Streudiagramm: nur Visualisierung, kein neuer Clusteralgorithmus
+
+Der Reiter **Cluster & Fallähnlichkeit → 2D-Streudiagramm** zeichnet echte
+QEC-/NTF-Fälle als Punkte. TruncatedSVD erhält dieselben **diagnostischen
+Vorher-Merkmalsgruppen** wie der gewichtete Jaccard-Vergleich (ECU:DTC,
+DTC, ECU, Beanstandung, ECU-SW, Baureihe/Variante). Die Gruppen werden als
+One-Hot-Merkmale mit normierten Gruppenbeiträgen abgebildet.
+
+- **Farbe** = bereits aus der vorhandenen Clusterberechnung übernommene Cluster-ID.
+- **Grau** = keinem automatischen Cluster zugeordnet.
+- **Quadrat** = Fall ohne Tauschanker, daher nicht automatisch gruppiert.
+- **Dunkler Rand** = aktuell ausgewählter Fall.
+- **Klick** = Fokusfall auswählen; aus dem Diagramm zur detaillierten
+  Clustervergleichsseite oder direkt zur vollständigen Fallanalyse wechseln.
+- Bauteilfamilien werden **getrennt** projiziert. Eine Projektion über
+  inkompatible Bauteilfamilien würde eine nicht vorhandene Vergleichbarkeit
+  suggerieren.
+- Fälle ohne ECU:DTC-Daten **und** ohne verfügbare Beanstandungsmerkmale
+  bekommen ausdrücklich **keine künstlichen Plotkoordinaten**.
+
+SVD liefert **keine Jaccard-Abstände**, keine Clusterzuordnung und keine
+Befund- oder Reparaturwahrscheinlichkeiten. Für zwei oder weniger auswertbare
+Fälle ist eine 2D-Struktur besonders eingeschränkt. Bei identischen 2D-Koordinaten
+werden Punktsymbole ausschließlich **visuell leicht versetzt**, damit alle
+Fälle anklickbar bleiben. Das ändert nicht die gespeicherten Koordinaten.
+Die Cluster-Schwelle und Zuordnungen bleiben synchron zur bestehenden
+Complete-Link-Ansicht; ein Wechsel der Schwelle verändert nur die Farben,
+nicht die Projektion.
+
+### DTC-Überlappung zwischen QuickTest und AutoExport
+
+Ein DTC darf nicht doppelt gewichtet werden, nur weil derselbe Befund sowohl
+in einem QuickTest-PDF als auch in einem AutoExport-CSV steht.
+
+- **Fallähnlichkeit und Clusterbildung** verwenden bereits Mengen
+  eindeutiger ECU:DTC-Kombinationen je Fall; mehrfache
+  Datenzeilen erhöhen den Jaccard-Wert nicht.
+- **DTC-Netzwerk-Ereigniszahlen, DTC-Explorer-Zahlen, Fall-DTC-Zahl und
+  Timeline** verwenden eine konservativ konsolidierte Beobachtungsansicht.
+- Wenn **FIN, ECU:DTC, Kalenderdatum und Kilometerstand exakt gleich** sind,
+  darf ein AutoExport-DTC mit einem QuickTest-DTC desselben Falls als
+  derselbe Berichtsbefund zusammengefasst werden. Bei einem AutoExport
+  mit exakter Uhrzeit muss auch die Uhrzeit übereinstimmen.
+- Ohne Kilometerstand oder bei abweichendem Datum/km erfolgt **keine
+  Zusammenfassung**. Zwei QuickTests beziehungsweise zwei AutoExport-Zeilen
+  werden nicht allein wegen gleichen DTC-Codes miteinander verschmolzen.
+  Bei mehreren passenden Ereignissen wird maximal **1:1** verknüpft.
+- **Originalereignisse und beide Quellenverweise bleiben in der lokalen
+  Datenbank erhalten.** Die Timeline zeigt für einen konsolidierten DTC
+  einen Hinweis auf die zweite Quelle und deren Quellverweis. Die
+  Quellenablage ermöglicht die Prüfung beider Originalzeilen.
+- Diese Zuordnung ist eine vorsichtige Zählungsregel, kein Nachweis
+  einer identischen Erstauftretenszeit. Unklarheiten bleiben getrennt.
+
+QEC-SSL-Endbefunde sind **nachgelagerte Befunde** und werden weiterhin
+ausdrücklich **nicht** zur Ähnlichkeits- oder SVD-Berechnung verwendet.
+Die vorhandene grobe Einordnung NTF versus OTHER muss anhand der tatsächlichen
+SSL-Befundcodes fachlich geprüft werden. Der Originalbefund bleibt auch ohne
+Befundabschlussdatum am Fall erhalten, wird dann aber **nicht auf den
+Bauteiltausch zurückdatiert**; ein datiertes Befundereignis entsteht nur mit
+wirklich vorhandenem Abschlussdatum. In der Cluster-Nachbarschafts-Tabelle
+und Fallansicht ist der Befund separat sichtbar.
 
 ### Cluster-Steckbrief und Auswahl
 
@@ -129,7 +197,7 @@ Empfohlener Ausbau:
 
 1. **20–50 manuell validierte Fälle:** Merkmale, Ähnlichkeitsrangfolge und Cluster fachlich prüfen.
 2. **Sobald genügend Fälle vorliegen:** HDBSCAN (auf sorgfältig kalibrierten Features/Distanzen) zum Finden dichter Gruppen und Ausreißer, ohne feste Clusteranzahl.
-3. **2D-Ansicht:** UMAP zur explorativen Darstellung; alternativ TruncatedSVD für sparse DTC-/Textvektoren. 2D-Abstände sind nicht automatisch kausale Beziehungen.
+3. **2D-Ansicht:** TruncatedSVD ist als rein visuelle Zusatzansicht umgesetzt; UMAP/MDS bleiben optionale spätere Ansichten bei fachlich validierter Distanzbehandlung.
 4. **Reparaturkandidaten:** Vergleichsfälle mit tatsächlich bestätigtem und zeitlich richtig zugeordnetem Lösungsergebnis priorisieren; Maßnahmen weiter durch Fachpersonen bewerten.
 
 ## Validierung: Werden ähnlichere Fälle tatsächlich ähnlich gelöst?
@@ -151,3 +219,7 @@ Ohne bestätigte Reparaturerfolge bleibt NTF Insight ein transparentes **Ähnlic
 - `src/ntf_insight/app/widgets/case_cluster_panel.py`: Desktop-Fallcluster, Vergleichstabelle, Heatmap
 - `src/ntf_insight/app/models/case_similarity_matrix_model.py`: kontrastfähige Qt-Matrix
 - `tests/test_case_clustering.py`, `tests/test_case_cluster_gui.py`: Regressionstests
+
+- `src/ntf_insight/analysis/case_projection.py`, `src/ntf_insight/app/widgets/case_scatter_plot.py`: SVD-2D-Projektion und Qt-Streudiagramm
+- `src/ntf_insight/analysis/diagnostic_observations.py`: konservative QuickTest-/AutoExport-Quellenüberlappung ohne Datenverlust
+- `tests/test_case_projection.py`, `tests/test_case_scatter_gui.py`, `tests/test_diagnostic_observations.py`: Projektion, Synchronisierung und Doppelquellen-Regressionen

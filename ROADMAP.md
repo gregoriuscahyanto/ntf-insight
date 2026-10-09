@@ -246,7 +246,9 @@ Current PySide6 views:
 - [ ] role-based permissions / centrally governed audit retention
 - [x] real source ZIP drag & drop import with automatic classification
 - [ ] interactive source-to-evidence drill-down
-- [ ] cluster visualization
+- [x] 2D scatter projection (TruncatedSVD) using existing diagnostic signatures and unchanged Complete-Link cluster IDs
+- [x] cross-source QuickTest/AutoExport overlap consolidation for counts and timeline without removing raw evidence
+- [ ] validated field-data cluster visualization and thresholds
 - [x] deterministic Markdown case report/export
 - [ ] PDF/HTML report rendering
 - [ ] packaging as distributable Windows executable

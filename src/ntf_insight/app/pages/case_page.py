@@ -25,6 +25,8 @@ from PySide6.QtWidgets import (
 )
 
 from ntf_insight.analysis.evidence_engine import generate_case_evidence
+from ntf_insight.analysis.qec_findings import qec_ssl_finding_label
+from ntf_insight.analysis.diagnostic_observations import unique_diagnostic_observations
 from ntf_insight.analysis.fin_diagnostics import (
     FIN_ONLY_PREFIX,
     build_fin_only_previews,
@@ -182,7 +184,7 @@ class CasePage(QWidget):
                     case_id=case.case_id,
                     vin=case.vin,
                     component=case.component_type,
-                    dtc_count=len(case.diagnostics),
+                    dtc_count=len(unique_diagnostic_observations(case.diagnostics)),
                     replacement=(
                         replacement.occurred_at.strftime("%Y-%m-%d")
                         if replacement is not None
@@ -233,6 +235,8 @@ class CasePage(QWidget):
         self.date_match_value = QLabel("—")
         self.root_cause_value = QLabel("—")
         self.supplier_value = QLabel("—")
+        self.ssl_finding_value = QLabel("—")
+        self.ssl_finding_value.setWordWrap(True)
         self.confidence_value = QLabel("—")
         self.recurrence_value = QLabel("—")
         for value in (
@@ -253,6 +257,7 @@ class CasePage(QWidget):
             ("Datumsabgleich", self.date_match_value),
             ("Aktuelle Bewertung", self.root_cause_value),
             ("Lieferantenbeteiligung", self.supplier_value),
+            ("QEC · SSL-Endbefund", self.ssl_finding_value),
             ("Konfidenz", self.confidence_value),
             ("Gleicher Fehler nach Tausch", self.recurrence_value),
         )
@@ -457,7 +462,8 @@ class CasePage(QWidget):
             self.component_value, self.replacement_value, self.autoexport_date_value,
             self.effective_swap_value, self.date_match_value,
             self.date_comparison_note, self.root_cause_value,
-            self.supplier_value, self.confidence_value, self.recurrence_value,
+            self.supplier_value, self.ssl_finding_value,
+            self.confidence_value, self.recurrence_value,
             self.assessment_text, self.recurrence_text, self.evidence_balance,
         ):
             value.setText("—")
@@ -541,6 +547,7 @@ class CasePage(QWidget):
             )
             self.root_cause_value.setText("Nicht bestimmbar")
             self.supplier_value.setText("Nicht bestimmbar")
+            self.ssl_finding_value.setText("Kein QEC-Schadteilfall")
             self.confidence_value.setText("—")
             self.recurrence_value.setText("Nicht beurteilbar")
             self.assessment_text.setText(
@@ -551,7 +558,7 @@ class CasePage(QWidget):
             )
             self.recurrence_text.setText(
                 f"{len(case.diagnostic_sessions)} QuickTest(s), "
-                f"{len(case.diagnostics)} DTC-Beobachtungen, "
+                f"{len(unique_diagnostic_observations(case.diagnostics))} DTC-Beobachtungen, "
                 f"{len(case.ecu_states)} Steuergeräte-Stände. "
                 "Für eine Vorher-/Nachher-Bewertung fehlt der zugehörige Tausch."
             )
@@ -624,6 +631,7 @@ class CasePage(QWidget):
         self.supplier_value.setText(
             str(assessment.supplier_involvement) if assessment else "Unbekannt"
         )
+        self.ssl_finding_value.setText(qec_ssl_finding_label(case))
         self.confidence_value.setText(str(assessment.confidence) if assessment else "—")
 
         if not recurrence.assessable:
