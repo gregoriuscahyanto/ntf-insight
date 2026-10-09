@@ -167,7 +167,7 @@ class SourceKnowledgePage(QWidget):
             f"CDD: {totals.get('candela_services', 0)} Services · "
             f"Part History: {totals.get('part_history', 0)} Änderungen · "
             f"QEC: {totals.get('qec_details', 0)} Tabellenzeilen · "
-            f"AutoExport: {totals.get('autoexport_rows', 0)} Datenzeilen · "
+            f"AutoExport (DTC/Werkstatt/TIPS): {totals.get('autoexport_rows', 0)} Datenzeilen · "
             f"Aggregate: {totals.get('autoexport_summary', 0)} · "
             f"Analysebericht-Seiten: {totals.get('supplier_analysis_document', 0)}"
         )
