@@ -247,6 +247,8 @@ Current PySide6 views:
 - [x] real source ZIP drag & drop import with automatic classification
 - [ ] interactive source-to-evidence drill-down
 - [x] 2D scatter projection (TruncatedSVD) using existing diagnostic signatures and unchanged Complete-Link cluster IDs
+- [x] unifying scatter plot, FIN case analysis and QuickTests under a single linked FIN workspace (retiring redundant cluster/network/pair tabs)
+- [x] transparent plot audit: matrix dimensions, weights, SVD variance and axis loadings, all coordinates, numerical weighted-Jaccard tables
 - [x] cross-source QuickTest/AutoExport overlap consolidation for counts and timeline without removing raw evidence
 - [ ] validated field-data cluster visualization and thresholds
 - [x] deterministic Markdown case report/export
