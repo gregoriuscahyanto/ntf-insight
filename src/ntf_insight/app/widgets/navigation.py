@@ -24,7 +24,6 @@ class NavigationPanel(QFrame):
         ("knowledge", "Quellenwissen"),
         ("cases", "Fälle / FIN"),
         ("dtcs", "DTC-Explorer"),
-        ("clusters", "Cluster & Fälle"),
         ("suppliers", "Lieferanten"),
         ("prediction", "KI-Prognose"),
         ("quality", "Datenqualität"),
