@@ -15,7 +15,7 @@ from ntf_insight.analysis.diagnostic_evidence_audit import (
 )
 from ntf_insight.analysis.mechanism_review import (
     ConfirmedMechanism, read_confirmed_mechanisms, review_cluster_mechanisms,
-    write_review_template,
+    safe_spreadsheet_cell, write_review_template,
 )
 from ntf_insight.analysis.supervised_pair_validation import (
     evaluate_supervised_pairs,
@@ -800,7 +800,9 @@ class HDBSCANPanel(QWidget):
                             member.membership_strength,
                             ", ".join(f"{e}:{d}" for e, d in member.shared_faults),
                             group.weakest_internal_similarity,
-                            qec_ssl_finding_label(self.by_id[member.case_id]),
+                            safe_spreadsheet_cell(
+                                qec_ssl_finding_label(self.by_id[member.case_id])
+                            ),
                             "; ".join(group.warnings),
                             self.result.dtc_source,
                             self.result.lookback_days or "gesamte Vorher-Historie",
