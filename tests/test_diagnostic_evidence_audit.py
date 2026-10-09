@@ -158,4 +158,16 @@ def test_original_hdbscan_remains_default_and_outcome_excluded() -> None:
     cases = sample()
     original = cluster_hdbscan_cases(cases)
     cases[0].qec_ssl_end_finding = "Synthetic SSL outcome"
-    assert cluster_hdbscan_cases(cases) == original
+    changed = cluster_hdbscan_cases(cases)
+    assert changed.distances == original.distances
+    assert changed.coordinates == original.coordinates
+    assert [(g.case_ids, g.representative_case_id)
+            for g in changed.clusters] == [
+        (g.case_ids, g.representative_case_id)
+        for g in original.clusters
+    ]
+    # SSL is allowed to change the *posthoc evidence/quality report*.
+    assert any(
+        a.ssl_finding_count != b.ssl_finding_count
+        for a, b in zip(original.clusters, changed.clusters)
+    )
