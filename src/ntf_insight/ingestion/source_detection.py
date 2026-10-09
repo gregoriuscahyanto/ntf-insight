@@ -36,7 +36,7 @@ def detect_source_type(path: Path) -> SourceType:
                 if {"RepairDt", "Fin", "PartLetterCd"} <= headers:
                     return SourceType.WORKSHOP_HISTORY
                 if names == ["C1"]:
-                    return SourceType.OTHER
+                    return SourceType.AUTOEXPORT_SUMMARY
                 break
         return SourceType.OTHER
     if ext == ".xlsx":
@@ -65,6 +65,8 @@ def detect_source_type(path: Path) -> SourceType:
         text = (reader.pages[0].extract_text() or "")[:15000]
         if "DIAG START" in text and "QuickTest" in text and "ECUS (" in text:
             return SourceType.SHORT_TEST
+        if "Part History List" in text and ("Datum zavedení" in text or "Q01" in text):
+            return SourceType.PART_HISTORY
         if "ANALYSIS" in text and "Complaint" in text:
             return SourceType.SUPPLIER_FINDING
         return SourceType.OTHER
