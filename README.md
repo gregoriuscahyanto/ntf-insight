@@ -245,7 +245,7 @@ Set `NTF_INSIGHT_DATA_DIR` to override that location. If neither real cases nor 
 
 ## Desktop views
 
-The current prototype includes Overview, Data Sources, a combined FIN/Case workspace, DTC Explorer, **Case clusters & DTC-Cluster visualization**, Suppliers and Data Quality. The FIN/Case workspace treats the FIN + case combination as the analysis unit and includes a chronological time plot for DTCs, diagnostic sessions, ECU states, replacements, software, workshop and supplier events. Data Sources supports multiple files and ZIP packages with local Drag & Drop, automatic format detection and asynchronous ingestion into DuckDB. The Case view can export a deterministic Markdown analysis report.
+The current prototype includes Overview, Data Sources, the unified **FIN / Case / 2D scatter / QuickTest** workspace, DTC Explorer, Suppliers and Data Quality. The FIN/Case workspace treats the FIN + case combination as the analysis unit and includes a chronological time plot for DTCs, diagnostic sessions, ECU states, replacements, software, workshop and supplier events. Data Sources supports multiple files and ZIP packages with local Drag & Drop, automatic format detection and asynchronous ingestion into DuckDB. The Case view can export a deterministic Markdown analysis report.
 
 ## Echte Quelldateien lokal laden
 
@@ -370,31 +370,39 @@ späteren QuickTest-Tag**. Der Änderungszeitpunkt bleibt unbekannt.
 
 [Erkennung, Anzeige und fachliche Grenzen](docs/ecu-stand-vergleich.md)
 
-## Ähnliche FIN-/NTF-Fälle finden
+## Ein gemeinsamer Arbeitsbereich: Streudiagramm, FIN/Fallanalyse, QuickTests
 
-Unter **Fälle / FIN → FIN / Fallanalyse** einen tatsächlichen
-QEC-/NTF-Fall auswählen und **„Ähnliche Fälle finden“** anklicken.
-NTF Insight wechselt zu **Cluster & Fälle → Fall-Cluster**
-und zeigt den gewählten Fall als Vergleichsfokus.
+Unter **Fälle / FIN** gibt es jetzt genau drei zusammengehörige Register:
+**2D-Streudiagramm**, **FIN / Fallanalyse** und **QuickTests nach FIN**.
+Eine gemeinsame Fall-/FIN-Auswahl verbindet die Informationen.
+Punkt- und Tabellenklicks im Scatter wählen denselben echten QEC-/NTF-Fall
+wie die Fallanalyse; der QuickTest-Reiter übernimmt dessen FIN.
+QuickTest-FINs ohne Schadteilfall bleiben als eigene, read-only
+FIN-Vorschau sichtbar und erscheinen **nicht als zusätzliche Scatter-Punkte**.
 
-Dort siehst du neben Ähnlichkeitsmatrix und Rangliste auch
-**Cluster-Steckbriefe** mit einem repräsentativen Fall, der
-schwächsten Ähnlichkeit innerhalb des Clusters und den
-verfügbaren Vorher-/Nachtests. Im Vergleich werden **gemeinsame
-und abweichende ECU:DTC-Kombinationen**, Dokumentationsgrad,
-historische Maßnahmen und der beobachtete Nachtest getrennt gezeigt.
-**„Vergleichsfall öffnen“** führt zurück zur vollständigen Analyse.
+Das **2D-Streudiagramm** enthält unmittelbar unter dem Plot die
+Berechnungsgrundlage (sechs Gruppen, Gewichte, SVD-Transformation),
+die Anzahl der Matrixspalten, erklärte Varianz, wichtigste
+Achsenladungen, alle Fallkoordinaten, sowie **tatsächliche
+gewichtete Jaccard-Paarähnlichkeiten** mit Merkmalsabdeckung,
+Gruppenwerten und vollständig nachvollziehbarer Summenformel.
 
-Ähnlichkeit beruht auf den Diagnosemerkmalen **vor** dem
-untersuchten Bauteiltausch; Lieferantenbefunde und Reparaturerfolge
-beeinflussen den Score nicht. Eine ähnliche Reparatur ist nur
-ein **fachlicher Prüfkandidat**, keine bestätigte Lösung.
+Die konservative Complete-Link-Clusterung bleibt unverändert für
+die Farben und Zuordnungen erhalten. Die früheren eigenständigen
+Oberflächen **Fall-Cluster**, **DTC-Netzwerk** und
+**Paarvergleich (Basis)** entfallen aus der Navigation.
+Die SVD-Punktabstände sind keine Ursachenwahrscheinlichkeiten
+und keine Jaccard-Werte. QEC-/SSL-Endbefundtexte werden nur
+**nachgelagert** eingeblendet, nie als Diagnosemerkmale verwendet.
 
-**Hinweis:** Mehrere QuickTests derselben FIN erzeugen
-**keine erfundenen NTF-Fälle**. Für die Fall-Clusterung werden
-mindestens zwei real angelegte oder importierte Fälle benötigt.
+**QuickTest und AutoExport** können dieselbe DTC-Beobachtung enthalten:
+die Originalquellen bleiben nachvollziehbar erhalten, und
+DTC-Ansichten konsolidieren eindeutige Querquellenüberlappungen
+vorsichtig. Die Scatter-/Cluster-Signatur verwendet ohnehin
+je Fall einzigartige ECU:DTC-Merkmale.
 
-[Methodik und nächste Schritte der Fallclusterung](docs/case-clustering.md)
+[Bedienung und komplette numerische Methodik](docs/fin-workspace.md) ·
+[Clustering-Grundlagen und fachliche Grenzen](docs/case-clustering.md)
 
 ## Manuelle Fallerfassung
 
@@ -408,17 +416,33 @@ Anleitung und Grenzen: [docs/manual-entry.md](docs/manual-entry.md).
 
 ## Fallähnlichkeit und Clustering
 
-Unter **Cluster & Fälle → Fall-Cluster** vergleicht NTF Insight jetzt FIN/Fall-Kombinationen anhand ihrer **Diagnosesignatur vor dem Austausch**. Die native Desktop-App zeigt Complete-Link-Fallcluster, eine Ähnlichkeitsmatrix (Heatmap) mit Begründungen und je ausgewähltem Fall eine Rangliste vergleichbarer historischer Fälle einschließlich der dokumentierten Maßnahmen und Nachtestergebnisse.
+Die neue Oberfläche liegt vollständig unter **Fälle / FIN → 2D-Streudiagramm**.
+Sie zeigt QEC-/NTF-Fälle als farbige Punkte mit einer vollständigen
+Berechnungserklärung (Gewichte, Matrixgröße, SVD-Varianz und -Ladungen,
+Fallkoordinaten, Jaccard-Score einschließlich aller Gruppenbeiträge).
 
-**Der zusätzliche Reiter „2D-Streudiagramm“ projiziert dieselben diagnostischen Vorher-Merkmale mit TruncatedSVD. Die Farben stammen unverändert von den bestehenden Complete-Link-Clustern; die Punktabstände sind ausdrücklich keine Jaccard-Werte.** Punkte sind anklickbar, zeigen ihre FIN/Fallreferenz und verlinken zum Fallvergleich beziehungsweise zur Fallanalyse. Bauteilfamilien werden getrennt dargestellt.
+**Die Clusterfarben stammen unverändert aus der konservativen
+Complete-Link-Berechnung.** TruncatedSVD bestimmt nur die X-/Y-Position.
+Die Abstände sind keine Jaccard-Werte. Bauteilfamilien werden getrennt
+projiziert; QuickTests ohne Schadteilfall werden nicht als Clusterfall gezählt.
 
-**QuickTest und AutoExport:** Überlappende ECU:DTC-Beobachtungen werden bei identischer FIN, Datum und km (sowie Uhrzeit, soweit AutoExport sie enthält) in Ereigniszahlen und Timeline konservativ nur einmal gezählt. Die Originalzeilen und beide Quellenbelege bleiben erhalten; bei unklarer Zuordnung wird nicht zusammengefasst. Der Fall-Cluster-Score wurde bereits zuvor aus einzigartigen ECU:DTC-Mengen berechnet.
+**QuickTest und AutoExport:** Überlappende ECU:DTC-Beobachtungen werden
+bei exakt übereinstimmenden Identifikatoren, Datum und km konservativ
+in Ereigniszahlen und Timeline nur einmal gezählt. Die Originalzeilen
+und beide Quellenbelege bleiben erhalten. Die Clustersignatur verwendet
+einzigartige ECU:DTC-Mengen pro Fall.
 
-**QEC / SSL-Endbefunde:** Der originale Endbefund ist separat in Fallansicht, Clustervergleich und Cluster-Steckbrief sichtbar; er beeinflusst weder Score noch SVD. Bei fehlendem Befundabschlussdatum wird kein Ereignis mit künstlich angenommenem Tauschdatum mehr erzeugt.
+**QEC-/SSL-Endbefunde** werden nur nachgelagert angezeigt, nicht zur
+Position oder Fallähnlichkeit verwendet. Ein fehlendes
+Befundabschlussdatum wird nicht künstlich als Tauschdatum ausgegeben.
 
-**PCA wird hierfür nicht als Clusteringverfahren verwendet.** Die aktuelle Grundlage sind nachvollziehbare, gewichtete Jaccard-Ähnlichkeiten für DTCs, ECUs und weitere verfügbare Vorher-Merkmale. Post-Tausch-Rekurrenz, Lieferant und Reparaturmaßnahme fließen nicht in den diagnostischen Score ein. Ein gleiches Fehlerbild garantiert keine gleiche Abhilfe.
+**PCA/SVD werden nicht als Clusterverfahren eingesetzt.**
+Die Clusterbildung beruht weiterhin auf gewichteten Jaccard-Vergleichen
+und Complete-Link. Die Gewichte und Schwellen müssen mit echten,
+fachlich geprüften Fällen validiert werden.
 
-Methodik, aktuelle Gewichte, Grenzen und geplanter Ausbau zu HDBSCAN/UMAP: [docs/case-clustering.md](docs/case-clustering.md).
+[Neuer gemeinsamer FIN-Arbeitsbereich und Zahlenmethodik](docs/fin-workspace.md) ·
+[Clustering-Grundlagen](docs/case-clustering.md).
 
 ## Development conventions
 

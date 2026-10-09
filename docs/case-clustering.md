@@ -11,35 +11,32 @@ Es gibt zwei getrennte Fragestellungen:
 
 Diese Trennung verhindert **Outcome Leakage**: Rekurrenz, Lieferantenbefund und manuell gewählte Root-Cause-Kategorie dürfen nicht in den Diagnoseähnlichkeits-Score einfließen.
 
-## Implementierter MVP (ohne ML-Abhängigkeit)
+## Implementierter MVP und neue Oberfläche
 
-Die App bietet unter **Cluster & Fälle → Fall-Cluster**:
+Die **Berechnung** bleibt die bestehende gewichtete Jaccard-Ähnlichkeit
+mit konservativer Complete-Link-Gruppierung und einer einstellbaren
+Mindestähnlichkeit von 0,65.
 
-- Gruppen ähnlicher FIN/Fall-Kombinationen mit eindeutiger Cluster-ID
-- eine einstellbare Mindestähnlichkeit (standardmäßig **0,65**)
-- eine **Ähnlichkeitsmatrix (Heatmap)** mit Hover-Begründung
-- Auswahl eines Falls und Rangliste der nächstähnlichen Fälle; die Detailbegründung
-  folgt auch der Tastaturnavigation und die Öffnen-Aktion wird bei ungültiger Auswahl deaktiviert
-- **„Ähnliche Fälle finden“** direkt aus **Fälle / FIN → FIN / Fallanalyse**,
-  wobei der aktuelle echte Fall automatisch als Vergleichsfokus gewählt wird
-- **Cluster-Steckbrief** mit Fallanzahl, unterschiedlichen FINs,
-  repräsentativem realem Fall, gemeinsamem ECU:DTC-Muster,
-  **schwächster Paarähnlichkeit**, Merkmalsabdeckung und
-  Zahl dokumentierter Vorher-/Nachtests
-- Der Cluster-Steckbrief zeigt zusätzlich die Zahl der Fälle mit
-  dokumentiertem QEC-SSL-Endbefund; das ist eine **Auswertung nach** der
-  Clusterbildung und niemals Teil des Ähnlichkeits-Scores.
-- ein **Doppelklick oder „Vergleichsfall öffnen“** führt aus dem Vergleich
-  direkt in die vollständige FIN-/Fallanalyse zurück
-- für jeden ausgewählten Vergleichsfall sowohl **gemeinsame als auch
-  abweichende DTCs**, gemeinsame Beanstandungen/Softwarestände,
-  Merkmalsabdeckung, dokumentierte Maßnahmen und den beobachteten Verlauf
-  nach der letzten Maßnahme
-- DTC-Koauftretensnetzwerk weiterhin unter **DTC-Netzwerk**
-- **2D-Streudiagramm** mit TruncatedSVD aus den gleichen Vorher-Merkmalen,
-  interaktiver Fallauswahl und den **unveränderten** Complete-Link-Clusterfarben
+**In der Desktop-App** werden Fall-Cluster, DTC-Netzwerk und
+Paarvergleich nicht mehr als eigenständige Tabs/Seiten angeboten.
+Stattdessen enthält **Fälle / FIN** drei verknüpfte Reiter:
+**2D-Streudiagramm**, **FIN / Fallanalyse** und **QuickTests nach FIN**.
 
-Die Matrix und die Vergleichsbegründung zeigen bei nicht vergleichbaren Paaren **„k. A.“**, nicht 0 % oder 100 %. Falls mehr als 24 Fälle existieren, wird die Matrix auf den Fokusfall und höchstens 23 weitere Fälle begrenzt; die Clusterberechnung berücksichtigt dennoch alle Fälle.
+Im Scatter können alle Fallkoordinaten, die Merkmalsmatrix,
+SVD-Achsenladungen/Varianz und die vollständige numerische Zerlegung
+ausgewählter gewichteter Jaccard-Paarwerte abgelesen werden.
+Die Cluster-ID bestimmt nur die Farbe, die SVD nur die Koordinaten.
+SSL-Endbefunde, Reparaturmaßnahmen und Nachtestergebnisse sind
+weiterhin keine Score- oder Projektionsmerkmale.
+
+Die getrennten älteren GUI-Komponenten für Heatmap,
+Cluster-Steckbrief und DTC-Netzwerk bleiben intern für
+Regressionen erhalten, sind aber aus der Navigation entfernt.
+Fachliche Qualitätssicherung und zukünftige Alternativansichten
+können weiter auf dem unveränderten Analysemodul aufbauen.
+
+Siehe [Gemeinsamer FIN-Arbeitsbereich / mathematische Erklärung](fin-workspace.md)
+für genaue Datenfelder, Achsenberechnung und Vergleichstabellen.
 
 ### Diagnostische Signatur
 
@@ -85,7 +82,7 @@ Hierarchische Cluster mit dieser konservativen Paarbedingung sind für erste man
 
 ### 2D-Streudiagramm: nur Visualisierung, kein neuer Clusteralgorithmus
 
-Der Reiter **Cluster & Fallähnlichkeit → 2D-Streudiagramm** zeichnet echte
+Der Reiter **Fälle / FIN → 2D-Streudiagramm** zeichnet echte
 QEC-/NTF-Fälle als Punkte. TruncatedSVD erhält dieselben **diagnostischen
 Vorher-Merkmalsgruppen** wie der gewichtete Jaccard-Vergleich (ECU:DTC,
 DTC, ECU, Beanstandung, ECU-SW, Baureihe/Variante). Die Gruppen werden als
@@ -95,8 +92,8 @@ One-Hot-Merkmale mit normierten Gruppenbeiträgen abgebildet.
 - **Grau** = keinem automatischen Cluster zugeordnet.
 - **Quadrat** = Fall ohne Tauschanker, daher nicht automatisch gruppiert.
 - **Dunkler Rand** = aktuell ausgewählter Fall.
-- **Klick** = Fokusfall auswählen; aus dem Diagramm zur detaillierten
-  Clustervergleichsseite oder direkt zur vollständigen Fallanalyse wechseln.
+- **Klick** = Fokusfall der gemeinsamen FIN-Auswahl; zur
+  FIN/Fallanalyse oder zu den QuickTests dieser FIN wechseln.
 - Bauteilfamilien werden **getrennt** projiziert. Eine Projektion über
   inkompatible Bauteilfamilien würde eine nicht vorhandene Vergleichbarkeit
   suggerieren.
@@ -108,9 +105,11 @@ Befund- oder Reparaturwahrscheinlichkeiten. Für zwei oder weniger auswertbare
 Fälle ist eine 2D-Struktur besonders eingeschränkt. Bei identischen 2D-Koordinaten
 werden Punktsymbole ausschließlich **visuell leicht versetzt**, damit alle
 Fälle anklickbar bleiben. Das ändert nicht die gespeicherten Koordinaten.
-Die Cluster-Schwelle und Zuordnungen bleiben synchron zur bestehenden
-Complete-Link-Ansicht; ein Wechsel der Schwelle verändert nur die Farben,
-nicht die Projektion.
+Die einstellbare Cluster-Schwelle berechnet weiterhin die vorhandenen
+Complete-Link-Gruppen; ein Wechsel der Schwelle verändert nur die Farben,
+nicht die Projektion. Der Berechnungsbereich enthält die verwendeten
+Gruppen-Gewichte, Matrixdimension, SVD-Varianz, Achsenladungen,
+Fallkoordinaten und die numerische Jaccard-Zerlegung.
 
 ### DTC-Überlappung zwischen QuickTest und AutoExport
 

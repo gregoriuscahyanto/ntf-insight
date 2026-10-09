@@ -25,6 +25,7 @@ from PySide6.QtWidgets import (
 )
 
 from ntf_insight.analysis.evidence_engine import generate_case_evidence
+from ntf_insight.analysis.case_clustering import cluster_diagnostic_cases
 from ntf_insight.analysis.qec_findings import qec_ssl_finding_label
 from ntf_insight.analysis.diagnostic_observations import unique_diagnostic_observations
 from ntf_insight.analysis.fin_diagnostics import (
@@ -45,6 +46,7 @@ from ntf_insight.app.models.simple_table_model import SimpleTableModel
 from ntf_insight.app.models.timeline_table_model import TimelineTableModel
 from ntf_insight.app.widgets.event_time_plot import EventTimePlot
 from ntf_insight.app.widgets.quicktest_browser import QuickTestBrowser
+from ntf_insight.app.widgets.case_scatter_plot import CaseScatterPanel
 from ntf_insight.ingestion.manual_entry import ManualCaseService, ManualEntryError
 from ntf_insight.domain.events import PartReplacement
 from ntf_insight.reporting.markdown import save_case_report
@@ -58,7 +60,6 @@ class CasePage(QWidget):
     """Inspect FIN/case combinations and edit persistent manual information."""
 
     case_saved = Signal(str)
-    similar_cases_requested = Signal(str)
 
     def __init__(
         self,
@@ -82,10 +83,12 @@ class CasePage(QWidget):
             if manual_service is not None
             else {}
         )
+        self.real_cases = repository.list_cases()
         self.view_cases = [
-            *repository.list_cases(),
+            *self.real_cases,
             *self.fin_only_previews.values(),
         ]
+        self._syncing_quicktest_fin = False
 
         outer_layout = QVBoxLayout(self)
         outer_layout.setContentsMargins(0, 0, 0, 0)
@@ -93,11 +96,25 @@ class CasePage(QWidget):
         self.detail_tabs = QTabWidget()
         outer_layout.addWidget(self.detail_tabs)
 
+        # One coherent workspace: plot, case analysis and FIN-scoped source tests.
+        # Only true QEC/NTF cases enter the scatter and clustering.
+        self.scatter_panel = CaseScatterPanel(
+            self.real_cases,
+            cluster_diagnostic_cases(self.real_cases) if self.real_cases else None,
+        )
+        self.detail_tabs.addTab(self.scatter_panel, "2D-Streudiagramm")
+        self.scatter_panel.case_focused.connect(
+            lambda case_id: self.select_case(case_id, show_analysis=False)
+        )
+        self.scatter_panel.case_requested.connect(self.select_case)
+        self.scatter_panel.quicktests_requested.connect(self.show_quicktests)
+
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setFrameShape(QFrame.Shape.NoFrame)
         content = QWidget()
         scroll.setWidget(content)
+        self.analysis_tab = scroll
         self.detail_tabs.addTab(scroll, "FIN / Fallanalyse")
 
         if manual_service is not None:
@@ -112,7 +129,7 @@ class CasePage(QWidget):
         layout.setContentsMargins(32, 28, 32, 28)
         layout.setSpacing(12)
 
-        layout.addWidget(QLabel("Fälle / FIN", objectName="PageTitle"))
+        layout.addWidget(QLabel("FIN / Fallanalyse", objectName="PageTitle"))
         intro = QLabel(
             "FINs mit QuickTests werden auch ohne NTF-/QEC-Fall angezeigt. "
             "Mit einem Schadteilfall werden Diagnose, Tausch und Befund "
@@ -123,7 +140,14 @@ class CasePage(QWidget):
         layout.addWidget(intro)
 
         self.selector = QComboBox(self)
-        self.selector.setVisible(False)
+        self.selector.setMinimumWidth(260)
+        shared_header = QHBoxLayout()
+        shared_header.setContentsMargins(22, 12, 22, 8)
+        shared_header.addWidget(QLabel("Fälle / FIN", objectName="PageTitle"))
+        shared_header.addStretch(1)
+        shared_header.addWidget(QLabel("Aktive FIN / Fall:"))
+        shared_header.addWidget(self.selector)
+        outer_layout.insertLayout(0, shared_header)
         for case in self.view_cases:
             title = (
                 f"Nur QuickTests · {case.vin}"
@@ -152,11 +176,11 @@ class CasePage(QWidget):
         self.add_event_button.clicked.connect(self._add_event)
         selector_row.addWidget(self.add_event_button)
 
-        self.find_similar_button = QPushButton("Ähnliche Fälle finden")
+        self.find_similar_button = QPushButton("Im 2D-Streudiagramm zeigen")
         self.find_similar_button.setToolTip(
-            "Vergleicht reale NTF-/QEC-Fälle anhand des vor dem Tausch "
-            "bekannten Diagnosebilds. QuickTests ohne Schadteilfall "
-            "werden nicht als zusätzliche Fälle gezählt."
+            "Zeigt den gewählten Schadteilfall in der 2D-Fallübersicht "
+            "mit Berechnungstabellen. FIN-only-QuickTests bilden keine "
+            "zusätzlichen Schadteilfälle."
         )
         self.find_similar_button.setEnabled(False)
         self.find_similar_button.clicked.connect(self._request_similar_cases)
@@ -422,6 +446,11 @@ class CasePage(QWidget):
         header.setStretchLastSection(True)
         layout.addWidget(self.timeline, 1)
 
+        if self.quicktest_browser is not None:
+            self.quicktest_browser.fin_selector.currentIndexChanged.connect(
+                lambda _index: self._on_quicktest_fin_changed()
+            )
+
         if self.selector.count():
             self.case_table.selectRow(0)
             self._refresh()
@@ -453,9 +482,24 @@ class CasePage(QWidget):
             self.selector.setCurrentIndex(selector_index)
 
     def _request_similar_cases(self) -> None:
+        """Show the selected true QEC/NTF case in the local scatter tab."""
         case_id = self.selector.currentData()
-        if isinstance(case_id, str) and self.repository.get_case(case_id):
-            self.similar_cases_requested.emit(case_id)
+        if isinstance(case_id, str) and self.scatter_panel.focus_case(case_id):
+            self.detail_tabs.setCurrentWidget(self.scatter_panel)
+
+    def _on_quicktest_fin_changed(self) -> None:
+        """Follow an explicit FIN selection from the QuickTest browser."""
+        if self._syncing_quicktest_fin or self.quicktest_browser is None:
+            return
+        fin = self.quicktest_browser.fin_selector.currentText()
+        current_id = self.selector.currentData()
+        if current_id and any(
+            case.case_id == current_id and case.vin == fin for case in self.view_cases
+        ):
+            return
+        matching = [case for case in self.view_cases if case.vin == fin]
+        if matching:
+            self.select_case(matching[0].case_id, show_analysis=False)
 
     def _clear_view(self) -> None:
         for value in (
@@ -531,6 +575,39 @@ class CasePage(QWidget):
         if case is None:
             self._clear_view()
             return
+
+        # Keep selected QEC/NTF case and FIN-specific QuickTests aligned.
+        if self.repository.get_case(case.case_id) is not None:
+            self.scatter_panel.focus_case(case.case_id)
+        else:
+            self.scatter_panel.clear_focus()
+        # Shared dropdown selection must also highlight the analysis table.
+        for source_row in range(self.case_model.rowCount()):
+            if self.case_model.case_id_at(source_row) != case.case_id:
+                continue
+            proxy_index = self.case_proxy.mapFromSource(
+                self.case_model.index(source_row, 0)
+            )
+            if not proxy_index.isValid() and self.case_search.text():
+                self.case_search.blockSignals(True)
+                self.case_search.clear()
+                self.case_search.blockSignals(False)
+                self.case_proxy.setFilterFixedString("")
+                proxy_index = self.case_proxy.mapFromSource(
+                    self.case_model.index(source_row, 0)
+                )
+            if proxy_index.isValid():
+                selection = self.case_table.selectionModel()
+                selection.blockSignals(True)
+                self.case_table.selectRow(proxy_index.row())
+                selection.blockSignals(False)
+            break
+        if self.quicktest_browser is not None:
+            self._syncing_quicktest_fin = True
+            try:
+                self.quicktest_browser.select_fin(case.vin)
+            finally:
+                self._syncing_quicktest_fin = False
 
         self._display_version_changes(case)
 
@@ -708,12 +785,19 @@ class CasePage(QWidget):
         """Open the FIN-scoped report browser, with or without a QEC case."""
         if self.quicktest_browser is None:
             return
-        self.detail_tabs.setCurrentWidget(self.quicktest_browser)
+        if fin is None:
+            selected = next(
+                (case for case in self.view_cases
+                 if case.case_id == self.selector.currentData()),
+                None,
+            )
+            fin = selected.vin if selected else None
         if fin:
             self.quicktest_browser.select_fin(fin)
+        self.detail_tabs.setCurrentWidget(self.quicktest_browser)
 
-    def select_case(self, case_id: str) -> None:
-        """Select a case after the shared application data is reloaded."""
+    def select_case(self, case_id: str, *, show_analysis: bool = True) -> None:
+        """Select a case across all three linked tabs, optionally switch tab."""
         for row in range(self.case_model.rowCount()):
             if self.case_model.case_id_at(row) == case_id:
                 source = self.case_model.index(row, 0)
@@ -724,7 +808,8 @@ class CasePage(QWidget):
                     self.case_search.clear()
                     proxy = self.case_proxy.mapFromSource(source)
                 if proxy.isValid():
-                    self.detail_tabs.setCurrentIndex(0)
+                    if show_analysis:
+                        self.detail_tabs.setCurrentWidget(self.analysis_tab)
                     self.case_table.selectRow(proxy.row())
                     self._case_clicked(proxy)
                 return

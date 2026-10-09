@@ -18,7 +18,10 @@ def test_main_window_can_be_constructed(tmp_path, monkeypatch) -> None:
     assert hasattr(window.pages["cases"], "case_table")
     assert hasattr(window.pages["cases"], "time_plot")
     assert "dtcs" in window.pages
-    assert "clusters" in window.pages
+    assert "clusters" not in window.pages
+    assert "clusters" not in window.navigation.buttons
+    assert hasattr(window.pages["cases"], "scatter_panel")
+    assert window.pages["cases"].scatter_panel.plot is not None
     assert "suppliers" in window.pages
     assert "quality" in window.pages
     assert window.repository.list_cases()

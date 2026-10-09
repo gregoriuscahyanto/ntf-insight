@@ -85,7 +85,7 @@ def test_empty_case_repository_does_not_convert_quicktests_to_cases() -> None:
     app.processEvents()
 
 
-def test_case_page_and_cluster_view_navigate_in_both_directions(
+def test_case_page_and_scatter_navigate_in_both_directions(
     tmp_path, monkeypatch,
 ) -> None:
     from ntf_insight.app.windows.main_window import MainWindow
@@ -93,31 +93,32 @@ def test_case_page_and_cluster_view_navigate_in_both_directions(
     monkeypatch.setenv("NTF_INSIGHT_DATA_DIR", str(tmp_path / "empty"))
     app = QApplication.instance() or QApplication([])
     window = MainWindow()
+    window.navigation.select_page("cases")
     cases = window.pages["cases"]
     selected = cases.selector.currentData()
-    assert isinstance(selected, str) and selected.startswith("DEMO-")
+    assert selected and selected.startswith("DEMO-")
     assert cases.find_similar_button.isEnabled()
     cases.find_similar_button.click()
 
-    clusters = window.pages["clusters"]
-    assert window.stack.currentWidget() is clusters
-    assert clusters.case_cluster_panel.focus.currentData() == selected
-    assert clusters.tabs.currentIndex() == 0
+    scatter = cases.scatter_panel
+    assert cases.detail_tabs.currentWidget() is scatter
+    assert scatter.focus_id == selected
 
-    panel = clusters.case_cluster_panel
-    panel.neighbor_table.selectRow(0)
-    expected = panel._selected_neighbor_case()
-    assert expected is not None and expected != selected
+    # Selecting a different chart point changes the shared FIN/Fall selection
+    # without jumping away from the plot.
+    other = next(case_id for case_id in scatter._visible_case_ids if case_id != selected)
+    scatter._select_point(other)
+    assert cases.selector.currentData() == other
+    assert cases.detail_tabs.currentWidget() is scatter
 
-    # The earlier case search is intentionally set to a nonmatching FIN;
-    # opening a comparison must still select the target case.
+    # The former nonmatching search must not prevent opening the real case.
     cases.case_search.setText("FIN-DOES-NOT-EXIST")
     assert cases.case_proxy.rowCount() == 0
-    panel._open_selected_neighbor()
-    assert window.stack.currentWidget() is window.pages["cases"]
-    assert cases.selector.currentData() == expected
+    scatter.open_button.click()
+    assert cases.selector.currentData() == other
     assert cases.case_search.text() == ""
-    assert cases.detail_tabs.currentIndex() == 0
+    assert cases.detail_tabs.currentWidget() is cases.analysis_tab
+    assert window.stack.currentWidget() is cases
 
     window.close()
     app.processEvents()

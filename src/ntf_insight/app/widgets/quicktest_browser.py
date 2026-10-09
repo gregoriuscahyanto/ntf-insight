@@ -158,7 +158,15 @@ class QuickTestBrowser(QWidget):
         self._load_fin()
 
     def select_fin(self, fin: str) -> None:
+        """Select a FIN even if it currently has no uploaded QuickTest PDF.
+
+        Showing an explicit 0-report FIN avoids silently leaving the browser
+        on a different vehicle when navigating from a QEC case.
+        """
         index = self.fin_selector.findText(fin)
+        if index < 0 and fin:
+            self.fin_selector.addItem(fin)
+            index = self.fin_selector.findText(fin)
         if index >= 0:
             self.fin_selector.setCurrentIndex(index)
 

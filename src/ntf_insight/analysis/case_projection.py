@@ -8,7 +8,7 @@ No supplier finding, repair action, or post-intervention outcome is a feature.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from math import sqrt
+from math import isfinite, sqrt
 
 from sklearn.decomposition import TruncatedSVD
 from sklearn.feature_extraction import DictVectorizer
@@ -32,6 +32,10 @@ class CaseProjection:
     points: tuple[ProjectedCase, ...]
     omitted_case_ids: tuple[str, ...]
     method: str = "TruncatedSVD (2D, diagnostische Signatur)"
+    feature_count: int = 0
+    components: int = 0
+    explained_variance_ratio: tuple[float, ...] = ()
+    axis_top_features: tuple[tuple[int, str, float], ...] = ()
 
 
 def project_diagnostic_cases(cases: list[NTFCase]) -> CaseProjection:
@@ -65,17 +69,44 @@ def project_diagnostic_cases(cases: list[NTFCase]) -> CaseProjection:
                 continue
             amplitude = sqrt(weight / len(tokens))
             for token in tokens:
-                features[f"{group}:{token!r}"] = amplitude
+                value = ":".join(token) if isinstance(token, tuple) else str(token)
+                features[f"{group}::{value}"] = amplitude
         rows.append(features)
 
+    vectorizer = DictVectorizer(sparse=True)
+    matrix = vectorizer.fit_transform(rows)
+    feature_count = matrix.shape[1]
     positions = [(0.0, 0.0)] * len(eligible)
-    if len(eligible) >= 2:
-        matrix = DictVectorizer(sparse=True).fit_transform(rows)
+    components = 0
+    explained_variance: tuple[float, ...] = ()
+    top_features: list[tuple[int, str, float]] = []
+    # Identical signatures have zero across-case variance. Do not ask SVD to
+    # estimate meaningless axes or divide by zero in explained-variance ratios.
+    has_variation = (
+        len(eligible) >= 2
+        and (matrix[1:] - matrix[:-1]).nnz > 0
+    )
+    if has_variation:
         components = min(2, matrix.shape[0] - 1, matrix.shape[1] - 1)
         if components >= 1:
-            raw = TruncatedSVD(
-                n_components=components, random_state=0
-            ).fit_transform(matrix)
+            svd = TruncatedSVD(n_components=components, random_state=0)
+            raw = svd.fit_transform(matrix)
+            explained_variance = tuple(
+                round(float(v), 6) if isfinite(float(v)) else 0.0
+                for v in svd.explained_variance_ratio_
+            )
+            feature_names = vectorizer.get_feature_names_out()
+            for axis_index, weights in enumerate(svd.components_, start=1):
+                top_indices = sorted(
+                    range(feature_count),
+                    key=lambda index: (-abs(float(weights[index])), str(feature_names[index])),
+                )[:6]
+                for index in top_indices:
+                    top_features.append((
+                        axis_index,
+                        str(feature_names[index]),
+                        round(float(weights[index]), 6),
+                    ))
             x_mean = float(raw[:, 0].mean())
             y_mean = float(raw[:, 1].mean()) if components == 2 else 0.0
             positions = [
@@ -99,4 +130,8 @@ def project_diagnostic_cases(cases: list[NTFCase]) -> CaseProjection:
             for sig, (x, y) in zip(eligible, positions)
         ),
         omitted_case_ids=omitted,
+        feature_count=feature_count,
+        components=components,
+        explained_variance_ratio=explained_variance,
+        axis_top_features=tuple(top_features),
     )
