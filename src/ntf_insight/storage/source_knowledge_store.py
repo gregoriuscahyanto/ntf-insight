@@ -225,7 +225,30 @@ class SourceKnowledgeStore:
                 WHERE category = 'autoexport_tips'
                 """
             ).fetchone()[0]
-        results: dict[str, int] = {"tips_distinct_case_ids": int(tips_ids or 0)}
+            qec = con.execute(
+                """
+                SELECT
+                    COUNT(*) AS all_rows,
+                    COUNT(*) FILTER (
+                        WHERE source_location LIKE 'Schadteile QEC!%'
+                    ) AS primary_rows,
+                    COUNT(DISTINCT reference) FILTER (
+                        WHERE source_location LIKE 'Schadteile QEC!%'
+                    ) AS primary_references,
+                    COUNT(DISTINCT fin) FILTER (
+                        WHERE source_location LIKE 'Schadteile QEC!%'
+                    ) AS primary_fins
+                FROM source_knowledge_rows
+                WHERE category = 'qec_row'
+                """
+            ).fetchone()
+        results: dict[str, int] = {
+            "tips_distinct_case_ids": int(tips_ids or 0),
+            "qec_original_rows": int(qec[0]),
+            "qec_primary_rows": int(qec[1]),
+            "qec_primary_references": int(qec[2]),
+            "qec_primary_fins": int(qec[3]),
+        }
         for category, row_count, fin_count in rows:
             results[f"{category}_rows"] = int(row_count)
             results[f"{category}_fins"] = int(fin_count)
