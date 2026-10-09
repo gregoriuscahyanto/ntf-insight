@@ -57,11 +57,12 @@ class TimelineTableModel(QAbstractTableModel):
         labels = {
             "diagnostic_session": "Diagnosesitzung",
             "diagnostic": "DTC",
-            "ecu_state": "ECU-Stand",
-            "replacement": "Tausch",
+            "ecu_state": "Steuergerät HW-/SW-Stand",
+            "replacement": "Tauschanker (QEC/manuell)",
+            "replacement_candidate": "AutoExport-Reparaturkandidat",
             "repair": "Werkstatt",
             "software": "Software",
-            "supplier": "Lieferant",
+            "supplier": "Lieferantenbefund",
         }
         return labels.get(kind, kind.replace("_", " ").title())
 
