@@ -434,6 +434,12 @@ class CaseScatterPanel(QWidget):
         # Recompute only visible labels/tables, never SVD positions.
         self._draw()
 
+    def clear_focus(self) -> None:
+        """FIN-only QuickTests are never treated as existing QEC cases."""
+        if self.focus_id is not None:
+            self.focus_id = None
+            self._draw()
+
     def focus_case(self, case_id: str) -> bool:
         if case_id not in self.by_id:
             return False
