@@ -23,6 +23,7 @@ from zipfile import ZIP_DEFLATED, ZipFile, ZipInfo
 from ntf_insight.analysis.case_clustering import signature_for
 from ntf_insight.analysis.cross_cluster_bridges import build_cluster_bridges
 from ntf_insight.analysis.cluster_pilot_priority import prioritize_cluster_pilots
+from ntf_insight.analysis.pilot_expert_validation import validate_pilot_evidence
 from ntf_insight.analysis.recurrence_coverage_audit import (
     RecurrenceCoverageReport, audit_recurrence_coverage,
 )
@@ -50,6 +51,8 @@ PACKAGE_FILES = (
     "cluster_bruecken.csv",
     "pilot_cluster_prioritaet.csv",
     "pilot_validierungsfaelle.csv",
+    "pilot_fachvalidierung.csv",
+    "pilot_gepruefte_zielpaare.csv",
     "diagnosesitzungs_pruefung.csv",
     "methodenvergleich.csv",
 )
@@ -222,6 +225,7 @@ def write_cluster_review_zip(
     pilot = prioritize_cluster_pilots(
         cases, result, audit, confirmations=confirmations, bridges=bridges,
     )
+    pilot_validation = validate_pilot_evidence(cases, result, confirmations)
     coverage = recurrence_coverage or audit_recurrence_coverage(cases)
     if {row.case_id for row in coverage.cases} != set(by_id):
         raise ValueError("Diagnosesitzungsprüfung enthält andere QEC-Fälle.")
@@ -397,6 +401,29 @@ def write_cluster_review_zip(
             "Offen – unabhängige technische Prüfung erforderlich",
         ) for row in pilot.inspections
     ]
+    pilot_validation_groups = [
+        (
+            item.group, aliases[item.representative_case_id],
+            int(item.representative_confirmed), item.members,
+            item.independently_reviewed_target_fins,
+            item.concordant_target_fins, item.discordant_target_fins,
+            item.screened_agree, item.screened_disagree,
+            item.outside_screen_agree, item.outside_screen_disagree,
+            item.same_fin_excluded, item.shared_evidence_excluded,
+            item.repeated_fin_excluded, item.open_target_fins, item.status,
+        ) for item in pilot_validation.groups
+    ]
+    pilot_validation_targets = [
+        (
+            item.group, aliases[item.representative_case_id],
+            aliases[item.target_case_id],
+            item.representative_mechanism,
+            item.target_mechanism,
+            item.similarity_to_representative,
+            int(item.screened_45), int(item.same_fin),
+            item.status, item.note,
+        ) for item in pilot_validation.targets
+    ]
     session_rows = [
         (
             aliases[row.case_id], vin_aliases[row.vin],
@@ -432,7 +459,7 @@ def write_cluster_review_zip(
 
     metadata = {
         "format": "ntf-insight-cluster-review",
-        "version": 2,
+        "version": 3,
         "pseudonymisiert": True,
         "enthält": "Nur abgeleitete Diagnosetabellen und Prüfhypothesen",
         "freie_ssl_texte": False,
@@ -463,6 +490,18 @@ def write_cluster_review_zip(
             pilot.independent_targets
         ),
         "pilot_prioritaet_heuristisch_nicht_kalibriert": True,
+        "pilot_bestaetigte_repraesentanten": (
+            pilot_validation.reviewed_representatives
+        ),
+        "pilot_bewertbare_zielfins": pilot_validation.comparable_target_fins,
+        "pilot_gepruefte_uebereinstimmungen": (
+            pilot_validation.concordant_target_fins
+        ),
+        "pilot_gepruefte_widersprueche": (
+            pilot_validation.discordant_target_fins
+        ),
+        "pilot_cluster_mit_widerspruechen": pilot_validation.groups_with_conflict,
+        "pilot_kein_statistisch_valider_ursachentransfer": True,
         "wiederauftreten_beurteilbar": coverage.assessable_qec,
         "vorher_dtc_ohne_vorher_sitzung": coverage.pre_dtc_but_no_pre_session,
         "rohe_fin_quicktests_keine_qec_zuordnung": True,
@@ -479,6 +518,9 @@ def write_cluster_review_zip(
         "Dxxxx ist KEIN auswertbarer Original-DTC-Code. CPC3 wird als\n"
         "boolesches Merkmal ausgewiesen. Gleiche Dxxxx sind vergleichbar.\n"
         "Clusterbruecken sind nur Diagnosemuster, KEINE gemeinsame Ursache.\n"
+        "Pilot-Fachvalidierung zeigt nur gepruefte FIN-Paare und Ausnahmen.\n"
+        "Evidenzreferenz-Verschiedenheit allein beweist keine Unabhaengigkeit.\n"
+        "Widersprueche sperren ungepruefte Cluster-Hypothesen.\n"
         "Vorher-DTC-Zeilen sind keine komplette Vorher-Diagnosesitzung.\n"
         "FIN-Roh-QuickTests sind keine automatisch zugeordneten QEC-Sitzungen.\n"
         "Die Zuordnungstabellen mit echten Schlüsseln liegen SEPARAT\n"
@@ -570,6 +612,25 @@ def write_cluster_review_zip(
             "Andere FIN als Repräsentant", "Prüfhinweis",
             "Unabhängiger Zielfallmechanismus",
         ), pilot_inspection_rows),
+        "pilot_fachvalidierung.csv": _csv_bytes((
+            "Gruppe", "Repräsentanten-Alias", "Repräsentant bestätigt",
+            "Clusterfälle", "Separat geprüfte Ziel-FINs",
+            "Übereinstimmende Ziel-FINs", "Widersprechende Ziel-FINs",
+            "Screening Übereinstimmungen", "Screening Widersprüche",
+            "Außerhalb Screening Übereinstimmungen",
+            "Außerhalb Screening Widersprüche",
+            "Gleiche-FIN-Ausschlüsse", "Wiederverwendete Evidenz",
+            "Mehrfache QEC je bestätigte Ziel-FIN",
+            "Noch nicht unabhängig geprüfte Ziel-FINs",
+            "Fachbewertung – KEINE automatische Übertragung",
+        ), pilot_validation_groups),
+        "pilot_gepruefte_zielpaare.csv": _csv_bytes((
+            "Gruppe", "Repräsentanten-Alias", "Zielfall-Alias",
+            "Separat bestätigter Rep-Mechanismus",
+            "Separat bestätigter Ziel-Mechanismus",
+            "Cosinus zum Medoid", "45%-DTC-Screening",
+            "Gleiche FIN", "Prüfstatus", "Prüfhinweis",
+        ), pilot_validation_targets),
         "diagnosesitzungs_pruefung.csv": _csv_bytes((
             "Fall", "Fahrzeug", "Gruppe",
             "Vorher-DTC-Zeilen", "Nachher-DTC-Zeilen",
