@@ -67,6 +67,9 @@ Pending real files/systems:
 - [x] AutoExport workshop/claim CSV parser
 - [x] safe ZIP expansion, automatic format recognition, SHA-256 archive
 - [x] idempotent FIN/fall attachment and asynchronous desktop import
+- [x] FIN-scoped QuickTest storage without an existing QEC case
+- [x] safely reprocess previously archived/uncategorized QuickTests without changing provenance
+- [x] archive view for processed, all and outstanding source files
 - [ ] additional replacement-list formats
 - [ ] SMR-D parser
 - [ ] HW/SW release/change parser
@@ -202,6 +205,8 @@ Current PySide6 views:
 - [x] Overview
 - [x] Data Sources + raw archive
 - [x] Combined FIN + case explorer
+- [x] read-only FIN-only QuickTest previews in case table, timeline and time plot (no fabricated NTF case)
+- [x] dashboard vehicle/QuickTest counts independent of existing QEC cases
 - [x] Manually create FIN/case combinations in persistent DuckDB
 - [x] Manually add short tests, DTCs, replacements, repairs, software/ECU state, supplier findings and notes
 - [x] Correct individual case events with audit history; original raw reports stay intact
