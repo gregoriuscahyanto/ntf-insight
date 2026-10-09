@@ -1,0 +1,102 @@
+"""Read-only 2D projection of the SAME pre-intervention case signatures.
+
+TruncatedSVD is only a drawing coordinate system. Cluster labels/thresholds
+come exclusively from case_clustering.cluster_diagnostic_cases, never from 2D.
+No supplier finding, repair action, or post-intervention outcome is a feature.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from math import sqrt
+
+from sklearn.decomposition import TruncatedSVD
+from sklearn.feature_extraction import DictVectorizer
+
+from ntf_insight.analysis.case_clustering import VIEW_WEIGHTS, signature_for
+from ntf_insight.domain.case import NTFCase
+
+
+@dataclass(frozen=True, slots=True)
+class ProjectedCase:
+    case_id: str
+    x: float
+    y: float
+    component_key: str
+    has_replacement_anchor: bool
+    fault_count: int
+
+
+@dataclass(frozen=True, slots=True)
+class CaseProjection:
+    points: tuple[ProjectedCase, ...]
+    omitted_case_ids: tuple[str, ...]
+    method: str = "TruncatedSVD (2D, diagnostische Signatur)"
+
+
+def project_diagnostic_cases(cases: list[NTFCase]) -> CaseProjection:
+    """Project comparable diagnostic evidence, excluding evidence-free cases.
+
+    Within a populated feature group every observed token has the same weight.
+    Normalising by group size stops long DTC lists from dominating the whole
+    embedding purely because a record contains more entries. The resulting
+    Euclidean positions are NOT the actual Jaccard/complete-link distances.
+    """
+    ordered = sorted(cases, key=lambda case: case.case_id)
+    if len({case.case_id for case in ordered}) != len(ordered):
+        raise ValueError("Fall-IDs müssen eindeutig sein.")
+
+    signatures = [signature_for(case) for case in ordered]
+    eligible = [
+        sig for sig in signatures if sig.faults or sig.complaint_tokens
+    ]
+    omitted = tuple(
+        sig.case_id for sig in signatures if not (sig.faults or sig.complaint_tokens)
+    )
+    if not eligible:
+        return CaseProjection(points=(), omitted_case_ids=omitted)
+
+    rows = []
+    for sig in eligible:
+        features: dict[str, float] = {}
+        for group, weight in VIEW_WEIGHTS.items():
+            tokens = sig.views()[group]
+            if not tokens:
+                continue
+            amplitude = sqrt(weight / len(tokens))
+            for token in tokens:
+                features[f"{group}:{token!r}"] = amplitude
+        rows.append(features)
+
+    positions = [(0.0, 0.0)] * len(eligible)
+    if len(eligible) >= 2:
+        matrix = DictVectorizer(sparse=True).fit_transform(rows)
+        components = min(2, matrix.shape[0] - 1, matrix.shape[1] - 1)
+        if components >= 1:
+            raw = TruncatedSVD(
+                n_components=components, random_state=0
+            ).fit_transform(matrix)
+            x_mean = float(raw[:, 0].mean())
+            y_mean = float(raw[:, 1].mean()) if components == 2 else 0.0
+            positions = [
+                (
+                    round(float(row[0]) - x_mean, 10),
+                    round(float(row[1]) - y_mean, 10) if components == 2 else 0.0,
+                )
+                for row in raw
+            ]
+
+    return CaseProjection(
+        points=tuple(
+            ProjectedCase(
+                case_id=sig.case_id,
+                x=x,
+                y=y,
+                component_key=sig.component_key,
+                has_replacement_anchor=sig.has_replacement_anchor,
+                fault_count=len(sig.faults),
+            )
+            for sig, (x, y) in zip(eligible, positions)
+        ),
+        omitted_case_ids=omitted,
+    )
