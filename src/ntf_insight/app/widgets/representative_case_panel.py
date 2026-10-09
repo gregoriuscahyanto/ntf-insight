@@ -230,6 +230,25 @@ class RepresentativeCasePanel(QWidget):
         layout.addLayout(open_row)
 
         layout.addWidget(QLabel(
+            "Nicht zugeordnete QEC-Fälle und Ausschlussgründe",
+            objectName="CardTitle",
+        ))
+        self.unassigned_model = SimpleTableModel((
+            "QEC-Fall", "FIN", "Grund", "Bester Vergleichsfall",
+            "Index (nur Hinweis)",
+        ))
+        self.unassigned_table = _table(self.unassigned_model, 255)
+        self.unassigned_table.doubleClicked.connect(self._open_unassigned_case)
+        layout.addWidget(self.unassigned_table)
+        unassigned_note = QLabel(
+            "Einzelne Ähnlichkeiten sind keine bestätigten Gruppen. "
+            "Doppelklick öffnet die Fallanalyse des unzugeordneten Falls.",
+            objectName="PageSubtitle",
+        )
+        unassigned_note.setWordWrap(True)
+        layout.addWidget(unassigned_note)
+
+        layout.addWidget(QLabel(
             "TIPS-Vorgänge einem tatsächlichen QEC-Fall zuordnen",
             objectName="CardTitle",
         ))
@@ -329,6 +348,21 @@ class RepresentativeCasePanel(QWidget):
             for group in plan.clusters
         ])
         self._group_ids = [group.cluster_id for group in plan.clusters]
+        self.unassigned_model.set_rows([
+            (
+                item.case_id, self.by_id[item.case_id].vin,
+                item.reason, item.nearest_diagnostic_case_id or "—",
+                f"{item.nearest_similarity:.1%}"
+                if item.nearest_similarity is not None else "Nicht vergleichbar",
+            )
+            for item in sorted(
+                plan.unassigned_reasons,
+                key=lambda item: (
+                    item.nearest_similarity is None,
+                    -(item.nearest_similarity or 0), item.case_id,
+                ),
+            )
+        ])
         self.open_case_button.setEnabled(bool(plan.clusters))
         self.export_button.setEnabled(bool(plan.clusters))
         self.group_note.setText(
@@ -342,6 +376,13 @@ class RepresentativeCasePanel(QWidget):
         if plan.clusters:
             self.group_table.selectRow(0)
             self._group_changed(self.group_model.index(0, 0), None)
+        else:
+            self.group_table.clearSelection()
+            self.group_note.setText(
+                "Keine diagnostisch ausreichend homogene Gruppe bei "
+                "diesem Mindestindex. Die QEC-Fälle bleiben einzeln "
+                "und erscheinen mit Gründen in der Ausschlusstabelle."
+            )
 
     def export_plan(self) -> None:
         """Export only after explicit local file selection; never upload VINs."""
@@ -436,6 +477,11 @@ class RepresentativeCasePanel(QWidget):
                     self.group_table.selectRow(i)
                     self.member_table.selectRow(j)
                     return
+
+    def _open_unassigned_case(self, index) -> None:
+        if index.isValid() and index.row() < self.unassigned_model.rowCount():
+            case_id = str(self.unassigned_model.rows[index.row()][0])
+            self.case_requested.emit(case_id)
 
     def _open_selected_case(self) -> None:
         index = self.member_table.currentIndex()
