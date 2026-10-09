@@ -93,6 +93,7 @@ def test_case_page_and_scatter_navigate_in_both_directions(
     monkeypatch.setenv("NTF_INSIGHT_DATA_DIR", str(tmp_path / "empty"))
     app = QApplication.instance() or QApplication([])
     window = MainWindow()
+    window.navigation.select_page("cases")
     cases = window.pages["cases"]
     selected = cases.selector.currentData()
     assert selected and selected.startswith("DEMO-")
