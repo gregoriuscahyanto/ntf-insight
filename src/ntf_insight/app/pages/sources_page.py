@@ -81,6 +81,7 @@ class SourcesPage(QWidget):
         SourceType.DIAGNOSTIC_DESCRIPTION: "CDD-Diagnosebeschreibung",
         SourceType.PART_HISTORY: "Part History / Produktänderungen",
         SourceType.AUTOEXPORT_SUMMARY: "AutoExport-Zählwert",
+        SourceType.TIPS_CASE: "AutoExport · TIPS-Fall",
         SourceType.HW_SW_CHANGE_HISTORY: "HW-/SW-Änderungshistorie",
         SourceType.VEHICLE_SOFTWARE_HISTORY: "Fahrzeug-SW-Historie",
         SourceType.INSTALLED_POPULATION: "Verbaute Population",
