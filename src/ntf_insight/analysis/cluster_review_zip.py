@@ -11,7 +11,9 @@ import csv
 import io
 import json
 import os
+import secrets
 import tempfile
+from hashlib import blake2b
 from collections import Counter
 from dataclasses import dataclass
 from itertools import combinations
@@ -97,7 +99,15 @@ def _validate(
         raise ValueError("Die Diagnoseprüfung enthält andere Fälle.")
     if result.dtc_source != audit.dtc_source or result.lookback_days != audit.lookback_days:
         raise ValueError("Diagnoseprüfung und ML-Szenario haben verschiedene Quellen/Zeitfenster.")
+    audit_eligible = {
+        row.case_id for row in audit.cases
+        if row.reason == "Auswertbare Vor-Tausch-Diagnose"
+    }
+    if len(audit_eligible) != audit.eligible_cases:
+        raise ValueError("Auswertbare QEC-Anzahl im Diagnoseaudit widersprüchlich.")
     eligible = set(result.eligible_case_ids)
+    if not eligible.issubset(audit_eligible):
+        raise ValueError("ML-Auswertung enthält Fälle ohne geprüfte Vorher-Diagnose.")
     listed = eligible | set(result.excluded_case_ids)
     if listed != set(by_id) or eligible & set(result.excluded_case_ids):
         raise ValueError("ML-Ergebnis enthält keine vollständige Fallpartition.")
@@ -153,23 +163,39 @@ def write_cluster_review_zip(
             "Bitte anderen Dateinamen wählen; vorhandene Daten bleiben unverändert."
         )
 
-    case_ids = sorted(by_id)
-    vins = sorted({case.vin for case in cases})
+    # Random keyed aliases break the ordering correlation with real QEC/VIN
+    # identifiers. The secret remains in memory and is never exported.
+    pseudonym_key = secrets.token_bytes(32)
+    def _order(domain: str, key: str) -> bytes:
+        return blake2b(
+            (domain + ":" + key).encode("utf-8"),
+            key=pseudonym_key, digest_size=16,
+        ).digest()
+
+    case_ids = sorted(by_id, key=lambda cid: _order("case", cid))
+    vins = sorted({case.vin for case in cases}, key=lambda vin: _order("vin", vin))
     aliases = {cid: f"F{i:04d}" for i, cid in enumerate(case_ids, start=1)}
     vin_aliases = {vin: f"V{i:04d}" for i, vin in enumerate(vins, start=1)}
     group_for = {
         member.case_id: f"H{group.cluster_id}"
         for group in result.clusters for member in group.members
     }
+    audit_eligible = tuple(
+        row.case_id for row in audit.cases
+        if row.reason == "Auswertbare Vor-Tausch-Diagnose"
+    )
     signatures = {
         cid: signature_for(
             by_id[cid],
             dtc_source=result.dtc_source,
             lookback_days=result.lookback_days,
         )
-        for cid in result.eligible_case_ids
+        for cid in audit_eligible
     }
-    all_faults = sorted({fault for sig in signatures.values() for fault in sig.faults})
+    all_faults = sorted(
+        {fault for sig in signatures.values() for fault in sig.faults},
+        key=lambda fault: _order("fault", "\\x00".join(fault)),
+    )
     fault_aliases = {
         fault: f"D{i:04d}" for i, fault in enumerate(all_faults, start=1)
     }
@@ -231,9 +257,13 @@ def write_cluster_review_zip(
                 int(similarity < 0.45), int(by_id[first].vin == by_id[second].vin),
             ))
 
-    for cid in result.eligible_case_ids:
+    for cid in audit_eligible:
         case = by_id[cid]
-        tag = group_for.get(cid, "RAUSCHEN")
+        tag = group_for.get(
+            cid,
+            "HÄUFIGKEITSFILTER" if cid in result.frequency_filtered_case_ids
+            else "RAUSCHEN",
+        )
         signature = signatures[cid]
         for fault in sorted(signature.faults):
             feature_rows.append((
@@ -241,7 +271,7 @@ def write_cluster_review_zip(
                 fault_aliases[fault], int(fault[0] == "CPC3"),
                 int(
                     result.common_dtc_cutoff is None
-                    or frequencies[fault] / len(result.eligible_case_ids)
+                    or frequencies[fault] / len(audit_eligible)
                     < result.common_dtc_cutoff
                 ),
             ))
@@ -251,8 +281,8 @@ def write_cluster_review_zip(
         freq = frequencies[fault]
         dtc_rows.append((
             fault_aliases[fault], freq,
-            round(freq / len(result.eligible_case_ids), 5)
-            if result.eligible_case_ids else 0,
+            round(freq / len(audit_eligible), 5)
+            if audit_eligible else 0,
             int(fault[0] == "CPC3"),
         ))
     audit_rows = [
