@@ -18,6 +18,9 @@ from PySide6.QtWidgets import (
 )
 
 from ntf_insight.app.models.simple_table_model import SimpleTableModel
+from ntf_insight.app.models.ecu_version_table_model import ECUVersionTableModel
+from ntf_insight.analysis.ecu_version_changes import detect_ecu_version_changes
+from ntf_insight.ingestion.quicktest_detailed import _identifier
 from ntf_insight.storage.quicktest_store import QuickTestStore
 
 
@@ -45,6 +48,7 @@ class QuickTestBrowser(QWidget):
         self._ecus: list[dict] = []
         self._dtcs: list[dict] = []
         self._report_id: str | None = None
+        self._version_flags: dict[str, frozenset[str]] = {}
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(24, 22, 24, 22)
@@ -79,12 +83,19 @@ class QuickTestBrowser(QWidget):
         layout.addWidget(self.report_table)
 
         layout.addWidget(QLabel("Steuergeräte / HW-/SW-Stände", objectName="CardTitle"))
-        self.ecu_model = SimpleTableModel(
-            ("ECU", "Beschreibung", "Variante", "HW", "SW", "DTCs")
-        )
+        self.ecu_model = ECUVersionTableModel()
         self.ecu_table = _table(self.ecu_model)
         self.ecu_table.setMaximumHeight(190)
         layout.addWidget(self.ecu_table)
+
+        self.version_hint = QLabel(objectName="PageSubtitle")
+        self.version_hint.setWordWrap(True)
+        self.version_hint.setText(
+            "Farbig markiert: HW-/SW-Stand weicht vom letzten vergleichbaren "
+            "QuickTest dieser FIN ab. Markiert ist der erste beobachtete "
+            "neue Stand, nicht das Datum eines bestätigten Updates."
+        )
+        layout.addWidget(self.version_hint)
 
         controls_dtc = QHBoxLayout()
         controls_dtc.addWidget(QLabel("DTC-Beobachtungen", objectName="CardTitle"))
@@ -154,6 +165,19 @@ class QuickTestBrowser(QWidget):
     def _load_fin(self) -> None:
         fin = self.fin_selector.currentText()
         self._reports = self.store.list_reports(fin) if fin else []
+        # Across *all* QuickTests of this FIN, independent from a QEC case.
+        # Calculate once on FIN switch; the selected report is then highlighted.
+        all_states = []
+        for report in self._reports:
+            _, _, states = self.store.case_projection(report["report_id"])
+            all_states.extend(states)
+        changed: dict[str, set[str]] = {}
+        for change in detect_ecu_version_changes(all_states):
+            changed.setdefault(change.current.event_id, set()).add(change.kind)
+        self._version_flags = {
+            event_id: frozenset(kinds)
+            for event_id, kinds in changed.items()
+        }
         self.report_model.set_rows([
             (
                 report["diagnosed_at"].strftime("%d.%m.%Y %H:%M"),
@@ -175,7 +199,7 @@ class QuickTestBrowser(QWidget):
             self._report_id = None
             self._ecus = []
             self._dtcs = []
-            self.ecu_model.set_rows([])
+            self.ecu_model.set_rows_with_flags([], [])
             self.dtc_model.set_rows([])
             self.parameter_model.set_rows([])
             self.metadata_text.clear()
@@ -192,16 +216,42 @@ class QuickTestBrowser(QWidget):
         self._report_id = report["report_id"]
         self._ecus = self.store.list_ecus(self._report_id)
         self._dtcs = self.store.list_dtcs(self._report_id)
-        self.ecu_model.set_rows([
-            (
-                ecu["ecu_code"], ecu["name"],
-                ecu["metadata"].get("ecu_variant"),
-                ecu["metadata"].get("hardware_version"),
-                ecu["metadata"].get("software_version"),
-                ecu["dtc_count"],
+        flags = [
+            self._version_flags.get(
+                _identifier(self._report_id, f"ecu:{ecu['ecu_index']}:state"),
+                frozenset(),
             )
             for ecu in self._ecus
-        ])
+        ]
+        self.ecu_model.set_rows_with_flags(
+            [
+                (
+                    ecu["ecu_code"], ecu["name"],
+                    ecu["metadata"].get("ecu_variant"),
+                    ecu["metadata"].get("hardware_version"),
+                    ecu["metadata"].get("software_version"),
+                    (
+                        "HW + SW abweichend"
+                        if {"hw", "sw"} <= changed
+                        else "HW abweichend" if "hw" in changed
+                        else "SW abweichend" if "sw" in changed
+                        else "Keine belegte Abweichung"
+                    ),
+                    ecu["dtc_count"],
+                )
+                for ecu, changed in zip(self._ecus, flags)
+            ],
+            flags,
+        )
+        hw = sum("hw" in changed for changed in flags)
+        sw = sum("sw" in changed for changed in flags)
+        self.version_hint.setText(
+            f"Dieses QuickTest: {hw} abweichende HW- und {sw} abweichende "
+            "SW-Stände gegenüber dem letzten vergleichbaren Stand. "
+            "Farbig hervorgehoben sind nur beobachtete Versionsunterschiede; "
+            "ein physischer Steuergerätetausch oder Flash-Zeitpunkt "
+            "ist dadurch nicht bewiesen."
+        )
 
         self.ecu_filter.blockSignals(True)
         self.ecu_filter.clear()
