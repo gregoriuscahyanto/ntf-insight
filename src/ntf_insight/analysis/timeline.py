@@ -137,15 +137,22 @@ def build_timeline(
             )
         )
 
+    def repair_key(event: RepairEvent) -> tuple:
+        return (
+            event.occurred_at.date(),
+            event.mileage_km,
+            "".join(
+                char for char in (
+                    getattr(event, "damaged_part_number", None) or ""
+                ).upper() if char.isalnum()
+            ),
+        )
+
     candidate_keys: set[tuple] = set()
     if date_comparison is not None:
         for candidate in date_comparison.candidates:
             repair = candidate.repair
-            candidate_keys.add((
-                repair.occurred_at.date(),
-                repair.mileage_km,
-                getattr(repair, "damaged_part_number", None),
-            ))
+            candidate_keys.add(repair_key(repair))
             entries.append(TimelineEntry(
                 occurred_at=repair.occurred_at,
                 mileage_km=repair.mileage_km,
@@ -162,11 +169,7 @@ def build_timeline(
     for event in case.repairs:
         # An AutoExport repair that is already shown as a potential swap date
         # must not appear again as a second, visually duplicated workshop event.
-        if (
-            event.occurred_at.date(),
-            event.mileage_km,
-            getattr(event, "damaged_part_number", None),
-        ) in candidate_keys:
+        if repair_key(event) in candidate_keys:
             continue
         entries.append(
             TimelineEntry(
