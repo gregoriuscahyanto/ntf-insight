@@ -73,9 +73,18 @@ class RepresentativePair:
 
 
 @dataclass(frozen=True, slots=True)
+class UnassignedCase:
+    case_id: str
+    reason: str
+    nearest_diagnostic_case_id: str | None
+    nearest_similarity: float | None
+
+
+@dataclass(frozen=True, slots=True)
 class RepresentativePlan:
     clusters: tuple[RepresentativeCluster, ...]
     unassigned: tuple[str, ...]
+    unassigned_reasons: tuple[UnassignedCase, ...]
     eligible_cases: tuple[str, ...]
     pair_scores: tuple[RepresentativePair, ...]
     minimum_similarity: float
@@ -414,9 +423,46 @@ def select_representative_cases(
     covered = frozenset(
         case_id for group in clusters for case_id in group.case_ids
     )
+    unassigned = tuple(sorted(set(by_id) - covered))
+    reasons = []
+    for case_id in unassigned:
+        sig = sigs[case_id]
+        options = sorted(
+            (
+                (pair.similarity, other, pair)
+                for pair in pairs.values()
+                if pair.eligible
+                and case_id in (pair.left_id, pair.right_id)
+                for other in (
+                    [pair.right_id] if pair.left_id == case_id
+                    else [pair.left_id]
+                )
+            ),
+            key=lambda option: (-option[0], option[1]),
+        )
+        if not sig.has_replacement_anchor:
+            reason = "Kein eindeutig dokumentierter Tauschanker"
+        elif not sig.faults:
+            reason = "Keine belegte ECU:DTC-Diagnose vor Tausch"
+        elif not options:
+            reason = "Kein zulässiger informativer ECU:DTC-Paarvergleich"
+        elif options[0][0] < minimum_similarity:
+            reason = "Beste Paarähnlichkeit unter Mindestindex"
+        else:
+            reason = (
+                "Einzelpaar passend, aber keine homogene Gruppe mit "
+                "gemeinsamem DTC-Kern und ausreichender Paarähnlichkeit"
+            )
+        reasons.append(UnassignedCase(
+            case_id=case_id,
+            reason=reason,
+            nearest_diagnostic_case_id=options[0][1] if options else None,
+            nearest_similarity=options[0][0] if options else None,
+        ))
     return RepresentativePlan(
         clusters=tuple(clusters),
-        unassigned=tuple(sorted(set(by_id) - covered)),
+        unassigned=unassigned,
+        unassigned_reasons=tuple(reasons),
         eligible_cases=eligible,
         pair_scores=tuple(sorted(
             pairs.values(), key=lambda pair: (pair.left_id, pair.right_id),
