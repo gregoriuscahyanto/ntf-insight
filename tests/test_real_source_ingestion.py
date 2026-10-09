@@ -219,7 +219,7 @@ def test_zip_import_is_local_linked_and_idempotent(tmp_path) -> None:
     saved = source.store.load_cases()
     assert first.cases_created == 1
     assert len(saved) == 1
-    assert first.files_parsed == 6
+    assert first.files_parsed == 7
     assert first.duplicates == 2
     assert len(saved[0].diagnostic_sessions) == 2
     assert len(saved[0].diagnostics) == 4
