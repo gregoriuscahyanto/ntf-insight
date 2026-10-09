@@ -422,7 +422,8 @@ class HDBSCANMethodComparison:
 
     eom: HDBSCANMethodSummary
     leaf: HDBSCANMethodSummary
-    pair_coassignment_jaccard: float
+    pair_coassignment_jaccard: float | None
+    positive_pair_union_count: int
     both_grouped_cases: int
     eligible_case_count: int
     min_cluster_size: int
@@ -481,8 +482,8 @@ def compare_hdbscan_methods(
 
     Cluster numbers are arbitrary. Pair co-assignment compares actual
     memberships and avoids the illusion of label ID matching.
-    1.0 when neither method forms any positive pair means 'agreement in
-    finding no groups', NOT a proof of high diagnostic quality.
+    If neither method forms a group, pair agreement is unavailable
+    (None), NOT a misleading 100% quality figure.
     """
     params = {
         "min_cluster_size": min_cluster_size,
@@ -508,9 +509,11 @@ def compare_hdbscan_methods(
     return HDBSCANMethodComparison(
         eom=_method_summary(eom),
         leaf=_method_summary(leaf),
-        pair_coassignment_jaccard=round(
-            len(eom_pairs & leaf_pairs) / len(union) if union else 1.0, 4
+        pair_coassignment_jaccard=(
+            round(len(eom_pairs & leaf_pairs) / len(union), 4)
+            if union else None
         ),
+        positive_pair_union_count=len(union),
         both_grouped_cases=len(grouped_eom & grouped_leaf),
         eligible_case_count=len(eom.eligible_case_ids),
         min_cluster_size=min_cluster_size,
