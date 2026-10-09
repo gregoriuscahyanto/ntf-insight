@@ -256,6 +256,7 @@ def test_cluster_insight_shows_real_representative_and_conservative_strength() -
     assert cluster.weakest_pair_similarity >= 0.65
     assert cluster.mean_feature_coverage > 0
     assert cluster.cases_with_pre_and_post_test == 0
+    assert cluster.cases_with_qec_ssl_finding == 0
 
 
 def test_neighbour_reason_lists_common_and_nonshared_dtcs() -> None:
