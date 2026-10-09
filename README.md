@@ -6,7 +6,7 @@ NTF Insight is a Python project for reconstructing and analysing vehicle field c
 
 The architecture is intentionally **not tied to one component**. Coolant pumps, HV batteries and future component families should use the same generic case, timeline, evidence, similarity and reporting engines, with component-specific profiles and rules layered on top.
 
-> **Status:** pre-alpha native desktop prototype. Local parsers now cover QEC case spreadsheets, AutoExport diagnosis/workshop CSVs and QuickTest PDFs with bounded FIN/case linking and immutable raw archives. Supplier PDFs, Candela/CDD semantics, SMR-D triggers and HW/SW release-change sources still require format-specific validation.
+> **Status:** pre-alpha native desktop prototype. Local parsers cover QuickTest PDFs, QEC case spreadsheets (including all sheet/column raw records), AutoExport diagnosis/workshop CSVs, Candela diagnostic service descriptions and product Part History PDFs. Supplier-report conclusions, SMR-D trigger semantics and HW/SW release applicability still require source-specific validation.
 
 ## Questions the project should answer
 
@@ -305,6 +305,29 @@ auswählen, den Eintrag markieren und über
 Die Originale werden dadurch **weder gelöscht noch überschrieben**.
 
 [Mehr zur FIN-Diagnose und Archivbereinigung](docs/quicktest-fin-import.md)
+
+## CDD, Part History, QEC und AutoExport in der Desktop-App
+
+Unter **Datenquellen** die Datei oder das ZIP per Drag & Drop importieren.
+Die Formate werden erkannt und getrennt behandelt:
+
+- **CDD/Candela:** Diagnoseklassen und Services werden als **globales
+  Steuergerätewissen** gespeichert und durchsucht. Es werden daraus
+  **keine unbestätigten DTC-Trigger** oder Fehlerursachen erzeugt.
+- **Part History PDF:** produktbezogene Änderungen nach Tag oder
+  Kalenderwoche; ohne eine belegte Zuordnung **nicht als FIN-Ereignis**.
+- **QEC Excel:** Kanonische QEC-Fälle und zusätzlich sämtliche
+  Quellzeilen aus allen enthaltenen Tabellenblättern.
+- **AutoExport CSV:** Rohfelder und Diagnose-/Werkstattdaten für
+  **alle** importierten FINs werden gespeichert; eine Falltimeline
+  erhält nur eindeutig zugeordnete Ereignisse.
+
+Die Inhalte sind in **Quellenwissen** mit Suchfunktion, Filter und
+vollständiger Zeilenansicht prüfbar. Bereits archivierte Quellen
+können über „**Markierte Datei neu prüfen…**“ erneut verarbeitet
+werden, ohne dass die Originaldatei gelöscht wird.
+
+[Details zum lokalen Echtdatenimport](docs/real-data-import.md).
 
 ## Manuelle Fallerfassung
 
