@@ -85,6 +85,38 @@ nicht denselben hohen diagnostischen Vergleichswert haben.
 Bei identischen Plotkoordinaten werden die Punktsymbole ausschließlich
 zur besseren Bedienung minimal versetzt.
 
+### Warum stehen gleichfarbige oder zusammengehörige Punkte weit auseinander?
+
+In einer früheren Version wiederholte eine achtfarbige Palette die
+Clusterfarbe ab Cluster 9 (z. B. Cluster 1 und 9). Das war ein
+**Darstellungsfehler**, nicht eine Veränderung der Complete-Link-Gruppen.
+
+Die überarbeitete Ansicht hat für die ersten 24 Cluster-IDs
+unterschiedliche Farben. Bei mehr Clustern werden zusätzliche Farben
+generiert. **Die numerische Cluster-ID in der Legende, der Falltabelle
+und dem Tooltip ist die eindeutige Referenz**, weil sehr viele Farben
+für Menschen nur eingeschränkt unterscheidbar sind.
+
+Auch **wirklich demselben Cluster zugeordnete Punkte** müssen in SVD
+nicht nahe erscheinen: Das Clustering verwendet gewichtete
+Jaccard-Ähnlichkeiten und die Complete-Link-Bedingung; SVD bildet
+gewichtete Merkmalsvektoren nach einem anderen geometrischen
+Optimierungsziel in nur zwei Dimensionen ab.
+
+Beim Auswählen eines Falls werden dessen **tatsächliche
+Clustermitglieder gestrichelt verbunden**. Daneben zeigt die App
+die Zahl der Gruppenmitglieder, die **kleinste originale
+Jaccard-Paarähnlichkeit innerhalb der Gruppe** sowie den
+**größten projizierten 2D-Abstand**. Diese beiden Zahlen sind
+absichtlich getrennt: Selbst ein großer SVD-Abstand widerlegt
+eine durch die Complete-Link-Regel bestätigte Gruppe nicht.
+
+Mit dem **Mausrad** kann die Darstellung bis zu einem begrenzten Faktor
+gezoomt werden; **„Zoom zurücksetzen“** stellt die Gesamtansicht
+wieder her. Die Zoomstufe bleibt bei Fallwechsel und Änderung der
+Cluster-Mindestähnlichkeit erhalten. Die SVD-Koordinaten bleiben
+davon stets unbeeinflusst.
+
 ## Exakte Paarvergleichszahlen
 
 Die Auswahl eines Vergleichsfalls in der Tabelle zeigt für jede
