@@ -7,6 +7,7 @@ from datetime import datetime
 from typing import Literal
 
 from ntf_insight.domain.case import NTFCase
+from ntf_insight.analysis.replacement_dates import ReplacementDateComparison
 from ntf_insight.domain.events import (
     DiagnosticEvent,
     DiagnosticSession,
@@ -22,6 +23,7 @@ TimelineKind = Literal[
     "diagnostic",
     "ecu_state",
     "replacement",
+    "replacement_candidate",
     "repair",
     "software",
     "supplier",
@@ -48,8 +50,12 @@ class TimelineEntry:
     event: TimelineEvent
 
 
-def build_timeline(case: NTFCase) -> list[TimelineEntry]:
-    """Return all case events in chronological order."""
+def build_timeline(
+    case: NTFCase,
+    date_comparison: ReplacementDateComparison | None = None,
+) -> list[TimelineEntry]:
+    """Return case events and optional separately attributed repair-date candidates."""
+
     entries: list[TimelineEntry] = []
 
     for event in case.diagnostic_sessions:
@@ -100,7 +106,7 @@ def build_timeline(case: NTFCase) -> list[TimelineEntry]:
                 occurred_at=event.occurred_at,
                 mileage_km=event.mileage_km,
                 kind="ecu_state",
-                title=f"ECU state · {event.ecu}",
+                title=f"HW-/SW-Stand · {event.ecu}",
                 detail=" · ".join(state_parts),
                 source_ref=event.source_ref,
                 event=event,
@@ -116,14 +122,52 @@ def build_timeline(case: NTFCase) -> list[TimelineEntry]:
                 occurred_at=event.occurred_at,
                 mileage_km=event.mileage_km,
                 kind="replacement",
-                title=f"Replacement · {event.component_type}",
-                detail=part_text or (event.supplier or ""),
+                title=(
+                    f"QEC-Tauschdatum (vorläufig) · {event.component_type}"
+                    if "Schadteile QEC" in (event.source_ref or "")
+                    else f"Dokumentierter Tausch · {event.component_type}"
+                ),
+                detail=(
+                    f"{part_text or event.supplier or ''} · Tauschanker für Analyse"
+                    if "Schadteile QEC" in (event.source_ref or "")
+                    else part_text or (event.supplier or "")
+                ),
                 source_ref=event.source_ref,
                 event=event,
             )
         )
 
+    candidate_keys: set[tuple] = set()
+    if date_comparison is not None:
+        for candidate in date_comparison.candidates:
+            repair = candidate.repair
+            candidate_keys.add((
+                repair.occurred_at.date(),
+                repair.mileage_km,
+                getattr(repair, "damaged_part_number", None),
+            ))
+            entries.append(TimelineEntry(
+                occurred_at=repair.occurred_at,
+                mileage_km=repair.mileage_km,
+                kind="replacement_candidate",
+                title="AutoExport · Reparaturdatum (Tauschkandidat)",
+                detail=(
+                    f"{candidate.detail} · {candidate.association}. "
+                    "Kein bestätigter Pumpentausch."
+                ),
+                source_ref=repair.source_ref,
+                event=repair,
+            ))
+
     for event in case.repairs:
+        # An AutoExport repair that is already shown as a potential swap date
+        # must not appear again as a second, visually duplicated workshop event.
+        if (
+            event.occurred_at.date(),
+            event.mileage_km,
+            getattr(event, "damaged_part_number", None),
+        ) in candidate_keys:
+            continue
         entries.append(
             TimelineEntry(
                 occurred_at=event.occurred_at,
@@ -155,7 +199,7 @@ def build_timeline(case: NTFCase) -> list[TimelineEntry]:
                 occurred_at=event.occurred_at,
                 mileage_km=event.mileage_km,
                 kind="supplier",
-                title=f"Supplier finding · {event.result}",
+                title=f"Lieferantenbefund · {event.result}",
                 detail=event.failure_mode or event.notes or "",
                 source_ref=event.source_ref,
                 event=event,
