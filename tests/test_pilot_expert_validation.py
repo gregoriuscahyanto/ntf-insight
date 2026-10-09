@@ -231,3 +231,21 @@ def test_same_fin_mechanism_conflict_is_warned_but_not_independent_agreement():
         for x in plan.rows
         if x.group == current.group and x.target_case_id != targets[0]
     )
+
+
+def test_confidential_expert_backup_roundtrips_all_labels_without_ssl_text():
+    from ntf_insight.analysis.mechanism_review import write_confirmed_review_backup
+
+    cases = sample()
+    cases[0].qec_ssl_end_finding = "SYNTHETIC-PRIVATE-SSL-NO-UPLOAD"
+    findings = (_label("A0"), _label("B0", "PUMP_ELECTRICAL_OPEN"))
+    out = StringIO()
+    write_confirmed_review_backup(out, cases, findings)
+    raw = out.getvalue()
+    rows = list(csv.DictReader(StringIO(raw), delimiter=";"))
+    assert len(rows) == 2
+    assert set(row["qec_case_id"] for row in rows) == {"A0", "B0"}
+    assert all(row["review_status"] == "confirmed" for row in rows)
+    assert all(row["qec_ssl_end_finding"] == "" for row in rows)
+    assert "SYNTHETIC-PRIVATE-SSL-NO-UPLOAD" not in raw
+    assert read_confirmed_mechanisms(StringIO(raw), cases) == findings
