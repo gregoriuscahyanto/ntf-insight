@@ -589,6 +589,123 @@ class HDBSCANPanel(QWidget):
                 self, "Aggregierter Qualitätsbericht nicht gespeichert", str(exc),
             )
 
+    def export_review_template(self) -> None:
+        """Local-only CSV with sensitive QEC SSL and VIN for human review."""
+        target, _ = QFileDialog.getSaveFileName(
+            self,
+            "Vertrauliche Fachprüfvorlage LOKAL speichern (FIN und SSL enthalten)",
+            "NTF_QEC_Fachpruefung_vertraulich.csv",
+            "CSV-Dateien (*.csv)",
+        )
+        if not target:
+            return
+        try:
+            with open(target, "w", encoding="utf-8-sig", newline="") as stream:
+                write_review_template(stream, self._subset())
+        except OSError as exc:
+            QMessageBox.warning(self, "Fachprüfvorlage nicht gespeichert", str(exc))
+
+    def import_mechanism_labels(self) -> None:
+        """Read an explicitly edited, reviewed CSV; never infer from QEC text."""
+        target, _ = QFileDialog.getOpenFileName(
+            self, "Lokale Fachbestätigungen auswählen",
+            "", "CSV-Dateien (*.csv)",
+        )
+        if not target:
+            return
+        try:
+            with open(target, encoding="utf-8-sig", newline="") as stream:
+                confirmed = read_confirmed_mechanisms(stream, self._subset())
+        except (OSError, UnicodeError, ValueError) as exc:
+            QMessageBox.warning(
+                self, "Fachbestätigungen nicht übernommen", str(exc),
+            )
+            return
+        self.confirmed_mechanisms = confirmed
+        self.pair_test_button.setEnabled(bool(confirmed))
+        self.pair_test_summary.setText(
+            "Noch kein trainiertes Paarmodell. Geladene Fachbestätigungen "
+            "werden nur für die NACHGELAGERTE Prüfung angezeigt."
+        )
+        self._refresh_mechanism_review()
+
+    def _refresh_mechanism_review(self) -> None:
+        if self.result is None:
+            self.mechanism_model.set_rows([])
+            return
+        review = review_cluster_mechanisms(
+            self._subset(), self.result, self.confirmed_mechanisms,
+        )
+        self.mechanism_model.set_rows([
+            (
+                f"H{row.cluster_id}",
+                row.case_count,
+                row.confirmed_cases,
+                row.independently_confirmed_vehicles,
+                row.same_mechanism_pairs,
+                row.different_mechanism_pairs,
+                (
+                    f"{row.labeled_pair_agreement:.1%}"
+                    if row.labeled_pair_agreement is not None
+                    else "Nicht auswertbar"
+                ),
+                row.review_note,
+            )
+            for row in review.audits
+        ])
+        observed = (
+            f"{review.observed_pair_agreement:.1%}"
+            if review.observed_pair_agreement is not None else "Nicht auswertbar"
+        )
+        self.mechanism_summary.setText(
+            f"Nur EXPLIZIT bestätigte Mechanismen: "
+            f"{review.reviewed_case_count}/{review.total_case_count} QEC-Fälle; "
+            f"{review.clustered_reviewed_count} bestätigte Fälle in den "
+            f"aktuellen ML-Gruppen. {review.evaluated_cross_fin_pairs} "
+            f"vergleichbare Fachlabel-Paare verschiedener FINs: "
+            f"{review.agreeing_cross_fin_pairs} gleich, "
+            f"{review.contradicting_cross_fin_pairs} abweichend. "
+            f"Übereinstimmung auf der geprüften TEILMENGE: {observed}. "
+            "Ungeprüfte Gruppenmitglieder erhalten KEINE Ursachenzuordnung. "
+            "Keine Veränderung an HDBSCAN, Medoids oder Originalquellen."
+        )
+
+    def test_supervised_pairs(self) -> None:
+        """Never use unreviewed SSL text as ground truth, never auto-deploy."""
+        if not self.confirmed_mechanisms:
+            self.pair_test_summary.setText(
+                "Keine unabhängig bestätigten Fehlermechanismen geladen. "
+                "Kein Modell trainiert."
+            )
+            return
+        evaluation = evaluate_supervised_pairs(
+            self._subset(),
+            self.confirmed_mechanisms,
+            dtc_source=self.source.currentData() or "all",
+            lookback_days=self.lookback.currentData(),
+        )
+        if not evaluation.validated:
+            self.pair_test_summary.setText(
+                f"Fachlich geeignete Fälle: {evaluation.eligible_confirmations}; "
+                f"bestätigte Mechanismen: {evaluation.confirmed_mechanisms}; "
+                f"unabhängige FINs: {evaluation.independent_vehicles}. "
+                f"{evaluation.status}"
+            )
+            return
+        self.pair_test_summary.setText(
+            f"Experimentelles Paarmodell, kein produktives Clustering: "
+            f"{evaluation.train_case_count} Trainings-QEC-Fälle / "
+            f"{evaluation.test_case_count} Test-QEC-Fälle aus getrennten FINs; "
+            f"Test: {evaluation.test_pair_count} Fallpaare "
+            f"({evaluation.test_same_mechanism_pairs} gleiche, "
+            f"{evaluation.test_different_mechanism_pairs} verschiedene "
+            f"bestätigte Mechanismen). Precision: {evaluation.test_precision:.1%}, "
+            f"Recall: {evaluation.test_recall:.1%}, "
+            f"Average Precision: {evaluation.test_average_precision:.1%} "
+            f"bei {evaluation.test_positive_fraction:.1%} positiven Paaren. "
+            f"{evaluation.status}"
+        )
+
     def _group_changed(self, index, _previous) -> None:
         if not index or not index.isValid() or self.result is None:
             return
