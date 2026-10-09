@@ -40,11 +40,39 @@ from ntf_insight.app.models.simple_table_model import SimpleTableModel
 from ntf_insight.domain.case import NTFCase
 
 
+# Non-cycling first 24 category colours: cluster 1 and 9 must NEVER have
+# the same colour just because the dataset has more than eight clusters.
+# Colour is only an aid; numerical cluster IDs remain the authoritative key.
 PALETTE = (
-    "#2069b2", "#15816f", "#b66717", "#7752b7",
-    "#b34d74", "#417e96", "#866b20", "#587f39",
+    "#0057b8", "#c43c39", "#00835e", "#7b41b2",
+    "#ca6b09", "#009eb7", "#bd4c8c", "#5e8500",
+    "#90512c", "#d492b4", "#4a6fbb", "#a7a125",
+    "#d54e62", "#507b5d", "#c15f00", "#6947d4",
+    "#237c90", "#a14936", "#6e9220", "#ab6eb2",
+    "#00796b", "#bd725e", "#1f5675", "#b36400",
 )
 UNASSIGNED = "#858e9b"
+
+
+def color_for_cluster(cluster_id: int | None) -> QColor:
+    """Stable mapping by cluster ID; no cyclic palette reuse at ID 9.
+
+    A finite display cannot guarantee human-distinguishable hues for arbitrary
+    many clusters. Above the hand-selected palette, generate additional colours;
+    always show numeric IDs in the legend/tooltip to remove colour ambiguity.
+    """
+    if cluster_id is None:
+        return QColor(UNASSIGNED)
+    if cluster_id < 1:
+        raise ValueError("Cluster-IDs müssen positiv sein.")
+    if cluster_id <= len(PALETTE):
+        return QColor(PALETTE[cluster_id - 1])
+    hue = int((cluster_id * 137.50776405) % 360)
+    return QColor.fromHsv(
+        hue,
+        174 + 12 * (cluster_id % 4),
+        175 + 12 * (cluster_id % 5),
+    )
 
 
 class CaseScatterPlot(QGraphicsView):
@@ -63,6 +91,8 @@ class CaseScatterPlot(QGraphicsView):
         self.setDragMode(QGraphicsView.DragMode.ScrollHandDrag)
         self.setMinimumHeight(415)
         self._has_points = False
+        self._projection_key: tuple[tuple[str, float, float], ...] | None = None
+        self._zoom_level = 1.0
         self.items_by_case = {}
 
     def set_points(
@@ -73,6 +103,11 @@ class CaseScatterPlot(QGraphicsView):
         focus_id: str | None,
     ) -> None:
         scene = self._scene
+        new_key = tuple(
+            (point.case_id, point.x, point.y) for point in projection.points
+        )
+        new_projection = new_key != self._projection_key
+        self._projection_key = new_key
         scene.clear()
         self.items_by_case = {}
         width, height = 850.0, 490.0
@@ -84,8 +119,8 @@ class CaseScatterPlot(QGraphicsView):
             item.setPos(45, 45)
             scene.setSceneRect(QRectF(0, 0, width, 140))
             self._has_points = False
-            self.resetTransform()
-            self.fitInView(scene.sceneRect(), Qt.AspectRatioMode.KeepAspectRatio)
+            if new_projection:
+                self.reset_zoom()
             return
 
         xmin = min(p.x for p in projection.points)
@@ -139,14 +174,40 @@ class CaseScatterPlot(QGraphicsView):
                 y += sin(theta) * radius
             locations[point.case_id] = (x, y)
 
+        clusters_by_case = {
+            case_id: cluster.cluster_id
+            for cluster in (result.clusters if result else ())
+            for case_id in cluster.case_ids
+        }
+        focus_cluster = clusters_by_case.get(focus_id)
+        # Dashed links show ACTUAL cluster membership of the focused case.
+        # Unlike pixel distances, the colour and these links represent the
+        # unchanged weighted-Jaccard/Complete-Link result.
+        if focus_cluster is not None and focus_id in locations:
+            cx, cy = locations[focus_id]
+            line_pen = QPen(color_for_cluster(focus_cluster), 1.2)
+            line_pen.setStyle(Qt.PenStyle.DashLine)
+            for member_id, member_cluster in clusters_by_case.items():
+                if member_cluster != focus_cluster or member_id == focus_id:
+                    continue
+                if member_id in locations:
+                    x_other, y_other = locations[member_id]
+                    line = scene.addLine(cx, cy, x_other, y_other, line_pen)
+                    line.setZValue(1)
+                    line.setOpacity(0.6)
+
         for point in projection.points:
             case = by_id[point.case_id]
-            cluster = result.cluster_for(point.case_id) if result else None
-            color = QColor(PALETTE[(cluster - 1) % len(PALETTE)]) if cluster else QColor(UNASSIGNED)
+            cluster = clusters_by_case.get(point.case_id)
+            color = color_for_cluster(cluster)
             x, y = locations[point.case_id]
             radius = 9.5 if point.case_id == focus_id else 7.0
             outline = QColor("#172638") if point.case_id == focus_id else QColor("#ffffff")
-            pen = QPen(outline, 3.0 if point.case_id == focus_id else 1.3)
+            in_focus_cluster = focus_cluster is not None and cluster == focus_cluster
+            pen = QPen(
+                outline,
+                3.0 if point.case_id == focus_id else 2.0 if in_focus_cluster else 1.3,
+            )
 
             # Square markers explicitly flag cases without a replacement anchor.
             if point.has_replacement_anchor:
@@ -179,8 +240,16 @@ class CaseScatterPlot(QGraphicsView):
 
         scene.setSceneRect(QRectF(0, 0, width, height))
         self._has_points = True
+        if new_projection:
+            self.reset_zoom()
+
+    def reset_zoom(self) -> None:
+        """Fit the whole plot; explicitly undo any previous manual zoom."""
+        self._zoom_level = 1.0
         self.resetTransform()
-        self.fitInView(scene.sceneRect(), Qt.AspectRatioMode.KeepAspectRatio)
+        self.fitInView(
+            self._scene.sceneRect(), Qt.AspectRatioMode.KeepAspectRatio
+        )
 
     def mousePressEvent(self, event) -> None:  # noqa: N802
         item = self.itemAt(event.position().toPoint())
@@ -195,12 +264,23 @@ class CaseScatterPlot(QGraphicsView):
     def wheelEvent(self, event) -> None:  # noqa: N802
         if not self._has_points:
             return super().wheelEvent(event)
-        self.scale(1.15 if event.angleDelta().y() > 0 else 1 / 1.15)
+        dy = event.angleDelta().y()
+        if dy == 0:
+            event.ignore()
+            return
+        requested = 1.15 if dy > 0 else 1 / 1.15
+        target = min(8.0, max(0.5, self._zoom_level * requested))
+        factor = target / self._zoom_level
+        if factor != 1.0:
+            # QGraphicsView.scale requires an x AND y factor.
+            self.scale(factor, factor)
+            self._zoom_level = target
         event.accept()
 
     def resizeEvent(self, event) -> None:  # noqa: N802
         super().resizeEvent(event)
-        if self._has_points:
+        # Do not cancel the user's zoom when the window is resized.
+        if self._has_points and self._zoom_level == 1.0:
             self.fitInView(self._scene.sceneRect(), Qt.AspectRatioMode.KeepAspectRatio)
 
 
