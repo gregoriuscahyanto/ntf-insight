@@ -156,6 +156,14 @@ def test_population_counts_not_conflated_with_qec_or_failures(tmp_path) -> None:
          "source_location": "csv:7", "data": {"CaseId": "TIPS-01"}},
     ]
     store.save_records("b" * 64, "autoexport_rows", rows)
+    store.save_records("c" * 64, "qec_details", [
+        {"category": "qec_row", "source_location": "Schadteile QEC!2",
+         "reference": "QEC-001", "fin": "W1TTEST0000000001", "data": {}},
+        {"category": "qec_row", "source_location": "Schadteile QEC!3",
+         "reference": "QEC-002", "fin": "W1TTEST0000000002", "data": {}},
+        {"category": "qec_row", "source_location": "NTF-Cluster!8",
+         "reference": "QEC-001", "fin": "W1TTEST0000000001", "data": {}},
+    ])
     numbers = store.autoexport_population()
     assert numbers["autoexport_dtc_rows"] == 3
     assert numbers["autoexport_dtc_fins"] == 2
@@ -163,6 +171,10 @@ def test_population_counts_not_conflated_with_qec_or_failures(tmp_path) -> None:
     assert numbers["autoexport_tips_fins"] == 1
     assert numbers["tips_distinct_case_ids"] == 1
     assert numbers["autoexport_repair_fins"] == 1
+    assert numbers["qec_original_rows"] == 3
+    assert numbers["qec_primary_rows"] == 2
+    assert numbers["qec_primary_references"] == 2
+    assert numbers["qec_primary_fins"] == 2
 
 
 @pytest.mark.parametrize("kind", ["quicktest", "autoexport"])
