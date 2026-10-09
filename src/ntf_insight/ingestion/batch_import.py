@@ -345,9 +345,15 @@ class LocalBatchImporter:
                         summary.reference_rows += total
                         summary.reference_sources += 1
                     except Exception as exc:
+                        # Do not report successful parsing with a truncated
+                        # or missing FIN-wide history. Originals remain safe.
+                        summary.files_pending += 1
                         summary.issues.append(
-                            f"AutoExport-Rohzeilen: {type(exc).__name__}"
+                            f"AutoExport-Rohzeilen konnten nicht vollstaendig "
+                            f"gespeichert werden: {type(exc).__name__}. "
+                            "Quelle bleibt archiviert und muss neu verarbeitet werden."
                         )
+                        continue
                 parser = None
                 if artifact.source_type in {
                     SourceType.SHORT_TEST, SourceType.WORKSHOP_HISTORY,
