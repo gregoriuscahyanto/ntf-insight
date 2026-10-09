@@ -25,6 +25,7 @@ from PySide6.QtWidgets import (
 )
 
 from ntf_insight.analysis.evidence_engine import generate_case_evidence
+from ntf_insight.analysis.diagnostic_observations import unique_diagnostic_observations
 from ntf_insight.analysis.fin_diagnostics import (
     FIN_ONLY_PREFIX,
     build_fin_only_previews,
@@ -182,7 +183,7 @@ class CasePage(QWidget):
                     case_id=case.case_id,
                     vin=case.vin,
                     component=case.component_type,
-                    dtc_count=len(case.diagnostics),
+                    dtc_count=len(unique_diagnostic_observations(case.diagnostics)),
                     replacement=(
                         replacement.occurred_at.strftime("%Y-%m-%d")
                         if replacement is not None
@@ -551,7 +552,7 @@ class CasePage(QWidget):
             )
             self.recurrence_text.setText(
                 f"{len(case.diagnostic_sessions)} QuickTest(s), "
-                f"{len(case.diagnostics)} DTC-Beobachtungen, "
+                f"{len(unique_diagnostic_observations(case.diagnostics))} DTC-Beobachtungen, "
                 f"{len(case.ecu_states)} Steuergeräte-Stände. "
                 "Für eine Vorher-/Nachher-Bewertung fehlt der zugehörige Tausch."
             )
