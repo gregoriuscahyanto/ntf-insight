@@ -7,6 +7,7 @@ ist eine 2D/3D-Punktwolke und NIE die Berechnungsgrundlage.
 from __future__ import annotations
 
 from dataclasses import replace
+from time import perf_counter
 
 from PySide6.QtCore import Qt, QThread, Signal
 from PySide6.QtWidgets import (
@@ -54,6 +55,7 @@ class _FinClusterTask(QThread):
         self.minimum_similarity = minimum_similarity
 
     def run(self) -> None:
+        started = perf_counter()
         try:
             self.phase.emit("Lese AutoExport und QEC als eindeutige FINs …")
             if self.source is not None:
@@ -84,6 +86,7 @@ class _FinClusterTask(QThread):
                     overlap_fin_count=combined.overlap_fin_count,
                     qec_only_fin_count=combined.qec_only_fin_count,
                     pre_swap_fins=len(self.qec_evidence.pump_swap_dates),
+                    runtime_seconds=round(perf_counter() - started, 2),
                 )
                 for key, result in results.items()
             }
@@ -486,8 +489,9 @@ class AutoExportFinWorkspace(QWidget):
         self.status.setText(
             f"{METHOD_TITLES[result.method]}: "
             f"{len(result.groups)} Cluster · {result.assigned_fins:,} "
-            f"FINs gruppiert. Methodenwechsel und 2D/3D benötigen "
-            "keine Neuberechnung."
+            f"FINs gruppiert · Laufzeit insgesamt: "
+            f"{result.runtime_seconds:.1f} s. "
+            "Methodenwechsel und 2D/3D benötigen keine Neuberechnung."
         )
         self.group_model.set_rows([
             (
