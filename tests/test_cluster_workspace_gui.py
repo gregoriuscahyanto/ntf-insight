@@ -216,6 +216,32 @@ def test_core_group_links_follow_selected_method_not_shared_cluster_number():
     app.processEvents()
 
 
+def test_strict_details_do_not_count_two_qecs_of_same_fin_as_independent():
+    app = QApplication.instance() or QApplication([])
+    cases = sample()
+    cases[1].vehicle = cases[1].vehicle.model_copy(
+        update={"vin": cases[0].vin},
+    )
+    panel = ClusterWorkspace(cases)
+    _calculate(panel)
+    matching = next(
+        (
+            index for index, link in enumerate(panel._visible_core_links)
+            if {"A0", "A1"}.issubset(link.core.case_ids)
+        ),
+        None,
+    )
+    if matching is not None:
+        panel.core_table.selectRow(matching)
+        rows = panel.member_model.rows
+        same_fin = [row for row in rows if row[2] == cases[0].vin]
+        assert len(same_fin) >= 2
+        assert any("Mehrfachfall" in row[0] for row in same_fin)
+        assert sum("Repräsentant" in row[0] for row in rows) == 1
+    panel.close()
+    app.processEvents()
+
+
 def test_search_synthetic_fin_finds_overlapping_projected_case():
     app = QApplication.instance() or QApplication([])
     panel = ClusterWorkspace(sample())
