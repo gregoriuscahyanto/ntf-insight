@@ -4,18 +4,25 @@ name: NTF Runner Verbindungstest
 on:
   workflow_dispatch:
 
-# Dieser Job braucht weder GitHub-API-Rechte noch Secrets.
+# Kein Zugriff auf GitHub APIs, Repository-Secrets oder Code via GITHUB_TOKEN.
 permissions: {}
 
 jobs:
   verbindungstest:
-    # Ausschliesslich manueller Aufruf vom geschuetzten Standardbranch.
+    name: Verbindungstest (${{ matrix.runner_label }})
+    # Der Test darf nur bewusst vom Standardbranch angestossen werden.
     if: ${{ github.repository == 'gregoriuscahyanto/ntf-insight' && github.ref == 'refs/heads/main' }}
-    runs-on: [self-hosted, Windows, X64, ntf-isolated-pilot]
+    strategy:
+      fail-fast: false
+      matrix:
+        runner_label:
+          - ntf-insight-1
+          - ntf-insight-2
+    runs-on: [self-hosted, Windows, X64, "${{ matrix.runner_label }}"]
     timeout-minutes: 3
     steps:
-      # Absichtlich KEIN checkout, Setup, Install oder Artefakt-Upload.
-      # Es werden keine lokalen Datentraeger oder Projektdateien gelesen.
+      # Kein checkout, keine Dependencies, keine Auswertung und kein Upload.
+      # Der einzige Testbefehl gibt feste, unkritische Strings aus.
       - name: Nur Verbindung bestaetigen
         shell: powershell
         run: |
