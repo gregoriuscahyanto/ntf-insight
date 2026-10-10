@@ -129,10 +129,10 @@ def test_hdbscan_tools_are_in_single_cluster_workspace(tmp_path, monkeypatch) ->
     assert page.detail_tabs.count() == 3
     assert page.detail_tabs.tabText(0) == "Clusteranalyse"
     panel = page.cluster_workspace
-    assert panel.method.currentData() == "leaf"
-    assert panel.expert_button.isEnabled()
-    assert panel.representative_button.isEnabled()
-    assert panel.old_scatter_button.isEnabled()
+    assert panel.method_combo.currentData() == "leaf"
+    assert panel.method_combo.count() == 3
+    assert panel.start_button.text() == "Clusteranalyse starten"
+    assert panel.plot is not None
     window.close()
     app.processEvents()
 
