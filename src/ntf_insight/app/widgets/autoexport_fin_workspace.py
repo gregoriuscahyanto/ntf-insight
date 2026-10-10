@@ -9,7 +9,7 @@ from __future__ import annotations
 from dataclasses import replace
 from time import perf_counter
 
-from PySide6.QtCore import QModelIndex, Qt, QThread, Signal
+from PySide6.QtCore import QModelIndex, QThread, Signal
 from PySide6.QtWidgets import (
     QAbstractItemView, QCheckBox, QComboBox, QFrame, QHBoxLayout,
     QLabel, QLineEdit, QPlainTextEdit, QPushButton, QScrollArea,
