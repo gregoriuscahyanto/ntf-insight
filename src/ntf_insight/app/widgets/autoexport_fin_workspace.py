@@ -593,11 +593,11 @@ class AutoExportFinWorkspace(QWidget):
                 "HDBSCAN findet ähnliche Diagnosemuster mithilfe einer "
                 "effizienten 16-dimensionalen Modellprojektion der "
                 "ECU:DTC-TF-IDF-Merkmale."
-                if result.method in ("leaf", "eom") else
+                if self.result.method in ("leaf", "eom") else
                 "Complete-Link prüft innerhalb begrenzter Leaf-Teilgruppen, "
                 "ob jede Paarähnlichkeit mindestens 45 % beträgt."
             ),
-            result.notes,
+            self.result.notes,
             "",
             "3. Wie sicher ist die Ähnlichkeit?",
             (
