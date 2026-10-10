@@ -6,6 +6,32 @@ Tab **Clusteranalyse** ersetzt. Der Tab enthält die bisherige Fallauswertung
 nicht selbst: `FIN / Fallanalyse` und `QuickTests nach FIN` bleiben eigene
 unveränderte Ansichten.
 
+## Analysebestand innerhalb desselben Tabs (keine weiteren Cluster-Tabs)
+
+Im Bereich **Fälle / FIN → Clusteranalyse** steht oben die Wahl
+**Analysebestand**. Standard ist **Alle FINs – AutoExport + QEC gemeinsam**:
+ein Fahrzeug wird anhand der eindeutigen FIN **genau einmal** geclustert.
+AutoExport-DTCs und belegte QEC-/QuickTest-DTCs vor dem Pumpentausch
+gehen in **dieselbe FIN-Signatur** ein; doppelte FINs werden vereinigt.
+Zusätzliche QEC-only-FINs können den AutoExport-Bestand erweitern.
+Die Summen zeigen ausdrücklich die Überlappung beider Bestände.
+Für einen belegten Pumpentausch werden nur vor dem frühesten
+QEC-**Rep.-Datum** beobachtete DTCs verwendet. Ohne Tauschanker
+bleibt die allgemeine AutoExport-Diagnosehistorie nutzbar,
+ohne sie als Vor-Tausch- oder Pumpenbefund zu behandeln.
+
+Für die bisherige HDBSCAN-/Complete-Link-Fallanalyse mit 2D/3D
+**Nur QEC-Pumpenfälle (Vor-Tausch-Analyse)** wählen.
+Es gibt weiterhin nur **einen Reiter „Clusteranalyse“**. Je nach
+Analysebestand erscheint eine eigene, passende Visualisierung:
+FIN-Muster als interaktive Balken und Fallcluster als 2D/3D.
+Das sind methodisch verschiedene Verfahren, **kein Ursachen-Voting**.
+Auch der FIN-basierte MiniBatchKMeans-Ansatz ist explorativ und
+liefert keine Wahrscheinlichkeit einer gleichen Pumpenursache.
+
+Die folgenden QEC-Fallzahlen und Fachfunktionen gelten nur für
+den optionalen QEC-Fallmodus.
+
 ## Standardansicht: vier Antworten ohne Statistikkenntnisse
 
 1. **Cluster erstellen:** `Clusteranalyse starten` anklicken.
