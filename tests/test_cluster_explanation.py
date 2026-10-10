@@ -144,3 +144,49 @@ def test_explanation_keeps_all_shared_codes_and_warning_pair_denominator():
     assert "45 % Cosinus-Ähnlichkeit" in info.text
     assert "Wichtig:" in info.text
     assert "CPC3:SHARED-E" in info.evidence_for("S1")
+
+
+def test_dtc_explorer_text_is_shown_only_when_the_exact_key_has_a_text():
+    """All pre-swap code keys remain; descriptions are labels, not features."""
+    cases = sample()
+    before, group = _first_group(cases)
+    cases[0].diagnostics[0].dtc_text = (
+        "Synthetic coolant circulation: no communication with control unit"
+    )
+    # A second ECU with the same DTC must NOT borrow CPC3's text.
+    cases[1].diagnostics.append(DiagnosticEvent(
+        vin=cases[1].vin, ecu="OTHER", dtc_code="CODE-A-ROOT-A",
+        occurred_at=datetime(2026, 7, 1),
+        dtc_text="Other ECU has an unrelated code description",
+        source_ref="raw:synthetic#csv:later:other",
+    ))
+    info = explain_cluster(cases, group, before.parameters, before.eligible_case_ids)
+    assert "CPC3:CODE-A-ROOT-A — Synthetic coolant circulation" in info.text
+    assert "CPC3:CODE-A-ROOT-B" in info.text
+    assert "CPC3:CODE-A-ROOT-B —" not in info.text
+    assert "OTHER:CODE-A-ROOT-A" not in info.text
+    assert "nicht zur Clusterbildung verwendet" in info.text
+    assert "anderen Diagnosezeitpunkt" in info.text
+    # Only labels changed; the originally eligible pre-swap group is stable.
+    unchanged = calculate_clusters(cases, ClusterParameters())
+    assert {frozenset(g.case_ids) for g in before.groups} == {
+        frozenset(g.case_ids) for g in unchanged.groups
+    }
+
+
+def test_label_from_later_observation_does_not_add_post_swap_dtc_as_feature():
+    cases = sample()
+    before, group = _first_group(cases)
+    # No pre-swap text for CODE-A-ROOT-B, but another observation has a label.
+    cases[0].diagnostics.append(DiagnosticEvent(
+        vin=cases[0].vin, ecu="CPC3", dtc_code="CODE-A-ROOT-B",
+        occurred_at=datetime(2026, 7, 1),
+        dtc_text="Synthetic descriptive label from later session",
+        source_ref="raw:synthetic#csv:after",
+    ))
+    info = explain_cluster(cases, group, before.parameters, before.eligible_case_ids)
+    assert "CPC3:CODE-A-ROOT-B — Synthetic descriptive label" in info.text
+    assert "anderen Diagnosezeitpunkt" in info.text
+    again = calculate_clusters(cases, ClusterParameters())
+    assert before.eligible_case_ids == again.eligible_case_ids
+    assert [g.case_ids for g in before.groups] == [g.case_ids for g in again.groups]

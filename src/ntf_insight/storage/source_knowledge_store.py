@@ -244,6 +244,15 @@ class SourceKnowledgeStore:
                 GROUP BY category
                 """
             ).fetchall()
+            overall_fins = con.execute(
+                """
+                SELECT COUNT(DISTINCT NULLIF(trim(fin), ''))
+                FROM source_knowledge_rows
+                WHERE category IN (
+                    'autoexport_dtc', 'autoexport_repair', 'autoexport_tips'
+                )
+                """
+            ).fetchone()[0]
             tips_ids = con.execute(
                 """
                 SELECT COUNT(DISTINCT NULLIF(
@@ -271,6 +280,8 @@ class SourceKnowledgeStore:
                 """
             ).fetchone()
         results: dict[str, int] = {
+            "autoexport_unique_fins": int(overall_fins or 0),
+            "autoexport_total_rows": sum(int(row_count) for _, row_count, _ in rows),
             "tips_distinct_case_ids": int(tips_ids or 0),
             "qec_original_rows": int(qec[0]),
             "qec_primary_rows": int(qec[1]),
@@ -281,6 +292,181 @@ class SourceKnowledgeStore:
             results[f"{category}_rows"] = int(row_count)
             results[f"{category}_fins"] = int(fin_count)
         return results
+
+    def autoexport_dtc_overview(
+        self,
+    ) -> dict[tuple[str, str], tuple[int, int, str]]:
+        """Aggregated DTC Explorer catalog: no raw FINs leave this query.
+
+        Values are (distinct vehicles, raw observations, imported description).
+        This includes DTCs from AutoExport FINs with no QEC case.
+        """
+        with self.store.connect() as con:
+            rows = con.execute(
+                """
+                SELECT
+                    upper(trim(json_extract_string(payload_json, '$.EcuNm'))) AS ecu,
+                    upper(trim(json_extract_string(payload_json, '$.EcuFaultNm'))) AS dtc,
+                    COUNT(DISTINCT CASE
+                        WHEN length(trim(fin)) = 20
+                         AND left(upper(trim(fin)), 3) = 'MBC'
+                        THEN substr(upper(trim(fin)), 4)
+                        ELSE upper(trim(fin))
+                    END) AS vehicle_count,
+                    COUNT(*) AS observation_count,
+                    MAX(NULLIF(trim(
+                        json_extract_string(payload_json, '$.EcuFaultTxt')
+                    ), '')) AS description
+                FROM source_knowledge_rows
+                WHERE category = 'autoexport_dtc'
+                  AND NULLIF(trim(
+                      json_extract_string(payload_json, '$.EcuNm')
+                  ), '') IS NOT NULL
+                  AND NULLIF(trim(
+                      json_extract_string(payload_json, '$.EcuFaultNm')
+                  ), '') IS NOT NULL
+                GROUP BY 1, 2
+                ORDER BY 1, 2
+                """
+            ).fetchall()
+        return {
+            (ecu, dtc): (int(vehicles), int(events), description or "")
+            for ecu, dtc, vehicles, events, description in rows
+        }
+
+    def autoexport_fin_dtc_signatures(
+        self, *,
+        pump_swap_dates: dict[str, str] | None = None,
+        include_all_fins: bool = False,
+    ) -> tuple[
+        tuple[str, ...],
+        dict[str, tuple[tuple[str, str], ...]],
+        dict[tuple[str, str], str],
+    ]:
+        """Read unique AutoExport ECU:DTC keys for all or pump-anchored FINs.
+
+        If pump_swap_dates is set, it is an explicit QEC-backed FIN -> ISO
+        date mapping. DTCs of anchored FINs must be dated STRICTLY BEFORE
+        their earliest documented pump swap. Same-day/undated are unknown.
+        With include_all_fins=True, unanchored FINs keep their full DTC
+        history as general diagnostic patterns; both sets share one
+        FIN-level comparison space. Workshop RepairDt is not a pump anchor.
+        """
+        from datetime import date
+
+        anchors: dict[str, date] | None = None
+        if pump_swap_dates is not None:
+            anchors = {
+                fin.strip().upper(): date.fromisoformat(value)
+                for fin, value in pump_swap_dates.items()
+            }
+
+        # QEC canonical_fin strips the known 20-character MBC sales
+        # prefix. Apply EXACTLY the same safe normalization to AutoExport
+        # source FINs so an identical vehicle cannot become two clusters.
+        fin_expression = """
+            CASE
+                WHEN length(trim(fin)) = 20
+                 AND left(upper(trim(fin)), 3) = 'MBC'
+                THEN substr(upper(trim(fin)), 4)
+                ELSE upper(trim(fin))
+            END
+        """
+        with self.store.connect() as con:
+            all_fins = tuple(
+                row[0] for row in con.execute(
+                    f"""
+                    SELECT DISTINCT {fin_expression} AS normalized_fin
+                    FROM source_knowledge_rows
+                    WHERE category IN (
+                        'autoexport_dtc', 'autoexport_repair', 'autoexport_tips'
+                    )
+                      AND NULLIF(trim(fin), '') IS NOT NULL
+                    ORDER BY 1
+                    """
+                ).fetchall()
+            )
+            if anchors is not None and not include_all_fins:
+                all_fins = tuple(
+                    fin for fin in all_fins if fin in anchors
+                )
+            if not all_fins:
+                return (), {}, {}
+
+            parameters: list[str] = []
+            where = ""
+            date_field = "NULL::VARCHAR AS event_date"
+            group_date = ""
+            if anchors is not None:
+                if not include_all_fins:
+                    where = (
+                        f"AND ({fin_expression}) IN ("
+                        + ", ".join("?" for _ in all_fins) + ")"
+                    )
+                    parameters.extend(all_fins)
+                # The original ISO AutoExport fields may represent a date
+                # or precise timestamp. Only its calendar day is safe
+                # against day-only QEC replacement precision.
+                date_field = """
+                    CAST(COALESCE(
+                        TRY_CAST(left(
+                            json_extract_string(payload_json, '$.DiagStartTs'), 10
+                        ) AS DATE),
+                        TRY_CAST(left(
+                            json_extract_string(payload_json, '$.DiagStartDt'), 10
+                        ) AS DATE)
+                    ) AS VARCHAR) AS event_date
+                """
+                group_date = ", 5"
+            sql = f"""
+                SELECT
+                    {fin_expression} AS fin,
+                    upper(trim(json_extract_string(payload_json, '$.EcuNm'))) AS ecu,
+                    upper(trim(json_extract_string(payload_json, '$.EcuFaultNm'))) AS dtc,
+                    max(nullif(trim(
+                        json_extract_string(payload_json, '$.EcuFaultTxt')
+                    ), '')) AS dtc_text,
+                    {date_field}
+                FROM source_knowledge_rows
+                WHERE category = 'autoexport_dtc'
+                  AND NULLIF(trim(fin), '') IS NOT NULL
+                  AND NULLIF(trim(
+                      json_extract_string(payload_json, '$.EcuNm')
+                  ), '') IS NOT NULL
+                  AND NULLIF(trim(
+                      json_extract_string(payload_json, '$.EcuFaultNm')
+                  ), '') IS NOT NULL
+                  {where}
+                GROUP BY 1, 2, 3{group_date}
+                ORDER BY 1, 2, 3
+            """
+            cursor = con.execute(sql, parameters)
+            groups: dict[str, set[tuple[str, str]]] = {}
+            labels: dict[tuple[str, str], str] = {}
+            while batch := cursor.fetchmany(5000):
+                for fin, ecu, dtc, dtc_text, event_date in batch:
+                    if anchors is not None and fin in anchors:
+                        if not event_date:
+                            continue
+                        try:
+                            event_day = date.fromisoformat(str(event_date)[:10])
+                        except ValueError:
+                            continue
+                        if event_day >= anchors[fin]:
+                            # QEC Rep.-Datum usually only has day precision.
+                            # A diagnostic taken the same day cannot be
+                            # proven to predate the actual replacement.
+                            continue
+                    key = (ecu, dtc)
+                    groups.setdefault(fin, set()).add(key)
+                    if dtc_text and key not in labels:
+                        labels[key] = dtc_text
+
+        return (
+            all_fins,
+            {fin: tuple(sorted(faults)) for fin, faults in groups.items()},
+            labels,
+        )
 
     def fin_history_counts(self, fin: str) -> dict[str, int]:
         """Counts of immutable original AutoExport rows for a FIN (not DTC rates)."""

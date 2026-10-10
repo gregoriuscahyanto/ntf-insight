@@ -45,7 +45,7 @@ from ntf_insight.app.models.simple_table_model import SimpleTableModel
 from ntf_insight.app.models.timeline_table_model import TimelineTableModel
 from ntf_insight.app.widgets.event_time_plot import EventTimePlot
 from ntf_insight.app.widgets.quicktest_browser import QuickTestBrowser
-from ntf_insight.app.widgets.cluster_workspace import ClusterWorkspace
+from ntf_insight.app.widgets.autoexport_fin_workspace import AutoExportFinWorkspace
 from ntf_insight.ingestion.manual_entry import ManualCaseService, ManualEntryError
 from ntf_insight.ingestion.real_source_parsers import canonical_fin
 from ntf_insight.domain.events import PartReplacement
@@ -53,6 +53,7 @@ from ntf_insight.reporting.markdown import save_case_report
 from ntf_insight.storage.reference_repositories import ReferenceRepository
 from ntf_insight.storage.repositories import CaseRepository
 from ntf_insight.storage.quicktest_store import QuickTestStore
+from ntf_insight.storage.dtc_review_store import DtcReviewStore
 from ntf_insight.storage.source_knowledge_store import SourceKnowledgeStore
 
 
@@ -66,11 +67,14 @@ class CasePage(QWidget):
         repository: CaseRepository,
         references: ReferenceRepository,
         manual_service: ManualCaseService | None = None,
+        *,
+        review_store: DtcReviewStore | None = None,
     ) -> None:
         super().__init__()
         self.repository = repository
         self.references = references
         self.manual_service = manual_service
+        self.review_store = review_store
         self.source_knowledge = (
             SourceKnowledgeStore(manual_service.store)
             if manual_service is not None else None
@@ -96,20 +100,24 @@ class CasePage(QWidget):
         self.detail_tabs = QTabWidget()
         outer_layout.addWidget(self.detail_tabs)
 
-        # A SINGLE extensible cluster tab replaces three separate pages.
-        # Source tests and independent case details remain separate and intact.
-        self.cluster_workspace = ClusterWorkspace(
-            self.real_cases,
-            store=manual_service.store if manual_service is not None else None,
-            source_knowledge=self.source_knowledge,
+        # ONE visible cluster-analysis surface for all unique FINs.
+        # AutoExport and QEC pre-swap features enter the SAME HDBSCAN
+        # model; there is no separate AutoExport/KMeans or embedded old page.
+        self.cluster_workspace = AutoExportFinWorkspace(
+            self.source_knowledge, self.real_cases,
             population_metrics=(
                 self.source_knowledge.autoexport_population()
                 if self.source_knowledge is not None else {}
             ),
+            review_store=review_store,
         )
+        # Compatibility alias for local FIN navigation and prior tests.
+        self.autoexport_fin_workspace = self.cluster_workspace
         self.detail_tabs.addTab(self.cluster_workspace, "Clusteranalyse")
+        self.cluster_workspace.fin_requested.connect(
+            self._open_autoexport_fin_history
+        )
         self.cluster_workspace.case_requested.connect(self.select_case)
-        self.cluster_workspace.tips_linked.connect(self._relay_tips_link)
 
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
@@ -593,6 +601,22 @@ class CasePage(QWidget):
         self.autoexport_history_note.setText("Keine FIN ausgewählt.")
         self.autoexport_history_count.setText("—")
         self.autoexport_history_more.setEnabled(False)
+
+    def _open_autoexport_fin_history(self, fin: str) -> None:
+        """Open the same vehicle's QEC case (when known) AND FIN history."""
+        matching = sorted(
+            (
+                case.case_id for case in self.real_cases
+                if case.vin == fin and case.component_profile_id == "coolant_pump"
+                and getattr(case, "qec_reference", None)
+            )
+        )
+        if matching:
+            # The local QEC selector also offers other cases of this FIN.
+            self.select_case(matching[0])
+        self.detail_tabs.setCurrentWidget(self.analysis_tab)
+        self.autoexport_fin_lookup.setText(fin)
+        self._load_autoexport_history(reset=True)
 
     def _load_autoexport_history(self, *, reset: bool = False) -> None:
         """Read bounded FIN-wide raw observations, never infer an NTF case."""

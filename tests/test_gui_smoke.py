@@ -24,6 +24,13 @@ def test_main_window_can_be_constructed(tmp_path, monkeypatch) -> None:
     assert window.pages["cases"].cluster_workspace.plot is not None
     assert window.pages["cases"].detail_tabs.tabText(0) == "Clusteranalyse"
     assert window.pages["cases"].detail_tabs.count() == 3
+    assert window.pages["cases"].detail_tabs.tabText(1) == "FIN / Fallanalyse"
+    assert window.pages["cases"].cluster_workspace is (
+        window.pages["cases"].autoexport_fin_workspace
+    )
+    cluster = window.pages["cases"].cluster_workspace
+    assert cluster.method_combo.currentData() == "leaf"
+    assert cluster.plot is not None
     assert "suppliers" in window.pages
     assert "quality" in window.pages
     assert window.repository.list_cases()
