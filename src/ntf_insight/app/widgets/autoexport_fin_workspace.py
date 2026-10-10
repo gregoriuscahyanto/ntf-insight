@@ -9,7 +9,7 @@ from collections import defaultdict
 
 from PySide6.QtCore import Qt, QThread, Signal
 from PySide6.QtWidgets import (
-    QAbstractItemView, QFrame, QHBoxLayout, QLabel, QLineEdit,
+    QAbstractItemView, QCheckBox, QFrame, QHBoxLayout, QLabel, QLineEdit,
     QPushButton, QScrollArea, QTableView, QVBoxLayout, QWidget,
 )
 
@@ -35,17 +35,21 @@ class _FinPatternTask(QThread):
         self,
         source: SourceKnowledgeStore,
         linked: dict[str, tuple[str, ...]],
+        pump_swap_dates: dict[str, str] | None = None,
     ) -> None:
         super().__init__()
         self.source = source
         self.linked = linked
+        self.pump_swap_dates = pump_swap_dates
 
     def run(self) -> None:
         try:
             self.phase.emit(
                 "Lese eindeutige FINs und ECU:DTC-Muster aus dem lokalen AutoExport …"
             )
-            fins, patterns, labels = self.source.autoexport_fin_dtc_signatures()
+            fins, patterns, labels = self.source.autoexport_fin_dtc_signatures(
+                pump_swap_dates=self.pump_swap_dates
+            )
             self.phase.emit(
                 "Bilde Diagnosegruppen aus FIN-Merkmalen – "
                 "ohne quadratischen Fahrzeugpaarvergleich …"
@@ -104,6 +108,21 @@ class AutoExportFinWorkspace(QWidget):
         self._linked = {
             fin: tuple(sorted(set(ids))) for fin, ids in case_ids.items()
         }
+        # Only explicitly imported QEC coolant-pump replacement dates.
+        # RepairDt in AutoExport is a generic workshop visit, NEVER a
+        # verified pump swap. Multiple cases: earliest pump date per FIN.
+        self._pump_swap_dates: dict[str, str] = {}
+        for case in cases:
+            if not case.qec_reference or case.component_profile_id != "coolant_pump":
+                continue
+            replacement = case.investigated_replacement()
+            if replacement is None:
+                continue
+            value = replacement.occurred_at.date().isoformat()
+            old = self._pump_swap_dates.get(case.vin)
+            if old is None or value < old:
+                self._pump_swap_dates[case.vin] = value
+        self._analysis_scoped_to_pump = False
         self.result: FinPatternResult | None = None
         self._task: _FinPatternTask | None = None
         self._selected_fin: str | None = None
@@ -146,8 +165,27 @@ class AutoExportFinWorkspace(QWidget):
         self.population_note.setWordWrap(True)
         body.addWidget(self.population_note)
 
+        self.only_pump_swap = QCheckBox(
+            "Nur FINs mit belegtem QEC-Pumpentausch (nur DTCs vor dem Tausch)"
+        )
+        self.only_pump_swap.setToolTip(
+            "Opt-in: nur QEC-Kühlmittelpumpenfälle mit gültigem Rep.-Datum. "
+            "Diagnosen am selben Tag, danach oder ohne Datum gelten nicht als "
+            "sicher vor dem Pumpentausch. AutoExport RepairDt genügt nicht."
+        )
+        self.only_pump_swap.toggled.connect(self._scope_changed)
+        body.addWidget(self.only_pump_swap)
+        self.scope_note = QLabel(
+            f"Aktuell {len(self._pump_swap_dates):,} FINs mit dokumentiertem "
+            "QEC-Pumpentauschdatum im lokalen QEC-Bestand. "
+            "Ohne Haken bleiben alle importierten AutoExport-FINs "
+            "für die allgemeine Diagnosemustersuche verfügbar.",
+            objectName="PageSubtitle",
+        )
+        self.scope_note.setWordWrap(True)
+        body.addWidget(self.scope_note)
         start_row = QHBoxLayout()
-        self.start_button = QPushButton("Alle AutoExport-FINs clustern")
+        self.start_button = QPushButton("AutoExport-FINs nach Diagnosemustern gruppieren")
         self.start_button.setObjectName("ClusterStartButton")
         self.start_button.setEnabled(source is not None)
         self.start_button.clicked.connect(self.run_analysis)
@@ -273,6 +311,25 @@ class AutoExportFinWorkspace(QWidget):
         end.setWordWrap(True)
         body.addWidget(end)
 
+    def _scope_changed(self, checked: bool) -> None:
+        if self.result is not None:
+            self.result = None
+            self.group_model.set_rows([])
+            self.fin_model.set_rows([])
+            self.chart.set_groups(())
+            for value in self.number_labels.values():
+                value.setText("–")
+            self.explanation.setText(
+                "Datenumfang verändert. Analyse bitte erneut starten."
+            )
+        self.status.setText(
+            "Modus Pumpentausch: nur QEC-FINs mit Rep.-Datum "
+            "und Diagnosen an früheren Kalendertagen."
+            if checked else
+            "Modus Alle FINs: gesamte AutoExport-DTC-Historie, "
+            "nicht auf Pumpentausch begrenzt."
+        )
+
     def run_analysis(self) -> None:
         if self.source is None:
             self.status.setText("Keine lokale AutoExport-Datenbank verfügbar.")
@@ -286,7 +343,12 @@ class AutoExportFinWorkspace(QWidget):
         self.chart.set_groups(())
         for value in self.number_labels.values():
             value.setText("–")
-        task = _FinPatternTask(self.source, self._linked)
+        self._analysis_scoped_to_pump = self.only_pump_swap.isChecked()
+        self.only_pump_swap.setEnabled(False)
+        task = _FinPatternTask(
+            self.source, self._linked,
+            self._pump_swap_dates if self._analysis_scoped_to_pump else None,
+        )
         self._task = task
         _ACTIVE_FIN_TASKS.add(task)
         task.calculated.connect(self._receive)
@@ -300,6 +362,7 @@ class AutoExportFinWorkspace(QWidget):
         self._task = None
         self.result = result
         self.start_button.setEnabled(True)
+        self.only_pump_swap.setEnabled(True)
         stats = {
             "total": result.total_fins,
             "dtc": result.dtc_fins,
@@ -314,8 +377,13 @@ class AutoExportFinWorkspace(QWidget):
         )
         for key, count in stats.items():
             self.number_labels[key].setText(f"{count:,}".replace(",", "."))
+        scope = (
+            "QEC-Pumpentausch-FINs mit DTCs vor dem Austausch"
+            if self._analysis_scoped_to_pump else
+            "Alle importierten AutoExport-FINs ohne Pumpentausch-Zeitfilter"
+        )
         self.status.setText(
-            "AutoExport-FIN-Musteranalyse abgeschlossen. "
+            f"FIN-Musteranalyse abgeschlossen ({scope}). "
             f"{result.initial_group_count} anfängliche Suchbereiche; "
             f"{len(result.groups)} tatsächlich ausgewiesene Mustergruppen. "
             "Nicht gruppierte Fahrzeuge bleiben separat sichtbar."
@@ -348,6 +416,7 @@ class AutoExportFinWorkspace(QWidget):
     def _failed(self, message: str) -> None:
         self._task = None
         self.start_button.setEnabled(self.source is not None)
+        self.only_pump_swap.setEnabled(True)
         self.status.setText("FIN-Clusteranalyse nicht möglich: " + message)
 
     def select_group(self, group_id: int) -> None:
@@ -397,9 +466,15 @@ class AutoExportFinWorkspace(QWidget):
         lines.append(
             "Diese Häufigkeiten und der Ähnlichkeitsindex sind "
             "kein Beleg für einen gemeinsamen Kühlmittelpumpenfehler. "
-            "Es wurde hier nicht geprüft, ob die DTCs vor einem "
-            "Pumpentausch auftraten. Bekannte QEC-FINs werden nur "
-            "als Verknüpfung gekennzeichnet."
+            (
+                "Es werden ausschließlich DTCs von Tagen VOR dem belegten "
+                "QEC-Pumpentausch berücksichtigt. Ein gemeinsamer Code "
+                "beweist trotzdem weder Defekt noch Tauschwirksamkeit."
+                if self._analysis_scoped_to_pump else
+                "Es wurde hier nicht geprüft, ob die DTCs vor einem "
+                "Pumpentausch auftraten. Bekannte QEC-FINs werden nur "
+                "als Verknüpfung gekennzeichnet."
+            )
         )
         self.explanation.setText("\n\n".join(lines))
 
