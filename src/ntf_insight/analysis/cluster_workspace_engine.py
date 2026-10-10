@@ -179,9 +179,15 @@ def _cosine(distance: float) -> float:
 def _from_hdbscan(
     result: MLClusterResult, params: ClusterParameters, positions,
 ) -> UnifiedClusterResult:
+    # The historical representative tool permits groups of two; the
+    # unified minimum-size control must consistently apply to ALL methods.
+    qualified = [
+        group for group in plan.clusters
+        if group.case_count >= params.min_cluster_size
+    ]
     groups = tuple(
         UnifiedCluster(
-            cluster_id=group.cluster_id,
+            cluster_id=index,
             representative_case_id=group.representative_case_id,
             members=tuple(
                 ClusterMember(m.case_id, m.similarity_to_representative,
@@ -317,7 +323,7 @@ def _legacy_jaccard(
             weak_pair_count=None,
             internal_pair_count=group.case_count * (group.case_count - 1) // 2,
             warnings=group.review_warnings,
-        ) for group in plan.clusters
+        ) for index, group in enumerate(qualified, start=1)
     )
     assigned = {cid for group in groups for cid in group.case_ids}
     eligible = plan.eligible_cases
