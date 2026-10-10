@@ -74,6 +74,7 @@ class FinPatternResult:
     positions: tuple[tuple[str, float, float, float], ...] = ()
     notes: str = ""
     pre_swap_fins: int = 0
+    runtime_seconds: float | None = None
 
     @property
     def assigned_fins(self) -> int:
