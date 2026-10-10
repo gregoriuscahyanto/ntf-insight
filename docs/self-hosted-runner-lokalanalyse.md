@@ -40,6 +40,59 @@ Vor realem Datenzugriff `main` schützen, Reviews insbesondere für
 Ein Runner-Label ist keine Zugriffskontrolle; der Runnerprozess darf nur
 die für ihn freigegebenen Datenkopien lesen.
 
+## Einmaliges Windows-Einrichtungsskript (empfohlen)
+
+Das Skript `scripts/konfiguriere_ntf_runner.ps1` prüft die bestehende
+registrierte Runner-Identität (`vehicle-sim-windows-laptop` für
+`ntf-insight-1`), die lokale Python-Umgebung und die vorhandene
+DuckDB. Es verändert **nur** die **lokale** `.env` im Installationsordner
+von Runner 1 (mit lokalem Backup bei vorhandener Konfiguration).
+Es verändert weder Runner 2 noch die Datenbank.
+
+Wenn du `main` lokal synchronisiert hast, in PowerShell am Repo-Root:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\konfiguriere_ntf_runner.ps1 -NurPruefen
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\konfiguriere_ntf_runner.ps1
+```
+
+Die Standardannahmen sind `C:\actions-runner-ntf-1`,
+`<Repo>\.venv\Scripts\python.exe`,
+`~\.ntf-insight\ntf-insight.duckdb` und
+`~\.ntf-insight\runner-analysen`. Stimmen sie nicht, Parameter
+`-RunnerRoot`, `-PythonPath`, `-DatabasePath` und
+`-OutputDirectory` verwenden. Das Skript zeigt keine echten Pfade an.
+Die Werte werden **nur lokal** in der Runner-Konfiguration gespeichert.
+
+**Anschließend Runner 1 neu starten**, damit die lokale `.env`
+wirksam wird. Bei interaktivem Runner `Ctrl+C` im Runner-Terminal,
+danach in dessen Installationsverzeichnis `run.cmd` starten.
+Beim Windows-Dienst muss die berechtigte IT den Dienst neu starten.
+Nicht die Runner-Registrierung löschen oder die Dienstidentität
+eigenmächtig verändern.
+
+Sobald der neue Workflow auf `main` vorhanden und Runner 1 wieder
+`Idle` ist, kann derselbe lokale Einrichtungshelfer den **ausdrücklich
+angeforderten Einzel-Lauf** per vorhandener, angemeldeter GitHub CLI
+(`gh auth login`) starten:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\konfiguriere_ntf_runner.ps1 -AnalyseStarten
+```
+
+Die Standardeinstellung gibt **keine Analysekennzahlen an GitHub**.
+Nur bei separater ausdrücklicher Erlaubnis:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\konfiguriere_ntf_runner.ps1 -AnalyseStarten -SummenFreigeben
+```
+
+Das benötigt eine funktionierende Anmeldung der GitHub CLI auf dem PC.
+Das Skript startet **niemals** beim Konfigurieren automatisch eine
+Datenanalyse. Die Remote-Ausführung kann aus diesem Chat heraus
+nicht durch einen nicht vorhandenen Workflow-Dispatch-Connector
+ersetzt werden.
+
 ## Vorbereitung auf `ntf-insight-1` (nicht in GitHub speichern)
 
 Der Runner benötigt eine bereits bereitgestellte Python-Umgebung
