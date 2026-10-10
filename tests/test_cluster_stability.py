@@ -94,7 +94,7 @@ def test_mixed_inputs_are_rejected_instead_of_claiming_comparability():
         compare_stability(a, replace(a, parameters=replace(a.parameters, method="eom")),
                           label="EOM", category="Daten/Parameter")
     with pytest.raises(ValueError, match="Fallbestand"):
-        compare_stability(a, replace(a, excluded_case_ids=()),
+        compare_stability(a, replace(a, excluded_case_ids=("SYNTHETIC-FOREIGN",)),
                           label="Fehler", category="Daten/Parameter")
 
 
