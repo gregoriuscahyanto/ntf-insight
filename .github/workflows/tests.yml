@@ -3,7 +3,11 @@ name: quality-gate
 on:
   push:
     branches: [main]
+  # Conserve scarce hosted minutes: explicitly request the one-off
+  # Windows PR quality run by switching Draft -> Ready for review.
+  # Ordinary commits on the open PR do NOT consume Actions minutes.
   pull_request:
+    types: [ready_for_review]
 
 # A new PR commit supersedes earlier, unvalidated revisions. Main CI is
 # never cancelled automatically; only stale PR runs are replaced.
