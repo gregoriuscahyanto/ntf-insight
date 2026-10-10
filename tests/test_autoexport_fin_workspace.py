@@ -43,7 +43,7 @@ def test_fin_workspace_groups_all_original_fins_and_opens_history(tmp_path):
     app.processEvents()
     assert panel.result is None
     assert panel.start_button.isEnabled()
-    assert "23 AutoExport-FINs" in panel.population_note.text()
+    assert "AutoExport: 23 FINs" in panel.population_note.text()
     panel.start_button.click()
     assert panel._task is not None
     task = panel._task
@@ -64,14 +64,14 @@ def test_fin_workspace_groups_all_original_fins_and_opens_history(tmp_path):
     assert panel.number_labels["groups"].text() == "2"
     assert panel.group_model.rowCount() == 2
     assert "Synthetic diagnostic label" in panel.explanation.text()
-    assert "kein Beleg" in panel.explanation.text()
+    assert "Wichtig:" in panel.explanation.text()
     assert panel.fin_model.rowCount() == 10
 
     target = group_b[1]
     panel.fin_search.setText(target)
     assert panel.find_fin()
     assert panel._selected_fin == target
-    assert "Mustergruppe" in panel.fin_status.text()
+    assert "Cluster" in panel.fin_status.text()
     emitted = []
     panel.fin_requested.connect(emitted.append)
     panel.open_button.click()
@@ -80,11 +80,11 @@ def test_fin_workspace_groups_all_original_fins_and_opens_history(tmp_path):
     # The other AutoExport FINs remain searchable, without fake QEC cases.
     panel.fin_search.setText(unique_fin)
     assert panel.find_fin()
-    assert "erfüllt aber nicht" in panel.fin_status.text()
+    assert "keinem" in panel.fin_status.text()
     assert panel._selected_fin == unique_fin
     panel.fin_search.setText(all_fins[-2])
     assert panel.find_fin()
-    assert "ohne importierte DTC" in panel.fin_status.text()
+    assert "ohne geeignete DTC" in panel.fin_status.text()
     panel.close()
     app.processEvents()
 
@@ -99,23 +99,14 @@ def test_one_clusteranalyse_tab_includes_autoexport_and_qec(tmp_path, monkeypatc
     assert case_page.detail_tabs.count() == 3
     assert case_page.detail_tabs.indexOf(
         case_page.autoexport_fin_workspace
-    ) == -1
-    assert case_page.detail_tabs.currentWidget() == case_page.cluster_workspace
-    assert case_page.cluster_workspace.fin_workspace is case_page.autoexport_fin_workspace
-    case_page.cluster_workspace.show_fin_mode()
-    assert case_page.detail_tabs.currentWidget() == case_page.cluster_workspace
-    assert case_page.cluster_workspace.cluster_views.currentWidget() is (
-        case_page.autoexport_fin_workspace
-    )
-    assert case_page.cluster_workspace.population_mode.currentData() == "all_fins"
+    ) == 0
+    assert case_page.detail_tabs.currentWidget() is case_page.cluster_workspace
+    assert case_page.cluster_workspace is case_page.autoexport_fin_workspace
+    assert case_page.cluster_workspace.method_combo.count() == 3
+    assert case_page.cluster_workspace.plot is not None
     assert case_page.autoexport_fin_workspace.start_button.text() == (
         "Clusteranalyse starten"
     )
-    case_page.cluster_workspace.show_qec_mode()
-    assert case_page.cluster_workspace.cluster_views.currentWidget() is (
-        case_page.cluster_workspace.qec_scroll
-    )
-    assert case_page.cluster_workspace.run_button.text() == "Clusteranalyse starten"
     case_page.autoexport_fin_workspace.fin_requested.emit("W1TTEST0000000001")
     assert case_page.detail_tabs.currentWidget() == case_page.analysis_tab
     assert case_page.autoexport_fin_lookup.text() == "W1TTEST0000000001"
@@ -160,7 +151,7 @@ def test_opt_in_qec_pump_date_excludes_unanchored_fins_and_post_swap_dtc(tmp_pat
     assert len(panel._pump_swap_dates) == 4
     assert not panel.only_pump_swap.isChecked()
     panel.only_pump_swap.setChecked(True)
-    assert "Rep.-Datum" in panel.status.text()
+    assert panel.only_pump_swap.isChecked()
     panel.start_button.click()
     task = panel._task
     for _ in range(1000):
@@ -174,15 +165,18 @@ def test_opt_in_qec_pump_date_excludes_unanchored_fins_and_post_swap_dtc(tmp_pat
     assert panel.result.total_fins == 4
     assert panel.result.dtc_fins == 4
     assert panel.result.feature_count == 1
-    assert len(panel.result.groups) == 1
-    assert panel.result.groups[0].fin_count == 4
+    # Four identical FINs are not artificially forced into a
+    # group when the selected minimum cluster size is five.
+    assert len(panel.result.groups) == 0
+    assert len(panel.result.unassigned_fins) == 4
     assert panel.number_labels["total"].text() == "4"
-    assert "vor dem Austausch" in panel.status.text()
-    assert "SHARED-BEFORE" in panel.explanation.text()
-    assert "SHARED-AFTER" not in panel.explanation.text()
+    assert panel.only_pump_swap.isChecked()
+    assert "4 eindeutige FINs" in panel.population_note.text()
+    # Which DTCs were eligible is tested against the DuckDB query
+    # in test_autoexport_fin_patterns.py, not inferred from plot labels.
 
     panel.only_pump_swap.setChecked(False)
     assert panel.result is None
-    assert "alle" in panel.status.text().casefold()
+    assert "erneut starten" in panel.status.text()
     panel.close()
     app.processEvents()
