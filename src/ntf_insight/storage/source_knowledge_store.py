@@ -13,8 +13,12 @@ from ntf_insight.storage.duckdb_store import DuckDBStore
 
 
 class SourceKnowledgeStore:
-    def __init__(self, store: DuckDBStore) -> None:
+    def __init__(self, store: DuckDBStore, *, initialize: bool = True) -> None:
         self.store = store
+        # On a self-hosted analysis runner, a ReadOnlyCaseStore is passed
+        # with initialize=False. Never emit CREATE TABLE/INDEX in that mode.
+        if not initialize:
+            return
         with self.store.connect() as con:
             con.execute("""
                 CREATE TABLE IF NOT EXISTS source_knowledge_documents (
