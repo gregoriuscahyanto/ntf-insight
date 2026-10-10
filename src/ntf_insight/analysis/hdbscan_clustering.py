@@ -180,6 +180,7 @@ def cluster_hdbscan_cases(
     common_dtc_cutoff: float | None = None,
     lookback_days: int | None = None,
     dtc_source: str = "all",
+    include_coordinates: bool = True,
 ) -> MLClusterResult:
     """Discover density groups, without any fixed K or Complete-Link gate.
 
@@ -419,7 +420,7 @@ def cluster_hdbscan_cases(
         noise_case_ids=noise,
         excluded_case_ids=excluded,
         frequency_filtered_case_ids=excluded_due_to_frequency,
-        coordinates=_mds(distance, eligible),
+        coordinates=_mds(distance, eligible) if include_coordinates else (),
         case_count=len(cases),
         vehicle_count=len({c.vin for c in cases}),
         feature_count=dimension_count,
