@@ -296,6 +296,7 @@ class SourceKnowledgeStore:
     def autoexport_fin_dtc_signatures(
         self, *,
         pump_swap_dates: dict[str, str] | None = None,
+        include_all_fins: bool = False,
     ) -> tuple[
         tuple[str, ...],
         dict[str, tuple[tuple[str, str], ...]],
@@ -304,10 +305,11 @@ class SourceKnowledgeStore:
         """Read unique AutoExport ECU:DTC keys for all or pump-anchored FINs.
 
         If pump_swap_dates is set, it is an explicit QEC-backed FIN -> ISO
-        date mapping. Only DTCs dated STRICTLY BEFORE the actual pump swap
-        are included. Same-day or undated AutoExport rows are unproven and
-        excluded. This mode never uses generic workshop RepairDt as a pump
-        replacement, and never invents replacement dates.
+        date mapping. DTCs of anchored FINs must be dated STRICTLY BEFORE
+        their earliest documented pump swap. Same-day/undated are unknown.
+        With include_all_fins=True, unanchored FINs keep their full DTC
+        history as general diagnostic patterns; both sets share one
+        FIN-level comparison space. Workshop RepairDt is not a pump anchor.
         """
         from datetime import date
 
@@ -332,7 +334,7 @@ class SourceKnowledgeStore:
                     """
                 ).fetchall()
             )
-            if anchors is not None:
+            if anchors is not None and not include_all_fins:
                 all_fins = tuple(
                     fin for fin in all_fins if fin in anchors
                 )
@@ -344,23 +346,24 @@ class SourceKnowledgeStore:
             date_field = "NULL::VARCHAR AS event_date"
             group_date = ""
             if anchors is not None:
-                where = (
-                    "AND upper(trim(fin)) IN ("
-                    + ", ".join("?" for _ in all_fins) + ")"
-                )
-                parameters.extend(all_fins)
+                if not include_all_fins:
+                    where = (
+                        "AND upper(trim(fin)) IN ("
+                        + ", ".join("?" for _ in all_fins) + ")"
+                    )
+                    parameters.extend(all_fins)
                 # The original ISO AutoExport fields may represent a date
                 # or precise timestamp. Only its calendar day is safe
                 # against day-only QEC replacement precision.
                 date_field = """
-                    COALESCE(
-                        try_cast(left(
+                    CAST(COALESCE(
+                        TRY_CAST(left(
                             json_extract_string(payload_json, '$.DiagStartTs'), 10
-                        ) AS VARCHAR),
-                        try_cast(left(
+                        ) AS DATE),
+                        TRY_CAST(left(
                             json_extract_string(payload_json, '$.DiagStartDt'), 10
-                        ) AS VARCHAR)
-                    ) AS event_date
+                        ) AS DATE)
+                    ) AS VARCHAR) AS event_date
                 """
                 group_date = ", 5"
             sql = f"""
@@ -390,7 +393,7 @@ class SourceKnowledgeStore:
             labels: dict[tuple[str, str], str] = {}
             while batch := cursor.fetchmany(5000):
                 for fin, ecu, dtc, dtc_text, event_date in batch:
-                    if anchors is not None:
+                    if anchors is not None and fin in anchors:
                         if not event_date:
                             continue
                         try:
