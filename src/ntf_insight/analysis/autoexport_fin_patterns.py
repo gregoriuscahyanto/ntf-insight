@@ -1,27 +1,41 @@
-"""Scalable, EXPLORATORY grouping of every imported AutoExport DTC FIN.
+"""FIN-weite Diagnosecluster mit HDBSCAN Leaf/EOM und Complete-Link.
 
-This is NOT the QEC/pump-failure analysis: a FIN can have DTC history without
-any pump replacement or NTF finding. Grouping intentionally ignores unknown
-replacement dates, supplier judgments, SSL outcomes, and post-repair labels.
-Do not use an NxN VIN-distance matrix (11k VINs would require >100M entries).
+Eine FIN ist genau eine Beobachtung. AutoExport und QEC werden zuvor unter
+derselben FIN zusammengeführt. Eine 2D/3D-Projektion ist NUR Visualisierung.
+
+Skalierung: Sparse TF-IDF -> 16-dimensionale SVD -> HDBSCAN. Es wird keine
+quadratische Distanzmatrix ueber alle FINs aufgebaut. Complete-Link wird
+konservativ innerhalb begrenzter Leaf-Pruefbloecke auf den ORIGINALEN
+hochdimensionalen Cosinusabstaenden berechnet (nicht globale Hierarchie).
+
+Weder Cluster noch Mitgliedschaft sind Pumpenfehler/NTF-Wahrscheinlichkeiten.
 """
 from __future__ import annotations
 
-from collections import Counter, defaultdict
-from dataclasses import dataclass
-from math import sqrt
-from typing import Mapping, Sequence
+from collections import Counter
+from dataclasses import dataclass, replace
+from math import ceil
+from typing import Callable, Mapping, Sequence
 
 import numpy as np
-from sklearn.cluster import MiniBatchKMeans
+from scipy.cluster.hierarchy import fcluster, linkage
+from scipy.spatial.distance import squareform
+from sklearn.cluster import HDBSCAN
+from sklearn.decomposition import TruncatedSVD
 from sklearn.feature_extraction import DictVectorizer
 from sklearn.feature_extraction.text import TfidfTransformer
 from sklearn.preprocessing import normalize
 
 FaultKey = tuple[str, str]
-MIN_FIN_SIMILARITY = 0.35  # exploratory, not validated to any failure mechanism
-MIN_GROUP_SIZE = 3
-MAX_INITIAL_GROUPS = 64
+METHODS = ("leaf", "eom", "complete_cosine")
+METHOD_TITLES = {
+    "leaf": "HDBSCAN · Leaf",
+    "eom": "HDBSCAN · EOM",
+    "complete_cosine": "Complete-Link · Cosinus (konservative Prüfgruppen)",
+}
+MAX_SVD_DIM = 16
+MAX_COMPLETE_BLOCK = 450
+MIN_COMPLETE_SIMILARITY = 0.45
 
 
 @dataclass(frozen=True, slots=True)
@@ -32,6 +46,9 @@ class FinPatternGroup:
     common_faults: tuple[tuple[str, str, int, str], ...]
     qec_fin_count: int
     median_similarity: float
+    shared_fault_count: int = 0
+    pair_weak_count: int = 0
+    checked_pair_count: int = 0
 
     @property
     def fin_count(self) -> int:
@@ -54,6 +71,10 @@ class FinPatternResult:
     qec_fin_count: int = 0
     overlap_fin_count: int = 0
     qec_only_fin_count: int = 0
+    method: str = "leaf"
+    positions: tuple[tuple[str, float, float, float], ...] = ()
+    notes: str = ""
+    pre_swap_fins: int = 0
 
     @property
     def assigned_fins(self) -> int:
@@ -61,9 +82,313 @@ class FinPatternResult:
 
     def group_for(self, fin: str) -> FinPatternGroup | None:
         return next(
-            (g for g in self.groups
-             if any(vin == fin for vin, _ in g.members)), None,
+            (group for group in self.groups
+             if any(member == fin for member, _ in group.members)), None
         )
+
+
+@dataclass(slots=True)
+class _PreparedFins:
+    all_fins: tuple[str, ...]
+    eligible: tuple[str, ...]
+    no_dtc: tuple[str, ...]
+    faults: dict[str, frozenset[FaultKey]]
+    codes: dict[str, int]
+    x: object
+    reduced: np.ndarray
+    positions: tuple[tuple[str, float, float, float], ...]
+    labels: Mapping[FaultKey, str]
+    links: dict[str, tuple[str, ...]]
+    dimensions: int
+
+
+def _prepare(
+    all_fins: Sequence[str],
+    fin_faults: Mapping[str, Sequence[FaultKey]],
+    labels: Mapping[FaultKey, str] | None,
+    qec_links: Mapping[str, Sequence[str]] | None,
+) -> _PreparedFins:
+    fins = tuple(sorted({fin.strip().upper() for fin in all_fins if fin.strip()}))
+    if len(fins) > 200_000:
+        raise ValueError("Die FIN-Anzahl uebersteigt das sichere lokale Analyselimit.")
+    finset = set(fins)
+    faults = {
+        fin: frozenset(
+            (ecu.strip().upper(), dtc.strip().upper())
+            for ecu, dtc in fin_faults.get(fin, ())
+            if ecu.strip() and dtc.strip()
+        )
+        for fin in fins
+    }
+    codes = {fin: len(faults[fin]) for fin in fins}
+    eligible = tuple(fin for fin in fins if codes[fin])
+    no_dtc = tuple(fin for fin in fins if not codes[fin])
+    links = {
+        fin: tuple(sorted(set(qec_links.get(fin, ()))))
+        for fin in fins if qec_links and qec_links.get(fin)
+    }
+    if not eligible:
+        return _PreparedFins(
+            fins, (), no_dtc, faults, codes, None,
+            np.zeros((0, 3), dtype=np.float32), (), labels or {}, links, 0,
+        )
+
+    # ECU:DTC is one exact, binary feature regardless of repeated raw lines.
+    # IDF is fitted on all FINs with imported diagnostics, not on QEC only.
+    vectorizer = DictVectorizer(sparse=True, dtype=np.float32)
+    x = vectorizer.fit_transform([
+        {f"{ecu}\u241f{dtc}": 1.0 for ecu, dtc in sorted(faults[fin])}
+        for fin in eligible
+    ])
+    x = TfidfTransformer(norm="l2").fit_transform(x)
+    dimensions = int(x.shape[1])
+    n = len(eligible)
+
+    # Dense 16-dimensional HDBSCAN avoids an O(n^2) raw-distance matrix.
+    # This is a high-dimensional model projection, NOT the plot's 2D space.
+    if n < 3 or dimensions < 2:
+        reduced = np.asarray(x.toarray(), dtype=np.float32)
+    else:
+        rank = min(MAX_SVD_DIM, dimensions - 1, n - 1)
+        reduced = TruncatedSVD(
+            n_components=rank, random_state=42,
+        ).fit_transform(x).astype(np.float32)
+    reduced = np.asarray(normalize(reduced), dtype=np.float32)
+
+    # 2D and 3D are views of the SAME fitted 16D model embedding.
+    # Missing dimensions simply lie on the corresponding coordinate axis.
+    points = np.zeros((n, 3), dtype=np.float32)
+    points[:, :min(3, reduced.shape[1])] = reduced[:, :3]
+    positions = tuple(
+        (fin, float(points[i, 0]), float(points[i, 1]), float(points[i, 2]))
+        for i, fin in enumerate(eligible)
+    )
+    return _PreparedFins(
+        fins, eligible, no_dtc, faults, codes, x, reduced,
+        positions, labels or {}, links, dimensions,
+    )
+
+
+def _hdbscan_labels(
+    prepared: _PreparedFins,
+    method: str,
+    min_cluster_size: int,
+    min_samples: int,
+) -> tuple[np.ndarray, np.ndarray]:
+    n = len(prepared.eligible)
+    labels = np.full(n, -1, dtype=int)
+    strengths = np.zeros(n, dtype=float)
+    if n < min_cluster_size or prepared.dimensions == 0:
+        return labels, strengths
+    model = HDBSCAN(
+        min_cluster_size=min_cluster_size,
+        min_samples=min(min_samples, n - 1),
+        cluster_selection_method=method,
+        metric="euclidean",
+        algorithm="auto",
+        n_jobs=1,
+        allow_single_cluster=False,
+    )
+    labels = np.asarray(model.fit_predict(prepared.reduced), dtype=int)
+    strengths = np.asarray(model.probabilities_, dtype=float)
+    return labels, strengths
+
+
+def _complete_link_labels(
+    prepared: _PreparedFins,
+    leaf_labels: np.ndarray,
+    min_cluster_size: int,
+    minimum_similarity: float,
+) -> tuple[np.ndarray, np.ndarray]:
+    """All accepted pairs pass the threshold; split blocks may miss matches.
+
+    Each real Complete-Link run compares ORIGINAL sparse TF-IDF cosine
+    distances for at most 450 FINs. This is a conservative secondary check,
+    never presented as a global Complete-Link partition of all vehicles.
+    """
+    labels = np.full(len(prepared.eligible), -1, dtype=int)
+    strengths = np.zeros(len(labels), dtype=float)
+    next_id = 0
+    for parent in sorted(set(leaf_labels) - {-1}):
+        indices = np.flatnonzero(leaf_labels == parent)
+        # Deterministic input order. Splitting only reduces recall,
+        # not internal pairwise guarantees of Complete-Link.
+        for start in range(0, len(indices), MAX_COMPLETE_BLOCK):
+            block = indices[start:start + MAX_COMPLETE_BLOCK]
+            if len(block) < min_cluster_size:
+                continue
+            x = prepared.x[block]
+            similarity = (x @ x.T).toarray()
+            distance = np.clip(1.0 - similarity, 0.0, 1.0)
+            distance = np.maximum(distance, distance.T)
+            np.fill_diagonal(distance, 0.0)
+            tree = linkage(
+                squareform(distance, checks=False),
+                method="complete",
+            )
+            subgroups = fcluster(
+                tree, t=1.0 - minimum_similarity, criterion="distance",
+            )
+            for subgroup in sorted(set(subgroups)):
+                positions = block[subgroups == subgroup]
+                if len(positions) >= min_cluster_size:
+                    labels[positions] = next_id
+                    strengths[positions] = 1.0
+                    next_id += 1
+    return labels, strengths
+
+
+def _make_result(
+    prepared: _PreparedFins,
+    method: str,
+    labels: np.ndarray,
+    strengths: np.ndarray,
+    *,
+    min_cluster_size: int,
+    notes: str,
+) -> FinPatternResult:
+    groups = []
+    assigned: set[str] = set()
+    for raw in sorted(set(labels) - {-1}):
+        positions = np.flatnonzero(labels == raw)
+        if len(positions) < min_cluster_size:
+            continue
+        fins = tuple(prepared.eligible[i] for i in positions)
+        # Representative = actual FIN closest to the ORIGINAL TF-IDF
+        # group centroid, not an invented average or QEC outcome.
+        submatrix = prepared.x[positions]
+        centroid = np.asarray(submatrix.mean(axis=0)).ravel()
+        centrality = np.asarray(submatrix @ centroid).ravel()
+        best = sorted(
+            range(len(fins)), key=lambda j: (-centrality[j], fins[j])
+        )[0]
+        rep_fin = fins[best]
+        cos_to_rep = np.clip(
+            (submatrix @ submatrix[best].T).toarray().ravel(), 0.0, 1.0,
+        )
+        members = tuple(sorted(
+            ((fin, round(float(cos_to_rep[j]), 4))
+             for j, fin in enumerate(fins)),
+            key=lambda item: (-item[1], item[0]),
+        ))
+        frequency = Counter(
+            fault for fin in fins for fault in prepared.faults[fin]
+        )
+        common = tuple(
+            (ecu, dtc, count, prepared.labels.get((ecu, dtc), ""))
+            for (ecu, dtc), count in sorted(
+                ((key, count) for key, count in frequency.items()
+                 if count >= 2),
+                key=lambda item: (-item[1], item[0][0] != "CPC3", item[0]),
+            )
+        )
+        # Assess heterogeneity on bounded, deterministic sample pairs.
+        # Never calculate the entire n^2 pair-distance matrix.
+        pair_total = len(fins) * (len(fins) - 1) // 2
+        rng = np.random.default_rng(42 + len(fins))
+        sample_count = min(1200, pair_total)
+        if sample_count == pair_total and len(fins) <= 50:
+            left, right = np.triu_indices(len(fins), k=1)
+        else:
+            left = rng.integers(0, len(fins), sample_count)
+            right = rng.integers(0, len(fins), sample_count)
+            mask = left != right
+            left, right = left[mask], right[mask]
+        pair_cos = np.asarray(
+            submatrix[left].multiply(submatrix[right]).sum(axis=1)
+        ).ravel() if len(left) else np.zeros(0)
+        weak = int(np.count_nonzero(pair_cos < 0.45))
+        assigned.update(fins)
+        groups.append(FinPatternGroup(
+            group_id=0,
+            members=members,
+            representative_fin=rep_fin,
+            common_faults=common,
+            qec_fin_count=sum(fin in prepared.links for fin in fins),
+            median_similarity=round(float(np.median(cos_to_rep)), 4),
+            shared_fault_count=sum(count == len(fins) for count in frequency.values()),
+            pair_weak_count=weak,
+            checked_pair_count=len(pair_cos),
+        ))
+    groups.sort(key=lambda g: (-g.fin_count, g.representative_fin))
+    groups = [
+        replace(group, group_id=index)
+        for index, group in enumerate(groups, 1)
+    ]
+    noise = tuple(
+        fin for fin in prepared.eligible if fin not in assigned
+    )
+    return FinPatternResult(
+        total_fins=len(prepared.all_fins),
+        dtc_fins=len(prepared.eligible),
+        no_dtc_fins=prepared.no_dtc,
+        unassigned_fins=noise,
+        groups=tuple(groups),
+        code_counts=prepared.codes,
+        qec_links=prepared.links,
+        initial_group_count=len(groups),
+        feature_count=prepared.dimensions,
+        method=method,
+        positions=prepared.positions,
+        notes=notes,
+    )
+
+
+def cluster_fin_methods(
+    all_fins: Sequence[str],
+    fin_faults: Mapping[str, Sequence[FaultKey]],
+    dtc_labels: Mapping[FaultKey, str] | None = None,
+    qec_links: Mapping[str, Sequence[str]] | None = None,
+    *,
+    min_cluster_size: int = 5,
+    min_samples: int = 2,
+    minimum_similarity: float = MIN_COMPLETE_SIMILARITY,
+    progress: Callable[[str], None] | None = None,
+) -> dict[str, FinPatternResult]:
+    """One computation, three genuine methods, same FIN feature space."""
+    if not 2 <= min_cluster_size <= 100:
+        raise ValueError("Mindestclustergröße muss zwischen 2 und 100 liegen.")
+    if not 1 <= min_samples <= 100:
+        raise ValueError("MinSamples muss zwischen 1 und 100 liegen.")
+    if not 0 < minimum_similarity < 1:
+        raise ValueError("Cosinus-Grenze muss zwischen 0 und 1 liegen.")
+    if progress:
+        progress("Baue gemeinsame ECU:DTC-Merkmale für eindeutige FINs …")
+    prepared = _prepare(all_fins, fin_faults, dtc_labels, qec_links)
+    out: dict[str, FinPatternResult] = {}
+    for method in ("leaf", "eom"):
+        if progress:
+            progress(f"Berechne {METHOD_TITLES[method]} …")
+        labels, strengths = _hdbscan_labels(
+            prepared, method, min_cluster_size, min_samples,
+        )
+        out[method] = _make_result(
+            prepared, method, labels, strengths,
+            min_cluster_size=min_cluster_size,
+            notes=(
+                "Echte HDBSCAN-Dichtegruppen auf 16D-SVD aus Sparse TF-IDF. "
+                "Eine Prognose zur Pumpentauschwirkung ist das nicht."
+            ),
+        )
+        if method == "leaf":
+            leaf_labels = labels
+    if progress:
+        progress("Prüfe konservative Complete-Link-Gruppen innerhalb Leaf …")
+    labels, strengths = _complete_link_labels(
+        prepared, leaf_labels, min_cluster_size, minimum_similarity,
+    )
+    out["complete_cosine"] = _make_result(
+        prepared, "complete_cosine", labels, strengths,
+        min_cluster_size=min_cluster_size,
+        notes=(
+            "Complete-Link prüft originale ECU:DTC-TF-IDF-Cosinusabstände "
+            "in Teilblöcken bis 450 FINs innerhalb von HDBSCAN Leaf. "
+            "Alle Paare einer ausgewiesenen Prüfgruppe erfüllen die Grenze; "
+            "gruppenübergreifende Ähnlichkeiten können übersehen werden. "
+            "Das ist ausdrücklich KEINE globale Complete-Link-Partition."
+        ),
+    )
+    return out
 
 
 def cluster_autoexport_fins(
@@ -71,122 +396,15 @@ def cluster_autoexport_fins(
     fin_faults: Mapping[str, Sequence[FaultKey]],
     dtc_labels: Mapping[FaultKey, str] | None = None,
     qec_links: Mapping[str, Sequence[str]] | None = None,
+    *,
+    method: str = "leaf",
+    min_cluster_size: int = 5,
+    min_samples: int = 2,
 ) -> FinPatternResult:
-    """Group full imported FIN histories using sparse TF-IDF and MiniBatchKMeans.
-
-    Never materializes pairwise FIN distances. A candidate requires at least
-    one ECU:DTC observed in two different FINs. Weak/undersized assignments
-    stay explicitly unassigned rather than being called confirmed clusters.
-    Repeated DTC readings on one FIN count as one feature.
-    """
-    fines = tuple(sorted(set(all_fins)))
-    all_set = set(fines)
-    if len(fines) > 200_000:
-        raise ValueError("Zu viele FINs für die explorative Offline-Analyse.")
-    faults = {
-        fin: frozenset(
-            (ecu.strip().upper(), code.strip().upper())
-            for ecu, code in codes
-            if ecu.strip() and code.strip()
-        )
-        for fin, codes in fin_faults.items() if fin in all_set
-    }
-    linked = {
-        fin: tuple(sorted(set(qec_links.get(fin, ()))))
-        for fin in fines if qec_links is not None and qec_links.get(fin)
-    }
-    code_counts = {fin: len(faults.get(fin, ())) for fin in fines}
-    observed = tuple(fin for fin in fines if code_counts[fin] > 0)
-    no_dtc = tuple(fin for fin in fines if not code_counts[fin])
-    prevalence = Counter(f for fin in observed for f in faults[fin])
-    # DTC unique to one FIN cannot provide evidence of a shared pattern.
-    usable = {fault for fault, count in prevalence.items() if count >= 2}
-    candidates = tuple(
-        fin for fin in observed if any(key in usable for key in faults[fin])
-    )
-    if len(candidates) < MIN_GROUP_SIZE:
-        return FinPatternResult(
-            len(fines), len(observed), no_dtc, observed, (), code_counts,
-            linked, 0, len(usable),
-        )
-
-    signature_map = {
-        fin: tuple(sorted(f for f in faults[fin] if f in usable))
-        for fin in candidates
-    }
-    # Use exact keys; no substring matching or semantic guesswork.
-    vectorizer = DictVectorizer(sparse=True, dtype=np.float32)
-    matrix = vectorizer.fit_transform([
-        {f"{ecu}\u241f{code}": 1.0 for ecu, code in signature_map[fin]}
-        for fin in candidates
-    ])
-    matrix = TfidfTransformer(norm="l2", use_idf=True).fit_transform(matrix)
-    n = len(candidates)
-    unique_signatures = len(set(signature_map.values()))
-    target = min(
-        n, unique_signatures, MAX_INITIAL_GROUPS,
-        max(2, int(sqrt(n / 2))),
-    )
-    # n_init and random_state make the comparison repeatable on the same data.
-    learner = MiniBatchKMeans(
-        n_clusters=target, batch_size=512, n_init=3,
-        max_iter=75, random_state=42, reassignment_ratio=0.0,
-    )
-    learner.fit(matrix)
-    centers = normalize(np.asarray(learner.cluster_centers_), axis=1)
-    # This is O(n * k) with k <= 64, not O(n*n). Sparse TF-IDF rows
-    # remain sparse, the dense score matrix stays bounded at n x 64.
-    scores = np.asarray(matrix @ centers.T)
-    best_cluster = np.argmax(scores, axis=1)
-    best_score = np.max(scores, axis=1)
-    grouped: dict[int, list[tuple[str, float]]] = defaultdict(list)
-    unassigned = {fin for fin in observed if fin not in signature_map}
-    for row, fin in enumerate(candidates):
-        similarity = float(best_score[row])
-        if similarity < MIN_FIN_SIMILARITY:
-            unassigned.add(fin)
-        else:
-            grouped[int(best_cluster[row])].append((fin, similarity))
-    retained = [
-        members for members in grouped.values()
-        if len(members) >= MIN_GROUP_SIZE
-    ]
-    for members in grouped.values():
-        if len(members) < MIN_GROUP_SIZE:
-            unassigned.update(fin for fin, _ in members)
-    retained.sort(
-        key=lambda members: (-len(members), min(fin for fin, _ in members))
-    )
-    labels = dtc_labels or {}
-    groups = []
-    for number, members in enumerate(retained, start=1):
-        members.sort(key=lambda item: (-item[1], item[0]))
-        local_frequency = Counter(
-            code for fin, _ in members for code in faults[fin]
-        )
-        common_codes = sorted(
-            ((key, count) for key, count in local_frequency.items() if count >= 2),
-            key=lambda item: (-item[1], item[0][0] != "CPC3", item[0]),
-        )[:16]
-        # Median similarity to a centroid is a grouping descriptive score,
-        # explicitly NOT P(same component failure).
-        groups.append(FinPatternGroup(
-            group_id=number,
-            members=tuple((fin, round(score, 4)) for fin, score in members),
-            representative_fin=members[0][0],
-            common_faults=tuple(
-                (ecu, dtc, count, labels.get((ecu, dtc), ""))
-                for (ecu, dtc), count in common_codes
-            ),
-            qec_fin_count=sum(fin in linked for fin, _ in members),
-            median_similarity=round(
-                float(np.median([score for _, score in members])), 4
-            ),
-        ))
-    return FinPatternResult(
-        total_fins=len(fines), dtc_fins=len(observed),
-        no_dtc_fins=no_dtc, unassigned_fins=tuple(sorted(unassigned)),
-        groups=tuple(groups), code_counts=code_counts,
-        qec_links=linked, initial_group_count=target,
-        feature_count=matrix.shape[1],
-    )
+    """Legacy local API, but no KMeans: returns actual requested method."""
+    if method not in METHODS:
+        raise ValueError("Unbekannte Clustermethode.")
+    return cluster_fin_methods(
+        all_fins, fin_faults, dtc_labels, qec_links,
+        min_cluster_size=min_cluster_size, min_samples=min_samples,
+    )[method]
