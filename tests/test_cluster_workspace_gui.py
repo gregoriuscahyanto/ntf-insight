@@ -16,8 +16,14 @@ from ntf_insight.app.widgets.cluster_workspace import ClusterWorkspace
 from test_hdbscan_clustering import sample, synthetic
 
 
-def _calculate(panel: ClusterWorkspace, compare: bool = False) -> None:
-    if compare:
+def _calculate(
+    panel: ClusterWorkspace, compare: bool = False, *, leaf_only: bool = False,
+) -> None:
+    if leaf_only:
+        # Large-cohort population smoke: avoid all optional experimental
+        # sensitivity runs; those are covered by the small synthetic suite.
+        panel._start_methods(("leaf",), include_stability=False)
+    elif compare:
         panel.compare_methods()
     else:
         panel.run_analysis()
@@ -319,7 +325,7 @@ def test_synthetic_336_cases_170_eligible_without_publishing_identifiers():
         for i in range(336)
     ]
     panel = ClusterWorkspace(cases)
-    _calculate(panel)
+    _calculate(panel, leaf_only=True)
     assert len(panel.result.eligible_case_ids) == 170
     assert len(panel.result.excluded_case_ids) == 166
     assert len(panel.plot.items_by_case) == 170
