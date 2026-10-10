@@ -28,6 +28,9 @@ def test_main_window_can_be_constructed(tmp_path, monkeypatch) -> None:
     assert window.pages["cases"].cluster_workspace.fin_workspace is (
         window.pages["cases"].autoexport_fin_workspace
     )
+    cluster = window.pages["cases"].cluster_workspace
+    assert cluster.population_mode.currentData() == "all_fins"
+    assert cluster.cluster_views.currentWidget() is cluster.fin_workspace
     assert "suppliers" in window.pages
     assert "quality" in window.pages
     assert window.repository.list_cases()
