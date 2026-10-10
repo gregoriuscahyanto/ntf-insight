@@ -1,70 +1,89 @@
 # Fahrzeugweite AutoExport-Muster: eigene Grundgesamtheit, kein NTF-Label
 
-## Warum ein zweiter Analysebereich?
+## Eine Clusteranalyse für AutoExport und QEC
 
-**Fälle / FIN → Clusteranalyse** bleibt die zeitbezogene QEC-Auswertung
-für einen untersuchten Pumpentausch. Für die vorliegende importierte
-Datenbasis zeigen die vom Nutzer lokal genannten Summen z. B. 336
-Pumpen-QEC-Fälle, 324 FINs, davon 170 mit geeigneter Vor-Tausch-Diagnose.
-Die übrigen QEC-Fälle dürfen nicht durch Nach-Tausch-Diagnosen ergänzt
-werden, nur damit ein größerer Cluster entsteht.
+Unter **Fälle / FIN → Clusteranalyse** gibt es nur **einen** Reiter.
+Das Dropdown **Analysebestand** wählt eine von zwei Grundgesamtheiten:
 
-**Fälle / FIN → Fahrzeugmuster (AutoExport)** verwendet unabhängig davon
-**alle lokal importierten AutoExport-FINs**. Im aktuell gezeigten lokalen
-Datenbestand: 11.667 verschiedene FINs, davon 10.898 mit DTC-Zeilen,
-469.777 DTC-Rohzeilen, dazu Werkstatt- und TIPS-Rohzeilen.
-Mehrfache Meldungen desselben ECU:DTC in derselben FIN werden nicht als
-mehrere Fahrzeuge oder mehrere unterschiedliche Diagnoseschlüssel
-interpretiert. Der tatsächliche Datenbestand wird jedes Mal neu gelesen
-und ist nicht im Code hartkodiert.
+- **Alle FINs – AutoExport + QEC gemeinsam (Standard):** Eine eindeutige
+  FIN ist genau ein Fahrzeug und **ein Clustering-Datenpunkt**. Die
+  App vereinigt den lokal importierten AutoExport-FIN-Bestand und
+  die FINs aus QEC-Kühlmittelpumpenfällen. Sie verbindet wiederholte
+  ECU:DTC-Beobachtungen aus AutoExport mit **zeitlich gesicherten
+  Vor-Tausch-DTCs aus QEC/QuickTests derselben FIN**, statt dieselbe
+  FIN zweimal zu berücksichtigen. QEC-FINs ohne AutoExport können als
+  eigene Fahrzeuge dazukommen. QEC-IDs und der QEC-Bezug bleiben
+  Attribute für die Fachprüfung und sind KEINE künstlichen Fahrzeuge.
+- **Nur QEC-Pumpenfälle (Vor-Tausch-Analyse):** Die bestehende
+  fallbezogene QEC-Analyse mit HDBSCAN Leaf/EOM,
+  Complete-Link, konservativen Prüfgruppen und 2D/3D bleibt unverändert.
+  Sie nutzt weiterhin ausschließlich gesicherte Diagnosen vor dem
+  dokumentierten Bauteiltausch.
+
+Die im Nutzer-Screenshot angegebenen Beispielzahlen sind 11.667
+verschiedene lokal importierte AutoExport-FINs und 324 QEC-Pumpen-FINs
+(336 QEC-Fälle). Die tatsächliche gemeinsame Gesamtzahl ist
+**11.667 + QEC-FINs, die im AutoExport fehlen**, und wird erst
+lokal nach dem FIN-Abgleich angezeigt. Die App legt keine dieser
+Zahlen als festen Modellparameter fest.
+
+Für **AutoExport-FINs mit QEC-Pumpentauschanker** gilt im kombinierten
+Modus dieselbe konservative Vor-Tausch-Regel für beide Quellen:
+DTCs von Tagen **vor** dem frühesten dokumentierten QEC-
+`Rep.-Datum` sind zulässig; DTCs am Tauschtag, danach und
+DTCs ohne hinreichenden Zeitnachweis sind keine Vor-Tausch-Merkmale.
+Für **AutoExport-FINs ohne Pumpentauschanker** bleibt die gesamte
+allgemeine AutoExport-Diagnosehistorie für die Mustererkennung
+zugänglich. Diese beiden Beobachtungsfenster sind verschieden:
+Die gemeinsame Gruppe ist deshalb nur ein **exploratives
+Diagnosemuster**, kein Nachweis für einen gemeinsamen Pumpendefekt
+oder NTF.
 
 Die FIN-Historie ist **kein automatisch bestätigter Tauschanker**:
-AutoExport-Werkstattzeilen können alle möglichen Reparaturen betreffen.
-Eine beliebige DTC-Beobachtung im AutoExport muss also weder die
-Kühlmittelpumpe betreffen noch zeitlich vor einem Pumpentausch liegen.
-**Die AutoExport-Gruppen heißen daher Diagnosemuster, nicht NTF-Fälle,
-Pumpen-Schadteilfälle oder technische Ursachencluster.**
+AutoExport-`RepairDt` bezeichnet zunächst einen Werkstatttermin
+und beweist keinen Austausch der Kühlmittelpumpe. Die einzige
+hier automatisch verwendete Pumpentauschquelle ist
+**QEC / Schadteile QEC / Rep.-Datum**.
 
 ## Bedienung
 
-1. Im QEC-Reiter **Alle AutoExport-FINs nach Diagnosemustern untersuchen**
-   drücken oder **Fahrzeugmuster (AutoExport)** öffnen.
-2. Mit deaktivierter Option **Nur FINs mit belegtem QEC-Pumpentausch**
-   bleibt die **gesamte AutoExport-DTC-Historie** für alle 11.667
-   importierten FINs durchsuchbar. Dies ist nur eine allgemeine
-   Diagnosemusteranalyse, kein Vor-Tausch-/NTF-Befund.
-   Mit aktivierter Option beschränkt die App die Analyse auf FINs
-   mit gültigem QEC-`Rep.-Datum` zur Kühlmittelpumpe und auf AutoExport-
-   DTC-Beobachtungen von Kalendertagen **streng vor** dem Tausch.
-   Gleicher Tag, Datum unbekannt oder später wird nie als sicher
-   *vor dem Tausch* behandelt. Das generische AutoExport-`RepairDt`
-   begründet ausdrücklich **keinen** Pumpentausch. Mehrere QEC-Tausche
-   derselben FIN werden zunächst konservativ am frühesten
-   dokumentierten Pumpentauschdatum ausgerichtet.
-3. **AutoExport-FINs nach Diagnosemustern gruppieren** starten.
-   Lesen und Berechnung laufen ausschließlich lokal im Hintergrund.
-4. Sechs Summen unterscheiden Gesamt-FINs, FINs mit DTC, FINs in Gruppen,
-   FINs mit DTC aber ohne Gruppe, FINs ohne DTC und Mustergruppen.
-   Dabei muss *in Gruppen + DTC ohne Gruppe + ohne DTC* genau der
-   Gesamtzahl importierter FINs entsprechen.
-5. Das Balkendiagramm zeigt die 14 größten Gruppen; **alle** Gruppen
-   stehen in der Tabelle. Eine Gruppe zeigt ihre **echten FINs**,
-   häufige ECU:DTC-Schlüssel mit Zahl betroffener FINs sowie
-   DTC-Klartexte, soweit sie in importierten AutoExport-Daten vorkommen.
-6. FIN-Suche funktioniert auch bei FINs **ohne Gruppe** oder **ohne DTC**.
-   Die Schaltfläche öffnet die lokal archivierte AutoExport-Gesamthistorie
-   der FIN, auch wenn kein QEC-Fall existiert.
-7. **Davon FINs mit QEC** bedeutet lediglich, dass zur gleichen FIN
-   mindestens ein QEC-Fall bekannt ist. Es ist **keine** Bestätigung,
-   dass die DTC-Historie diesen Pumpenfall erklärt.
+1. **Fälle / FIN → Clusteranalyse** öffnen.
+2. Im oberen Feld **Analysebestand** standardmäßig
+   **Alle FINs – AutoExport + QEC gemeinsam** wählen. Das ist ein
+   EINZIGER Clusterlauf für die zusammengeführten FIN-Diagnosemerkmale.
+   Für die detaillierte bisherige Pumpen-QEC-Auswertung stattdessen
+   **Nur QEC-Pumpenfälle** wählen.
+3. Optional **Nur FINs mit belegtem QEC-Pumpentausch** aktivieren:
+   Dann sind ausschließlich FINs mit QEC-`Rep.-Datum` und
+   Diagnoseereignisse von früheren Tagen zugelassen. Diese
+   Einstellung kann die Anzahl der FINs deutlich verringern.
+4. **Clusteranalyse starten**. Sechs Summen zeigen die Gesamtzahl
+   der einzigartigen FINs, FINs mit DTC, zugeordnete FINs, FINs
+   mit DTC ohne Gruppe, FINs ohne DTC und die Anzahl der Mustergruppen.
+   Zugeordnete + unzugeordnete FINs mit DTC + FINs ohne DTC
+   ergeben exakt die Gesamtgrundgesamtheit.
+5. Die Balkengrafik zeigt die 14 größten FIN-Muster, die Tabelle
+   **alle** Mustergruppen. Die FIN-Tabelle enthält echte FINs,
+   QEC-Fallzahl und **Diagnosequelle (AutoExport, QEC/QuickTest oder beide)**.
+   Gemeinsame ECU:DTCs und verfügbare Klartexte erklären die Gruppen.
+   Der QEC-Bezug bedeutet nicht, dass der Pumpendefekt bewiesen ist.
+6. Die FIN-Suche findet Fahrzeuge in Gruppen, außerhalb von Gruppen
+   und ohne DTC. Über die Aktion zur FIN-Historie sind importierte
+   AutoExport-Daten lokal erreichbar. FINs ohne AutoExport können
+   dort eine leere Historie haben, obwohl ein QEC-Fall bekannt ist.
 
 ## Methode und Einschränkungen
 
-Die lokale DuckDB aggregiert aus allen Originaldaten pro FIN die Menge
-**eindeutiger ECU:DTC-Kombinationen**. Nicht belegte Klartexte werden
-nicht ergänzt. Der Python-Prozess erhält für die Musterbildung nur
-reduzierte Schlüsselmengen und optionale DTC-Klartexte; originale
-Reparaturfreitexte, ZIPs, SSL-Befunde und Rohdateien bleiben unberührt.
+Die lokale DuckDB aggregiert aus importierten AutoExport-Daten je FIN
+die Menge **eindeutiger ECU:DTC-Kombinationen**. Die im QEC-Bestand
+vor dem untersuchten Kühlmittelpumpentausch dokumentierten
+ECU:DTC-Kombinationen werden in denselben **FIN-Merkmalsvektor**
+eingetragen. Mehrfach beobachtete DTCs zählen pro FIN nur einmal.
+Ein vollständiger QEC- oder Lieferantenbefund ist **kein
+Gruppierungsmerkmal**. DTC-Klartexte dienen nur als Beschriftung,
+nicht als Vektorinput. Nicht belegte Klartexte werden nicht erfunden.
+Reparaturfreitexte, ZIPs, SSL-Befunde und Originaldateien bleiben
+unberührt.
 
 Nur Fehlercodes, die bei **mindestens zwei verschiedenen FINs** vorkommen,
 erzeugen gemeinsame Mustermerkmale. Daraus entsteht eine **sparse
