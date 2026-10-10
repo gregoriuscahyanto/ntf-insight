@@ -88,6 +88,17 @@ def test_zip_one_real_medoid_per_cluster_with_no_sensitive_source_fields(tmp_pat
         assert len(recurrence) == len(cases)
         assert all(r["Wiederauftreten beurteilbar"] == "0" for r in recurrence)
         assert all(r["Bewertung"] == "Nicht beurteilbar" for r in recurrence)
+        session_review = _csv(archive, "diagnosesitzungs_pruefung.csv")
+        assert len(session_review) == len(cases)
+        assert sum(
+            int(row["Vorher-DTC-Zeilen"] != "0") for row in session_review
+        ) == 13
+        assert sum(
+            int(row["QEC-Vorher-Sitzungen"] != "0") for row in session_review
+        ) == 0
+        assert _csv(archive, "cluster_bruecken.csv") == []
+        assert manifest["version"] == 2
+        assert manifest["vorher_dtc_ohne_vorher_sitzung"] == 13
         assert len(_csv(archive, "methodenvergleich.csv")) == 2
 
 
@@ -142,3 +153,34 @@ def test_zip_pseudonyms_are_not_original_order_identifiers(tmp_path, monkeypatch
     second = write_cluster_review_zip(tmp_path / "second.zip", cases, result, audit)
     assert first.zip_path.read_bytes() == second.zip_path.read_bytes()
     assert first.private_case_map.read_bytes() == second.private_case_map.read_bytes()
+
+
+def test_shared_cpc3_bridges_are_pseudonymized_in_zip(tmp_path):
+    from datetime import datetime
+    from ntf_insight.domain.events import DiagnosticEvent
+
+    cases = sample()
+    for case in cases[:12]:
+        case.diagnostics.append(DiagnosticEvent(
+            event_id="cross-" + case.case_id, vin=case.vin, ecu="CPC3",
+            dtc_code="SENSITIVE_SYNTHETIC_CPC3_SIGNAL",
+            occurred_at=datetime(2026, 4, 29),
+        ))
+    audit = audit_diagnostic_evidence(cases)
+    result = cluster_hdbscan_cases(cases)
+    assert len(result.clusters) == 2
+    exported = write_cluster_review_zip(
+        tmp_path / "cross-brige.zip", cases, result, audit,
+    )
+    with ZipFile(exported.zip_path) as package:
+        bridge = _csv(package, "cluster_bruecken.csv")
+        assert len(bridge) == 1
+        assert bridge[0]["Gemeinsame CPC3-Kern-DTC Anzahl"] == "1"
+        assert bridge[0]["Gemeinsame CPC3-DTC-Aliasse"].startswith("D")
+        data = b"".join(package.read(item) for item in package.namelist())
+        assert b"SENSITIVE_SYNTHETIC_CPC3_SIGNAL" not in data
+        assert b"CODE-A-ROOT" not in data
+        assert b"W1TTEST" not in data
+    assert "SENSITIVE_SYNTHETIC_CPC3_SIGNAL" in (
+        exported.private_dtc_map.read_text(encoding="utf-8-sig")
+    )

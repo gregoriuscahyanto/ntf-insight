@@ -191,6 +191,31 @@ class QuickTestStore:
                 raise
         return found is None
 
+    def report_summaries_for_fins(
+        self, fins: set[str]
+    ) -> dict[str, list[tuple[datetime, int]]]:
+        """All original FIN QuickTest report timestamps, including zero-DTC tests.
+
+        No QEC assignment is inferred and no source PDF is materialized.
+        The count is the reported DTC count, not an independent fault event.
+        """
+        if not fins:
+            return {}
+        summaries: dict[str, list[tuple[datetime, int]]] = {}
+        with self.store.connect() as con:
+            for fin in sorted(fins):
+                rows = con.execute(
+                    """SELECT diagnosed_at, dtc_count
+                       FROM quicktest_reports
+                       WHERE fin = ?
+                       ORDER BY diagnosed_at, report_id""",
+                    [fin],
+                ).fetchall()
+                summaries[fin] = [
+                    (observed_at, int(count)) for observed_at, count in rows
+                ]
+        return summaries
+
     def diagnostic_times_for_fins(
         self, fins: set[str]
     ) -> dict[str, list[tuple[datetime, int]]]:
