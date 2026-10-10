@@ -111,8 +111,9 @@ class CasePage(QWidget):
         self.detail_tabs.addTab(self.cluster_workspace, "Clusteranalyse")
         self.cluster_workspace.case_requested.connect(self.select_case)
         self.cluster_workspace.tips_linked.connect(self._relay_tips_link)
-        # The full FIN population has no confirmed pump-swap anchor and
-        # deliberately never appears as 11k fake QEC cases.
+        # One visible Clusteranalyse tab. AutoExport and QEC share a FIN
+        # model in the combined mode; QEC cases retain their independent
+        # before-replacement expert analysis as an optional view.
         self.autoexport_fin_workspace = AutoExportFinWorkspace(
             self.source_knowledge, self.real_cases,
             population_metrics=(
@@ -120,12 +121,7 @@ class CasePage(QWidget):
                 if self.source_knowledge is not None else {}
             ),
         )
-        self.detail_tabs.addTab(
-            self.autoexport_fin_workspace, "Fahrzeugmuster (AutoExport)"
-        )
-        self.cluster_workspace.autoexport_requested.connect(
-            lambda: self.detail_tabs.setCurrentWidget(self.autoexport_fin_workspace)
-        )
+        self.cluster_workspace.attach_fin_workspace(self.autoexport_fin_workspace)
         self.autoexport_fin_workspace.fin_requested.connect(
             self._open_autoexport_fin_history
         )
