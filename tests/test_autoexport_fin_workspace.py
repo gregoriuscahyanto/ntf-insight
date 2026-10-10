@@ -100,7 +100,7 @@ def test_autoexport_tab_is_separate_from_qec_and_fin_history(tmp_path, monkeypat
         case_page.autoexport_fin_workspace
     ) >= 0
     assert case_page.detail_tabs.currentWidget() == case_page.cluster_workspace
-    case_page.cluster_workspace.autoexport_requested.emit()
+    case_page.cluster_workspace.all_fin_button.click()
     assert case_page.detail_tabs.currentWidget() == case_page.autoexport_fin_workspace
     case_page.autoexport_fin_workspace.fin_requested.emit("W1TTEST0000000001")
     assert case_page.detail_tabs.currentWidget() == case_page.analysis_tab
