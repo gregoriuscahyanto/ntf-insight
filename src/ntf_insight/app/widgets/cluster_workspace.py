@@ -387,6 +387,7 @@ class ClusterWorkspace(QWidget):
             self._display_method_changed
         )
         self.display_method.setEnabled(False)
+        self.display_method.setMinimumWidth(180)
         map_header.addWidget(self.display_method)
         self.zoom_reset = QPushButton("Ansicht zurücksetzen")
         self.zoom_reset.clicked.connect(self._reset_zoom)
@@ -1028,6 +1029,22 @@ class ClusterWorkspace(QWidget):
             self.display_method.blockSignals(True)
             self.display_method.setCurrentIndex(selected)
             self.display_method.blockSignals(False)
+        # Side-by-side comparison should never silently show the same
+        # clustering method on both sides after the main method switches.
+        if (
+            self.compare_side.isChecked()
+            and self.other_method.currentData() == result.parameters.method
+        ):
+            alternative = next(
+                (key for key in self._run_results
+                 if key != result.parameters.method), None,
+            )
+            if alternative is not None:
+                self.other_method.blockSignals(True)
+                self.other_method.setCurrentIndex(
+                    self.other_method.findData(alternative)
+                )
+                self.other_method.blockSignals(False)
         self._group_ids = [group.cluster_id for group in result.groups]
         self.summary_values["groups"].setText(str(len(result.groups)))
         self.summary_values["assigned"].setText(str(result.clustered_count))
