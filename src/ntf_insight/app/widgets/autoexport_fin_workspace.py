@@ -597,6 +597,9 @@ class AutoExportFinWorkspace(QWidget):
         )
         if result.groups:
             self.group_table.selectRow(0)
+            # Model resets may preserve the same current row and skip
+            # Qt's currentRowChanged signal. Always show real evidence.
+            self._group_changed(self.group_model.index(0, 0), QModelIndex())
         else:
             self.explanation.setText(
                 "Das Verfahren hat bei diesen Einstellungen keine "
@@ -620,6 +623,11 @@ class AutoExportFinWorkspace(QWidget):
             self._refresh_review_table()
             if selected is not None:
                 self.select_group(selected)
+                row = self._group_rows.index(selected)
+                self._group_changed(self.group_model.index(row, 0), QModelIndex())
+            elif self._group_rows:
+                self.group_table.selectRow(0)
+                self._group_changed(self.group_model.index(0, 0), QModelIndex())
 
     def _refresh_review_table(self) -> None:
         if self.result is None:
