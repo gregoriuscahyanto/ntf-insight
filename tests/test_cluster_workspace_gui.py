@@ -128,6 +128,16 @@ def test_method_selector_displays_relevant_controls_and_compare_toggle():
     assert panel.result is panel._run_results["complete_cosine"]
     assert "Complete-Link" in panel.kpi.text()
     assert panel.method.currentData() == "complete_cosine"
+    panel.display_method.setCurrentIndex(
+        panel.display_method.findData("complete_legacy")
+    )
+    assert panel.result is panel._run_results["complete_legacy"]
+    if not panel.result.groups:
+        assert "keine Cluster" in panel.why_heading.text()
+        assert "fehlerfrei" in panel.why_text.text()
+    panel.display_method.setCurrentIndex(
+        panel.display_method.findData("complete_cosine")
+    )
     panel.compare_side.setChecked(True)
     panel.other_method.setCurrentIndex(panel.other_method.findData("leaf"))
     assert panel.other_plot._result is panel._run_results["leaf"]
