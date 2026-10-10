@@ -293,6 +293,47 @@ class SourceKnowledgeStore:
             results[f"{category}_fins"] = int(fin_count)
         return results
 
+    def autoexport_dtc_overview(
+        self,
+    ) -> dict[tuple[str, str], tuple[int, int, str]]:
+        """Aggregated DTC Explorer catalog: no raw FINs leave this query.
+
+        Values are (distinct vehicles, raw observations, imported description).
+        This includes DTCs from AutoExport FINs with no QEC case.
+        """
+        with self.store.connect() as con:
+            rows = con.execute(
+                """
+                SELECT
+                    upper(trim(json_extract_string(payload_json, '$.EcuNm'))) AS ecu,
+                    upper(trim(json_extract_string(payload_json, '$.EcuFaultNm'))) AS dtc,
+                    COUNT(DISTINCT CASE
+                        WHEN length(trim(fin)) = 20
+                         AND left(upper(trim(fin)), 3) = 'MBC'
+                        THEN substr(upper(trim(fin)), 4)
+                        ELSE upper(trim(fin))
+                    END) AS vehicle_count,
+                    COUNT(*) AS observation_count,
+                    MAX(NULLIF(trim(
+                        json_extract_string(payload_json, '$.EcuFaultTxt')
+                    ), '')) AS description
+                FROM source_knowledge_rows
+                WHERE category = 'autoexport_dtc'
+                  AND NULLIF(trim(
+                      json_extract_string(payload_json, '$.EcuNm')
+                  ), '') IS NOT NULL
+                  AND NULLIF(trim(
+                      json_extract_string(payload_json, '$.EcuFaultNm')
+                  ), '') IS NOT NULL
+                GROUP BY 1, 2
+                ORDER BY 1, 2
+                """
+            ).fetchall()
+        return {
+            (ecu, dtc): (int(vehicles), int(events), description or "")
+            for ecu, dtc, vehicles, events, description in rows
+        }
+
     def autoexport_fin_dtc_signatures(
         self, *,
         pump_swap_dates: dict[str, str] | None = None,
