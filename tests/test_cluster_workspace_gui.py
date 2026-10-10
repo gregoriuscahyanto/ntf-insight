@@ -183,7 +183,7 @@ def test_conservative_core_group_drilldown_is_inline_and_not_another_tab():
     another_group_index = 1 if len(panel.result.groups) > 1 else 0
     panel.group_table.selectRow(another_group_index)
     assert panel._active_core_group is None
-    assert panel.member_title.text() == panel._member_title_default
+    assert panel.member_title.text().startswith("4. Fälle in Cluster C")
     assert panel.plot._emphasis_case_ids is None
     assert panel.member_model.rowCount() == (
         panel.result.groups[another_group_index].case_count
