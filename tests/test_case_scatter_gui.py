@@ -78,13 +78,12 @@ def test_cluster_workspace_replaces_scatter_tab_and_synchronizes_case_selection(
     assert cases.detail_tabs.widget(1) is cases.analysis_tab
     assert cases.detail_tabs.widget(2) is cases.quicktest_browser
     assert cases.detail_tabs.count() == 3
-    assert cluster.fin_workspace is cases.autoexport_fin_workspace
-    cluster.show_fin_mode()
-    assert cluster.cluster_views.currentWidget() is cases.autoexport_fin_workspace
+    assert cluster is cases.autoexport_fin_workspace
+    assert cluster.plot is not None
+    assert cluster.start_button.text() == "Clusteranalyse starten"
 
     assert cluster.focus_case("DEMO-004")
-    assert cluster.population_mode.currentData() == "qec"
-    assert cluster.cluster_views.currentWidget() is cluster.qec_scroll
+    assert cluster.fin_search.text() == "DEMO-VIN-000004"
     cluster.case_requested.emit("DEMO-004")
     assert cases.detail_tabs.currentWidget() is cases.analysis_tab
     assert cases.selector.currentData() == "DEMO-004"
