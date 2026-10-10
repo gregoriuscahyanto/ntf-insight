@@ -274,6 +274,11 @@ def _make_result(
         frequency = Counter(
             fault for fin in fins for fault in prepared.faults[fin]
         )
+        # SVD may bring otherwise unrelated rare-DTC FINs close together.
+        # Never publish such a group without at least one repeated ORIGINAL
+        # ECU:DTC feature; 2D/3D proximity by itself is not DTC evidence.
+        if not any(count >= 2 for count in frequency.values()):
+            continue
         common = tuple(
             (ecu, dtc, count, prepared.labels.get((ecu, dtc), ""))
             for (ecu, dtc), count in sorted(
