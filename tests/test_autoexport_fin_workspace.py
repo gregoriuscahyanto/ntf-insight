@@ -107,3 +107,65 @@ def test_autoexport_tab_is_separate_from_qec_and_fin_history(tmp_path, monkeypat
     assert case_page.autoexport_fin_lookup.text() == "W1TTEST0000000001"
     window.close()
     app.processEvents()
+
+
+def test_opt_in_qec_pump_date_excludes_unanchored_fins_and_post_swap_dtc(tmp_path):
+    """One user-click switches all AutoExport FINs to proven pre-swap subset."""
+    from test_hdbscan_clustering import synthetic
+
+    fins = [f"W1TTEST000000{i:04d}" for i in range(6)]
+    cases = [
+        synthetic(f"QEC-SYN-{i}", "X", i, vin=fins[i])
+        for i in range(4)
+    ]
+    for case in cases:
+        case.qec_reference = case.case_id
+    source = SourceKnowledgeStore(DuckDBStore(tmp_path / "pump-scope.duckdb"))
+    rows = []
+    for fin in fins:
+        rows.extend([
+            {"category": "autoexport_dtc", "fin": fin, "data": {
+                "EcuNm": "CPC3", "EcuFaultNm": "SHARED-BEFORE",
+                "DiagStartDt": "2026-04-02",
+            }},
+            {"category": "autoexport_dtc", "fin": fin, "data": {
+                "EcuNm": "CPC3", "EcuFaultNm": "SHARED-AFTER",
+                "DiagStartDt": "2026-06-10",
+            }},
+        ])
+    source.save_records("a" * 64, "autoexport_rows", rows)
+    app = QApplication.instance() or QApplication([])
+    panel = AutoExportFinWorkspace(
+        source, cases, source.autoexport_population()
+    )
+    panel.show()
+    app.processEvents()
+    assert len(panel._pump_swap_dates) == 4
+    assert not panel.only_pump_swap.isChecked()
+    panel.only_pump_swap.setChecked(True)
+    assert "Rep.-Datum" in panel.status.text()
+    panel.start_button.click()
+    task = panel._task
+    for _ in range(1000):
+        app.processEvents()
+        if panel.result is not None and panel.start_button.isEnabled():
+            break
+        QTest.qWait(10)
+    assert panel.result is not None, panel.status.text()
+    if isValid(task):
+        assert task.wait(10000)
+    assert panel.result.total_fins == 4
+    assert panel.result.dtc_fins == 4
+    assert panel.result.feature_count == 1
+    assert len(panel.result.groups) == 1
+    assert panel.result.groups[0].fin_count == 4
+    assert panel.number_labels["total"].text() == "4"
+    assert "vor dem Austausch" in panel.status.text()
+    assert "SHARED-BEFORE" in panel.explanation.text()
+    assert "SHARED-AFTER" not in panel.explanation.text()
+
+    panel.only_pump_swap.setChecked(False)
+    assert panel.result is None
+    assert "alle" in panel.status.text().casefold()
+    panel.close()
+    app.processEvents()
