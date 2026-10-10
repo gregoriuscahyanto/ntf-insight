@@ -30,8 +30,12 @@ from ntf_insight.analysis.cluster_core_review import (
 from ntf_insight.analysis.hdbscan_clustering import cluster_hdbscan_cases
 from ntf_insight.analysis.cluster_explanation import explain_cluster
 from ntf_insight.analysis.cluster_stability import build_stability_report, sensitivity_scenarios
+from ntf_insight.analysis.diagnostic_observations import dtc_description_catalog
 from ntf_insight.app.models.simple_table_model import SimpleTableModel
 from ntf_insight.app.widgets.cluster_projection_plot import ClusterProjectionPlot
+from ntf_insight.app.widgets.cluster_case_pie import (
+    ClusterCasePie, PIE_COLORS, PIE_LABELS,
+)
 from ntf_insight.domain.case import NTFCase
 
 
@@ -189,6 +193,7 @@ class ClusterWorkspace(QWidget):
         super().__init__()
         self.cases = sorted(cases, key=lambda c: c.case_id)
         self.by_id = {case.case_id: case for case in self.cases}
+        self._dtc_texts = dtc_description_catalog(self.cases)
         self._store = store
         self._source_knowledge = source_knowledge
         self._population_metrics = population_metrics or {}
@@ -294,6 +299,22 @@ class ClusterWorkspace(QWidget):
         fields.addWidget(self.lookback, 1, 1)
         body.addLayout(fields)
 
+        # Local archived AutoExport rows != QEC coolant-pump claims.
+        # These values are aggregates from the source-knowledge database,
+        # never raw vehicle identifiers or rows.
+        self.population_summary = QLabel(objectName="PageSubtitle")
+        self.population_summary.setWordWrap(True)
+        body.addWidget(self.population_summary)
+        self.population_toggle = QCheckBox("AutoExport-Datenumfang aufschlüsseln")
+        body.addWidget(self.population_toggle)
+        self.population_detail = QLabel(objectName="PageSubtitle")
+        self.population_detail.setWordWrap(True)
+        self.population_detail.hide()
+        self.population_toggle.toggled.connect(self.population_detail.setVisible)
+        body.addWidget(self.population_detail)
+        self.family.currentIndexChanged.connect(self._update_population)
+        self._update_population()
+
         # Optional professional controls, not separate clustering actions.
         self.advanced_toggle = QCheckBox("Erweiterte Einstellungen anzeigen")
         body.addWidget(self.advanced_toggle)
@@ -341,30 +362,74 @@ class ClusterWorkspace(QWidget):
         self.status.setWordWrap(True)
         body.addWidget(self.status)
 
-        # The three everyday KPIs and the separate missing-evidence figure.
+        # A plain cluster count and one three-category QEC pie.
         summary = QHBoxLayout()
-        summary.setSpacing(10)
+        summary.setSpacing(12)
         self.summary_values = {}
-        for key, title in (
-            ("groups", "Gefundene Cluster"),
-            ("assigned", "Fälle in Clustern"),
-            ("noise", "Ohne Cluster"),
-            ("missing", "Ohne Vor-Tausch-Diagnose"),
+        self.pie_percent_labels = {}
+
+        number_card = QFrame()
+        number_card.setObjectName("Card")
+        number_layout = QVBoxLayout(number_card)
+        number_layout.setContentsMargins(18, 14, 18, 14)
+        number_layout.addWidget(QLabel("Gefundene Cluster", objectName="CardTitle"))
+        count_label = QLabel("–", objectName="CardValue")
+        number_layout.addWidget(count_label)
+        number_layout.addStretch(1)
+        self.summary_values["groups"] = count_label
+        summary.addWidget(number_card, 1)
+
+        distribution_card = QFrame()
+        distribution_card.setObjectName("Card")
+        distribution_layout = QVBoxLayout(distribution_card)
+        distribution_layout.setContentsMargins(16, 12, 16, 12)
+        distribution_layout.addWidget(QLabel(
+            "Verteilung der QEC-Fälle", objectName="CardTitle",
+        ))
+        chart_row = QHBoxLayout()
+        self.pie_chart = ClusterCasePie()
+        chart_row.addWidget(self.pie_chart, 0)
+        legend_layout = QVBoxLayout()
+        legend_layout.setSpacing(9)
+        for key, label, color in zip(
+            ("assigned", "noise", "missing"), PIE_LABELS, PIE_COLORS,
+            strict=True,
         ):
-            card = QFrame()
-            card.setObjectName("Card")
-            stack = QVBoxLayout(card)
-            stack.setContentsMargins(14, 10, 14, 10)
-            label = QLabel(title, objectName="CardTitle")
-            label.setWordWrap(True)
+            row = QHBoxLayout()
+            dot = QFrame()
+            dot.setFixedSize(12, 12)
+            dot.setStyleSheet(
+                f"background-color: {color}; border: none; border-radius: 6px;"
+            )
+            row.addWidget(dot)
+            label_stack = QVBoxLayout()
+            label_stack.setSpacing(1)
+            title = QLabel(label)
+            title.setObjectName("CardTitle")
+            title.setWordWrap(True)
+            label_stack.addWidget(title)
+            percent = QLabel("–", objectName="PageSubtitle")
+            label_stack.addWidget(percent)
+            self.pie_percent_labels[key] = percent
+            row.addLayout(label_stack, 1)
             value = QLabel("–", objectName="CardValue")
-            value.setObjectName("CardValue")
-            value.setAlignment(Qt.AlignmentFlag.AlignLeft)
-            stack.addWidget(label)
-            stack.addWidget(value)
-            summary.addWidget(card, 1)
+            value.setAlignment(Qt.AlignmentFlag.AlignRight)
+            row.addWidget(value)
             self.summary_values[key] = value
+            legend_layout.addLayout(row)
+        legend_layout.addStretch(1)
+        chart_row.addLayout(legend_layout, 1)
+        distribution_layout.addLayout(chart_row)
+        summary.addWidget(distribution_card, 3)
         body.addLayout(summary)
+        self.pie_note = QLabel(
+            "Nur Fälle mit geeigneten Vor-Tausch-Diagnosedaten werden "
+            "geclustert. Nicht auswertbar bedeutet nicht, dass in "
+            "der Werkstatt nie eine Diagnose durchgeführt wurde.",
+            objectName="PageSubtitle",
+        )
+        self.pie_note.setWordWrap(True)
+        body.addWidget(self.pie_note)
         self.kpi = QLabel(objectName="PageSubtitle")
         self.kpi.setWordWrap(True)
         body.addWidget(self.kpi)
@@ -710,6 +775,47 @@ class ClusterWorkspace(QWidget):
         self.core_threshold.valueChanged.connect(self._invalidate_on_input)
         self._change_dimension()
 
+    def _update_population(self, *_args) -> None:
+        """Show actual locally imported FINs, not the QEC case population."""
+        scoped = self._subset()
+        qec_fins = len({case.vin for case in scoped})
+        qec = (
+            f"QEC-Fälle dieser Bauteilfamilie: {len(scoped):,} · "
+            f"{qec_fins:,} unterschiedliche FINs."
+        ).replace(",", ".")
+        metrics = self._population_metrics
+        if not metrics:
+            self.population_summary.setText(
+                "AutoExport-Gesamtumfang lokal nicht verfügbar. " + qec
+            )
+            self.population_detail.setText(
+                "Importierte AutoExport-Quellen sind hier nicht angeschlossen."
+            )
+            return
+        fin_count = metrics.get("autoexport_unique_fins", 0)
+        rows = metrics.get("autoexport_total_rows", 0)
+        self.population_summary.setText(
+            (
+                f"AutoExport importiert: {rows:,} Rohzeilen aus "
+                f"DTC/Werkstatt/TIPS · {fin_count:,} eindeutige FINs. "
+                + qec
+            ).replace(",", ".")
+        )
+        def detail(kind: str, title: str) -> str:
+            return (
+                f"{title}: {metrics.get(kind + '_rows', 0):,} Zeilen, "
+                f"{metrics.get(kind + '_fins', 0):,} FINs"
+            ).replace(",", ".")
+        self.population_detail.setText(
+            detail("autoexport_dtc", "Fehlerspeicher")
+            + " · " + detail("autoexport_repair", "Werkstatt")
+            + " · " + detail("autoexport_tips", "TIPS")
+            + ". Gezählt werden gespeicherte importierte Rohzeilen "
+            "und unterschiedliche FINs über alle AutoExport-Quellen; "
+            "gleiche FINs in mehreren Quellen zählen insgesamt nur einmal. "
+            "Eine AutoExport-FIN ist nicht automatisch ein QEC-Pumpenfall."
+        )
+
     def _toggle_technical_columns(self, shown: bool) -> None:
         """Expose the complete legacy evidence columns only on explicit demand."""
         for col in (1, 4, 5, 6, 8):
@@ -905,6 +1011,9 @@ class ClusterWorkspace(QWidget):
         self.kpi.setText("")
         for value in self.summary_values.values():
             value.setText("–")
+        for value in self.pie_percent_labels.values():
+            value.setText("–")
+        self.pie_chart.set_values(None)
         self._group_ids = []
         self._member_ids = []
         self._noise_ids = []
@@ -1047,9 +1156,20 @@ class ClusterWorkspace(QWidget):
                 self.other_method.blockSignals(False)
         self._group_ids = [group.cluster_id for group in result.groups]
         self.summary_values["groups"].setText(str(len(result.groups)))
-        self.summary_values["assigned"].setText(str(result.clustered_count))
-        self.summary_values["noise"].setText(str(len(result.noise_case_ids)))
-        self.summary_values["missing"].setText(str(len(result.excluded_case_ids)))
+        pie_values = (
+            result.clustered_count,
+            len(result.noise_case_ids),
+            len(result.excluded_case_ids),
+        )
+        if sum(pie_values) != len(self._subset()):
+            raise ValueError("QEC-Fallzahlen der Kreisgrafik sind inkonsistent.")
+        self.pie_chart.set_values(pie_values)
+        total = sum(pie_values)
+        for key, count in zip(("assigned", "noise", "missing"), pie_values, strict=True):
+            self.summary_values[key].setText(str(count))
+            self.pie_percent_labels[key].setText(
+                f"{count / total:.1%} der QEC-Fälle" if total else "Keine Fälle"
+            )
         self.kpi.setText(
             f"Angezeigt: {BY_METHOD[result.parameters.method].title} · "
             f"{len(result.eligible_case_ids)} von {len(self._subset())} "
@@ -1125,6 +1245,7 @@ class ClusterWorkspace(QWidget):
         explanation = explain_cluster(
             self._subset(), group, reference.parameters,
             reference.eligible_case_ids, strict_review=core,
+            dtc_texts=self._dtc_texts,
         )
         self.why_heading.setText(explanation.heading)
         self.why_text.setText(explanation.text)
