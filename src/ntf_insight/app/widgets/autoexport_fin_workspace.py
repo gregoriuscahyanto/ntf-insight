@@ -5,7 +5,7 @@ pump replacement. A diagnostic pattern is NOT a failed pump or NTF finding.
 """
 from __future__ import annotations
 
-from collections import defaultdict
+from dataclasses import replace
 
 from PySide6.QtCore import Qt, QThread, Signal
 from PySide6.QtWidgets import (
@@ -15,6 +15,9 @@ from PySide6.QtWidgets import (
 
 from ntf_insight.analysis.autoexport_fin_patterns import (
     FinPatternResult, cluster_autoexport_fins,
+)
+from ntf_insight.analysis.combined_fin_evidence import (
+    QECFinEvidence, merge_fin_evidence, qec_fin_evidence,
 )
 from ntf_insight.app.models.simple_table_model import SimpleTableModel
 from ntf_insight.app.widgets.fin_pattern_bar_chart import FinPatternBarChart
@@ -34,13 +37,14 @@ class _FinPatternTask(QThread):
     def __init__(
         self,
         source: SourceKnowledgeStore,
-        linked: dict[str, tuple[str, ...]],
-        pump_swap_dates: dict[str, str] | None = None,
+        qec_evidence: QECFinEvidence,
+        *,
+        only_pump_swap: bool,
     ) -> None:
         super().__init__()
         self.source = source
-        self.linked = linked
-        self.pump_swap_dates = pump_swap_dates
+        self.qec_evidence = qec_evidence
+        self.only_pump_swap = only_pump_swap
 
     def run(self) -> None:
         try:
@@ -48,16 +52,29 @@ class _FinPatternTask(QThread):
                 "Lese eindeutige FINs und ECU:DTC-Muster aus dem lokalen AutoExport …"
             )
             fins, patterns, labels = self.source.autoexport_fin_dtc_signatures(
-                pump_swap_dates=self.pump_swap_dates
+                pump_swap_dates=self.qec_evidence.pump_swap_dates,
+                include_all_fins=not self.only_pump_swap,
+            )
+            combined = merge_fin_evidence(
+                fins, patterns, labels, self.qec_evidence,
+                only_pump_swap=self.only_pump_swap,
             )
             self.phase.emit(
-                "Bilde Diagnosegruppen aus FIN-Merkmalen – "
-                "ohne quadratischen Fahrzeugpaarvergleich …"
+                "Bilde gemeinsame Diagnosegruppen aus AutoExport- und "
+                "QEC-DTCs je eindeutiger FIN – ohne Fahrzeugpaarmatrix …"
             )
             result = cluster_autoexport_fins(
-                fins, patterns, labels, self.linked,
+                combined.fins, combined.faults,
+                combined.labels, combined.case_links,
             )
-            self.calculated.emit(result)
+            self.calculated.emit(replace(
+                result,
+                sources_by_fin=combined.sources,
+                autoexport_fin_count=combined.autoexport_fin_count,
+                qec_fin_count=combined.qec_fin_count,
+                overlap_fin_count=combined.overlap_fin_count,
+                qec_only_fin_count=combined.qec_only_fin_count,
+            ))
         except (ValueError, RuntimeError) as exc:
             # Explicit, non-sensitive validation errors only.
             self.failed.emit(str(exc))
@@ -102,26 +119,9 @@ class AutoExportFinWorkspace(QWidget):
         super().__init__()
         self.source = source
         self.population_metrics = population_metrics or {}
-        case_ids: dict[str, list[str]] = defaultdict(list)
-        for case in cases:
-            case_ids[case.vin].append(case.case_id)
-        self._linked = {
-            fin: tuple(sorted(set(ids))) for fin, ids in case_ids.items()
-        }
-        # Only explicitly imported QEC coolant-pump replacement dates.
-        # RepairDt in AutoExport is a generic workshop visit, NEVER a
-        # verified pump swap. Multiple cases: earliest pump date per FIN.
-        self._pump_swap_dates: dict[str, str] = {}
-        for case in cases:
-            if not case.qec_reference or case.component_profile_id != "coolant_pump":
-                continue
-            replacement = case.investigated_replacement()
-            if replacement is None:
-                continue
-            value = replacement.occurred_at.date().isoformat()
-            old = self._pump_swap_dates.get(case.vin)
-            if old is None or value < old:
-                self._pump_swap_dates[case.vin] = value
+        self._qec_evidence = qec_fin_evidence(cases)
+        self._linked = self._qec_evidence.case_links
+        self._pump_swap_dates = self._qec_evidence.pump_swap_dates
         self._analysis_scoped_to_pump = False
         self.result: FinPatternResult | None = None
         self._task: _FinPatternTask | None = None
@@ -144,11 +144,13 @@ class AutoExportFinWorkspace(QWidget):
             "Alle AutoExport-FINs · Diagnosemuster", objectName="PageTitle",
         ))
         lead = QLabel(
-            "Hier werden Fahrzeuge mit vorhandenen DTC-Daten untersucht, "
-            "auch wenn KEIN QEC-Schadteilfall vorliegt. "
-            "Die gesamte verfügbare DTC-Historie wird betrachtet. "
-            "Ohne einen belegten Pumpentausch ist dies ausdrücklich "
-            "KEINE Vor-Tausch-Pumpenanalyse und KEIN NTF-Nachweis.",
+            "Gemeinsame Diagnosemuster aus AutoExport und QEC: "
+            "Jede FIN wird genau einmal betrachtet. "
+            "QEC-/QuickTest-DTCs vor einem belegten Pumpentausch "
+            "ergänzen den AutoExport derselben FIN. "
+            "Für FINs ohne Tauschanker bleibt die allgemeine AutoExport-"
+            "Historie nutzbar, aber nicht als Vor-Tausch-Beweis. "
+            "Ein Cluster ist kein bestätigter Pumpendefekt oder NTF.",
             objectName="PageSubtitle",
         )
         lead.setWordWrap(True)
@@ -159,14 +161,16 @@ class AutoExportFinWorkspace(QWidget):
             f"Lokal importiert: {metrics.get('autoexport_unique_fins', 0):,} "
             f"unterschiedliche FINs · "
             f"{metrics.get('autoexport_dtc_fins', 0):,} FINs mit DTC-Zeilen. "
-            f"{len(cases):,} QEC-Fälle bleiben separat ausgewertet.".replace(",", "."),
+            f"{len(self._linked):,} FINs mit QEC-Pumpenfall zusätzlich verknüpfbar. "
+            "Die gemeinsame Anzahl wird nach FIN-Deduplikation berechnet."
+            .replace(",", "."),
             objectName="PageSubtitle",
         )
         self.population_note.setWordWrap(True)
         body.addWidget(self.population_note)
 
         self.only_pump_swap = QCheckBox(
-            "Nur FINs mit QEC-Rep.-Datum zur Pumpe (nur frühere DTCs)"
+            "Nur FINs mit belegtem QEC-Pumpentausch (nur frühere DTCs)"
         )
         self.only_pump_swap.setToolTip(
             "Opt-in: nur QEC-Kühlmittelpumpenfälle mit gültigem Rep.-Datum. "
@@ -177,17 +181,15 @@ class AutoExportFinWorkspace(QWidget):
         body.addWidget(self.only_pump_swap)
         self.scope_note = QLabel(
             f"Aktuell {len(self._pump_swap_dates):,} FINs mit dokumentiertem "
-            "QEC-Pumpentauschdatum im lokalen QEC-Bestand. "
-            "Das Datum ist der dokumentierte QEC-Reparaturanker, "
-            "keine unabhängige Bestätigung eines erfolgreichen Tauschs. "
-            "Ohne Haken bleiben alle importierten AutoExport-FINs "
-            "für die allgemeine Diagnosemustersuche verfügbar.",
+            "QEC-Pumpentauschdatum. Das Datum stammt aus QEC Rep.-Datum. "
+            "Ohne Haken: AutoExport + QEC-Diagnosen zusammen je FIN. "
+            "Mit Haken: nur FINs mit Pumpentausch und nur DTCs davor.",
             objectName="PageSubtitle",
         )
         self.scope_note.setWordWrap(True)
         body.addWidget(self.scope_note)
         start_row = QHBoxLayout()
-        self.start_button = QPushButton("AutoExport-FINs nach Diagnosemustern gruppieren")
+        self.start_button = QPushButton("Clusteranalyse starten")
         self.start_button.setObjectName("ClusterStartButton")
         self.start_button.setEnabled(source is not None)
         self.start_button.clicked.connect(self.run_analysis)
@@ -285,8 +287,8 @@ class AutoExportFinWorkspace(QWidget):
         ))
         self.fin_table, self.fin_model = _table(
             ("FIN", "Eindeutige ECU:DTC", "Ähnlichkeit zum Muster",
-             "Zugeordnete QEC-Fälle"),
-            (195, 165, 190, 200),
+             "Zugeordnete QEC-Fälle", "Diagnosequelle"),
+            (195, 165, 190, 170, 180),
             280,
         )
         self.fin_table.selectionModel().currentRowChanged.connect(
@@ -348,8 +350,8 @@ class AutoExportFinWorkspace(QWidget):
         self._analysis_scoped_to_pump = self.only_pump_swap.isChecked()
         self.only_pump_swap.setEnabled(False)
         task = _FinPatternTask(
-            self.source, self._linked,
-            self._pump_swap_dates if self._analysis_scoped_to_pump else None,
+            self.source, self._qec_evidence,
+            only_pump_swap=self._analysis_scoped_to_pump,
         )
         self._task = task
         _ACTIVE_FIN_TASKS.add(task)
@@ -386,9 +388,13 @@ class AutoExportFinWorkspace(QWidget):
         )
         self.status.setText(
             f"FIN-Musteranalyse abgeschlossen ({scope}). "
-            f"{result.initial_group_count} anfängliche Suchbereiche; "
-            f"{len(result.groups)} tatsächlich ausgewiesene Mustergruppen. "
-            "Nicht gruppierte Fahrzeuge bleiben separat sichtbar."
+            f"{result.total_fins:,} FINs insgesamt: "
+            f"{result.autoexport_fin_count:,} aus AutoExport und "
+            f"{result.qec_fin_count:,} mit QEC-Bezug, "
+            f"darunter {result.overlap_fin_count:,} in beiden Quellen; "
+            f"{result.qec_only_fin_count:,} QEC-FINs ohne AutoExport. "
+            f"{len(result.groups)} diagnostische Mustergruppen. "
+            "Eine FIN zählt nur einmal; nicht gruppierte FINs bleiben sichtbar."
         )
         self.group_model.set_rows([
             (
@@ -441,6 +447,7 @@ class AutoExportFinWorkspace(QWidget):
                 self.result.code_counts.get(fin, 0),
                 f"{similarity:.1%}",
                 len(self.result.qec_links.get(fin, ())),
+                (self.result.sources_by_fin or {}).get(fin, "—"),
             )
             for fin, similarity in group.members
         ])
@@ -449,8 +456,9 @@ class AutoExportFinWorkspace(QWidget):
         lines = [
             f"Warum sind {group.fin_count} FINs in Mustergruppe "
             f"G{group.group_id}?",
-            "Die App erkennt ähnliche Kombinationen bereits "
-            "gespeicherter Steuergerät-Fehlercodes (ECU:DTC). "
+            "AutoExport- und QEC-/QuickTest-Fehlercodes werden je FIN "
+            "als ein gemeinsames Diagnosemuster verglichen. Eine FIN "
+            "wird nicht doppelt gezählt. "
             "Folgende Codes wurden in mehreren Fahrzeugen dieser "
             "Gruppe beobachtet (pro FIN höchstens einmal gezählt):",
         ]
