@@ -8,9 +8,10 @@ from __future__ import annotations
 
 from collections import Counter
 from dataclasses import dataclass
-from typing import Sequence
+from typing import Mapping, Sequence
 
 from ntf_insight.analysis.case_clustering import FaultKey, signature_for
+from ntf_insight.analysis.diagnostic_observations import dtc_description_catalog
 from ntf_insight.analysis.cluster_workspace_engine import (
     ClusterParameters, UnifiedCluster,
 )
@@ -37,9 +38,22 @@ def _format_fault(fault: FaultKey) -> str:
     return f"{fault[0]}:{fault[1]}"
 
 
-def _fault_list(faults: list[FaultKey]) -> str:
-    """Display ALL available codes, without hiding evidence after 'weitere'."""
-    return "\n".join(f"• {_format_fault(fault)}" for fault in faults)
+def _described_fault(
+    fault: FaultKey, descriptions: Mapping[FaultKey, str],
+) -> str:
+    """DTC-Explorer text is a label, NOT clustering or repair evidence."""
+    label = descriptions.get(fault, "").strip()
+    return f"{_format_fault(fault)} — {label}" if label else _format_fault(fault)
+
+
+def _fault_list(
+    faults: list[FaultKey], descriptions: Mapping[FaultKey, str],
+) -> str:
+    """Display ALL original codes and only documented description texts."""
+    return "\n".join(
+        f"• {_described_fault(fault, descriptions)}"
+        for fault in faults
+    )
 
 
 def explain_cluster(
@@ -49,6 +63,7 @@ def explain_cluster(
     eligible_case_ids: Sequence[str],
     *,
     strict_review: bool = False,
+    dtc_texts: Mapping[FaultKey, str] | None = None,
 ) -> ClusterExplanation:
     """Explain overlapping original diagnostic features for real group members.
 
@@ -58,6 +73,14 @@ def explain_cluster(
     exact decomposition of TF-IDF weights or an HDBSCAN causal attribution.
     """
     by_id = {case.case_id: case for case in cases}
+    # This lookup can use any locally recorded observation, as in the
+    # DTC-Explorer. It ONLY annotates codes already established by the
+    # strictly pre-swap signatures below. A later label cannot make a
+    # post-swap event an input feature.
+    descriptions = (
+        dtc_texts if dtc_texts is not None
+        else dtc_description_catalog(cases)
+    )
     members = tuple(group.case_ids)
     if not members or any(cid not in by_id for cid in members):
         raise ValueError("Cluster-Erklärung: Fälle fehlen in der lokalen Datenbasis.")
@@ -116,7 +139,7 @@ def explain_cluster(
             "Steuergerät-Fehlercode-Kombinationen dokumentiert. "
             "ECU:DTC bedeutet Steuergerät:Fehlercode. "
             "Die Codes sind vor dem untersuchten Pumpentausch erfasst worden:\n"
-            + _fault_list(common)
+            + _fault_list(common, descriptions)
         )
     else:
         lines.append(
@@ -127,12 +150,23 @@ def explain_cluster(
 
     if additional:
         entries = "\n".join(
-            f"• {_format_fault(fault)} – bei {count} von {total} Fällen"
+            f"• {_described_fault(fault, descriptions)} "
+            f"– bei {count} von {total} Fällen"
             for fault, count in additional
         )
         lines.append(
             "Diese weiteren Fehlercodes kommen häufig vor, aber "
             "nicht in allen Fällen:\n" + entries
+        )
+
+    if any(fault in descriptions for fault in (
+        *common, *(fault for fault, _ in additional),
+    )):
+        lines.append(
+            "Die Klartexte stammen aus lokal vorhandenen Diagnosebeobachtungen "
+            "(wie im DTC-Explorer). Sie erläutern nur die Fehlercodes; "
+            "sie werden nicht zur Clusterbildung verwendet. "
+            "Der Beschreibungstext kann aus einem anderen Diagnosezeitpunkt stammen."
         )
 
     complaints = Counter(
