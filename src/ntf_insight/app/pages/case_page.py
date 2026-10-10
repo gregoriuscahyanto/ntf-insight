@@ -146,7 +146,10 @@ class CasePage(QWidget):
         self.representative_panel.tips_linked.connect(self._relay_tips_link)
 
         # Experiment, never silently replace/overwrite strict QEC clusters.
-        self.hdbscan_panel = HDBSCANPanel(self.real_cases)
+        self.hdbscan_panel = HDBSCANPanel(
+            self.real_cases,
+            store=manual_service.store if manual_service is not None else None,
+        )
         self.detail_tabs.addTab(
             self.hdbscan_panel, "ML-Cluster (HDBSCAN)"
         )

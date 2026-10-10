@@ -10,6 +10,14 @@ from PySide6.QtWidgets import (
 )
 
 from ntf_insight.analysis.case_clustering import _component_key
+from ntf_insight.analysis.diagnostic_gap_investigation import (
+    investigate_diagnostic_gaps,
+)
+from ntf_insight.analysis.representative_transfer import (
+    plan_representative_transfer,
+)
+from ntf_insight.storage.quicktest_store import QuickTestStore
+from ntf_insight.storage.source_knowledge_store import SourceKnowledgeStore
 from ntf_insight.analysis.diagnostic_evidence_audit import (
     DiagnosticEvidenceAudit, audit_diagnostic_evidence,
 )
@@ -36,9 +44,10 @@ class HDBSCANPanel(QWidget):
 
     case_requested = Signal(str)
 
-    def __init__(self, cases: list[NTFCase]) -> None:
+    def __init__(self, cases: list[NTFCase], *, store=None) -> None:
         super().__init__()
         self.cases = sorted(cases, key=lambda case: case.case_id)
+        self._local_store = store
         self.by_id = {case.case_id: case for case in self.cases}
         self.family_map = {
             case.case_id: _component_key(case) for case in self.cases
@@ -254,6 +263,45 @@ class HDBSCANPanel(QWidget):
         body.addWidget(self.frequency_table)
 
         body.addWidget(QLabel(
+            "Diagnose-Datenlücken: FIN-Rohquellen nur als Prüfhilfe",
+            objectName="CardTitle",
+        ))
+        self.gap_summary = QLabel(
+            "Noch keine lokale Diagnose-Datenlückenanalyse.",
+            objectName="PageSubtitle",
+        )
+        self.gap_summary.setWordWrap(True)
+        body.addWidget(self.gap_summary)
+        self.gap_model = SimpleTableModel((
+            "QEC-Fall", "FIN", "QEC-Ausschluss", "Prüfhinweis",
+            "QEC am Tauschtag", "QEC nach Tausch",
+            "FIN-Roh-DTC vor Tausch", "Roh-DTC gleicher Tag",
+            "Roh-DTC nach Tausch", "Roh-DTC Zeit unklar",
+            "QuickTest-Roh-DTC", "AutoExport-Roh-DTC",
+        ))
+        self.gap_table = _table(self.gap_model, 210)
+        body.addWidget(self.gap_table)
+
+        body.addWidget(QLabel(
+            "Repräsentantenbefund: Übertragbarkeit als Prüfhypothese",
+            objectName="CardTitle",
+        ))
+        self.transfer_summary = QLabel(
+            "Ungeprüfte Cluster-Repräsentanten liefern keine Ursachenbestätigung.",
+            objectName="PageSubtitle",
+        )
+        self.transfer_summary.setWordWrap(True)
+        body.addWidget(self.transfer_summary)
+        self.transfer_model = SimpleTableModel((
+            "Gruppe", "QEC-Repräsentant", "Ziel-QEC-Fall",
+            "Bestätigter Mechanismus des Repräsentanten",
+            "Cosinus zum Medoid", "Gemeinsame ECU:DTC",
+            "Prüfstatus", "Begründung",
+        ))
+        self.transfer_table = _table(self.transfer_model, 220)
+        body.addWidget(self.transfer_table)
+
+        body.addWidget(QLabel(
             "Fachlich bestätigte Fehlermechanismen – unabhängige Validierung",
             objectName="CardTitle",
         ))
@@ -283,6 +331,30 @@ class HDBSCANPanel(QWidget):
         self.pair_test_button.clicked.connect(self.test_supervised_pairs)
         review_controls.addWidget(self.pair_test_button)
         body.addLayout(review_controls)
+        representative_controls = QHBoxLayout()
+        self.representative_template_button = QPushButton(
+            "Nur Cluster-Repräsentanten zur Fachprüfung exportieren"
+        )
+        self.representative_template_button.setEnabled(False)
+        self.representative_template_button.setToolTip(
+            "Eine vertrauliche CSV mit genau einem echten Medoid je Cluster. "
+            "Die Vorlage kann nach unabhängiger Prüfung direkt wieder eingelesen werden."
+        )
+        self.representative_template_button.clicked.connect(
+            self.export_representative_template
+        )
+        representative_controls.addWidget(self.representative_template_button)
+        self.transfer_export_button = QPushButton(
+            "Befundhypothesen lokal als CSV exportieren"
+        )
+        self.transfer_export_button.setEnabled(False)
+        self.transfer_export_button.setToolTip(
+            "Gibt Ziel-Fälle und Prüfsperren aus. "
+            "Niemals eine bestätigte Ursache automatisch übertragen."
+        )
+        self.transfer_export_button.clicked.connect(self.export_transfer_hypotheses)
+        representative_controls.addWidget(self.transfer_export_button)
+        body.addLayout(representative_controls)
         self.mechanism_summary = QLabel(
             "Noch keine Fachbestätigungen geladen. "
             "Alle Cluster sind unvalidierte Diagnostik-Vergleichsgruppen.",
@@ -354,11 +426,19 @@ class HDBSCANPanel(QWidget):
             self.noise_model.set_rows([])
             self.result = None
             self.evidence_audit = None
+            self.gap_model.set_rows([])
+            self.transfer_model.set_rows([])
+            self.representative_template_button.setEnabled(False)
+            self.transfer_export_button.setEnabled(False)
+            self.gap_summary.setText("Diagnose-Datenlückenanalyse nicht verfügbar.")
+            self.transfer_summary.setText("Repräsentantenprüfung nicht verfügbar.")
             self.export_button.setEnabled(False)
             self.evidence_summary.setText(f"Diagnosedaten nicht auswertbar: {exc}")
             return
         self.result = result
         self.evidence_audit = audit
+        self.representative_template_button.setEnabled(bool(result.clusters))
+        self.transfer_export_button.setEnabled(bool(result.clusters))
         if not {review.case_id for review in self.confirmed_mechanisms}.issubset(
             {case.case_id for case in subset}
         ):
@@ -431,6 +511,7 @@ class HDBSCANPanel(QWidget):
             "35 % der auswertbaren QEC-Fälle. Hohe Häufigkeit bedeutet "
             "NICHT technisch irrelevant."
         )
+        self._refresh_diagnostic_gaps(subset, audit)
         self.frequency_model.set_rows([
             (
                 item.fault[0], item.fault[1], item.case_count,
@@ -605,6 +686,101 @@ class HDBSCANPanel(QWidget):
         except OSError as exc:
             QMessageBox.warning(self, "Fachprüfvorlage nicht gespeichert", str(exc))
 
+    def export_representative_template(self) -> None:
+        """Export exactly one real ML medoid per group, local and confidential."""
+        if self.result is None or not self.result.clusters:
+            return
+        medoids = {
+            group.representative_case_id for group in self.result.clusters
+        }
+        target, _ = QFileDialog.getSaveFileName(
+            self,
+            "Vertrauliche Repräsentantenprüfung LOKAL speichern (FIN / SSL)",
+            "NTF_Cluster_Repraesentanten_Fachpruefung_vertraulich.csv",
+            "CSV-Dateien (*.csv)",
+        )
+        if not target:
+            return
+        try:
+            with open(target, "w", encoding="utf-8-sig", newline="") as stream:
+                write_review_template(
+                    stream,
+                    [case for case in self._subset() if case.case_id in medoids],
+                )
+        except OSError as exc:
+            QMessageBox.warning(
+                self, "Repräsentantenprüfung nicht gespeichert", str(exc),
+            )
+
+    def export_transfer_hypotheses(self) -> None:
+        """Export read-only transfer candidates, not any new cause labels."""
+        if self.result is None or not self.result.clusters:
+            return
+        target, _ = QFileDialog.getSaveFileName(
+            self,
+            "Vertrauliche Befundhypothesen LOKAL speichern (QEC und FIN)",
+            "NTF_Cluster_Befundhypothesen_vertraulich.csv",
+            "CSV-Dateien (*.csv)",
+        )
+        if not target:
+            return
+        plan = plan_representative_transfer(
+            self._subset(), self.result, self.confirmed_mechanisms,
+        )
+        labels = {label.case_id: label for label in self.confirmed_mechanisms}
+        try:
+            with open(target, "w", encoding="utf-8-sig", newline="") as stream:
+                writer = csv.writer(stream, delimiter=";")
+                writer.writerow((
+                    "ML-Gruppe", "Repräsentant-QEC", "Repräsentant-FIN",
+                    "Ziel-QEC", "Ziel-FIN", "Repräsentantenmechanismus nur als Hypothese",
+                    "Fachprüfer des Repräsentanten", "Evidenzreferenz des Repräsentanten",
+                    "Bestätigungsdatum", "Cosinus zum Medoid",
+                    "Gemeinsame ECU:DTC", "Prüfstatus", "Begründung",
+                    "Ergebnisstatus Ziel", "Bestätigter Zielmechanismus",
+                    "Unabhängige Zielevidenz",
+                    "HDBSCAN-Methode", "DTC-Quellen", "Vor-Tausch-Tage",
+                    "DTC-Häufigkeitsfilter", "Methodenhinweis",
+                ))
+                for row in plan.rows:
+                    label = labels.get(row.representative_case_id)
+                    target_label = labels.get(row.target_case_id)
+                    writer.writerow((
+                        row.group,
+                        safe_spreadsheet_cell(row.representative_case_id),
+                        safe_spreadsheet_cell(self.by_id[row.representative_case_id].vin),
+                        safe_spreadsheet_cell(row.target_case_id),
+                        safe_spreadsheet_cell(self.by_id[row.target_case_id].vin),
+                        safe_spreadsheet_cell(row.mechanism_hypothesis),
+                        safe_spreadsheet_cell(label.reviewer if label else ""),
+                        safe_spreadsheet_cell(label.evidence_ref if label else ""),
+                        label.confirmed_on.isoformat() if label else "",
+                        f"{row.cosine:.4f}", row.shared_dtc_count,
+                        safe_spreadsheet_cell(row.status),
+                        safe_spreadsheet_cell(row.explanation),
+                        (
+                            "Unabhängig bestätigt"
+                            if target_label is not None else "Nicht bestätigt"
+                        ),
+                        safe_spreadsheet_cell(
+                            target_label.mechanism_code if target_label else ""
+                        ),
+                        safe_spreadsheet_cell(
+                            target_label.evidence_ref if target_label else ""
+                        ),
+                        self.result.selection_method, self.result.dtc_source,
+                        self.result.lookback_days or "gesamte Vorher-Historie",
+                        (
+                            f"{self.result.common_dtc_cutoff:.0%}"
+                            if self.result.common_dtc_cutoff is not None else "Aus"
+                        ),
+                        "Hypothese zur Einzelprüfung; keine automatische Ursache",
+                    ))
+        except OSError as exc:
+            QMessageBox.warning(
+                self, "Befundhypothesen nicht gespeichert", str(exc),
+            )
+
     def import_mechanism_labels(self) -> None:
         """Read an explicitly edited, reviewed CSV; never infer from QEC text."""
         target, _ = QFileDialog.getOpenFileName(
@@ -629,10 +805,77 @@ class HDBSCANPanel(QWidget):
         )
         self._refresh_mechanism_review()
 
+    def _refresh_diagnostic_gaps(self, subset, audit) -> None:
+        quicktests = (
+            QuickTestStore(self._local_store)
+            if self._local_store is not None else None
+        )
+        autoexport = (
+            SourceKnowledgeStore(self._local_store)
+            if self._local_store is not None else None
+        )
+        try:
+            report = investigate_diagnostic_gaps(
+                subset, audit, quicktests=quicktests, autoexport=autoexport,
+            )
+        except (ValueError, OSError) as exc:
+            self.gap_summary.setText(f"FIN-Rohquellenprüfung nicht möglich: {exc}")
+            self.gap_model.set_rows([])
+            return
+        self.gap_summary.setText(
+            f"{len(report.cases)} QEC-Fälle ohne geeignete Vorher-Diagnose: "
+            f"{report.missing_qec_dtc} ohne QEC-DTC, "
+            f"{report.unsafe_time} zeitlich nicht sicher vorher, "
+            f"{report.other_exclusions} sonstige Ausschlüsse. "
+            f"{report.with_raw_pre_hint} Fälle mit FIN-Rohdaten-Hinweis vor Tausch; "
+            f"{report.qec_same_day_cases} mit QEC-DTC am Tauschtag; "
+            f"{report.qec_post_only_cases} mit QEC-DTC nach Tausch. "
+            + (
+                "Rohquellen lokal geprüft. "
+                if report.raw_available else "Keine FIN-Rohdatenbank angebunden. "
+            )
+            + "Rohzeilen sind keine automatisch zugeordneten QEC-DTCs; "
+            "mehrere QEC-Fälle je FIN können dieselben Rohhinweise zeigen."
+        )
+        self.gap_model.set_rows([
+            (
+                item.case_id, item.vin, item.exclusion, item.detail,
+                item.qec_same_day, item.qec_after, item.raw_pre_dtc_rows,
+                item.raw_same_day_dtc_rows, item.raw_post_dtc_rows,
+                item.raw_unusable_date_rows, item.raw_quicktest_dtc_rows,
+                item.raw_autoexport_dtc_rows,
+            ) for item in report.cases
+        ])
+
+    def _refresh_transfer_plan(self) -> None:
+        if self.result is None:
+            self.transfer_model.set_rows([])
+            return
+        plan = plan_representative_transfer(
+            self._subset(), self.result, self.confirmed_mechanisms,
+        )
+        self.transfer_summary.setText(
+            f"{len(self.result.clusters)} Repräsentanten zur Einzelfallprüfung; "
+            f"{plan.representative_reviewed} fachlich bestätigt. "
+            f"{plan.candidates} noch unbestätigte Ziel-Fälle als Prüfhypothese; "
+            f"{plan.withheld} Ziele zurückgestellt, gesperrt oder bereits bestätigt. "
+            "Keine automatische Ursachenübertragung. Unabhängige Evidenz "
+            "am Zielfall bleibt erforderlich."
+        )
+        self.transfer_model.set_rows([
+            (
+                item.group, item.representative_case_id,
+                item.target_case_id, item.mechanism_hypothesis or "Nicht geprüft",
+                f"{item.cosine:.1%}", item.shared_dtc_count,
+                item.status, item.explanation,
+            ) for item in plan.rows
+        ])
+
     def _refresh_mechanism_review(self) -> None:
         if self.result is None:
             self.mechanism_model.set_rows([])
             return
+        self._refresh_transfer_plan()
         review = review_cluster_mechanisms(
             self._subset(), self.result, self.confirmed_mechanisms,
         )

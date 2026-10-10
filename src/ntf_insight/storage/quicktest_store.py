@@ -191,6 +191,27 @@ class QuickTestStore:
                 raise
         return found is None
 
+    def diagnostic_times_for_fins(
+        self, fins: set[str]
+    ) -> dict[str, list[tuple[datetime, int]]]:
+        """Count source-reported QuickTest DTCs by FIN/session, not by QEC."""
+        if not fins:
+            return {}
+        output: dict[str, list[tuple[datetime, int]]] = {}
+        with self.store.connect() as con:
+            for fin in sorted(fins):
+                rows = con.execute(
+                    """SELECT r.diagnosed_at, COUNT(d.dtc_index)
+                       FROM quicktest_reports AS r
+                       JOIN quicktest_dtcs AS d ON d.report_id = r.report_id
+                       WHERE r.fin = ?
+                       GROUP BY r.report_id, r.diagnosed_at
+                       ORDER BY r.diagnosed_at""",
+                    [fin],
+                ).fetchall()
+                output[fin] = [(when, int(count)) for when, count in rows]
+        return output
+
     def list_fins(self) -> list[str]:
         with self.store.connect() as con:
             return [
