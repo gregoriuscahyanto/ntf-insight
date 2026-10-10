@@ -349,6 +349,7 @@ def calculate_clusters(
     params: ClusterParameters,
     *,
     reference: MLClusterResult | None = None,
+    projection: tuple[tuple[str, float, float, float], ...] | None = None,
 ) -> UnifiedClusterResult:
     """Single method registry entry; no QWidget or extra tab per algorithm."""
     params.validate()
@@ -364,7 +365,19 @@ def calculate_clusters(
         )
     if params.method == "complete_legacy" and params.common_dtc_cutoff is not None:
         raise ValueError("Jaccard-Vergleich nur ohne TF-IDF-Häufigkeitsfilter.")
-    positions = _project_3d(baseline)
+    # Reuse one identical 3D projection across method comparisons;
+    # recalculating the same symmetric eigenproblem for every method can
+    # otherwise make the Qt workspace appear unresponsive on 170+ cases.
+    if projection is not None:
+        if (
+            len(projection) != len(baseline.eligible_case_ids)
+            or tuple(item[0] for item in projection)
+            != baseline.eligible_case_ids
+        ):
+            raise ValueError("3D-Projektion gehört zu einer anderen QEC-Kohorte.")
+        positions = projection
+    else:
+        positions = _project_3d(baseline)
     if params.method == "leaf":
         return _from_hdbscan(baseline, params, positions)
     if params.method == "eom":
