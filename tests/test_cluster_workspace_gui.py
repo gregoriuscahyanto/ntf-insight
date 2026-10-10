@@ -3,6 +3,8 @@ from __future__ import annotations
 
 import csv
 import os
+from pathlib import Path
+from tempfile import TemporaryDirectory
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
@@ -239,24 +241,43 @@ def test_search_synthetic_fin_finds_overlapping_projected_case():
 
 
 def test_core_csv_is_saved_only_locally_with_pending_mechanism_status(
-    tmp_path, monkeypatch,
+    monkeypatch,
 ):
     app = QApplication.instance() or QApplication([])
     panel = ClusterWorkspace(sample())
     _calculate(panel)
-    file = tmp_path / "Kernpruefgruppen_FIN_QEC_NICHT_HOCHLADEN.csv"
+    # Repository tests deliberately keep pytest-tmp *inside Git*; genuine
+    # customer data exports must use a completely separate private directory.
+    with TemporaryDirectory(prefix="ntf-private-core-review-") as directory:
+        file = Path(directory) / "Kernpruefgruppen_FIN_QEC_NICHT_HOCHLADEN.csv"
+        monkeypatch.setattr(
+            QFileDialog, "getSaveFileName", lambda *a, **k: (str(file), "CSV"),
+        )
+        panel.core_export.click()
+        assert file.is_file()
+        with file.open("r", encoding="utf-8-sig", newline="") as stream:
+            rows = list(csv.DictReader(stream, delimiter=";"))
+        assert rows
+        assert all(row["review_status"] == "pending" for row in rows)
+        assert all(not row["mechanism_code"] for row in rows)
+        assert all(row["qec_case_id"] in panel.by_id for row in rows)
+        assert "ausschließlich lokal" in panel.status.text()
+    panel.close()
+    app.processEvents()
+
+
+def test_local_core_export_refuses_files_in_git_checkout(tmp_path, monkeypatch):
+    app = QApplication.instance() or QApplication([])
+    panel = ClusterWorkspace(sample())
+    _calculate(panel)
+    forbidden = tmp_path / "NEVER_COMMIT_FIN_QEC.csv"
     monkeypatch.setattr(
-        QFileDialog, "getSaveFileName", lambda *a, **k: (str(file), "CSV"),
+        QFileDialog, "getSaveFileName",
+        lambda *a, **k: (str(forbidden), "CSV"),
     )
     panel.core_export.click()
-    assert file.is_file()
-    with file.open("r", encoding="utf-8-sig", newline="") as stream:
-        rows = list(csv.DictReader(stream, delimiter=";"))
-    assert rows
-    assert all(row["review_status"] == "pending" for row in rows)
-    assert all(not row["mechanism_code"] for row in rows)
-    assert all(row["qec_case_id"] in panel.by_id for row in rows)
-    assert "ausschließlich lokal" in panel.status.text()
+    assert not forbidden.exists()
+    assert "Git-Repository" in panel.status.text()
     panel.close()
     app.processEvents()
 
