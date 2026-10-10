@@ -59,27 +59,25 @@ def qec_fin_evidence(cases: Sequence[NTFCase]) -> QECFinEvidence:
         date = swap.occurred_at.date().isoformat()
         if fin not in anchors or date < anchors[fin]:
             anchors[fin] = date
+    # A FIN can have multiple QEC pump cases. Compare diagnostics with the
+    # EARLIEST recorded investigated replacement: later case histories must
+    # never reintroduce what could be post-swap evidence.
+    from datetime import date
+    earliest = {
+        fin: date.fromisoformat(value)
+        for fin, value in anchors.items()
+    }
+    for case in pump_cases:
+        fin = case.vin.strip().upper()
+        swap = case.investigated_replacement()
+        if swap is None:
+            continue
         for event in case.diagnostics:
-            if relative_to_replacement(event, swap) == "pre":
+            if (
+                relative_to_replacement(event, swap) == "pre"
+                and event.occurred_at.date() < earliest[fin]
+            ):
                 faults[fin].add(event.fault_key)
-
-    # A VIN may have more than one QEC pump case. Only signals strictly
-    # before the earliest investigated replacement may be used across cases.
-    if anchors:
-        from datetime import date
-        earliest = {fin: date.fromisoformat(value) for fin, value in anchors.items()}
-        faults.clear()
-        for case in pump_cases:
-            fin = case.vin.strip().upper()
-            swap = case.investigated_replacement()
-            if swap is None:
-                continue
-            for event in case.diagnostics:
-                if (
-                    relative_to_replacement(event, swap) == "pre"
-                    and event.occurred_at.date() < earliest[fin]
-                ):
-                    faults[fin].add(event.fault_key)
     return QECFinEvidence(
         pre_swap_faults={
             fin: tuple(sorted(values)) for fin, values in faults.items()
