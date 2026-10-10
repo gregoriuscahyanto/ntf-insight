@@ -5,6 +5,12 @@ on:
     branches: [main]
   pull_request:
 
+# A new PR commit supersedes earlier, unvalidated revisions. Main CI is
+# never cancelled automatically; only stale PR runs are replaced.
+concurrency:
+  group: quality-gate-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   quality:
     strategy:

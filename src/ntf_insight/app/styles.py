@@ -175,6 +175,27 @@ QPushButton:hover {{
     background-color: {p["hover"]};
 }}
 
+/* Neutral graphite primary action; no proprietary brand assets needed. */
+QPushButton#ClusterStartButton {{
+    background-color: #252a2e;
+    color: #ffffff;
+    border: 1px solid #52565a;
+    border-radius: 8px;
+    padding: 11px 20px;
+    font-weight: 600;
+}}
+
+QPushButton#ClusterStartButton:hover {{
+    background-color: #3a4045;
+    color: #ffffff;
+}}
+
+QPushButton#ClusterStartButton:disabled {{
+    background-color: {p["surface_alt"]};
+    color: {p["muted"]};
+    border: 1px solid {p["border"]};
+}}
+
 QPushButton:disabled {{
     color: {p["subtle"]};
 }}

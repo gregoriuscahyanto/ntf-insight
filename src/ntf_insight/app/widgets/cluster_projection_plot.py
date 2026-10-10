@@ -11,7 +11,7 @@ from math import cos, radians, sin
 
 from PySide6.QtCore import QPoint, QRectF, Qt, Signal
 from PySide6.QtGui import QBrush, QColor, QPainter, QPen
-from PySide6.QtWidgets import QFrame, QGraphicsScene, QGraphicsView
+from PySide6.QtWidgets import QApplication, QFrame, QGraphicsScene, QGraphicsView
 
 from ntf_insight.analysis.cluster_workspace_engine import UnifiedClusterResult
 from ntf_insight.app.widgets.case_scatter_plot import color_for_cluster
@@ -20,6 +20,7 @@ from ntf_insight.domain.case import NTFCase
 
 class ClusterProjectionPlot(QGraphicsView):
     case_picked = Signal(str)
+    rotation_changed = Signal(int, int)
 
     def __init__(self) -> None:
         super().__init__()
@@ -34,6 +35,10 @@ class ClusterProjectionPlot(QGraphicsView):
         self.yaw = 32
         self.elevation = 24
         self._drag_position: QPoint | None = None
+        self._drag_origin: QPoint | None = None
+        self._drag_button: Qt.MouseButton | None = None
+        self._dragged = False
+        self._pressed_case_id: str | None = None
         self._result: UnifiedClusterResult | None = None
         self._cases: dict[str, NTFCase] = {}
         self._selected_group: int | None = None
@@ -62,6 +67,17 @@ class ClusterProjectionPlot(QGraphicsView):
         if mode not in {"2d", "3d"}:
             raise ValueError("Darstellung muss 2D oder 3D sein.")
         self._mode = mode
+        self._drag_position = None
+        self._drag_origin = None
+        self._drag_button = None
+        self._pressed_case_id = None
+        self._dragged = False
+        if mode == "3d":
+            self.setDragMode(QGraphicsView.DragMode.NoDrag)
+            self.setCursor(Qt.CursorShape.OpenHandCursor)
+        else:
+            self.setDragMode(QGraphicsView.DragMode.ScrollHandDrag)
+            self.unsetCursor()
         self._draw()
 
     def set_highlight(self, cluster_id: int | None, case_id: str | None = None) -> None:
@@ -79,7 +95,7 @@ class ClusterProjectionPlot(QGraphicsView):
 
     def set_rotation(self, yaw: int, elevation: int) -> None:
         self.yaw = int(yaw) % 360
-        self.elevation = max(-89, min(89, int(elevation)))
+        self.elevation = max(-75, min(75, int(elevation)))
         if self._mode == "3d":
             self._draw()
 
@@ -200,7 +216,7 @@ class ClusterProjectionPlot(QGraphicsView):
                 label.setPos(x + 9, y - 19)
                 label.setZValue(6)
         label = self._scene.addText(
-            "3D-MDS · Drehen: rechte Maustaste ziehen"
+            "3D-MDS · Linke Maustaste halten und ziehen: drehen und neigen"
             if self._mode == "3d" else "2D-MDS · Originaldiagnose, nur Projektion"
         )
         label.setDefaultTextColor(QColor("#8394A6"))
@@ -222,41 +238,91 @@ class ClusterProjectionPlot(QGraphicsView):
         self._zoom = 1.0
         self._refit_preserving_zoom()
 
-    def mousePressEvent(self, event) -> None:  # noqa: N802
-        if self._mode == "3d" and event.button() == Qt.MouseButton.RightButton:
-            self._drag_position = event.pos()
-            event.accept()
-            return
-        item = self.itemAt(event.pos())
+    def _case_at(self, position: QPoint) -> str | None:
+        """Find an actual ellipse also when a text label overlaps the point."""
+        item = self.itemAt(position)
         case_id = item.data(0) if item is not None else None
         if not isinstance(case_id, str):
-            # A text label may be above a projected case point; use the
-            # actual underlying selectable ellipse instead of ignoring it.
-            candidates = self._scene.items(self.mapToScene(event.pos()))
+            candidates = self._scene.items(self.mapToScene(position))
             case_id = next(
                 (candidate.data(0) for candidate in candidates
                  if isinstance(candidate.data(0), str)), None,
             )
-        if isinstance(case_id, str):
-            self._selected_case = case_id
-            self.case_picked.emit(case_id)
+        return case_id if isinstance(case_id, str) else None
+
+    def mousePressEvent(self, event) -> None:  # noqa: N802
+        if (
+            self._mode == "3d"
+            and event.button() in (
+                Qt.MouseButton.LeftButton, Qt.MouseButton.RightButton,
+            )
+        ):
+            self._drag_origin = event.pos()
+            self._drag_position = event.pos()
+            self._drag_button = event.button()
+            self._dragged = False
+            self._pressed_case_id = (
+                self._case_at(event.pos())
+                if event.button() == Qt.MouseButton.LeftButton else None
+            )
+            self.setCursor(Qt.CursorShape.ClosedHandCursor)
+            event.accept()
+            return
+        if event.button() == Qt.MouseButton.LeftButton:
+            case_id = self._case_at(event.pos())
+            if case_id is not None:
+                self._selected_case = case_id
+                self.case_picked.emit(case_id)
         super().mousePressEvent(event)
 
     def mouseMoveEvent(self, event) -> None:  # noqa: N802
         if (
-            self._mode == "3d" and self._drag_position is not None
-            and event.buttons() & Qt.MouseButton.RightButton
+            self._mode == "3d"
+            and self._drag_position is not None
+            and self._drag_origin is not None
+            and self._drag_button is not None
+            and event.buttons() & self._drag_button
         ):
+            displacement = event.pos() - self._drag_origin
+            if (
+                not self._dragged
+                and displacement.manhattanLength() < QApplication.startDragDistance()
+            ):
+                event.accept()
+                return
+            self._dragged = True
             delta = event.pos() - self._drag_position
             self._drag_position = event.pos()
-            self.set_rotation(self.yaw + delta.x(), self.elevation - delta.y())
+            if delta.x() or delta.y():
+                # Horizontal movement rotates the view; vertical movement
+                # tilts it. No diagnostic distances or cluster IDs change.
+                self.set_rotation(
+                    self.yaw + delta.x(), self.elevation - delta.y(),
+                )
+                self.rotation_changed.emit(self.yaw, self.elevation)
             event.accept()
             return
         super().mouseMoveEvent(event)
 
     def mouseReleaseEvent(self, event) -> None:  # noqa: N802
-        if event.button() == Qt.MouseButton.RightButton:
+        if (
+            self._mode == "3d"
+            and event.button() == self._drag_button
+        ):
+            case_id = (
+                self._pressed_case_id
+                if event.button() == Qt.MouseButton.LeftButton
+                and not self._dragged else None
+            )
             self._drag_position = None
+            self._drag_origin = None
+            self._drag_button = None
+            self._dragged = False
+            self._pressed_case_id = None
+            self.setCursor(Qt.CursorShape.OpenHandCursor)
+            if case_id is not None:
+                self._selected_case = case_id
+                self.case_picked.emit(case_id)
             event.accept()
             return
         super().mouseReleaseEvent(event)

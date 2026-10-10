@@ -146,3 +146,22 @@ def test_legacy_complete_link_never_uses_a_qec_from_another_family():
     other.component_type = "Battery"
     with pytest.raises(ValueError, match="Bauteilfamilie"):
         calculate_clusters(cases + [other], params("leaf"))
+
+
+def test_sensitivity_mode_skips_plot_eigenvectors_without_changing_groups():
+    """Offline robustness calculation must avoid expensive unused projections."""
+    cases = sample()
+    for method in ("leaf", "eom", "complete_cosine", "complete_legacy"):
+        full = calculate_clusters(cases, params(method))
+        fast = calculate_clusters(cases, params(method), include_projection=False)
+        assert len(full.positions) == len(full.eligible_case_ids)
+        assert fast.positions == ()
+        assert positive_pairs(fast) == positive_pairs(full)
+        assert fast.noise_case_ids == full.noise_case_ids
+        assert fast.excluded_case_ids == full.excluded_case_ids
+        assert fast.original_distances == full.original_distances
+    with pytest.raises(ValueError, match="Projektionen"):
+        calculate_clusters(
+            cases, params(), projection=full.positions,
+            include_projection=False,
+        )

@@ -6,51 +6,112 @@ Tab **Clusteranalyse** ersetzt. Der Tab enthält die bisherige Fallauswertung
 nicht selbst: `FIN / Fallanalyse` und `QuickTests nach FIN` bleiben eigene
 unveränderte Ansichten.
 
+## Standardansicht: vier Antworten ohne Statistikkenntnisse
+
+1. **Cluster erstellen:** `Clusteranalyse starten` anklicken.
+   Alle zulässigen Methoden werden intern berechnet; in der
+   Standardansicht wird **HDBSCAN Leaf** gezeigt.
+2. **Wie viele Cluster?** Die großen Kennzahlen zeigen
+   *Gefundene Cluster*, *Fälle in Clustern*, *Ohne Cluster*
+   und *Ohne Vor-Tausch-Diagnose*. Nur nachweislich geeignete
+   Fälle werden geclustert; die letzte Zahl bedeutet nicht, dass
+   keine Werkstattdiagnose stattgefunden hat.
+3. **Visuell und Fälle:** Die 2D-Grafik stellt echte QEC-Fälle
+   dar, 3D bleibt optional. Über **Clusterverfahren** neben 2D/3D
+   werden die tatsächlich angezeigten Cluster, Falllisten und
+   Erklärungen gewechselt, ohne die Analyse erneut zu berechnen.
+   Die Tabelle **Cluster auswählen**
+   zeigt die Cluster mit Anzahl QEC-Fällen, FINs und gemeinsamem
+   ECU:DTC-Kern. Klick auf eine Zeile oder auf einen Punkt zeigt
+   die Fälle im Cluster, einschließlich QEC, FIN und Evidenz
+   im Vergleich zum repräsentativen Fall (Medoid).
+4. **Warum zusammen?** Die Erklärung nennt echte
+   Vor-Tausch-ECU:DTCs, die in **allen Fällen** vorkommen,
+   weitere häufige ECU:DTCs mit Fallzahlen sowie – falls
+   dokumentiert – gemeinsame Beanstandungsbegriffe.
+   Für einzelne QECs erscheint deren ECU:DTC-Überlappung
+   mit dem Medoid. Das Ergebnis verwendet genau die gewählte
+   Quelle, den Zeitraum und ggf. den DTC-Häufigkeitsfilter.
+   Fehlt ein durchgehender DTC-Kern oder sind viele Paar-
+   ähnlichkeiten schwach, steht eine gut sichtbare Warnung.
+   Die drei einfach lesbaren Abschnitte zeigen gemeinsame
+   ECU:DTCs, zusätzliche DTCs mit Fallzahlen, die Art der
+   Zuordnung sowie schwache Fallpaare. **Alle qualifizierenden
+   DTCs werden vollständig gezeigt**, auch nach dem vierten.
+   Das sind beobachtete Gemeinsamkeiten, **keine** mathematische
+   Zurechnung zu einer technischen Pumpenursache.
+
+**Weitere Details für Experten anzeigen** blendet bei Bedarf
+die alten, weiterhin voll funktionsfähigen Methoden-, Stabilitäts-,
+K-Prüfgruppen- und Ausreißertabellen und technischen Werkzeuge ein.
+**Erweiterte Einstellungen anzeigen** ist ein eigener optionaler
+Bereich vor dem Start. Nichts davon ist für die vier Fragen nötig.
+
+**Achtung:** Die Zahl der Cluster ist immer methoden- und
+parameterabhängig. Gleiche Diagnosen und identische DTCs sind
+keine Bestätigung eines mechanischen Pumpendefekts oder einer
+Lieferantenverantwortung. SSL- und Lieferantenbefunde fließen
+nicht in das Clustering oder diese Erklärung ein.
+
 ## Bedienung von oben nach unten
 
-1. **Bauteilfamilie wählen** (standardmäßig Kühlmittelpumpe, falls vorhanden).
-   Nur QEC-Fälle derselben Familie gehören in eine ML-Kohorte.
-2. **Verfahren** wählen: `HDBSCAN · Leaf` (Standard), `HDBSCAN · EOM`,
-   `Complete-Link · Cosinus` oder `Complete-Link · DTC-Jaccard`.
-   Letzteres ist die bisherige restriktive Repräsentantenmethode mit
-   **anderem Ähnlichkeitsmaß**. Der schreibende Datenbestand bleibt unverändert.
-3. Gemeinsame Filter: DTC-Quelle (QuickTest/AutoExport/beide),
-   Zeitfenster vor Pumpentausch, Mindestgröße je Cluster. Optionaler
-   DTC-Häufigkeitsfilter ist eine Sensitivitätsanalyse, keine DTC-Widerlegung.
-   Die Methode blendet nicht relevante Eingaben aus:
-   `MinSamples` für HDBSCAN; Paar-Cosinus für das neue Complete-Link;
-   gewichteter Jaccard-Mindestindex für die ältere Methode.
-4. **Cluster berechnen**. Parameterwechsel invalidiert die alte Darstellung;
-   die GUI lässt keine alten Zuordnungen als aktuelle Ergebnisse stehen.
-   Die Berechnung läuft im Hintergrund, um die Qt-Oberfläche bedienbar zu halten.
-5. **Methoden vergleichen** rechnet auf gleicher gewählter Vor-Tausch-Kohorte
-   mehrere Verfahren. Die Tabelle zeigt Clusteranzahl, zugeordnete Fälle,
-   Rauschen, durchgehenden exakten DTC-Kern, Anzahl Gruppen mit ≥2 FINs
-   sowie Fallpaar-Übereinstimmung zum zuerst gewählten Verfahren. Doppelklick
-   auf eine Methode zeigt ihre Gruppen. Optional können zwei Projektionen
-   nebeneinander betrachtet werden. Das andere Verfahren wird über das
-   Dropdown rechts neben der 2D/3D-Umschaltung ausgewählt.
-6. **2D**: klassische MDS-Projektion derselben diagnostischen Distanz.
-   **3D**: MDS mit dritter Achse, drehbar über Azimut/Neigung und
-   rechte Maustaste, per Mausrad zoombar. Plotkoordinaten werden **niemals
-   als Clustering-Eingabe** verwendet. Unterschiedlich gruppierte Punkte
-   können in der Projektion räumlich zusammenfallen. Unzugeordnete Fälle
-   sind grau; repräsentative Fälle erscheinen größer.
-7. **Clustertabelle**: pro Gruppe ein echter QEC-Medoid, Anzahl Fälle,
-   verschiedene FINs, Diagnostik-Kern und Prüfhinweise.
-   **Falltabelle** darunter: reale QECs, FINs, diagnostischer
-   Index zum Medoid, bei HDBSCAN die Zugehörigkeit, gemeinsame DTCs,
-   und separat markierte *post-hoc* SSL-Endbefunde.
-   Per Doppelklick oder **In FIN / Fallanalyse öffnen** navigieren.
-   Die Fälle ohne Vor-Tausch-Diagnose bzw. ohne Gruppenbindung sind getrennt
-   in einer unteren Tabelle zugänglich.
-8. **Fachprüfung und Exporte**: vorhandene HDBSCAN-Fachvalidierung,
-   Pilotfälle, CPC3-Brücken, Wiederauftreten, technische
-   Expertenbestätigungen, das restriktive Repräsentanten/TIPS-Werkzeug
-   sowie die erweiterte Fallpaaranalyse bleiben über drei Schaltflächen
-   in Dialogen erreichbar – **keine neuen Cluster-Tabs**.
-   Zusätzlich lässt sich die ausgewählte Ergebnismenge als
-   **vertrauliche lokale CSV** speichern.
+1. **Bauteilfamilie und Datenbasis wählen** (standardmäßig
+   Kühlmittelpumpe, soweit vorhanden), DTC-Quelle (QuickTest,
+   AutoExport, beide) und Zeitfenster vor dem dokumentierten Tausch.
+   Nur QEC-Fälle derselben Bauteilfamilie werden gemeinsam analysiert.
+2. **Clusteranalyse starten** ist die **einzige Aktion zum Erzeugen der
+   Cluster**. Die Anwendung berechnet **automatisch** HDBSCAN Leaf,
+   HDBSCAN EOM, Complete-Link Cosinus und – wenn mit dem Filter
+   kompatibel – das ältere gewichtete DTC-Jaccard-Verfahren.
+   Sie erstellt dabei **auch** die konservativen K-Prüfgruppen,
+   die Methodenvergleichstabelle und die Robustheitsprüfung zu
+   diagnostischen Ein-Faktor-Variationen. Ein Methoden-Voting wird
+   **nicht** durchgeführt.
+3. **Erweiterte Einstellungen anzeigen** öffnet die optionalen
+   methodenspezifischen Filter und die Auswahl des zunächst
+   **angezeigten Referenzverfahrens** (Standard Leaf). Darin liegen
+   MinSamples, Mindestgröße, Paar-Cosinus, DTC-Jaccard-Schwelle und
+   der experimentelle DTC-Häufigkeitsfilter. Wechsel von
+   Datenbasis oder Berechnungsparametern invalidiert alte
+   Ergebnisse. Der Tab startet **nicht ungefragt beim Öffnen**.
+4. **Methodenvergleich** zeigt Clusteranzahl, zugeordnete Fälle,
+   Rauschen, exakten DTC-Kern, Zahl der Gruppen mit mindestens zwei
+   FINs und Fallpaar-Überlappung. Ein Doppelklick zeigt die echte
+   jeweilige Methode im selben Cluster-Tab. Die Robustheitstabelle
+   kennzeichnet explizit, zu welchem beim Start gewählten
+   Referenzverfahren ihre Werte gehören. Methodenvergleich bedeutet
+   nicht unabhängige Fehlerursachenbestätigung.
+5. **Robustheitsprüfung** unterscheidet echte Fallpaar-Übereinstimmung
+   (Paar-Jaccard), Paarerhalt und Verbindungen zwischen Gruppen.
+   Quelle, Zeitfenster und optionale Einstellungen werden einzeln
+   variiert. Dabei zählen nur QECs mit nachgewiesener Vor-Tausch-
+   Diagnose in **beiden** Szenarien; fehlende Daten gelten nicht
+   als Gegenbeleg. Kennzahlen sind keine Pumpendefekt-Wahrscheinlichkeit.
+6. **2D/3D** sind Projektionen derselben *ursprünglichen*
+   Diagnosedistanzen, niemals Clustering-Eingaben. In 3D dreht
+   **linke Maustaste halten und horizontal ziehen** die Ansicht,
+   vertikales Ziehen neigt sie. **Einzelklick** wählt weiterhin
+   einen Fall. Präzise Regler liegen in den Expertendetails.
+   Gruppierte Fälle sind farbig, Ausreißer grau und
+   Repräsentanten größer. Zwei Verfahren können in der
+   Expertenansicht mit einem **separaten** Dropdown
+   `Zweites Verfahren` nebeneinander verglichen werden.
+7. **Clustertabelle / Falltabelle** enthalten Medoide, FIN-Anzahl,
+   diagnostischen Kern, Mindest-/Medianähnlichkeit, echte
+   QEC-IDs und fachliche Vorbehalte. Fall-Doppelklick führt
+   in **FIN / Fallanalyse**. Die lokale FIN-/QEC-Suche zeigt
+   selbst überlagerte Projektionspunkte. Fälle ohne geeignete
+   Diagnose oder ohne Gruppenbindung bleiben separat prüfbar.
+8. **Fachprüfung und Exporte**: Pilotprüfgruppen, CPC3-Brücken,
+   Wiederauftreten, HDBSCAN-Fachprüfung und weitere bewährte
+   lokale Analysewerkzeuge bleiben erreichbar. Vertrauliche
+   CSV-Dateien werden nur nach ausdrücklichem Export auf dem
+   lokalen Rechner gespeichert; keine Originaldaten in CI/Git.
+
+Die Vergleichsansicht ist **kein Wettbewerb um das beste Verfahren**:
+Unterschiedliche Methoden werden als komplementäre Diagnosemodelle
+interpretiert. Ihre Ähnlichkeit liefert keine unabhängige Bestätigung
+eines mechanischen Pumpendefekts oder einer Lieferantenursache.
 
 ## Konservative Kernprüfgruppen direkt im selben Tab
 

@@ -28,6 +28,8 @@ from ntf_insight.analysis.cluster_core_review import (
     CoreGroupLink, link_core_review_groups, write_core_review_template,
 )
 from ntf_insight.analysis.hdbscan_clustering import cluster_hdbscan_cases
+from ntf_insight.analysis.cluster_explanation import explain_cluster
+from ntf_insight.analysis.cluster_stability import build_stability_report, sensitivity_scenarios
 from ntf_insight.app.models.simple_table_model import SimpleTableModel
 from ntf_insight.app.widgets.cluster_projection_plot import ClusterProjectionPlot
 from ntf_insight.domain.case import NTFCase
@@ -41,6 +43,7 @@ _ACTIVE_TASKS: set[QThread] = set()
 class _ClusterTask(QThread):
     calculated = Signal(object)
     problem = Signal(str)
+    progress = Signal(str)
 
     def __init__(
         self,
@@ -48,12 +51,14 @@ class _ClusterTask(QThread):
         parameters: ClusterParameters,
         methods: tuple[str, ...],
         core_threshold: float = 0.45,
+        include_stability: bool = False,
     ) -> None:
         super().__init__()
         self.cases = cases
         self.parameters = parameters
         self.methods = methods
         self.core_threshold = core_threshold
+        self.include_stability = include_stability
 
     def run(self) -> None:
         try:
@@ -67,6 +72,7 @@ class _ClusterTask(QThread):
                 lookback_days=p.lookback_days,
                 common_dtc_cutoff=p.common_dtc_cutoff,
             )
+            self.progress.emit("Berechne alle Clustermethoden auf gleicher Diagnosebasis …")
             shared_projection = _project_3d(base)
             results = [
                 calculate_clusters(
@@ -88,7 +94,29 @@ class _ClusterTask(QThread):
                     self.cases, strict_params, reference=base,
                     projection=shared_projection,
                 )
-            self.calculated.emit((results, core))
+            report = None
+            if self.include_stability:
+                reference = next(
+                    result for result in results
+                    if result.parameters.method == p.method
+                )
+                comparisons = [
+                    ("Verfahren", BY_METHOD[item.parameters.method].title, item)
+                    for item in results if item.parameters.method != p.method
+                ]
+                scenarios = sensitivity_scenarios(p)
+                for index, (label, variant) in enumerate(scenarios, start=1):
+                    self.progress.emit(
+                        f"Robustheitsprüfung {index}/{len(scenarios)}: {label}"
+                    )
+                    # Independently re-evaluate eligible cases per scenario.
+                    run = calculate_clusters(
+                        self.cases, variant, include_projection=False,
+                    )
+                    comparisons.append(("Daten/Parameter", label, run))
+                self.progress.emit("Fasse Fallpaar-Stabilität zusammen …")
+                report = build_stability_report(reference, tuple(comparisons))
+            self.calculated.emit((results, core, report))
         except (ValueError, RuntimeError) as exc:
             self.problem.emit(str(exc))
         except Exception:
@@ -168,6 +196,7 @@ class ClusterWorkspace(QWidget):
         self._run_results: dict[str, UnifiedClusterResult] = {}
         self.result: UnifiedClusterResult | None = None
         self._core_result: UnifiedClusterResult | None = None
+        self._stability_report = None
         self._core_links: tuple[CoreGroupLink, ...] = ()
         self._visible_core_links: list[CoreGroupLink] = []
         self._active_core_group: UnifiedCluster | None = None
@@ -175,10 +204,8 @@ class ClusterWorkspace(QWidget):
         self._member_ids: list[str] = []
         self._noise_ids: list[str] = []
         self._focused_case_id: str | None = None
-        self._member_title_default = "Falltabelle – gewählter Cluster"
+        self._member_title_default = "4. Fälle im ausgewählten Cluster"
         self._dialogs: list[QDialog] = []
-        self._activated = False
-
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         scroll = QScrollArea(self)
@@ -199,16 +226,15 @@ class ClusterWorkspace(QWidget):
         headline.addWidget(self.method_hint)
         body.addLayout(headline)
         lead = QLabel(
-            "Eine Analysefläche für alle Clustermethoden. Gleiche Merkmale "
-            "vor dem Pumpentausch, echte QEC-Repräsentanten, sichtbare "
-            "Ausreißer und technisch getrennte Fachprüfung. "
-            "SSL-Endbefunde fließen nicht in das Clustering ein.",
+            "Ein Klick erstellt Cluster aus den vorhandenen Diagnosemerkmalen "
+            "vor dem Pumpentausch. Wähle anschließend einen Cluster, "
+            "um seine Fälle und ihre Gemeinsamkeiten zu sehen.",
             objectName="PageSubtitle",
         )
         lead.setWordWrap(True)
         body.addWidget(lead)
 
-        body.addWidget(QLabel("Methode und Datenbasis", objectName="CardTitle"))
+        body.addWidget(QLabel("Datenbasis", objectName="CardTitle"))
         fields = QGridLayout()
         fields.setHorizontalSpacing(12)
         fields.setVerticalSpacing(8)
@@ -262,79 +288,89 @@ class ClusterWorkspace(QWidget):
 
         fields.addWidget(QLabel("Bauteilfamilie"), 0, 0)
         fields.addWidget(self.family, 0, 1)
-        fields.addWidget(QLabel("Verfahren"), 0, 2)
-        fields.addWidget(self.method, 0, 3)
-        fields.addWidget(QLabel("DTC-Quellen"), 1, 0)
-        fields.addWidget(self.source, 1, 1)
-        fields.addWidget(QLabel("Vor-Tausch-Zeitraum"), 1, 2)
-        fields.addWidget(self.lookback, 1, 3)
-        fields.addWidget(QLabel("Min. Fälle je Cluster"), 2, 0)
-        fields.addWidget(self.min_cluster_size, 2, 1)
-        self.min_samples_label = QLabel("MinSamples")
-        fields.addWidget(self.min_samples_label, 2, 2)
-        fields.addWidget(self.min_samples, 2, 3)
-        self.cosine_label = QLabel("Min. Paar-Cosinus")
-        fields.addWidget(self.cosine_label, 3, 0)
-        fields.addWidget(self.cosine_threshold, 3, 1)
-        self.jaccard_label = QLabel("Min. DTC-Jaccard-Index")
-        fields.addWidget(self.jaccard_label, 3, 2)
-        fields.addWidget(self.jaccard_threshold, 3, 3)
-        fields.addWidget(self.filter_common, 4, 0, 1, 4)
+        fields.addWidget(QLabel("DTC-Quellen"), 0, 2)
+        fields.addWidget(self.source, 0, 3)
+        fields.addWidget(QLabel("Vor-Tausch-Zeitraum"), 1, 0)
+        fields.addWidget(self.lookback, 1, 1)
         body.addLayout(fields)
+
+        # Optional professional controls, not separate clustering actions.
+        self.advanced_toggle = QCheckBox("Erweiterte Einstellungen anzeigen")
+        body.addWidget(self.advanced_toggle)
+        self.advanced_panel = QWidget()
+        advanced_fields = QGridLayout(self.advanced_panel)
+        advanced_fields.setContentsMargins(0, 0, 0, 0)
+        advanced_fields.setHorizontalSpacing(12)
+        advanced_fields.setVerticalSpacing(8)
+        advanced_fields.addWidget(QLabel("Verfahren für Ergebnisansicht"), 0, 0)
+        advanced_fields.addWidget(self.method, 0, 1)
+        advanced_fields.addWidget(QLabel("Min. Fälle je Cluster"), 0, 2)
+        advanced_fields.addWidget(self.min_cluster_size, 0, 3)
+        self.min_samples_label = QLabel("MinSamples")
+        advanced_fields.addWidget(self.min_samples_label, 1, 0)
+        advanced_fields.addWidget(self.min_samples, 1, 1)
+        self.cosine_label = QLabel("Min. Paar-Cosinus")
+        advanced_fields.addWidget(self.cosine_label, 1, 2)
+        advanced_fields.addWidget(self.cosine_threshold, 1, 3)
+        self.jaccard_label = QLabel("Min. DTC-Jaccard-Index")
+        advanced_fields.addWidget(self.jaccard_label, 2, 0)
+        advanced_fields.addWidget(self.jaccard_threshold, 2, 1)
+        advanced_fields.addWidget(self.filter_common, 3, 0, 1, 4)
+        body.addWidget(self.advanced_panel)
+        self.advanced_panel.hide()
+        self.advanced_toggle.toggled.connect(self.advanced_panel.setVisible)
         self.method.currentIndexChanged.connect(self._method_changed)
         self._update_parameters()
 
         buttons = QHBoxLayout()
-        self.run_button = QPushButton("Cluster berechnen")
+        self.run_button = QPushButton("Clusteranalyse starten")
+        self.run_button.setObjectName("ClusterStartButton")
+        self.run_button.setToolTip(
+            "Alle zulässigen Verfahren, konservative Prüfgruppen und "
+            "Stabilitätsanalysen ausschließlich mit lokalen Daten berechnen."
+        )
         self.run_button.clicked.connect(self.run_analysis)
         buttons.addWidget(self.run_button)
-        self.compare_button = QPushButton("Methoden vergleichen")
-        self.compare_button.clicked.connect(self.compare_methods)
-        buttons.addWidget(self.compare_button)
-        self.export_button = QPushButton("Clustertabelle lokal exportieren")
-        self.export_button.setEnabled(False)
-        self.export_button.clicked.connect(self.export_csv)
-        buttons.addWidget(self.export_button)
         buttons.addStretch(1)
         body.addLayout(buttons)
 
-        self.status = QLabel("Noch keine Analyse ausgeführt.", objectName="PageSubtitle")
+        self.status = QLabel(
+            "Bereit. 'Clusteranalyse starten' prüft alle Verfahren gemeinsam.",
+            objectName="PageSubtitle",
+        )
         self.status.setWordWrap(True)
         body.addWidget(self.status)
+
+        # The three everyday KPIs and the separate missing-evidence figure.
+        summary = QHBoxLayout()
+        summary.setSpacing(10)
+        self.summary_values = {}
+        for key, title in (
+            ("groups", "Gefundene Cluster"),
+            ("assigned", "Fälle in Clustern"),
+            ("noise", "Ohne Cluster"),
+            ("missing", "Ohne Vor-Tausch-Diagnose"),
+        ):
+            card = QFrame()
+            card.setObjectName("Card")
+            stack = QVBoxLayout(card)
+            stack.setContentsMargins(14, 10, 14, 10)
+            label = QLabel(title, objectName="CardTitle")
+            label.setWordWrap(True)
+            value = QLabel("–", objectName="CardValue")
+            value.setObjectName("CardValue")
+            value.setAlignment(Qt.AlignmentFlag.AlignLeft)
+            stack.addWidget(label)
+            stack.addWidget(value)
+            summary.addWidget(card, 1)
+            self.summary_values[key] = value
+        body.addLayout(summary)
         self.kpi = QLabel(objectName="PageSubtitle")
         self.kpi.setWordWrap(True)
         body.addWidget(self.kpi)
 
-        comparison_header = QHBoxLayout()
-        comparison_header.addWidget(QLabel("Methodenvergleich", objectName="CardTitle"))
-        comparison_header.addStretch(1)
-        self.compare_side = QCheckBox("Zwei Verfahren nebeneinander")
-        self.compare_side.setEnabled(False)
-        self.compare_side.toggled.connect(self._draw_plots)
-        comparison_header.addWidget(self.compare_side)
-        body.addLayout(comparison_header)
-        self.compare_model = _ClusterTableModel((
-            "Verfahren", "Cluster", "Clusterfälle", "Ausreißer",
-            "Mit DTC-Kern", "Mit ≥2 FINs", "Paarübereinstimmung", "Distanzmaß",
-        ))
-        self.compare_table = _table(
-            self.compare_model, 145,
-            (205, 78, 104, 88, 110, 102, 151, 166),
-        )
-        self.compare_table.setMaximumHeight(200)
-        self.compare_table.doubleClicked.connect(self._compare_row_picked)
-        body.addWidget(self.compare_table)
-        info = QLabel(
-            "Paarübereinstimmung vergleicht echte QEC-Fallpaare, niemals "
-            "zufällige Clusternummern. Jaccard verwendet eine andere Metrik. "
-            "Hohe Übereinstimmung bedeutet nicht gleiche technische Ursache.",
-            objectName="PageSubtitle",
-        )
-        info.setWordWrap(True)
-        body.addWidget(info)
-
         map_header = QHBoxLayout()
-        map_header.addWidget(QLabel("Fallvisualisierung", objectName="CardTitle"))
+        map_header.addWidget(QLabel("2. Cluster im Überblick", objectName="CardTitle"))
         map_header.addStretch(1)
         map_header.addWidget(QLabel("Darstellung"))
         self.dimension = QComboBox()
@@ -342,10 +378,17 @@ class ClusterWorkspace(QWidget):
         self.dimension.addItem("3D · drehbar", "3d")
         self.dimension.currentIndexChanged.connect(self._change_dimension)
         map_header.addWidget(self.dimension)
-        self.other_method = QComboBox()
-        self.other_method.currentIndexChanged.connect(self._draw_plots)
-        self.other_method.setEnabled(False)
-        map_header.addWidget(self.other_method)
+        map_header.addWidget(QLabel("Clusterverfahren"))
+        self.display_method = QComboBox()
+        self.display_method.setToolTip(
+            "Wechselt die tatsächlich angezeigten Cluster, Fälle und Erklärungen."
+        )
+        self.display_method.currentIndexChanged.connect(
+            self._display_method_changed
+        )
+        self.display_method.setEnabled(False)
+        self.display_method.setMinimumWidth(180)
+        map_header.addWidget(self.display_method)
         self.zoom_reset = QPushButton("Ansicht zurücksetzen")
         self.zoom_reset.clicked.connect(self._reset_zoom)
         map_header.addWidget(self.zoom_reset)
@@ -364,23 +407,28 @@ class ClusterWorkspace(QWidget):
         self.elevation.setValue(24)
         self.elevation.setToolTip("Vertikale Neigung der 3D-Projektion")
         rotate.addWidget(self.elevation, 1)
-        body.addLayout(rotate)
+        # Precise sliders remain accessible under expert details only.
+        # Everyday rotation works by holding and dragging in the 3D plot.
         self.yaw.valueChanged.connect(self._set_rotation)
         self.elevation.valueChanged.connect(self._set_rotation)
         self.plot_row = QHBoxLayout()
         self.plot = ClusterProjectionPlot()
         self.plot.case_picked.connect(self.focus_case)
+        self.plot.rotation_changed.connect(self._plot_rotated)
         self.plot_row.addWidget(self.plot, 1)
         self.other_plot = ClusterProjectionPlot()
         self.other_plot.case_picked.connect(self.focus_case)
+        self.other_plot.rotation_changed.connect(self._plot_rotated)
         self.other_plot.hide()
         self.plot_row.addWidget(self.other_plot, 1)
         body.addLayout(self.plot_row)
         plot_note = QLabel(
-            "2D/3D sind MDS-Projektionen der Originaldistanzen. "
-            "Cluster entstehen NIE aus 2D/3D-Pixeln. "
-            "Farbige Punkte = gruppiert, Grau = Rauschen, größere Punkte = Medoid. "
-            "Fälle ohne gesicherte Vor-Tausch-Diagnose werden unten dokumentiert.",
+            "Jeder Punkt ist ein QEC-Fall. Farbe = Cluster, "
+            "Grau = nicht zugeordnet, großer Punkt = repräsentativer Fall. "
+            "Klick auf einen Punkt zeigt dessen Cluster. In 3D: "
+            "linke Maustaste gedrückt halten und ziehen, um zu drehen "
+            "oder zu neigen. Die Grafik zeigt Ähnlichkeiten, "
+            "keine bewiesenen Defekte.",
             objectName="PageSubtitle",
         )
         plot_note.setWordWrap(True)
@@ -402,7 +450,7 @@ class ClusterWorkspace(QWidget):
         self.search_feedback.setWordWrap(True)
         body.addWidget(self.search_feedback)
 
-        body.addWidget(QLabel("Clustertabelle", objectName="CardTitle"))
+        body.addWidget(QLabel("3. Cluster auswählen – ein Klick zeigt die Fälle", objectName="CardTitle"))
         self.group_model = _ClusterTableModel((
             "Cluster", "Repräsentativer QEC-Fall", "QEC-Fälle", "FINs",
             "Schwächstes Paar", "Median", "Schwache Paare",
@@ -415,7 +463,143 @@ class ClusterWorkspace(QWidget):
         self.group_table.selectionModel().currentRowChanged.connect(
             self._group_changed
         )
+        # Keep technical columns in the model, but remove them from the
+        # everyday view. The advanced details still explain algorithms below.
+        for column in (1, 4, 5, 6, 8):
+            self.group_table.setColumnHidden(column, True)
+        self.group_table.setColumnWidth(7, 630)
         body.addWidget(self.group_table)
+
+        self.why_box = QFrame()
+        self.why_box.setObjectName("Card")
+        why_layout = QVBoxLayout(self.why_box)
+        why_layout.setContentsMargins(14, 12, 14, 12)
+        self.why_heading = QLabel("Warum gehören diese Fälle zusammen?")
+        self.why_heading.setObjectName("CardTitle")
+        self.why_text = QLabel(
+            "Bitte zuerst die Clusteranalyse starten und einen Cluster wählen."
+        )
+        self.why_text.setWordWrap(True)
+        self.why_text.setTextFormat(Qt.TextFormat.PlainText)
+        self.why_text.setTextInteractionFlags(
+            Qt.TextInteractionFlag.TextSelectableByMouse
+        )
+        why_layout.addWidget(self.why_heading)
+        why_layout.addWidget(self.why_text)
+        body.addWidget(self.why_box)
+
+        self.member_title = QLabel(
+            self._member_title_default, objectName="CardTitle",
+        )
+        body.addWidget(self.member_title)
+        self.member_model = _ClusterTableModel((
+            "Rolle", "QEC-Fall", "FIN", "Index zum Medoid",
+            "ML-Zugehörigkeit", "Gemeinsam mit Repräsentanten", "SSL-Endbefund (post hoc)",
+        ))
+        self.member_table = _table(
+            self.member_model, 240,
+            (165, 175, 185, 137, 115, 560, 480),
+        )
+        for column in (3, 4, 6):
+            self.member_table.setColumnHidden(column, True)
+        self.member_table.doubleClicked.connect(self._open_member_case)
+        body.addWidget(self.member_table)
+        open_row = QHBoxLayout()
+        self.open_button = QPushButton("Ausgewählten Fall in FIN / Fallanalyse öffnen")
+        self.open_button.clicked.connect(self.open_selected_case)
+        self.open_button.setEnabled(False)
+        open_row.addWidget(self.open_button)
+        open_row.addStretch(1)
+        body.addLayout(open_row)
+
+        # The four everyday questions stay visible; detailed method diagnostics
+        # and review/export tooling remain available, initially collapsed.
+        self.expert_toggle = QCheckBox("Weitere Details für Experten anzeigen")
+        body.addWidget(self.expert_toggle)
+        self.expert_panel = QWidget()
+        expert_body = QVBoxLayout(self.expert_panel)
+        expert_body.setContentsMargins(0, 6, 0, 0)
+        expert_body.setSpacing(10)
+        expert_body.addLayout(rotate)
+        export_row = QHBoxLayout()
+        self.export_button = QPushButton("Clustertabelle lokal exportieren")
+        self.export_button.setEnabled(False)
+        self.export_button.clicked.connect(self.export_csv)
+        export_row.addWidget(self.export_button)
+        export_row.addStretch(1)
+        expert_body.addLayout(export_row)
+
+        comparison_header = QHBoxLayout()
+        comparison_header.addWidget(QLabel("Methodenvergleich", objectName="CardTitle"))
+        comparison_header.addStretch(1)
+        self.compare_side = QCheckBox("Zwei Verfahren nebeneinander")
+        self.compare_side.setEnabled(False)
+        self.compare_side.toggled.connect(self._draw_plots)
+        comparison_header.addWidget(self.compare_side)
+        comparison_header.addWidget(QLabel("Zweites Verfahren"))
+        self.other_method = QComboBox()
+        self.other_method.setToolTip(
+            "Nur für den optionalen Vergleich mit der linken Clusteransicht."
+        )
+        self.other_method.currentIndexChanged.connect(self._draw_plots)
+        self.other_method.setEnabled(False)
+        comparison_header.addWidget(self.other_method)
+        expert_body.addLayout(comparison_header)
+        self.compare_model = _ClusterTableModel((
+            "Verfahren", "Cluster", "Clusterfälle", "Ausreißer",
+            "Mit DTC-Kern", "Mit ≥2 FINs", "Paarübereinstimmung", "Distanzmaß",
+        ))
+        self.compare_table = _table(
+            self.compare_model, 145,
+            (205, 78, 104, 88, 110, 102, 151, 166),
+        )
+        self.compare_table.setMaximumHeight(200)
+        self.compare_table.doubleClicked.connect(self._compare_row_picked)
+        expert_body.addWidget(self.compare_table)
+        info = QLabel(
+            "Paarübereinstimmung vergleicht echte QEC-Fallpaare, niemals "
+            "zufällige Clusternummern. Jaccard verwendet eine andere Metrik. "
+            "Hohe Übereinstimmung bedeutet nicht gleiche technische Ursache.",
+            objectName="PageSubtitle",
+        )
+        info.setWordWrap(True)
+        expert_body.addWidget(info)
+        expert_body.addWidget(QLabel(
+            "Robustheitsprüfung · Methoden und Datenvarianten",
+            objectName="CardTitle",
+        ))
+        self.stability_note = QLabel(
+            "Noch keine Stabilitätsprüfung ausgeführt.",
+            objectName="PageSubtitle",
+        )
+        self.stability_note.setWordWrap(True)
+        expert_body.addWidget(self.stability_note)
+        self.stability_model = _ClusterTableModel((
+            "Vergleich", "Art", "Beidseitig geeignet",
+            "Referenzfälle", "Paar-Jaccard", "Paarerhalt", "Hinweis",
+        ))
+        self.stability_table = _table(
+            self.stability_model, 190,
+            (245, 120, 145, 92, 115, 110, 400),
+        )
+        expert_body.addWidget(self.stability_table)
+        self.stability_group_model = _ClusterTableModel((
+            "Referenzcluster", "Prüfung", "Mitglieder", "Vergleichbar",
+            "Referenzpaare", "Erhalten", "Erhaltquote", "Neue Verbindungen",
+        ))
+        self.stability_group_table = _table(
+            self.stability_group_model, 155,
+            (126, 210, 105, 100, 126, 100, 120, 160),
+        )
+        self.stability_group_table.setMaximumHeight(240)
+        expert_body.addWidget(self.stability_group_table)
+        self.stability_detail = QLabel(
+            "Paarerhalt und Erhaltquote sind Diagnose-Stabilitätsmaße, "
+            "keine Fehlerursachenwahrscheinlichkeiten.",
+            objectName="PageSubtitle",
+        )
+        self.stability_detail.setWordWrap(True)
+        expert_body.addWidget(self.stability_detail)
 
         core_header = QHBoxLayout()
         core_header.addWidget(QLabel(
@@ -438,14 +622,14 @@ class ClusterWorkspace(QWidget):
         self.core_only_group.setChecked(False)
         self.core_only_group.toggled.connect(self._refresh_core_groups)
         core_header.addWidget(self.core_only_group)
-        body.addLayout(core_header)
+        expert_body.addLayout(core_header)
         self.core_note = QLabel(
             "Prüfgruppen werden zusammen mit der Clustermethode berechnet. "
             "Gruppennummern verschiedener Methoden werden nicht gleichgesetzt.",
             objectName="PageSubtitle",
         )
         self.core_note.setWordWrap(True)
-        body.addWidget(self.core_note)
+        expert_body.addWidget(self.core_note)
         self.core_model = _ClusterTableModel((
             "Prüfgruppe", "Fälle", "FINs", "Zugeordneter Cluster",
             "Überlappung", "Min. Cosinus", "Gemeinsamer ECU:DTC-Kern",
@@ -458,7 +642,7 @@ class ClusterWorkspace(QWidget):
         self.core_table.selectionModel().currentRowChanged.connect(
             self._core_changed
         )
-        body.addWidget(self.core_table)
+        expert_body.addWidget(self.core_table)
         core_actions = QHBoxLayout()
         self.core_export = QPushButton(
             "Prüfgruppen zur technischen Fachprüfung lokal exportieren"
@@ -467,31 +651,9 @@ class ClusterWorkspace(QWidget):
         self.core_export.clicked.connect(self.export_core_review)
         core_actions.addWidget(self.core_export)
         core_actions.addStretch(1)
-        body.addLayout(core_actions)
+        expert_body.addLayout(core_actions)
 
-        self.member_title = QLabel(
-            self._member_title_default, objectName="CardTitle",
-        )
-        body.addWidget(self.member_title)
-        self.member_model = _ClusterTableModel((
-            "Rolle", "QEC-Fall", "FIN", "Index zum Medoid",
-            "ML-Zugehörigkeit", "Gemeinsame ECU:DTC", "SSL-Endbefund (post hoc)",
-        ))
-        self.member_table = _table(
-            self.member_model, 210,
-            (185, 165, 183, 137, 115, 317, 480),
-        )
-        self.member_table.doubleClicked.connect(self._open_member_case)
-        body.addWidget(self.member_table)
-        open_row = QHBoxLayout()
-        self.open_button = QPushButton("Ausgewählten Fall in FIN / Fallanalyse öffnen")
-        self.open_button.clicked.connect(self.open_selected_case)
-        self.open_button.setEnabled(False)
-        open_row.addWidget(self.open_button)
-        open_row.addStretch(1)
-        body.addLayout(open_row)
-
-        body.addWidget(QLabel(
+        expert_body.addWidget(QLabel(
             "Nicht zugeordnete und diagnostisch ausgeschlossene Fälle",
             objectName="CardTitle",
         ))
@@ -502,9 +664,9 @@ class ClusterWorkspace(QWidget):
             self.noise_model, 190, (190, 230, 540),
         )
         self.noise_table.doubleClicked.connect(self._open_noise_case)
-        body.addWidget(self.noise_table)
+        expert_body.addWidget(self.noise_table)
 
-        body.addWidget(QLabel(
+        expert_body.addWidget(QLabel(
             "Fachprüfung und weiterführende Untersuchungen",
             objectName="CardTitle",
         ))
@@ -519,7 +681,7 @@ class ClusterWorkspace(QWidget):
         self.old_scatter_button.clicked.connect(self.open_pair_tools)
         footer.addWidget(self.old_scatter_button)
         footer.addStretch(1)
-        body.addLayout(footer)
+        expert_body.addLayout(footer)
         note = QLabel(
             "Fachbestätigungen, Pilot-Vergleichslisten, CPC3-Brücken, "
             "TIPS-Verknüpfungen und bewährte CSV-Exporte bleiben "
@@ -527,7 +689,12 @@ class ClusterWorkspace(QWidget):
             objectName="PageSubtitle",
         )
         note.setWordWrap(True)
-        body.addWidget(note)
+        expert_body.addWidget(note)
+
+        body.addWidget(self.expert_panel)
+        self.expert_panel.hide()
+        self.expert_toggle.toggled.connect(self.expert_panel.setVisible)
+        self.expert_toggle.toggled.connect(self._toggle_technical_columns)
         # New settings must never silently retain a previous grouping as
         # though it had been calculated with the changed parameters.
         for control in (
@@ -543,6 +710,13 @@ class ClusterWorkspace(QWidget):
         self.core_threshold.valueChanged.connect(self._invalidate_on_input)
         self._change_dimension()
 
+    def _toggle_technical_columns(self, shown: bool) -> None:
+        """Expose the complete legacy evidence columns only on explicit demand."""
+        for col in (1, 4, 5, 6, 8):
+            self.group_table.setColumnHidden(col, not shown)
+        for col in (3, 4, 6):
+            self.member_table.setColumnHidden(col, not shown)
+
     def _update_parameters(self, *_args) -> None:
         spec = BY_METHOD.get(self.method.currentData(), METHODS[0])
         self.min_samples_label.setVisible(spec.supports_min_samples)
@@ -554,7 +728,9 @@ class ClusterWorkspace(QWidget):
         self.filter_common.setEnabled(not spec.supports_jaccard_cutoff)
         if spec.supports_jaccard_cutoff:
             self.filter_common.setChecked(False)
-        self.method_hint.setText(spec.description)
+        self.method_hint.setText(
+            f"Ansicht: {spec.title} · Ursache unbestätigt"
+        )
 
     def _method_changed(self, *_args) -> None:
         self._update_parameters()
@@ -565,9 +741,27 @@ class ClusterWorkspace(QWidget):
         elif self.result is not None:
             self._clear_results()
             self.status.setText(
-                "Methode geändert. Bitte 'Cluster berechnen' oder "
-                "'Methoden vergleichen' starten."
+                "Einstellungen verändert. Bitte die Clusteranalyse neu starten."
             )
+
+    def _display_method_changed(self, *_args) -> None:
+        """Main dropdown changes the ACTUAL analysis, not the second plot."""
+        key = self.display_method.currentData()
+        if key in self._run_results:
+            self._activate_method(key)
+
+    def _activate_method(self, key: str) -> None:
+        """Use existing calculated memberships; never infer cluster IDs."""
+        result = self._run_results.get(key)
+        if result is None:
+            return
+        selected = self.method.findData(key)
+        if selected >= 0:
+            self.method.blockSignals(True)
+            self.method.setCurrentIndex(selected)
+            self.method.blockSignals(False)
+            self._update_parameters()
+        self._show_result(result)
 
     def _invalidate_on_input(self, *_args) -> None:
         if self.result is None:
@@ -575,7 +769,7 @@ class ClusterWorkspace(QWidget):
         self._clear_results()
         self.status.setText(
             "Eingaben geändert. Die alten Cluster wurden ausgeblendet. "
-            "Bitte mit den neuen Parametern berechnen."
+            "Bitte die Clusteranalyse neu starten."
         )
 
     def _parameters(self) -> ClusterParameters:
@@ -595,28 +789,28 @@ class ClusterWorkspace(QWidget):
         return [case for case in self.cases
                 if _component_key(case) == family]
 
-    def showEvent(self, event) -> None:  # noqa: N802
-        super().showEvent(event)
-        if not self._activated:
-            self._activated = True
-            self.run_analysis()
-
     def run_analysis(self) -> None:
-        self._start_methods((self._parameters().method,))
-
-    def compare_methods(self) -> None:
+        """The sole GUI analysis action computes every permissible method."""
         p = self._parameters()
-        selected = p.method
-        options = (
-            selected,
-            *(x.key for x in METHODS if (
-                x.key != selected
-                and (p.common_dtc_cutoff is None or x.key != "complete_legacy")
-            )),
+        methods = (
+            p.method,
+            *(item.key for item in METHODS
+              if item.key != p.method
+              and (p.common_dtc_cutoff is None
+                   or item.key != "complete_legacy")),
         )
-        self._start_methods(tuple(options))
+        self._start_methods(tuple(methods), include_stability=True)
 
-    def _start_methods(self, methods: tuple[str, ...]) -> None:
+    # Internal legacy helpers remain callable, but are no longer UI actions.
+    def compare_methods(self) -> None:
+        self.run_analysis()
+
+    def run_stability(self) -> None:
+        self.run_analysis()
+
+    def _start_methods(
+        self, methods: tuple[str, ...], *, include_stability: bool = False,
+    ) -> None:
         if self._task is not None and self._task.isRunning():
             self.status.setText("Eine Clusterberechnung läuft bereits.")
             return
@@ -625,7 +819,6 @@ class ClusterWorkspace(QWidget):
             self.status.setText("Keine Fälle für die gewählte Bauteilfamilie.")
             self._clear_results()
             return
-        self._activated = True
         params = self._parameters()
         try:
             params.validate()
@@ -633,20 +826,22 @@ class ClusterWorkspace(QWidget):
             self.status.setText(str(exc))
             return
         self.run_button.setEnabled(False)
-        self.compare_button.setEnabled(False)
         self.export_button.setEnabled(False)
         self.status.setText(
-            f"Berechne {len(methods)} Methode(n) für {len(cases)} QEC-Fälle …"
+            f"Berechne {len(methods)} Methoden und die Stabilität "
+            f"für {len(cases)} QEC-Fälle …"
         )
         self._running_params = params
         self._running_family = self.family.currentData()
         self._running_core_threshold = self.core_threshold.value()
         task = _ClusterTask(
             cases, params, methods, self._running_core_threshold,
+            include_stability=include_stability,
         )
         _ACTIVE_TASKS.add(task)
         self._task = task
         task.calculated.connect(self._receive_results)
+        task.progress.connect(self.status.setText)
         task.problem.connect(self._receive_error)
         task.finished.connect(lambda: _ACTIVE_TASKS.discard(task))
         task.finished.connect(task.deleteLater)
@@ -654,12 +849,11 @@ class ClusterWorkspace(QWidget):
 
     def _receive_results(
         self,
-        payload: tuple[list[UnifiedClusterResult], UnifiedClusterResult],
+        payload: tuple[list[UnifiedClusterResult], UnifiedClusterResult, object],
     ) -> None:
-        results, core_result = payload
+        results, core_result, stability_report = payload
         self._task = None
         self.run_button.setEnabled(True)
-        self.compare_button.setEnabled(True)
         if (
             self._running_params != self._parameters()
             or self._running_family != self.family.currentData()
@@ -673,13 +867,12 @@ class ClusterWorkspace(QWidget):
             return
         self._run_results = {r.parameters.method: r for r in results}
         self._core_result = core_result
+        self._show_stability(stability_report)
         self.result = results[0]
         self.export_button.setEnabled(True)
         self.status.setText(
-            f"{len(results)} Methode(n) berechnet · "
-            f"gemeinsame Basis: {len(results[0].eligible_case_ids)} "
-            "QEC-Fälle mit geeigneter Vor-Tausch-Diagnose. "
-            "Keine technisch bestätigten Fehlermechanismen."
+            "Clusteranalyse abgeschlossen. Wähle einen Cluster in der "
+            "Grafik oder Tabelle, um die Fälle und ihre Gemeinsamkeiten zu sehen."
         )
         self._refresh_comparison(results)
         self._show_result(results[0])
@@ -687,7 +880,6 @@ class ClusterWorkspace(QWidget):
     def _receive_error(self, message: str) -> None:
         self._task = None
         self.run_button.setEnabled(True)
-        self.compare_button.setEnabled(True)
         self.status.setText(f"Clusterberechnung nicht möglich: {message}")
         self._clear_results()
 
@@ -695,6 +887,7 @@ class ClusterWorkspace(QWidget):
         self.result = None
         self._run_results = {}
         self._core_result = None
+        self._show_stability(None)
         self._core_links = ()
         self._visible_core_links = []
         self._active_core_group = None
@@ -705,6 +898,13 @@ class ClusterWorkspace(QWidget):
         )
         self.core_export.setEnabled(False)
         self.member_title.setText(self._member_title_default)
+        self.why_heading.setText("Warum gehören diese Fälle zusammen?")
+        self.why_text.setText(
+            "Bitte zuerst die Clusteranalyse starten und einen Cluster wählen."
+        )
+        self.kpi.setText("")
+        for value in self.summary_values.values():
+            value.setText("–")
         self._group_ids = []
         self._member_ids = []
         self._noise_ids = []
@@ -718,8 +918,50 @@ class ClusterWorkspace(QWidget):
         self.other_plot.set_emphasis_cases(None)
         self.compare_side.setEnabled(False)
         self.compare_side.setChecked(False)
+        for selector in (self.display_method, self.other_method):
+            selector.blockSignals(True)
+            selector.clear()
+            selector.setEnabled(False)
+            selector.blockSignals(False)
         self.export_button.setEnabled(False)
         self.open_button.setEnabled(False)
+
+    def _show_stability(self, report) -> None:
+        self._stability_report = report
+        if report is None:
+            self.stability_model.set_rows([])
+            self.stability_group_model.set_rows([])
+            self.stability_note.setText(
+                "Noch keine Robustheitsprüfung. 'Clusteranalyse starten' "
+                "vergleicht vorhandene lokale Vor-Tausch-Diagnosen."
+            )
+            return
+        self.stability_note.setText(
+            f"{len(report.comparisons)} Vergleiche · "
+            f"Referenz: {BY_METHOD[report.reference_method].title} · "
+            f"{report.reference_eligible} geeignete Referenzfälle. "
+            "Methoden = gleiche Diagnosebasis; Daten/Parameter = "
+            "Ein-Faktor-Variationen. Kein Ursachen-Voting."
+        )
+        def percent(value):
+            return f"{value:.1%}" if value is not None else "nicht bestimmbar"
+        self.stability_model.set_rows([
+            (
+                c.label, c.category, c.shared_eligible,
+                c.baseline_eligible, percent(c.pair_jaccard),
+                percent(c.reference_pair_retention), c.warning,
+            )
+            for c in report.comparisons
+        ])
+        self.stability_group_model.set_rows([
+            (
+                f"C{g.group_number}", c.label, g.reference_members,
+                g.comparable_members, g.reference_pairs,
+                g.retained_pairs, percent(g.retention),
+                g.newly_joined_external_pairs,
+            )
+            for c in report.comparisons for g in c.group_rows
+        ])
 
     def _refresh_comparison(
         self, results: list[UnifiedClusterResult],
@@ -744,44 +986,75 @@ class ClusterWorkspace(QWidget):
             ))
         self.compare_model.set_rows(values)
         self.compare_side.setEnabled(len(results) > 1)
-        self.other_method.blockSignals(True)
-        self.other_method.clear()
-        for result in results:
-            self.other_method.addItem(
-                BY_METHOD[result.parameters.method].title,
-                result.parameters.method,
-            )
+        for selector in (self.display_method, self.other_method):
+            selector.blockSignals(True)
+            selector.clear()
+            for result in results:
+                selector.addItem(
+                    BY_METHOD[result.parameters.method].title,
+                    result.parameters.method,
+                )
+            selector.setEnabled(len(results) > 1)
+            selector.blockSignals(False)
+
+        # The prominent selector always represents the shown result.
+        active_method = self.result.parameters.method if self.result else None
+        self.display_method.blockSignals(True)
+        self.display_method.setCurrentIndex(
+            self.display_method.findData(active_method)
+        )
+        self.display_method.blockSignals(False)
+
+        # The optional right-side comparison uses a different selector.
         if len(results) > 1:
-            self.other_method.setCurrentIndex(1)
-        self.other_method.setEnabled(len(results) > 1)
-        self.other_method.blockSignals(False)
+            secondary = next(
+                (i for i, result in enumerate(results)
+                 if result.parameters.method != active_method), 1,
+            )
+            self.other_method.blockSignals(True)
+            self.other_method.setCurrentIndex(secondary)
+            self.other_method.blockSignals(False)
         self._draw_plots()
 
     def _compare_row_picked(self, index) -> None:
         if not index.isValid() or index.row() >= len(self._comparison_order):
             return
         key = self._comparison_order[index.row()]
-        if key not in self._run_results:
-            return
-        selected = self.method.findData(key)
-        if selected >= 0:
-            self.method.blockSignals(True)
-            self.method.setCurrentIndex(selected)
-            self.method.blockSignals(False)
-            self._update_parameters()
-        self._show_result(self._run_results[key])
+        self._activate_method(key)
 
     def _show_result(self, result: UnifiedClusterResult) -> None:
         self.result = result
+        selected = self.display_method.findData(result.parameters.method)
+        if selected >= 0:
+            self.display_method.blockSignals(True)
+            self.display_method.setCurrentIndex(selected)
+            self.display_method.blockSignals(False)
+        # Side-by-side comparison should never silently show the same
+        # clustering method on both sides after the main method switches.
+        if (
+            self.compare_side.isChecked()
+            and self.other_method.currentData() == result.parameters.method
+        ):
+            alternative = next(
+                (key for key in self._run_results
+                 if key != result.parameters.method), None,
+            )
+            if alternative is not None:
+                self.other_method.blockSignals(True)
+                self.other_method.setCurrentIndex(
+                    self.other_method.findData(alternative)
+                )
+                self.other_method.blockSignals(False)
         self._group_ids = [group.cluster_id for group in result.groups]
+        self.summary_values["groups"].setText(str(len(result.groups)))
+        self.summary_values["assigned"].setText(str(result.clustered_count))
+        self.summary_values["noise"].setText(str(len(result.noise_case_ids)))
+        self.summary_values["missing"].setText(str(len(result.excluded_case_ids)))
         self.kpi.setText(
-            f"{len(self._subset())} QEC-Fälle · "
-            f"{len(result.eligible_case_ids)} auswertbar · "
-            f"{len(result.groups)} Cluster · "
-            f"{result.clustered_count} zugeordnet · "
-            f"{len(result.noise_case_ids)} Ausreißer · "
-            f"{len(result.excluded_case_ids)} ohne geeignete Diagnose. "
-            f"{result.note}"
+            f"Angezeigt: {BY_METHOD[result.parameters.method].title} · "
+            f"{len(result.eligible_case_ids)} von {len(self._subset())} "
+            "QEC-Fällen sind für diese Analyse auswertbar. "
+            "Die Clusterzahl hängt vom Verfahren ab."
         )
         self.group_model.set_rows([
             (
@@ -812,6 +1085,8 @@ class ClusterWorkspace(QWidget):
         self.member_model.set_rows([])
         self._member_ids = []
         self.open_button.setEnabled(False)
+        self.why_heading.setText("Warum gehören diese Fälle zusammen?")
+        self.why_text.setText("Wähle einen Cluster aus der Tabelle.")
         if result.groups:
             selected_id = self._focused_case_id
             match = next(
@@ -821,6 +1096,14 @@ class ClusterWorkspace(QWidget):
             )
             self.group_table.selectRow(match)
         else:
+            self.why_heading.setText("Dieses Verfahren hat keine Cluster gefunden")
+            self.why_text.setText(
+                "Bei diesen Einstellungen werden keine Fälle einer "
+                "gemeinsamen Gruppe zugeordnet. Das bedeutet nicht, "
+                "dass die Kühlmittelpumpe fehlerfrei ist. "
+                "Wähle oben ein anderes Clusterverfahren, "
+                "um dessen Ergebnisse zu sehen."
+            )
             self._refresh_core_groups()
             if self._focused_case_id is not None:
                 self.focus_case(self._focused_case_id)
@@ -830,9 +1113,21 @@ class ClusterWorkspace(QWidget):
         self, group: UnifiedCluster, *, core: bool,
     ) -> None:
         self.member_title.setText(
-            f"Falltabelle – konservative Prüfgruppe K{group.cluster_id}"
-            if core else self._member_title_default
+            f"4. Fälle in Prüfgruppe K{group.cluster_id}"
+            if core else
+            f"4. Fälle in Cluster C{group.cluster_id}"
         )
+        # All explanatory values use the EXACT locally selected pre-swap
+        # source/time/filter basis, never SSL or supplier outcomes.
+        reference = self._core_result if core else self.result
+        if reference is None:
+            return
+        explanation = explain_cluster(
+            self._subset(), group, reference.parameters,
+            reference.eligible_case_ids, strict_review=core,
+        )
+        self.why_heading.setText(explanation.heading)
+        self.why_text.setText(explanation.text)
         self._member_ids = [member.case_id for member in group.members]
         rows = []
         # One QEC is not one independent vehicle. Only the first target
@@ -849,9 +1144,7 @@ class ClusterWorkspace(QWidget):
                 seen_fins.add(case.vin)
             else:
                 role = "Clusterfall"
-            common = ", ".join(
-                f"{ecu}:{dtc}" for ecu, dtc in group.common_faults[:7]
-            ) or "Kein durchgängiger ECU:DTC"
+            common = explanation.evidence_for(member.case_id)
             ssl = getattr(
                 case, "qec_ssl_end_finding", None,
             ) or "Nicht dokumentiert"
@@ -1088,6 +1381,18 @@ class ClusterWorkspace(QWidget):
     def _set_rotation(self, *_args) -> None:
         for plot in (self.plot, self.other_plot):
             plot.set_rotation(self.yaw.value(), self.elevation.value())
+
+    def _plot_rotated(self, yaw: int, elevation: int) -> None:
+        """Mouse dragging controls both plots and the optional expert sliders."""
+        self.yaw.blockSignals(True)
+        self.elevation.blockSignals(True)
+        self.yaw.setValue(yaw)
+        self.elevation.setValue(elevation)
+        self.yaw.blockSignals(False)
+        self.elevation.blockSignals(False)
+        for plot in (self.plot, self.other_plot):
+            if plot.yaw != yaw or plot.elevation != elevation:
+                plot.set_rotation(yaw, elevation)
 
     def _reset_zoom(self) -> None:
         for plot in (self.plot, self.other_plot):
