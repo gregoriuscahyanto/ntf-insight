@@ -9,7 +9,7 @@ from __future__ import annotations
 from dataclasses import replace
 from time import perf_counter
 
-from PySide6.QtCore import Qt, QThread, Signal
+from PySide6.QtCore import QModelIndex, Qt, QThread, Signal
 from PySide6.QtWidgets import (
     QAbstractItemView, QCheckBox, QComboBox, QFrame, QHBoxLayout,
     QLabel, QLineEdit, QPlainTextEdit, QPushButton, QScrollArea,
@@ -24,6 +24,13 @@ from ntf_insight.analysis.combined_fin_evidence import (
 )
 from ntf_insight.app.models.simple_table_model import SimpleTableModel
 from ntf_insight.app.widgets.fin_cluster_projection_plot import FinClusterProjectionPlot
+from ntf_insight.app.widgets.fin_status_donut import (
+    FIN_COLORS, FIN_LABELS, FinStatusDonut,
+)
+from ntf_insight.analysis.dtc_review_priority import (
+    GroupDtcPriority, review_priority,
+)
+from ntf_insight.storage.dtc_review_store import DtcReviewStore
 from ntf_insight.domain.case import NTFCase
 from ntf_insight.storage.source_knowledge_store import SourceKnowledgeStore
 
@@ -153,9 +160,16 @@ class AutoExportFinWorkspace(QWidget):
         source: SourceKnowledgeStore | None,
         cases: list[NTFCase],
         population_metrics: dict[str, int] | None = None,
+        *,
+        review_store: DtcReviewStore | None = None,
     ) -> None:
         super().__init__()
         self.source = source
+        self.review_store = review_store
+        self._review_marks = (
+            review_store.list_marks() if review_store is not None else {}
+        )
+        self._review_levels: dict[int, GroupDtcPriority] = {}
         self._case_vins = {case.case_id: case.vin for case in cases}
         self.by_id = {case.case_id: case for case in cases}
         self._focused_case_id: str | None = None
@@ -249,37 +263,87 @@ class AutoExportFinWorkspace(QWidget):
         self.status.setWordWrap(True)
         body.addWidget(self.status)
 
+        # Clear overview: one cluster count, one FIN donut with three
+        # mutually exclusive categories. No chart library, no data upload.
         self.number_labels: dict[str, QLabel] = {}
-        summary = QHBoxLayout()
-        summary.setSpacing(9)
-        for key, title in (
-            ("total", "FINs insgesamt"),
-            ("groups", "Gefundene Cluster"),
-            ("assigned", "FINs in Clustern"),
-            ("unassigned", "Mit DTC, ohne Cluster"),
-            ("missing", "Ohne geeignete DTC"),
-        ):
-            card = QFrame()
-            card.setObjectName("Card")
-            inner = QVBoxLayout(card)
-            inner.setContentsMargins(10, 9, 10, 9)
-            heading = QLabel(title, objectName="CardTitle")
-            heading.setWordWrap(True)
-            inner.addWidget(heading)
-            value = QLabel("–", objectName="CardValue")
-            inner.addWidget(value)
-            self.number_labels[key] = value
-            summary.addWidget(card, 1)
-        # Kept as a counted field for detailed tests and optional summaries.
+        overview = QHBoxLayout()
+        overview.setSpacing(10)
+
+        count_card = QFrame()
+        count_card.setObjectName("Card")
+        count_card.setMinimumWidth(210)
+        cluster_stack = QVBoxLayout(count_card)
+        cluster_stack.setContentsMargins(17, 15, 17, 15)
+        cluster_stack.addWidget(QLabel(
+            "Gefundene Cluster", objectName="CardTitle",
+        ))
+        number = QLabel("–", objectName="CardValue")
+        number.setStyleSheet("font-size: 31px; font-weight: 700;")
+        self.number_labels["groups"] = number
+        cluster_stack.addWidget(number)
+        cluster_stack.addStretch(1)
+        overview.addWidget(count_card, 1)
+
+        distribution_card = QFrame()
+        distribution_card.setObjectName("Card")
+        distribution_box = QHBoxLayout(distribution_card)
+        distribution_box.setContentsMargins(15, 12, 19, 12)
+        distribution_box.setSpacing(15)
+        self.donut = FinStatusDonut()
+        distribution_box.addWidget(self.donut, 0)
+        legend = QVBoxLayout()
+        headline = QHBoxLayout()
+        headline.addWidget(QLabel(
+            "Verteilung der FINs", objectName="CardTitle",
+        ))
+        headline.addStretch(1)
+        headline.addWidget(QLabel("FINs gesamt:"))
+        total = QLabel("–", objectName="CardValue")
+        self.number_labels["total"] = total
+        headline.addWidget(total)
+        legend.addLayout(headline)
+        self.percent_labels: dict[str, QLabel] = {}
+        for index, key in enumerate(("assigned", "unassigned", "missing")):
+            line = QHBoxLayout()
+            square = QLabel("●")
+            square.setStyleSheet(
+                f"color: {FIN_COLORS[index]}; font-size: 15px;"
+            )
+            square.setFixedWidth(18)
+            line.addWidget(square)
+            group_label = QLabel(FIN_LABELS[index])
+            group_label.setMinimumWidth(175)
+            line.addWidget(group_label)
+            percent = QLabel("–")
+            percent.setObjectName("PageSubtitle")
+            self.percent_labels[key] = percent
+            line.addWidget(percent)
+            line.addStretch(1)
+            count = QLabel("–", objectName="CardValue")
+            self.number_labels[key] = count
+            line.addWidget(count)
+            legend.addLayout(line)
+        legend.addStretch(1)
+        distribution_box.addLayout(legend, 1)
+        overview.addWidget(distribution_card, 3)
+        body.addLayout(overview)
+        # Compatibility: number of FINs with suitable DTCs; also in caption.
         self.number_labels["dtc"] = QLabel("–")
-        body.addLayout(summary)
+
         self.summary_note = QLabel(
-            "FINs ohne geeignete DTC werden nicht geclustert, bleiben "
-            "aber in der Gesamtanzahl sichtbar.",
+            "Alle eindeutigen FINs werden gezählt. FINs ohne geeignete "
+            "DTC-Daten erhalten keine künstliche Clusterzuordnung.",
             objectName="PageSubtitle",
         )
         self.summary_note.setWordWrap(True)
         body.addWidget(self.summary_note)
+        self.priority_note = QLabel(
+            "Fachliche Prüfpriorität: markiere wichtige ECU:DTCs "
+            "im DTC-Explorer. Dies verändert keine Cluster.",
+            objectName="PageSubtitle",
+        )
+        self.priority_note.setWordWrap(True)
+        body.addWidget(self.priority_note)
 
         plot_header = QHBoxLayout()
         plot_header.addWidget(QLabel(
@@ -309,10 +373,11 @@ class AutoExportFinWorkspace(QWidget):
 
         self.group_table, self.group_model = _table(
             (
-                "Cluster", "FINs", "Mit QEC", "Repräsentative FIN",
+                "Cluster", "Prüfpriorität", "Markierte FINs",
+                "FINs", "Mit QEC", "Repräsentative FIN",
                 "DTC-Kern", "Diagnoseähnlichkeit",
             ),
-            (77, 75, 90, 190, 100, 170),
+            (76, 145, 115, 75, 85, 185, 92, 166),
             235,
         )
         self.group_table.selectionModel().currentRowChanged.connect(
@@ -385,6 +450,14 @@ class AutoExportFinWorkspace(QWidget):
         )
         for label in self.number_labels.values():
             label.setText("–")
+        self.donut.set_values(None)
+        for label in self.percent_labels.values():
+            label.setText("–")
+        self._review_levels = {}
+        self.priority_note.setText(
+            "DTC-Markierungen aus dem Explorer bestimmen nur die "
+            "Prüfpriorität, nicht die Clusterbildung."
+        )
 
     def _invalidate(self, *_args) -> None:
         if self._task is not None:
@@ -469,6 +542,14 @@ class AutoExportFinWorkspace(QWidget):
             raise ValueError("FIN-Clusterzahlen passen nicht zum importierten Bestand.")
         for key, number in summary.items():
             self.number_labels[key].setText(f"{number:,}".replace(",", "."))
+        self.donut.set_values((
+            summary["assigned"], summary["unassigned"], summary["missing"],
+        ))
+        for key in ("assigned", "unassigned", "missing"):
+            self.percent_labels[key].setText(
+                (f"{summary[key] / summary['total'] * 100:.1f} %"
+                 if summary["total"] else "0,0 %").replace(".", ",")
+            )
         self.population_note.setText(
             (
                 f"Gemeinsamer FIN-Bestand: {result.total_fins:,} eindeutige FINs. "
@@ -500,17 +581,7 @@ class AutoExportFinWorkspace(QWidget):
                 "Methodenwechsel und 2D/3D benötigen keine Neuberechnung."
             ).replace(",", ".")
         )
-        self.group_model.set_rows([
-            (
-                f"C{group.group_id}",
-                group.fin_count,
-                group.qec_fin_count,
-                group.representative_fin,
-                group.shared_fault_count,
-                f"{group.median_similarity:.1%}",
-            )
-            for group in result.groups
-        ])
+        self._refresh_review_table()
         self.plot.set_result(result)
         self.plot.set_mode(self.dimension.currentData() or "2d")
         self._selected_fin = None
@@ -533,20 +604,93 @@ class AutoExportFinWorkspace(QWidget):
                 "dass keine Kühlmittelpumpenstörung vorliegt."
             )
 
+    def refresh_review_priorities(self) -> None:
+        """Read local manual annotations; NEVER trigger cluster recalculation."""
+        if self.review_store is None:
+            return
+        current = self.review_store.list_marks()
+        if current == self._review_marks:
+            return
+        self._review_marks = current
+        if self.result is not None:
+            selected = None
+            index = self.group_table.currentIndex()
+            if index.isValid() and index.row() < len(self._group_rows):
+                selected = self._group_rows[index.row()]
+            self._refresh_review_table()
+            if selected is not None:
+                self.select_group(selected)
+
+    def _refresh_review_table(self) -> None:
+        if self.result is None:
+            return
+        keys = set(self._review_marks)
+        faults = self.result.dtc_keys_by_fin or {}
+        groups = self.result.groups
+        self._review_levels = {
+            group.group_id: review_priority(group, faults, keys)
+            for group in groups
+        }
+        rank = {"hoch": 0, "hinweis": 1, "keine": 2}
+        ranked = sorted(
+            groups,
+            key=lambda group: (
+                rank[self._review_levels[group.group_id].level],
+                -self._review_levels[group.group_id].ratio,
+                -group.fin_count,
+                group.group_id,
+            ),
+        )
+        self._group_rows = tuple(g.group_id for g in ranked)
+        self.group_model.set_rows([
+            (
+                f"C{group.group_id}",
+                self._review_levels[group.group_id].label,
+                (
+                    f"{self._review_levels[group.group_id].affected_fins}"
+                    f"/{group.fin_count}"
+                ),
+                group.fin_count,
+                group.qec_fin_count,
+                group.representative_fin,
+                group.shared_fault_count,
+                f"{group.median_similarity:.1%}",
+            )
+            for group in ranked
+        ])
+        high = sum(
+            score.level == "hoch" for score in self._review_levels.values()
+        )
+        hints = sum(
+            score.level == "hinweis" for score in self._review_levels.values()
+        )
+        self.priority_note.setText(
+            f"Fachliche Prüfpriorität: {high} Cluster hoch · "
+            f"{hints} mit Prüfhinweis · "
+            f"{len(self._review_marks)} markierte ECU:DTCs. "
+            "Markierungen dienen der Nachprüfung, nicht der Ursachenzuweisung."
+        )
+
     def select_group(self, group_id: int) -> None:
         if self.result is None:
             return
-        for row, group in enumerate(self.result.groups):
-            if group.group_id == group_id:
+        for row, candidate in enumerate(self._group_rows):
+            if candidate == group_id:
                 self.group_table.selectRow(row)
                 return
 
     def _group_changed(self, index, _previous) -> None:
         if self.result is None or not index.isValid():
             return
-        if index.row() >= len(self.result.groups):
+        if index.row() >= len(self._group_rows):
             return
-        group = self.result.groups[index.row()]
+        group_id = self._group_rows[index.row()]
+        group = next(
+            (item for item in self.result.groups if item.group_id == group_id),
+            None,
+        )
+        if group is None:
+            return
         self.plot.set_highlight(group.group_id)
         self._shown_members = [fin for fin, _ in group.members]
         self.fin_model.set_rows([
@@ -566,7 +710,30 @@ class AutoExportFinWorkspace(QWidget):
             f"Warum gehören diese {group.fin_count} FINs zu Cluster "
             f"C{group.group_id}?"
         )
+        priority = self._review_levels.get(group.group_id)
+        if priority is None:
+            priority = review_priority(
+                group, self.result.dtc_keys_by_fin or {},
+                set(self._review_marks),
+            )
         lines = [
+            (
+                f"Prüfpriorität: {priority.label}. "
+                f"{priority.affected_fins} von {priority.total_fins} FINs "
+                "enthalten mindestens einen manuell markierten Pumpen-DTC. "
+                "Das ist kein Defektnachweis."
+            ),
+            *(
+                [
+                    "Markierte ECU:DTCs in diesem Cluster:",
+                    *[
+                        f"★ {ecu}:{dtc} – {count} von {group.fin_count} FINs"
+                        for ecu, dtc, count in priority.marked_faults
+                    ],
+                ]
+                if priority.marked_faults else []
+            ),
+            "",
             "1. Gemeinsame Diagnosemerkmale",
             f"Die {group.fin_count} Fahrzeuge teilen wiederkehrende "
             "Steuergerät-Fehlercode-Kombinationen (ECU:DTC). "
@@ -578,8 +745,9 @@ class AutoExportFinWorkspace(QWidget):
         if group.common_faults:
             for ecu, dtc, count, description in group.common_faults:
                 label = f" — {description}" if description else ""
+                star = "★ " if (ecu, dtc) in self._review_marks else "• "
                 lines.append(
-                    f"• {ecu}:{dtc}{label} – bei {count} "
+                    f"{star}{ecu}:{dtc}{label} – bei {count} "
                     f"von {group.fin_count} FINs"
                 )
         else:
