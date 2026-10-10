@@ -9,7 +9,7 @@ from __future__ import annotations
 from collections import Counter
 
 from ntf_insight.analysis.case_clustering import _component_key
-from ntf_insight.analysis.cluster_pilot_priority import prioritize_cluster_pilots
+from ntf_insight.analysis.cluster_pilot_priority import (ClusterPilotPlan, prioritize_cluster_pilots)
 from ntf_insight.analysis.cross_cluster_bridges import build_cluster_bridges
 from ntf_insight.analysis.diagnostic_evidence_audit import audit_diagnostic_evidence
 from ntf_insight.analysis.diagnostic_gap_investigation import investigate_diagnostic_gaps
@@ -22,18 +22,18 @@ from ntf_insight.analysis.recurrence_coverage_audit import audit_recurrence_cove
 from ntf_insight.domain.case import NTFCase
 
 
-def build_runner_local_report(
+def build_runner_local_analysis(
     cases: list[NTFCase],
     *,
     component: str = "coolant_pump",
     quicktests=None,
     autoexport=None,
-) -> dict:
-    """Analyse current QEC/coolant-pump cohort without mutating inputs.
+) -> tuple[dict, ClusterPilotPlan]:
+    """Calculate safe aggregate report AND confidential in-memory pilot plan.
 
-    Group names H1..Hn are ephemeral between runs. There are NO identifiable
-    case rows, technical original ECU:DTC codes, SSL texts, VINs or QEC IDs
-    in this JSON. The complete report may still be internally confidential.
+    Returning the existing prioritized pilot plan avoids a second HDBSCAN
+    calculation. The plan contains real case IDs and must NEVER enter the
+    JSON report, GitHub Actions logs or CI artifacts.
     """
     scoped = [
         case for case in cases if _component_key(case) == component
@@ -96,7 +96,7 @@ def build_runner_local_report(
         "gleiche_fin_grenz_fallpaare": link.same_fin_between_pairs,
     } for link in bridges.links]
 
-    return {
+    report = {
         "format": "ntf-insight-lokale-aggregatanalyse",
         "version": 1,
         "ausgabe": "NUR_LOKAL_VERTRAULICH",
@@ -168,6 +168,22 @@ def build_runner_local_report(
             sorted(Counter(group["prioritaet"] for group in group_rows).items())
         ),
     }
+    return report, pilot
+
+
+def build_runner_local_report(
+    cases: list[NTFCase],
+    *,
+    component: str = "coolant_pump",
+    quicktests=None,
+    autoexport=None,
+) -> dict:
+    """Backward-compatible aggregate-only API; contains NO individual IDs."""
+    report, _ = build_runner_local_analysis(
+        cases, component=component,
+        quicktests=quicktests, autoexport=autoexport,
+    )
+    return report
 
 
 # These INTEGERS may appear in Actions logs ONLY after explicit manual
