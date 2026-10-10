@@ -28,7 +28,7 @@ class GroupDtcPriority:
     @property
     def label(self) -> str:
         if self.level == "hoch":
-            return "Hohe Pruefprioritaet"
+            return "Hohe Prüfpriorität"
         if self.level == "hinweis":
             return "Pruefhinweis"
         return "Keine Markierung"
