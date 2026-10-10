@@ -25,7 +25,6 @@ from PySide6.QtWidgets import (
 )
 
 from ntf_insight.analysis.evidence_engine import generate_case_evidence
-from ntf_insight.analysis.case_clustering import cluster_diagnostic_cases
 from ntf_insight.analysis.qec_findings import qec_ssl_finding_label
 from ntf_insight.analysis.diagnostic_observations import unique_diagnostic_observations
 from ntf_insight.analysis.fin_diagnostics import (
