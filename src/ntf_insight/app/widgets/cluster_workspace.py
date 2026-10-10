@@ -97,19 +97,50 @@ class _ClusterTask(QThread):
             )
 
 
-def _table(model: SimpleTableModel, height: int = 190) -> QTableView:
+class _ClusterTableModel(SimpleTableModel):
+    """Compact text on screen, with complete local evidence on hover."""
+
+    def data(self, index, role=Qt.ItemDataRole.DisplayRole):
+        if role == Qt.ItemDataRole.ToolTipRole and index.isValid():
+            value = self.rows[index.row()][index.column()]
+            return str(value) if value is not None else ""
+        return super().data(index, role)
+
+    def headerData(self, section, orientation, role=Qt.ItemDataRole.DisplayRole):
+        if role == Qt.ItemDataRole.ToolTipRole:
+            return super().headerData(
+                section, orientation, Qt.ItemDataRole.DisplayRole,
+            )
+        return super().headerData(section, orientation, role)
+
+
+def _table(
+    model: SimpleTableModel,
+    height: int = 190,
+    widths: tuple[int, ...] = (),
+) -> QTableView:
+    """Readable even with 336 cases and long CPC3/SSL text columns."""
     table = QTableView()
     table.setModel(model)
     table.setMinimumHeight(height)
     table.setAlternatingRowColors(True)
+    table.setWordWrap(False)
+    table.setTextElideMode(Qt.TextElideMode.ElideRight)
+    table.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+    table.setHorizontalScrollMode(QAbstractItemView.ScrollMode.ScrollPerPixel)
     table.setSortingEnabled(False)
     table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
     table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
     table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
     table.verticalHeader().setVisible(False)
+    table.verticalHeader().setDefaultSectionSize(27)
     header = table.horizontalHeader()
-    header.setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
-    header.setStretchLastSection(True)
+    header.setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
+    header.setDefaultSectionSize(136)
+    header.setMinimumSectionSize(65)
+    header.setStretchLastSection(False)
+    for column, width in enumerate(widths):
+        table.setColumnWidth(column, width)
     return table
 
 
@@ -279,11 +310,14 @@ class ClusterWorkspace(QWidget):
         self.compare_side.toggled.connect(self._draw_plots)
         comparison_header.addWidget(self.compare_side)
         body.addLayout(comparison_header)
-        self.compare_model = SimpleTableModel((
+        self.compare_model = _ClusterTableModel((
             "Verfahren", "Cluster", "Clusterfälle", "Ausreißer",
             "Mit DTC-Kern", "Mit ≥2 FINs", "Paarübereinstimmung", "Distanzmaß",
         ))
-        self.compare_table = _table(self.compare_model, 145)
+        self.compare_table = _table(
+            self.compare_model, 145,
+            (205, 78, 104, 88, 110, 102, 151, 166),
+        )
         self.compare_table.setMaximumHeight(200)
         self.compare_table.doubleClicked.connect(self._compare_row_picked)
         body.addWidget(self.compare_table)
@@ -349,24 +383,101 @@ class ClusterWorkspace(QWidget):
         plot_note.setWordWrap(True)
         body.addWidget(plot_note)
 
+        search_row = QHBoxLayout()
+        search_row.addWidget(QLabel("FIN oder QEC finden:"))
+        self.case_finder = QLineEdit()
+        self.case_finder.setPlaceholderText(
+            "FIN / QEC lokal suchen – auch bei überlagerten 2D-/3D-Punkten"
+        )
+        self.case_finder.returnPressed.connect(self.find_case)
+        search_row.addWidget(self.case_finder, 1)
+        self.find_button = QPushButton("Fall markieren")
+        self.find_button.clicked.connect(self.find_case)
+        search_row.addWidget(self.find_button)
+        body.addLayout(search_row)
+        self.search_feedback = QLabel(objectName="PageSubtitle")
+        self.search_feedback.setWordWrap(True)
+        body.addWidget(self.search_feedback)
+
         body.addWidget(QLabel("Clustertabelle", objectName="CardTitle"))
-        self.group_model = SimpleTableModel((
+        self.group_model = _ClusterTableModel((
             "Cluster", "Repräsentativer QEC-Fall", "QEC-Fälle", "FINs",
             "Schwächstes Paar", "Median", "Schwache Paare",
             "Gemeinsame ECU:DTC", "Prüfhypothese",
         ))
-        self.group_table = _table(self.group_model, 210)
+        self.group_table = _table(
+            self.group_model, 210,
+            (80, 170, 89, 74, 126, 92, 113, 320, 420),
+        )
         self.group_table.selectionModel().currentRowChanged.connect(
             self._group_changed
         )
         body.addWidget(self.group_table)
 
-        body.addWidget(QLabel("Falltabelle – gewählter Cluster", objectName="CardTitle"))
-        self.member_model = SimpleTableModel((
+        core_header = QHBoxLayout()
+        core_header.addWidget(QLabel(
+            "Konservative Prüfgruppen · Complete-Link Cosinus",
+            objectName="CardTitle",
+        ))
+        core_header.addStretch(1)
+        core_header.addWidget(QLabel("Mindestpaarähnlichkeit"))
+        self.core_threshold = QDoubleSpinBox()
+        self.core_threshold.setRange(0.05, 0.95)
+        self.core_threshold.setDecimals(2)
+        self.core_threshold.setSingleStep(0.05)
+        self.core_threshold.setValue(0.45)
+        self.core_threshold.setToolTip(
+            "Separater konservativer Prüfgruppenfilter, NICHT automatisch "
+            "eine bestätigte Fehlerursache."
+        )
+        core_header.addWidget(self.core_threshold)
+        self.core_only_group = QCheckBox("Nur passend zum gewählten Cluster")
+        self.core_only_group.setChecked(False)
+        self.core_only_group.toggled.connect(self._refresh_core_groups)
+        core_header.addWidget(self.core_only_group)
+        body.addLayout(core_header)
+        self.core_note = QLabel(
+            "Prüfgruppen werden zusammen mit der Clustermethode berechnet. "
+            "Gruppennummern verschiedener Methoden werden nicht gleichgesetzt.",
+            objectName="PageSubtitle",
+        )
+        self.core_note.setWordWrap(True)
+        body.addWidget(self.core_note)
+        self.core_model = _ClusterTableModel((
+            "Prüfgruppe", "Fälle", "FINs", "Zugeordneter Cluster",
+            "Überlappung", "Min. Cosinus", "Gemeinsamer ECU:DTC-Kern",
+            "Fachlicher Hinweis",
+        ))
+        self.core_table = _table(
+            self.core_model, 168,
+            (103, 70, 72, 152, 98, 104, 326, 430),
+        )
+        self.core_table.selectionModel().currentRowChanged.connect(
+            self._core_changed
+        )
+        body.addWidget(self.core_table)
+        core_actions = QHBoxLayout()
+        self.core_export = QPushButton(
+            "Prüfgruppen zur technischen Fachprüfung lokal exportieren"
+        )
+        self.core_export.setEnabled(False)
+        self.core_export.clicked.connect(self.export_core_review)
+        core_actions.addWidget(self.core_export)
+        core_actions.addStretch(1)
+        body.addLayout(core_actions)
+
+        self.member_title = QLabel(
+            self._member_title_default, objectName="CardTitle",
+        )
+        body.addWidget(self.member_title)
+        self.member_model = _ClusterTableModel((
             "Rolle", "QEC-Fall", "FIN", "Index zum Medoid",
             "ML-Zugehörigkeit", "Gemeinsame ECU:DTC", "SSL-Endbefund (post hoc)",
         ))
-        self.member_table = _table(self.member_model, 210)
+        self.member_table = _table(
+            self.member_model, 210,
+            (185, 165, 183, 137, 115, 317, 480),
+        )
         self.member_table.doubleClicked.connect(self._open_member_case)
         body.addWidget(self.member_table)
         open_row = QHBoxLayout()
@@ -381,8 +492,12 @@ class ClusterWorkspace(QWidget):
             "Nicht zugeordnete und diagnostisch ausgeschlossene Fälle",
             objectName="CardTitle",
         ))
-        self.noise_model = SimpleTableModel(("QEC-Fall", "FIN", "Begründung"))
-        self.noise_table = _table(self.noise_model, 190)
+        self.noise_model = _ClusterTableModel(
+            ("QEC-Fall", "FIN", "Begründung"),
+        )
+        self.noise_table = _table(
+            self.noise_model, 190, (190, 230, 540),
+        )
         self.noise_table.doubleClicked.connect(self._open_noise_case)
         body.addWidget(self.noise_table)
 
@@ -422,6 +537,7 @@ class ClusterWorkspace(QWidget):
         ):
             control.valueChanged.connect(self._invalidate_on_input)
         self.filter_common.toggled.connect(self._invalidate_on_input)
+        self.core_threshold.valueChanged.connect(self._invalidate_on_input)
         self._change_dimension()
 
     def _update_parameters(self, *_args) -> None:
