@@ -603,7 +603,7 @@ class CasePage(QWidget):
             (
                 case.case_id for case in self.real_cases
                 if case.vin == fin and case.component_profile_id == "coolant_pump"
-                and case.qec_reference
+                and getattr(case, "qec_reference", None)
             )
         )
         if matching:
