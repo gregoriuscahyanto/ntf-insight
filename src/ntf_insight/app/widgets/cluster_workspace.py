@@ -776,43 +776,46 @@ class ClusterWorkspace(QWidget):
         self._change_dimension()
 
     def _update_population(self, *_args) -> None:
-        """Show actual locally imported FINs, not the QEC case population."""
+        """Explain imported AutoExport FINs vs local QEC pump cases."""
+        def count(number: int) -> str:
+            return f"{number:,}".replace(",", ".")
+
         scoped = self._subset()
         qec_fins = len({case.vin for case in scoped})
         qec = (
-            f"QEC-Fälle dieser Bauteilfamilie: {len(scoped):,} · "
-            f"{qec_fins:,} unterschiedliche FINs."
-        ).replace(",", ".")
+            f"QEC-Fälle dieser Bauteilfamilie: {count(len(scoped))} · "
+            f"{count(qec_fins)} unterschiedliche FINs."
+        )
         metrics = self._population_metrics
         if not metrics:
             self.population_summary.setText(
                 "AutoExport-Gesamtumfang lokal nicht verfügbar. " + qec
             )
             self.population_detail.setText(
-                "Importierte AutoExport-Quellen sind hier nicht angeschlossen."
+                "Hier sind keine importierten AutoExport-Gesamtzahlen verfügbar."
             )
             return
         fin_count = metrics.get("autoexport_unique_fins", 0)
         rows = metrics.get("autoexport_total_rows", 0)
         self.population_summary.setText(
-            (
-                f"AutoExport importiert: {rows:,} Rohzeilen aus "
-                f"DTC/Werkstatt/TIPS · {fin_count:,} eindeutige FINs. "
-                + qec
-            ).replace(",", ".")
+            f"AutoExport lokal importiert: {count(rows)} Rohzeilen "
+            f"(DTC, Werkstatt, TIPS) · {count(fin_count)} eindeutige FINs. "
+            + qec
         )
+
         def detail(kind: str, title: str) -> str:
             return (
-                f"{title}: {metrics.get(kind + '_rows', 0):,} Zeilen, "
-                f"{metrics.get(kind + '_fins', 0):,} FINs"
-            ).replace(",", ".")
+                f"{title}: {count(metrics.get(kind + '_rows', 0))} Zeilen, "
+                f"{count(metrics.get(kind + '_fins', 0))} FINs"
+            )
+
         self.population_detail.setText(
             detail("autoexport_dtc", "Fehlerspeicher")
             + " · " + detail("autoexport_repair", "Werkstatt")
             + " · " + detail("autoexport_tips", "TIPS")
-            + ". Gezählt werden gespeicherte importierte Rohzeilen "
-            "und unterschiedliche FINs über alle AutoExport-Quellen; "
-            "gleiche FINs in mehreren Quellen zählen insgesamt nur einmal. "
+            + ". Gezählt werden nur erfolgreich gespeicherte, importierte "
+            "AutoExport-Rohzeilen. FINs über mehrere Kategorien/Dateien "
+            "werden für die Gesamtsumme einmal gezählt. "
             "Eine AutoExport-FIN ist nicht automatisch ein QEC-Pumpenfall."
         )
 
@@ -1168,7 +1171,8 @@ class ClusterWorkspace(QWidget):
         for key, count in zip(("assigned", "noise", "missing"), pie_values, strict=True):
             self.summary_values[key].setText(str(count))
             self.pie_percent_labels[key].setText(
-                f"{count / total:.1%} der QEC-Fälle" if total else "Keine Fälle"
+                (f"{count / total * 100:.1f}".replace(".", ",")
+                 + " % der QEC-Fälle") if total else "Keine Fälle"
             )
         self.kpi.setText(
             f"Angezeigt: {BY_METHOD[result.parameters.method].title} · "
