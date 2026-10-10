@@ -13,7 +13,8 @@ param(
     [string]$OutputDirectory = '',
     [switch]$NurPruefen,
     [switch]$AnalyseStarten,
-    [switch]$SummenFreigeben
+    [switch]$SummenFreigeben,
+    [switch]$MethodenFreigeben
 )
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
@@ -102,7 +103,8 @@ if ($AnalyseStarten) {
     Write-Host 'Starte einen MANUELL autorisierten GitHub-Lauf auf main.'
     Write-Host 'Voraussetzung: Runner 1 wurde nach der Konfiguration neu gestartet.'
     $release = if ($SummenFreigeben) { 'true' } else { 'false' }
-    & gh workflow run local-analysis.yml --repo gregoriuscahyanto/ntf-insight --ref main --field analyse_freigegeben=true --field "summen_in_actions_log_freigeben=$release"
+    $methods = if ($MethodenFreigeben) { 'true' } else { 'false' }
+    & gh workflow run local-analysis.yml --repo gregoriuscahyanto/ntf-insight --ref main --field analyse_freigegeben=true --field "summen_in_actions_log_freigeben=$release" --field "methodenvergleich_freigeben=$methods"
     if ($LASTEXITCODE -ne 0) {
         throw 'GitHub-Lauf konnte nicht gestartet werden; gh auth und main pruefen.'
     }
