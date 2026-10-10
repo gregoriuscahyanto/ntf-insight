@@ -42,6 +42,7 @@ _ACTIVE_TASKS: set[QThread] = set()
 class _ClusterTask(QThread):
     calculated = Signal(object)
     problem = Signal(str)
+    progress = Signal(str)
 
     def __init__(
         self,
@@ -70,6 +71,7 @@ class _ClusterTask(QThread):
                 lookback_days=p.lookback_days,
                 common_dtc_cutoff=p.common_dtc_cutoff,
             )
+            self.progress.emit("Berechne alle Clustermethoden auf gleicher Diagnosebasis …")
             shared_projection = _project_3d(base)
             results = [
                 calculate_clusters(
@@ -101,10 +103,15 @@ class _ClusterTask(QThread):
                     ("Verfahren", BY_METHOD[item.parameters.method].title, item)
                     for item in results if item.parameters.method != p.method
                 ]
-                for label, variant in sensitivity_scenarios(p):
+                scenarios = sensitivity_scenarios(p)
+                for index, (label, variant) in enumerate(scenarios, start=1):
+                    self.progress.emit(
+                        f"Robustheitsprüfung {index}/{len(scenarios)}: {label}"
+                    )
                     # Independently re-evaluate eligible cases per scenario.
                     run = calculate_clusters(self.cases, variant)
                     comparisons.append(("Daten/Parameter", label, run))
+                self.progress.emit("Fasse Fallpaar-Stabilität zusammen …")
                 report = build_stability_report(reference, tuple(comparisons))
             self.calculated.emit((results, core, report))
         except (ValueError, RuntimeError) as exc:
@@ -196,8 +203,6 @@ class ClusterWorkspace(QWidget):
         self._focused_case_id: str | None = None
         self._member_title_default = "Falltabelle – gewählter Cluster"
         self._dialogs: list[QDialog] = []
-        self._activated = False
-
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         scroll = QScrollArea(self)
@@ -278,7 +283,6 @@ class ClusterWorkspace(QWidget):
         self.filter_common.setToolTip(
             "Experimenteller Sensitivitätsfilter, keine Aussage über technische Relevanz."
         )
-
 
         fields.addWidget(QLabel("Bauteilfamilie"), 0, 0)
         fields.addWidget(self.family, 0, 1)
@@ -703,7 +707,6 @@ class ClusterWorkspace(QWidget):
             self.status.setText("Keine Fälle für die gewählte Bauteilfamilie.")
             self._clear_results()
             return
-        self._activated = True
         params = self._parameters()
         try:
             params.validate()
@@ -726,6 +729,7 @@ class ClusterWorkspace(QWidget):
         _ACTIVE_TASKS.add(task)
         self._task = task
         task.calculated.connect(self._receive_results)
+        task.progress.connect(self.status.setText)
         task.problem.connect(self._receive_error)
         task.finished.connect(lambda: _ACTIVE_TASKS.discard(task))
         task.finished.connect(task.deleteLater)
@@ -806,7 +810,7 @@ class ClusterWorkspace(QWidget):
             self.stability_model.set_rows([])
             self.stability_group_model.set_rows([])
             self.stability_note.setText(
-                "Noch keine Robustheitsprüfung. 'Stabilität prüfen' "
+                "Noch keine Robustheitsprüfung. 'Clusteranalyse starten' "
                 "vergleicht vorhandene lokale Vor-Tausch-Diagnosen."
             )
             return
