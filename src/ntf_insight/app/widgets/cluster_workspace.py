@@ -673,6 +673,7 @@ class ClusterWorkspace(QWidget):
         body.addWidget(self.expert_panel)
         self.expert_panel.hide()
         self.expert_toggle.toggled.connect(self.expert_panel.setVisible)
+        self.expert_toggle.toggled.connect(self._toggle_technical_columns)
         # New settings must never silently retain a previous grouping as
         # though it had been calculated with the changed parameters.
         for control in (
@@ -687,6 +688,13 @@ class ClusterWorkspace(QWidget):
         self.filter_common.toggled.connect(self._invalidate_on_input)
         self.core_threshold.valueChanged.connect(self._invalidate_on_input)
         self._change_dimension()
+
+    def _toggle_technical_columns(self, shown: bool) -> None:
+        """Expose the complete legacy evidence columns only on explicit demand."""
+        for col in (1, 4, 5, 6, 8):
+            self.group_table.setColumnHidden(col, not shown)
+        for col in (3, 4, 6):
+            self.member_table.setColumnHidden(col, not shown)
 
     def _update_parameters(self, *_args) -> None:
         spec = BY_METHOD.get(self.method.currentData(), METHODS[0])
