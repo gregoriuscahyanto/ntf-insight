@@ -444,7 +444,7 @@ def test_four_everyday_questions_are_visible_without_expert_tables():
     assert panel.summary_values["missing"].text() == "2"
     assert panel.plot.items_by_case
     assert panel.group_table.currentIndex().isValid()
-    assert "Warum sind diese" in panel.why_heading.text()
+    assert "Warum gehören diese" in panel.why_heading.text()
     assert "CPC3:CODE-" in panel.why_text.text()
     assert panel.member_model.rowCount() == 6
     assert all(row[1] in panel.by_id for row in panel.member_model.rows)
