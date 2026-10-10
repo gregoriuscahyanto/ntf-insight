@@ -30,7 +30,7 @@ class GroupDtcPriority:
         if self.level == "hoch":
             return "Hohe Prüfpriorität"
         if self.level == "hinweis":
-            return "Pruefhinweis"
+            return "Prüfhinweis"
         return "Keine Markierung"
 
 
