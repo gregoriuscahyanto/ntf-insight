@@ -22,7 +22,7 @@ from PySide6.QtWidgets import (
 from ntf_insight.analysis.case_clustering import _component_key
 from ntf_insight.analysis.cluster_workspace_engine import (
     BY_METHOD, METHODS, ClusterParameters, UnifiedClusterResult, UnifiedCluster,
-    calculate_clusters, compare_cluster_runs,
+    _project_3d, calculate_clusters, compare_cluster_runs,
 )
 from ntf_insight.analysis.cluster_core_review import (
     CoreGroupLink, link_core_review_groups, write_core_review_template,
@@ -67,9 +67,11 @@ class _ClusterTask(QThread):
                 lookback_days=p.lookback_days,
                 common_dtc_cutoff=p.common_dtc_cutoff,
             )
+            shared_projection = _project_3d(base)
             results = [
                 calculate_clusters(
-                    self.cases, replace(p, method=method), reference=base,
+                    self.cases, replace(p, method=method),
+                    reference=base, projection=shared_projection,
                 )
                 for method in self.methods
             ]
@@ -84,6 +86,7 @@ class _ClusterTask(QThread):
             if core is None:
                 core = calculate_clusters(
                     self.cases, strict_params, reference=base,
+                    projection=shared_projection,
                 )
             self.calculated.emit((results, core))
         except (ValueError, RuntimeError) as exc:
