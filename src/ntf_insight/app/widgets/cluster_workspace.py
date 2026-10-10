@@ -835,14 +835,20 @@ class ClusterWorkspace(QWidget):
         )
         self._member_ids = [member.case_id for member in group.members]
         rows = []
+        # One QEC is not one independent vehicle. Only the first target
+        # with a genuinely different FIN is eligible for that designation.
+        seen_fins = {self.by_id[group.representative_case_id].vin}
         for member in group.members:
             case = self.by_id[member.case_id]
-            role = (
-                "Repräsentant (Kern)" if core
-                else "Repräsentant"
-            ) if member.case_id == group.representative_case_id else (
-                "Unabhängig zu prüfender Fall" if core else "Clusterfall"
-            )
+            if member.case_id == group.representative_case_id:
+                role = "Repräsentant (Kern)" if core else "Repräsentant"
+            elif core and case.vin in seen_fins:
+                role = "Mehrfachfall derselben FIN – nicht unabhängig"
+            elif core:
+                role = "Prüffall mit anderer FIN – Mechanismus offen"
+                seen_fins.add(case.vin)
+            else:
+                role = "Clusterfall"
             common = ", ".join(
                 f"{ecu}:{dtc}" for ecu, dtc in group.common_faults[:7]
             ) or "Kein durchgängiger ECU:DTC"
