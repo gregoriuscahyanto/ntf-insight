@@ -11,6 +11,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from PySide6.QtCore import Qt
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QFileDialog, QHeaderView
+from shiboken6 import isValid
 
 from ntf_insight.app.widgets.cluster_workspace import ClusterWorkspace
 from test_hdbscan_clustering import sample, synthetic
@@ -42,7 +43,8 @@ def _calculate(
     assert panel.run_button.isEnabled()
     # Avoid PySide GC collecting the GUI while a previous test's QThread
     # is still finishing. The UI itself stays asynchronous.
-    assert task.wait(10000)
+    if isValid(task):
+        assert task.wait(10000)
     QApplication.processEvents()
 
 
@@ -370,7 +372,8 @@ def test_single_cluster_start_button_runs_all_methods_and_sensitivities():
             break
         QTest.qWait(10)
     assert panel._stability_report is not None, panel.status.text()
-    assert task.wait(10000)
+    if isValid(task):
+        assert task.wait(10000)
     QApplication.processEvents()
     report = panel._stability_report
     assert panel.stability_model.rowCount() == len(report.comparisons)
