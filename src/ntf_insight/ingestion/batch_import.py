@@ -440,6 +440,21 @@ class LocalBatchImporter:
                     ("tips_observations", document.tips_observations),
                 ):
                     for event in events:
+                        if attr == "tips_observations" and event.tips_case_id:
+                            # A human-reviewed link must win over automated
+                            # replay of the same TIPS episode into another QEC.
+                            already_linked = any(
+                                candidate.vin == event.vin
+                                and any(
+                                    linked.tips_case_id == event.tips_case_id
+                                    and linked.occurred_at.date()
+                                    == event.occurred_at.date()
+                                    for linked in candidate.tips_observations
+                                )
+                                for candidate in existing.values()
+                            )
+                            if already_linked:
+                                continue
                         case = self._case_for_event(event, case_fin, attr)
                         if case is None:
                             summary.events_unassigned += 1

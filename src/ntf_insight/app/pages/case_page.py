@@ -47,6 +47,7 @@ from ntf_insight.app.models.timeline_table_model import TimelineTableModel
 from ntf_insight.app.widgets.event_time_plot import EventTimePlot
 from ntf_insight.app.widgets.quicktest_browser import QuickTestBrowser
 from ntf_insight.app.widgets.case_scatter_plot import CaseScatterPanel
+from ntf_insight.app.widgets.representative_case_panel import RepresentativeCasePanel
 from ntf_insight.ingestion.manual_entry import ManualCaseService, ManualEntryError
 from ntf_insight.ingestion.real_source_parsers import canonical_fin
 from ntf_insight.domain.events import PartReplacement
@@ -129,6 +130,19 @@ class CasePage(QWidget):
             self.detail_tabs.addTab(self.quicktest_browser, "QuickTests nach FIN")
         else:
             self.quicktest_browser = None
+
+        # New, distinct experiment-planning view: does NOT relabel the
+        # original conservative Complete-Link clusters on the scatter tab.
+        self.representative_panel = RepresentativeCasePanel(
+            self.real_cases,
+            source_knowledge=self.source_knowledge,
+            store=manual_service.store if manual_service is not None else None,
+        )
+        self.detail_tabs.addTab(
+            self.representative_panel, "Repräsentative Cluster"
+        )
+        self.representative_panel.case_requested.connect(self.select_case)
+        self.representative_panel.tips_linked.connect(self._relay_tips_link)
 
         layout = QVBoxLayout(content)
         layout.setContentsMargins(32, 28, 32, 28)
@@ -552,6 +566,10 @@ class CasePage(QWidget):
         selector_index = self.selector.findData(case_id)
         if selector_index >= 0:
             self.selector.setCurrentIndex(selector_index)
+
+    def _relay_tips_link(self, case_id: str) -> None:
+        """Emit through a CasePage slot owned by Qt, not a shared emitter."""
+        self.case_saved.emit(case_id)
 
     def _request_similar_cases(self) -> None:
         """Show the selected true QEC/NTF case in the local scatter tab."""
