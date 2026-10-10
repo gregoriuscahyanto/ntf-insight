@@ -109,7 +109,9 @@ class _ClusterTask(QThread):
                         f"Robustheitsprüfung {index}/{len(scenarios)}: {label}"
                     )
                     # Independently re-evaluate eligible cases per scenario.
-                    run = calculate_clusters(self.cases, variant)
+                    run = calculate_clusters(
+                        self.cases, variant, include_projection=False,
+                    )
                     comparisons.append(("Daten/Parameter", label, run))
                 self.progress.emit("Fasse Fallpaar-Stabilität zusammen …")
                 report = build_stability_report(reference, tuple(comparisons))
