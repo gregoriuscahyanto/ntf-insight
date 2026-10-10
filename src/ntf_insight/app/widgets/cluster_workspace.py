@@ -1096,6 +1096,14 @@ class ClusterWorkspace(QWidget):
             )
             self.group_table.selectRow(match)
         else:
+            self.why_heading.setText("Dieses Verfahren hat keine Cluster gefunden")
+            self.why_text.setText(
+                "Bei diesen Einstellungen werden keine Fälle einer "
+                "gemeinsamen Gruppe zugeordnet. Das bedeutet nicht, "
+                "dass die Kühlmittelpumpe fehlerfrei ist. "
+                "Wähle oben ein anderes Clusterverfahren, "
+                "um dessen Ergebnisse zu sehen."
+            )
             self._refresh_core_groups()
             if self._focused_case_id is not None:
                 self.focus_case(self._focused_case_id)
