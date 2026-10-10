@@ -5,11 +5,21 @@ import csv
 
 from PySide6.QtCore import Signal
 from PySide6.QtWidgets import (
-    QComboBox, QFileDialog, QGridLayout, QHBoxLayout, QLabel, QMessageBox,
+    QCheckBox, QComboBox, QFileDialog, QGridLayout, QHBoxLayout, QLabel, QMessageBox,
     QPushButton, QScrollArea, QSpinBox, QVBoxLayout, QWidget,
 )
 
-from ntf_insight.analysis.case_clustering import _component_key, signature_for
+from ntf_insight.analysis.case_clustering import _component_key
+from ntf_insight.analysis.diagnostic_evidence_audit import (
+    DiagnosticEvidenceAudit, audit_diagnostic_evidence,
+)
+from ntf_insight.analysis.mechanism_review import (
+    ConfirmedMechanism, read_confirmed_mechanisms, review_cluster_mechanisms,
+    safe_spreadsheet_cell, write_review_template,
+)
+from ntf_insight.analysis.supervised_pair_validation import (
+    evaluate_supervised_pairs,
+)
 from ntf_insight.analysis.hdbscan_clustering import (
     HDBSCANMethodComparison, MLClusterResult, cluster_hdbscan_cases,
     compare_hdbscan_methods,
@@ -35,6 +45,8 @@ class HDBSCANPanel(QWidget):
         }
         self.result: MLClusterResult | None = None
         self.comparison: HDBSCANMethodComparison | None = None
+        self.evidence_audit: DiagnosticEvidenceAudit | None = None
+        self.confirmed_mechanisms: tuple[ConfirmedMechanism, ...] = ()
         self._activated = False
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -113,6 +125,16 @@ class HDBSCANPanel(QWidget):
             "Beide benutzen dieselben diagnostischen Vektoren."
         )
         grid.addWidget(self.selection_method, 1, 5)
+        self.filter_common = QCheckBox(
+            "Häufige ECU:DTC ab 35 % testweise aus ML-Merkmalen ausschließen"
+        )
+        self.filter_common.setChecked(False)
+        self.filter_common.setToolTip(
+            "Experimenteller Sensitivitätsvergleich. Nicht behaupten, "
+            "dass häufige Kommunikations-DTCs technisch irrelevant sind. "
+            "Fälle ohne verbleibenden DTC werden getrennt ausgewiesen."
+        )
+        grid.addWidget(self.filter_common, 2, 0, 1, 6)
         body.addLayout(grid)
 
         actions = QHBoxLayout()
@@ -216,6 +238,71 @@ class HDBSCANPanel(QWidget):
         self.noise_table = _table(self.noise_model, 260)
         self.noise_table.doubleClicked.connect(self._open_noise_case)
         body.addWidget(self.noise_table)
+
+        body.addWidget(QLabel(
+            "Diagnosebasis prüfen: warum werden Fälle ausgeschlossen?",
+            objectName="CardTitle",
+        ))
+        self.evidence_summary = QLabel(objectName="PageSubtitle")
+        self.evidence_summary.setWordWrap(True)
+        body.addWidget(self.evidence_summary)
+        self.frequency_model = SimpleTableModel((
+            "ECU", "DTC", "QEC-Fälle mit DTC", "Anteil an Fällen mit Vorher-DTC",
+            "Häufigkeitsprüfung (KEIN Ursachenurteil)",
+        ))
+        self.frequency_table = _table(self.frequency_model, 210)
+        body.addWidget(self.frequency_table)
+
+        body.addWidget(QLabel(
+            "Fachlich bestätigte Fehlermechanismen – unabhängige Validierung",
+            objectName="CardTitle",
+        ))
+        instructions = QLabel(
+            "Die QEC-SSL-Endbefunde erscheinen nur als Referenz in einer "
+            "lokalen Prüfvorlage. Nicht als bestätigte Fehlerursache "
+            "übernehmen! Ein Fachprüfer muss einen spezifischen Mechanismus "
+            "mit unabhängiger Evidenz und Datum ausdrücklich bestätigen. "
+            "Diese Labels ändern NIEMALS die HDBSCAN-Zuordnung.",
+            objectName="PageSubtitle",
+        )
+        instructions.setWordWrap(True)
+        body.addWidget(instructions)
+        review_controls = QHBoxLayout()
+        self.template_button = QPushButton(
+            "Fachprüfvorlage lokal exportieren (mit FIN und SSL)"
+        )
+        self.template_button.clicked.connect(self.export_review_template)
+        review_controls.addWidget(self.template_button)
+        self.import_review_button = QPushButton(
+            "Bestätigte Fehlermechanismen lokal einlesen"
+        )
+        self.import_review_button.clicked.connect(self.import_mechanism_labels)
+        review_controls.addWidget(self.import_review_button)
+        self.pair_test_button = QPushButton("FIN-getrenntes Paarmodell prüfen")
+        self.pair_test_button.setEnabled(False)
+        self.pair_test_button.clicked.connect(self.test_supervised_pairs)
+        review_controls.addWidget(self.pair_test_button)
+        body.addLayout(review_controls)
+        self.mechanism_summary = QLabel(
+            "Noch keine Fachbestätigungen geladen. "
+            "Alle Cluster sind unvalidierte Diagnostik-Vergleichsgruppen.",
+            objectName="PageSubtitle",
+        )
+        self.mechanism_summary.setWordWrap(True)
+        body.addWidget(self.mechanism_summary)
+        self.mechanism_model = SimpleTableModel((
+            "ML-Gruppe", "QEC-Fälle", "Fachlich bestätigt", "Bestätigte FINs",
+            "Gleiche Ursachenpaare", "Abweichende Ursachenpaare",
+            "Übereinstimmung NUR auf geprüften Paaren", "Fachliche Bewertung",
+        ))
+        self.mechanism_table = _table(self.mechanism_model, 220)
+        body.addWidget(self.mechanism_table)
+        self.pair_test_summary = QLabel(
+            "Kein Paarmodell trainiert. Erst unabhängige Fachlabels laden.",
+            objectName="PageSubtitle",
+        )
+        self.pair_test_summary.setWordWrap(True)
+        body.addWidget(self.pair_test_summary)
         footer = QLabel(
             "Interpretation: Dichtecluster können Fälle mit unterschiedlichen "
             "technischen Fehlerursachen enthalten. Besonders problematisch sind "
@@ -245,11 +332,18 @@ class HDBSCANPanel(QWidget):
     def run_analysis(self) -> None:
         subset = self._subset()
         try:
+            audit = audit_diagnostic_evidence(
+                subset,
+                dtc_source=self.source.currentData() or "all",
+                lookback_days=self.lookback.currentData(),
+                common_cutoff=0.35,
+            )
             result = cluster_hdbscan_cases(
                 subset,
                 min_cluster_size=self.min_cluster_size.value(),
                 min_samples=self.min_samples.value(),
                 selection_method=self.selection_method.currentData(),
+                common_dtc_cutoff=0.35 if self.filter_common.isChecked() else None,
                 dtc_source=self.source.currentData() or "all",
                 lookback_days=self.lookback.currentData(),
             )
@@ -259,9 +353,20 @@ class HDBSCANPanel(QWidget):
             self.member_model.set_rows([])
             self.noise_model.set_rows([])
             self.result = None
+            self.evidence_audit = None
             self.export_button.setEnabled(False)
+            self.evidence_summary.setText(f"Diagnosedaten nicht auswertbar: {exc}")
             return
         self.result = result
+        self.evidence_audit = audit
+        if not {review.case_id for review in self.confirmed_mechanisms}.issubset(
+            {case.case_id for case in subset}
+        ):
+            self.confirmed_mechanisms = ()
+            self.pair_test_button.setEnabled(False)
+            self.pair_test_summary.setText(
+                "Fachbestätigungen zurückgesetzt: andere Bauteilfamilie."
+            )
         self.comparison = None
         self.comparison_model.set_rows([])
         self.quality_button.setEnabled(False)
@@ -272,7 +377,9 @@ class HDBSCANPanel(QWidget):
         self.summary.setText(
             f"{result.case_count} QEC-Fälle / {result.vehicle_count} FINs · "
             f"{len(result.eligible_case_ids)} mit Tauschanker und Vorher-DTC · "
-            f"{len(result.excluded_case_ids)} ohne geeignete Diagnosebasis · "
+            f"{len(result.excluded_case_ids)} nicht projizierbar "
+            f"(davon {len(result.frequency_filtered_case_ids)} durch "
+            "experimentellen DTC-Häufigkeitsfilter) · "
             f"{result.feature_count} TF-IDF-Merkmalsspalten · "
             f"{len(result.clusters)} HDBSCAN-Gruppen (automatisch) · "
             f"{result.clustered_count} Fälle ({result.coverage:.1%}) "
@@ -282,7 +389,8 @@ class HDBSCANPanel(QWidget):
             f"min_cluster_size={result.min_cluster_size}, "
             f"min_samples={result.min_samples}; "
             f"Quelle: {self.source.currentText()}; "
-            f"Zeitfenster: {self.lookback.currentText()}. "
+            f"Zeitfenster: {self.lookback.currentText()}; "
+            f"Häufigkeitsfilter: {'an (35 %)' if result.common_dtc_cutoff is not None else 'aus'}. "
             "Die Gruppenanzahl ist keine Gütebewertung."
         )
         self.group_model.set_rows([
@@ -306,12 +414,31 @@ class HDBSCANPanel(QWidget):
                 "; ".join(group.warnings) or "Fachliche Ursachenprüfung erforderlich",
             ) for group in result.clusters
         ])
-        sigs = {
-            c.case_id: signature_for(
-                c, dtc_source=result.dtc_source,
-                lookback_days=result.lookback_days,
-            ) for c in subset
-        }
+        availability = {row.case_id: row for row in audit.cases}
+        self.evidence_summary.setText(
+            f"QEC-Grundgesamtheit {audit.scoped_cases}, davon "
+            f"{audit.eligible_cases} mit geeigneter Vor-Tausch-Diagnose · "
+            f"{audit.without_anchor} ohne Tauschanker · "
+            f"{audit.without_any_dtc} ohne QEC-DTC-Zeilen · "
+            f"{audit.only_after_swap_or_undated} mit DTC, aber nicht sicher vorher · "
+            f"{audit.no_selected_source} ohne Vorher-DTC aus gewählter Quelle · "
+            f"{audit.outside_lookback} außerhalb des gewählten Vorher-Fensters. "
+            f"{audit.with_source_overlap} QEC-Fälle zeigen dieselbe ECU:DTC-"
+            f"Kombination in QuickTest und AutoExport "
+            f"({audit.overlapping_fault_occurrences} Fall-DTC-Überlappungen; "
+            "als Mengenmerkmale nicht doppelt gezählt). "
+            f"{len(audit.high_prevalence_faults)} ECU:DTC erreichen mindestens "
+            "35 % der auswertbaren QEC-Fälle. Hohe Häufigkeit bedeutet "
+            "NICHT technisch irrelevant."
+        )
+        self.frequency_model.set_rows([
+            (
+                item.fault[0], item.fault[1], item.case_count,
+                f"{item.proportion:.1%}",
+                "Häufig, fachliche Relevanz ungeklärt"
+                if item.screened_common else "Unter Screening-Grenze",
+            ) for item in audit.frequencies[:30]
+        ])
         self.noise_model.set_rows([
             (
                 cid, self.by_id[cid].vin,
@@ -320,14 +447,23 @@ class HDBSCANPanel(QWidget):
         ] + [
             (
                 cid, self.by_id[cid].vin,
-                "Tauschanker fehlt" if not sigs[cid].has_replacement_anchor
-                else "Keine belegte Vor-Tausch-ECU:DTC-Diagnose",
+                (
+                    "Nur häufige DTCs nach experimentellem Screening"
+                    if cid in result.frequency_filtered_case_ids
+                    else availability[cid].reason
+                ),
             ) for cid in result.excluded_case_ids
         ])
         self.member_model.set_rows([])
         self.open_button.setEnabled(bool(result.clusters))
         self.export_button.setEnabled(bool(result.clusters))
         self.map.set_result(result, subset)
+        self._refresh_mechanism_review()
+        self.pair_test_summary.setText(
+            "Kein neues Paarmodell geprüft. "
+            "Für eine FIN-getrennte Bewertung Fachbestätigungen laden "
+            "und auf 'Paarmodell prüfen' klicken."
+        )
         if result.clusters:
             self.group_table.selectRow(0)
             self._group_changed(self.group_model.index(0, 0), None)
@@ -351,6 +487,7 @@ class HDBSCANPanel(QWidget):
                 min_samples=self.min_samples.value(),
                 dtc_source=self.source.currentData() or "all",
                 lookback_days=self.lookback.currentData(),
+                common_dtc_cutoff=0.35 if self.filter_common.isChecked() else None,
             )
         except ValueError as exc:
             self.comparison_summary.setText(f"Vergleich nicht berechenbar: {exc}")
@@ -375,7 +512,8 @@ class HDBSCANPanel(QWidget):
         ])
         self.comparison_summary.setText(
             f"EOM/Leaf-Vergleich auf identischen "
-            f"{report.eligible_case_count} diagnostizierbaren QEC-Fällen · "
+            f"{report.eligible_case_count} für diese Merkmalsvariante "
+            "auswertbaren QEC-Fällen · "
             f"{report.both_grouped_cases} Fälle in beiden Verfahren gruppiert · "
             f"{'Paar-Zuordnungs-Übereinstimmung: ' + format(report.pair_coassignment_jaccard, '.1%') if report.pair_coassignment_jaccard is not None else 'Keine gruppierten Paare in beiden Varianten'}. "
             "Dabei werden echte Fallpaare verglichen, nicht willkürliche "
@@ -410,7 +548,8 @@ class HDBSCANPanel(QWidget):
                     "Paar-Zuordnungs-Übereinstimmung EOM/Leaf",
                     "In beiden Methoden gruppierte Fälle",
                     "min_cluster_size", "min_samples",
-                    "DTC-Quellen", "Vor-Tausch-Tage", "Methodenstatus",
+                    "DTC-Quellen", "Vor-Tausch-Tage",
+                    "Häufigkeitsfilter ECU:DTC", "Methodenstatus",
                 ))
                 for line in report.rows:
                     writer.writerow((
@@ -439,12 +578,133 @@ class HDBSCANPanel(QWidget):
                         report.min_samples,
                         report.dtc_source,
                         report.lookback_days or "gesamte Vorher-Historie",
+                        (
+                            f"Ab {report.common_dtc_cutoff:.0%}"
+                            if report.common_dtc_cutoff is not None else "Aus"
+                        ),
                         "ML explorativ; keinerlei Ursache bestätigt",
                     ))
         except OSError as exc:
             QMessageBox.warning(
                 self, "Aggregierter Qualitätsbericht nicht gespeichert", str(exc),
             )
+
+    def export_review_template(self) -> None:
+        """Local-only CSV with sensitive QEC SSL and VIN for human review."""
+        target, _ = QFileDialog.getSaveFileName(
+            self,
+            "Vertrauliche Fachprüfvorlage LOKAL speichern (FIN und SSL enthalten)",
+            "NTF_QEC_Fachpruefung_vertraulich.csv",
+            "CSV-Dateien (*.csv)",
+        )
+        if not target:
+            return
+        try:
+            with open(target, "w", encoding="utf-8-sig", newline="") as stream:
+                write_review_template(stream, self._subset())
+        except OSError as exc:
+            QMessageBox.warning(self, "Fachprüfvorlage nicht gespeichert", str(exc))
+
+    def import_mechanism_labels(self) -> None:
+        """Read an explicitly edited, reviewed CSV; never infer from QEC text."""
+        target, _ = QFileDialog.getOpenFileName(
+            self, "Lokale Fachbestätigungen auswählen",
+            "", "CSV-Dateien (*.csv)",
+        )
+        if not target:
+            return
+        try:
+            with open(target, encoding="utf-8-sig", newline="") as stream:
+                confirmed = read_confirmed_mechanisms(stream, self._subset())
+        except (OSError, UnicodeError, ValueError) as exc:
+            QMessageBox.warning(
+                self, "Fachbestätigungen nicht übernommen", str(exc),
+            )
+            return
+        self.confirmed_mechanisms = confirmed
+        self.pair_test_button.setEnabled(bool(confirmed))
+        self.pair_test_summary.setText(
+            "Noch kein trainiertes Paarmodell. Geladene Fachbestätigungen "
+            "werden nur für die NACHGELAGERTE Prüfung angezeigt."
+        )
+        self._refresh_mechanism_review()
+
+    def _refresh_mechanism_review(self) -> None:
+        if self.result is None:
+            self.mechanism_model.set_rows([])
+            return
+        review = review_cluster_mechanisms(
+            self._subset(), self.result, self.confirmed_mechanisms,
+        )
+        self.mechanism_model.set_rows([
+            (
+                f"H{row.cluster_id}",
+                row.case_count,
+                row.confirmed_cases,
+                row.independently_confirmed_vehicles,
+                row.same_mechanism_pairs,
+                row.different_mechanism_pairs,
+                (
+                    f"{row.labeled_pair_agreement:.1%}"
+                    if row.labeled_pair_agreement is not None
+                    else "Nicht auswertbar"
+                ),
+                row.review_note,
+            )
+            for row in review.audits
+        ])
+        observed = (
+            f"{review.observed_pair_agreement:.1%}"
+            if review.observed_pair_agreement is not None else "Nicht auswertbar"
+        )
+        self.mechanism_summary.setText(
+            f"Nur EXPLIZIT bestätigte Mechanismen: "
+            f"{review.reviewed_case_count}/{review.total_case_count} QEC-Fälle; "
+            f"{review.clustered_reviewed_count} bestätigte Fälle in den "
+            f"aktuellen ML-Gruppen. {review.evaluated_cross_fin_pairs} "
+            f"vergleichbare Fachlabel-Paare verschiedener FINs: "
+            f"{review.agreeing_cross_fin_pairs} gleich, "
+            f"{review.contradicting_cross_fin_pairs} abweichend. "
+            f"Übereinstimmung auf der geprüften TEILMENGE: {observed}. "
+            "Ungeprüfte Gruppenmitglieder erhalten KEINE Ursachenzuordnung. "
+            "Keine Veränderung an HDBSCAN, Medoids oder Originalquellen."
+        )
+
+    def test_supervised_pairs(self) -> None:
+        """Never use unreviewed SSL text as ground truth, never auto-deploy."""
+        if not self.confirmed_mechanisms:
+            self.pair_test_summary.setText(
+                "Keine unabhängig bestätigten Fehlermechanismen geladen. "
+                "Kein Modell trainiert."
+            )
+            return
+        evaluation = evaluate_supervised_pairs(
+            self._subset(),
+            self.confirmed_mechanisms,
+            dtc_source=self.source.currentData() or "all",
+            lookback_days=self.lookback.currentData(),
+        )
+        if not evaluation.validated:
+            self.pair_test_summary.setText(
+                f"Fachlich geeignete Fälle: {evaluation.eligible_confirmations}; "
+                f"bestätigte Mechanismen: {evaluation.confirmed_mechanisms}; "
+                f"unabhängige FINs: {evaluation.independent_vehicles}. "
+                f"{evaluation.status}"
+            )
+            return
+        self.pair_test_summary.setText(
+            f"Experimentelles Paarmodell, kein produktives Clustering: "
+            f"{evaluation.train_case_count} Trainings-QEC-Fälle / "
+            f"{evaluation.test_case_count} Test-QEC-Fälle aus getrennten FINs; "
+            f"Test: {evaluation.test_pair_count} Fallpaare "
+            f"({evaluation.test_same_mechanism_pairs} gleiche, "
+            f"{evaluation.test_different_mechanism_pairs} verschiedene "
+            f"bestätigte Mechanismen). Precision: {evaluation.test_precision:.1%}, "
+            f"Recall: {evaluation.test_recall:.1%}, "
+            f"Average Precision: {evaluation.test_average_precision:.1%} "
+            f"bei {evaluation.test_positive_fraction:.1%} positiven Paaren. "
+            f"{evaluation.status}"
+        )
 
     def _group_changed(self, index, _previous) -> None:
         if not index or not index.isValid() or self.result is None:
@@ -528,7 +788,7 @@ class HDBSCANPanel(QWidget):
                     "DTC-Quelle", "Vor-Tausch-Zeitraum",
                     "min_cluster_size", "min_samples", "HDBSCAN-Methode",
                     "10%-Quantil interne Paare", "Schwache Paare",
-                    "Bewertung", "Methodenstatus",
+                    "Bewertung", "Häufigkeitsfilter ECU:DTC", "Methodenstatus",
                 ))
                 for group in self.result.clusters:
                     for member in group.members:
@@ -540,7 +800,9 @@ class HDBSCANPanel(QWidget):
                             member.membership_strength,
                             ", ".join(f"{e}:{d}" for e, d in member.shared_faults),
                             group.weakest_internal_similarity,
-                            qec_ssl_finding_label(self.by_id[member.case_id]),
+                            safe_spreadsheet_cell(
+                                qec_ssl_finding_label(self.by_id[member.case_id])
+                            ),
                             "; ".join(group.warnings),
                             self.result.dtc_source,
                             self.result.lookback_days or "gesamte Vorher-Historie",
@@ -550,6 +812,10 @@ class HDBSCANPanel(QWidget):
                             group.p10_internal_similarity,
                             group.weak_pair_count,
                             group.screening_status,
+                            (
+                                f"Ab {self.result.common_dtc_cutoff:.0%}"
+                                if self.result.common_dtc_cutoff is not None else "Aus"
+                            ),
                             "Exploratives ML – gleiche Fehlerursache NICHT bestätigt",
                         ))
         except OSError as exc:

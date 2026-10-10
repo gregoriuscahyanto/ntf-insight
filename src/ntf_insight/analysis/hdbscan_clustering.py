@@ -8,7 +8,7 @@ input. Unanchored and DTC-less cases are explicitly excluded, not fabricated.
 from __future__ import annotations
 
 from collections import Counter
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from math import log, sqrt
 
 import numpy as np
@@ -74,6 +74,7 @@ class MLClusterResult:
     eligible_case_ids: tuple[str, ...]
     noise_case_ids: tuple[str, ...]
     excluded_case_ids: tuple[str, ...]
+    frequency_filtered_case_ids: tuple[str, ...]
     coordinates: tuple[tuple[str, float, float], ...]
     case_count: int
     vehicle_count: int
@@ -83,6 +84,7 @@ class MLClusterResult:
     selection_method: str
     lookback_days: int | None
     dtc_source: str
+    common_dtc_cutoff: float | None
     distances: tuple[tuple[float, ...], ...]
     ssl_not_used_as_feature: bool = True
 
@@ -175,6 +177,7 @@ def cluster_hdbscan_cases(
     min_cluster_size: int = 3,
     min_samples: int = 2,
     selection_method: str = "eom",
+    common_dtc_cutoff: float | None = None,
     lookback_days: int | None = None,
     dtc_source: str = "all",
 ) -> MLClusterResult:
@@ -190,6 +193,8 @@ def cluster_hdbscan_cases(
         raise ValueError("HDBSCAN-MinSamples muss 1 bis 100 sein.")
     if selection_method not in {"eom", "leaf"}:
         raise ValueError("HDBSCAN-Methode muss 'eom' oder 'leaf' sein.")
+    if common_dtc_cutoff is not None and not 0 < common_dtc_cutoff <= 1:
+        raise ValueError("Grenzwert für häufige DTCs muss im Intervall (0, 1] liegen.")
     by_id = {case.case_id: case for case in cases}
     if len(by_id) != len(cases):
         raise ValueError("QEC-Fall-IDs müssen eindeutig sein.")
@@ -201,12 +206,42 @@ def cluster_hdbscan_cases(
     }
     if len({sig.component_key for sig in sigs.values()}) > 1:
         raise ValueError("HDBSCAN nur innerhalb einer Bauteilfamilie ausführen.")
-    eligible = tuple(
+    eligible_before_screen = tuple(
         cid for cid, sig in sigs.items()
         if sig.has_replacement_anchor and sig.faults
     )
+    # Optional prevalence filter is a *sensitivity experiment*, not an
+    # inference that a common fault is unimportant to the component.
+    screened_signatures = dict(sigs)
+    if common_dtc_cutoff is not None and eligible_before_screen:
+        counts = Counter(
+            fault
+            for cid in eligible_before_screen
+            for fault in sigs[cid].faults
+        )
+        common_faults = frozenset(
+            fault for fault, count in counts.items()
+            if count / len(eligible_before_screen) >= common_dtc_cutoff
+        )
+        for cid in eligible_before_screen:
+            signature = sigs[cid]
+            retained = signature.faults - common_faults
+            screened_signatures[cid] = replace(
+                signature,
+                faults=retained,
+                codes=frozenset(code for _, code in retained),
+                ecus=frozenset(ecu for ecu, _ in retained),
+            )
+    excluded_due_to_frequency = tuple(
+        cid for cid in eligible_before_screen
+        if not screened_signatures[cid].faults
+    )
+    eligible = tuple(
+        cid for cid in eligible_before_screen
+        if screened_signatures[cid].faults
+    )
     excluded = tuple(sorted(set(by_id) - set(eligible)))
-    signatures = [sigs[cid] for cid in eligible]
+    signatures = [screened_signatures[cid] for cid in eligible]
     vectors, dimension_count = _feature_matrix(signatures)
     # Euclidean distance on unit vectors is a genuine metric; cosine distance
     # 1-cosine alone does NOT obey triangle inequality.
@@ -261,11 +296,14 @@ def cluster_hdbscan_cases(
         pair_median = float(np.median(offdiag)) if offdiag else 1.0
         pair_p10 = float(np.percentile(offdiag, 10)) if offdiag else 1.0
         weak_pair_count = sum(value < 0.45 for value in offdiag)
-        core = set(sigs[group_ids[0]].faults)
+        # Report the precise DTC features that entered this model run.
+        # Unsuppressed raw source frequencies remain visible separately
+        # in the diagnostic evidence audit.
+        core = set(screened_signatures[group_ids[0]].faults)
         frequencies: Counter[FaultKey] = Counter()
         for cid in group_ids:
-            core.intersection_update(sigs[cid].faults)
-            frequencies.update(sigs[cid].faults)
+            core.intersection_update(screened_signatures[cid].faults)
+            frequencies.update(screened_signatures[cid].faults)
 
         members = tuple(
             MLMember(
@@ -277,7 +315,8 @@ def cluster_hdbscan_cases(
                 ),
                 membership_strength=round(float(strengths[i]), 4),
                 shared_faults=tuple(sorted(
-                    sigs[eligible[i]].faults & sigs[representative].faults
+                    screened_signatures[eligible[i]].faults
+                    & screened_signatures[representative].faults
                 )),
             )
             for i in positions
@@ -379,6 +418,7 @@ def cluster_hdbscan_cases(
         eligible_case_ids=eligible,
         noise_case_ids=noise,
         excluded_case_ids=excluded,
+        frequency_filtered_case_ids=excluded_due_to_frequency,
         coordinates=_mds(distance, eligible),
         case_count=len(cases),
         vehicle_count=len({c.vin for c in cases}),
@@ -388,6 +428,7 @@ def cluster_hdbscan_cases(
         selection_method=selection_method,
         lookback_days=lookback_days,
         dtc_source=dtc_source,
+        common_dtc_cutoff=common_dtc_cutoff,
         distances=tuple(tuple(float(val) for val in row) for row in distance),
     )
 
@@ -430,6 +471,7 @@ class HDBSCANMethodComparison:
     min_samples: int
     dtc_source: str
     lookback_days: int | None
+    common_dtc_cutoff: float | None
 
     @property
     def rows(self) -> tuple[HDBSCANMethodSummary, HDBSCANMethodSummary]:
@@ -477,6 +519,7 @@ def compare_hdbscan_methods(
     min_samples: int = 2,
     lookback_days: int | None = None,
     dtc_source: str = "all",
+    common_dtc_cutoff: float | None = None,
 ) -> HDBSCANMethodComparison:
     """Apples-to-apples EOM/Leaf sensitivity report on identical input.
 
@@ -490,6 +533,7 @@ def compare_hdbscan_methods(
         "min_samples": min_samples,
         "lookback_days": lookback_days,
         "dtc_source": dtc_source,
+        "common_dtc_cutoff": common_dtc_cutoff,
     }
     eom = cluster_hdbscan_cases(cases, selection_method="eom", **params)
     leaf = cluster_hdbscan_cases(cases, selection_method="leaf", **params)
@@ -520,4 +564,5 @@ def compare_hdbscan_methods(
         min_samples=min_samples,
         dtc_source=dtc_source,
         lookback_days=lookback_days,
+        common_dtc_cutoff=common_dtc_cutoff,
     )
