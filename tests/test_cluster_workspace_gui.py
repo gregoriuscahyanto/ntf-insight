@@ -330,3 +330,34 @@ def test_synthetic_336_cases_170_eligible_without_publishing_identifiers():
     assert panel.core_threshold.value() == 0.45
     panel.close()
     app.processEvents()
+
+
+def test_stability_button_uses_one_tab_with_synthetic_inputs_only():
+    app = QApplication.instance() or QApplication([])
+    panel = ClusterWorkspace(sample())
+    panel.run_stability()
+    assert panel._task is not None
+    for _ in range(3000):
+        QApplication.processEvents()
+        if panel._stability_report is not None and panel.run_button.isEnabled():
+            break
+        if panel._task is None and "nicht möglich" in panel.status.text():
+            break
+        QTest.qWait(10)
+    assert panel._stability_report is not None, panel.status.text()
+    report = panel._stability_report
+    assert panel.stability_model.rowCount() == len(report.comparisons)
+    assert panel.stability_group_model.rowCount() == sum(
+        len(item.group_rows) for item in report.comparisons
+    )
+    assert {"Verfahren", "Daten/Parameter"} == {
+        item.category for item in report.comparisons
+    }
+    assert panel.result.parameters.method == "leaf"
+    assert "Kein Ursachen-Voting" in panel.stability_note.text()
+    # Parameter changes must invalidate the stale robustness evidence.
+    panel.lookback.setCurrentIndex(panel.lookback.findData(90))
+    assert panel._stability_report is None
+    assert panel.stability_model.rowCount() == 0
+    panel.close()
+    app.processEvents()
