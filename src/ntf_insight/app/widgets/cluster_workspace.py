@@ -326,7 +326,9 @@ class ClusterWorkspace(QWidget):
             "AutoExport-DTCs; kein automatischer NTF- oder Pumpenbefund."
         )
         self.all_fin_button.setEnabled(source_knowledge is not None)
-        self.all_fin_button.clicked.connect(self.autoexport_requested.emit)
+        self.all_fin_button.clicked.connect(
+            lambda: self.autoexport_requested.emit()
+        )
         body.addWidget(self.all_fin_button)
 
         # Optional professional controls, not separate clustering actions.
