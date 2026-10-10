@@ -17,7 +17,10 @@ unveränderte Ansichten.
    Fälle werden geclustert; die letzte Zahl bedeutet nicht, dass
    keine Werkstattdiagnose stattgefunden hat.
 3. **Visuell und Fälle:** Die 2D-Grafik stellt echte QEC-Fälle
-   dar, 3D bleibt optional. Die Tabelle **Cluster auswählen**
+   dar, 3D bleibt optional. Über **Clusterverfahren** neben 2D/3D
+   werden die tatsächlich angezeigten Cluster, Falllisten und
+   Erklärungen gewechselt, ohne die Analyse erneut zu berechnen.
+   Die Tabelle **Cluster auswählen**
    zeigt die Cluster mit Anzahl QEC-Fällen, FINs und gemeinsamem
    ECU:DTC-Kern. Klick auf eine Zeile oder auf einen Punkt zeigt
    die Fälle im Cluster, einschließlich QEC, FIN und Evidenz
@@ -31,8 +34,12 @@ unveränderte Ansichten.
    Quelle, den Zeitraum und ggf. den DTC-Häufigkeitsfilter.
    Fehlt ein durchgehender DTC-Kern oder sind viele Paar-
    ähnlichkeiten schwach, steht eine gut sichtbare Warnung.
-   Die Aufzählung erklärt beobachtete Merkmalsgemeinsamkeiten,
-   **nicht** den exakten Modellbeitrag jedes Merkmals.
+   Die drei einfach lesbaren Abschnitte zeigen gemeinsame
+   ECU:DTCs, zusätzliche DTCs mit Fallzahlen, die Art der
+   Zuordnung sowie schwache Fallpaare. **Alle qualifizierenden
+   DTCs werden vollständig gezeigt**, auch nach dem vierten.
+   Das sind beobachtete Gemeinsamkeiten, **keine** mathematische
+   Zurechnung zu einer technischen Pumpenursache.
 
 **Weitere Details für Experten anzeigen** blendet bei Bedarf
 die alten, weiterhin voll funktionsfähigen Methoden-, Stabilitäts-,
@@ -81,10 +88,14 @@ nicht in das Clustering oder diese Erklärung ein.
    Diagnose in **beiden** Szenarien; fehlende Daten gelten nicht
    als Gegenbeleg. Kennzahlen sind keine Pumpendefekt-Wahrscheinlichkeit.
 6. **2D/3D** sind Projektionen derselben *ursprünglichen*
-   Diagnosedistanzen, niemals Clustering-Eingaben. 3D ist drehbar.
-   Gruppierte Fälle erscheinen farbig, Ausreißer grau und
-   Repräsentanten größer. Zwei Verfahren können nebeneinander
-   betrachtet werden.
+   Diagnosedistanzen, niemals Clustering-Eingaben. In 3D dreht
+   **linke Maustaste halten und horizontal ziehen** die Ansicht,
+   vertikales Ziehen neigt sie. **Einzelklick** wählt weiterhin
+   einen Fall. Präzise Regler liegen in den Expertendetails.
+   Gruppierte Fälle sind farbig, Ausreißer grau und
+   Repräsentanten größer. Zwei Verfahren können in der
+   Expertenansicht mit einem **separaten** Dropdown
+   `Zweites Verfahren` nebeneinander verglichen werden.
 7. **Clustertabelle / Falltabelle** enthalten Medoide, FIN-Anzahl,
    diagnostischen Kern, Mindest-/Medianähnlichkeit, echte
    QEC-IDs und fachliche Vorbehalte. Fall-Doppelklick führt
