@@ -3,8 +3,6 @@ from __future__ import annotations
 
 from ntf_insight.analysis.cluster_exclusion_reasons import exclusion_reasons
 from ntf_insight.analysis.cluster_workspace_engine import ClusterParameters, calculate_clusters
-from ntf_insight.domain.case import NTFCase
-from ntf_insight.domain.vehicle import Vehicle
 from test_hdbscan_clustering import sample, synthetic
 
 
