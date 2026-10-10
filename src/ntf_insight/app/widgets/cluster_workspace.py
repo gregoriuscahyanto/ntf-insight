@@ -484,6 +484,7 @@ class ClusterWorkspace(QWidget):
             self.status.setText("Keine Fälle für die gewählte Bauteilfamilie.")
             self._clear_results()
             return
+        self._activated = True
         params = self._parameters()
         try:
             params.validate()
