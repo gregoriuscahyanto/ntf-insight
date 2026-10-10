@@ -29,6 +29,12 @@ Robustheitstabelle kennzeichnet ihre beim Start verwendete Referenz
 explizit. Ein späterer Wechsel der Ergebnisansicht interpretiert einen
 bereits berechneten Robustheitsbericht nicht stillschweigend um.
 
+Methodenvergleich, Stabilitätskennzahlen, K-Prüfgruppen und die
+technischen Einzeltabellen sind im Normalbetrieb unter
+**Weitere Details für Experten anzeigen** eingeklappt. Die ersten
+Antworten stehen unmittelbar unter den Kennzahlen/Grafiken:
+Cluster auswählen und **Warum gehören diese Fälle zusammen?**
+
 Die Berechnung läuft in einem Hintergrundthread und schreibt keine
 QEC-, FIN- oder Diagnose-Rohdaten auf GitHub. Die Tabelle
 **Robustheitsprüfung · Methoden und Datenvarianten** zeigt:
