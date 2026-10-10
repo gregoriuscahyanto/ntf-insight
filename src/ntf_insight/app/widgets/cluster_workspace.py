@@ -226,10 +226,9 @@ class ClusterWorkspace(QWidget):
         headline.addWidget(self.method_hint)
         body.addLayout(headline)
         lead = QLabel(
-            "Eine Analysefläche für alle Clustermethoden. Gleiche Merkmale "
-            "vor dem Pumpentausch, echte QEC-Repräsentanten, sichtbare "
-            "Ausreißer und technisch getrennte Fachprüfung. "
-            "SSL-Endbefunde fließen nicht in das Clustering ein.",
+            "Ein Klick erstellt Cluster aus den vorhandenen Diagnosemerkmalen "
+            "vor dem Pumpentausch. Wähle anschließend einen Cluster, "
+            "um seine Fälle und ihre Gemeinsamkeiten zu sehen.",
             objectName="PageSubtitle",
         )
         lead.setWordWrap(True)
@@ -701,7 +700,7 @@ class ClusterWorkspace(QWidget):
         if spec.supports_jaccard_cutoff:
             self.filter_common.setChecked(False)
         self.method_hint.setText(
-            f"Alle Verfahren · Ansicht: {spec.title} · Ursache unbestätigt"
+            f"Ansicht: {spec.title} · Ursache unbestätigt"
         )
 
     def _method_changed(self, *_args) -> None:
@@ -824,10 +823,8 @@ class ClusterWorkspace(QWidget):
         self.result = results[0]
         self.export_button.setEnabled(True)
         self.status.setText(
-            f"Analyse abgeschlossen: {len(results)} Verfahren und "
-            f"{len(stability_report.comparisons) if stability_report else 0} "
-            f"Stabilitätsvergleiche · {len(results[0].eligible_case_ids)} "
-            "auswertbare QEC-Fälle. Keine Ursachenbestätigung."
+            "Clusteranalyse abgeschlossen. Wähle einen Cluster in der "
+            "Grafik oder Tabelle, um die Fälle und ihre Gemeinsamkeiten zu sehen."
         )
         self._refresh_comparison(results)
         self._show_result(results[0])
@@ -971,9 +968,10 @@ class ClusterWorkspace(QWidget):
         self.summary_values["noise"].setText(str(len(result.noise_case_ids)))
         self.summary_values["missing"].setText(str(len(result.excluded_case_ids)))
         self.kpi.setText(
-            f"Grundlage: {len(self._subset())} QEC-Fälle · "
-            f"{len(result.eligible_case_ids)} mit geeigneter Vor-Tausch-Diagnose. "
-            "Ausreißer und Fälle ohne geeignete Diagnose sind getrennt."
+            f"Angezeigt: {BY_METHOD[result.parameters.method].title} · "
+            f"{len(result.eligible_case_ids)} von {len(self._subset())} "
+            "QEC-Fällen sind für diese Analyse auswertbar. "
+            "Die Clusterzahl hängt vom Verfahren ab."
         )
         self.group_model.set_rows([
             (
