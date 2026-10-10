@@ -52,7 +52,8 @@ def run_local_analysis(
     output_dir: Path | None = None,
 ) -> dict:
     """Read from an existing DB with DuckDB read_only=True. Write local JSON."""
-    from ntf_insight.analysis.local_runner_report import build_runner_local_report
+    from ntf_insight.analysis.local_runner_report import build_runner_local_analysis
+    from ntf_insight.analysis.pilot_expert_validation import write_pilot_review_template
     from ntf_insight.storage.quicktest_store import QuickTestStore
     from ntf_insight.storage.readonly_case_store import ReadOnlyCaseStore
     from ntf_insight.storage.source_knowledge_store import SourceKnowledgeStore
@@ -72,9 +73,12 @@ def run_local_analysis(
         if "source_knowledge_rows" in available_tables
         else None
     )
-    report = build_runner_local_report(
-        store.load_cases(), quicktests=qt, autoexport=auto,
+    cases = store.load_cases()
+    report, plan = build_runner_local_analysis(
+        cases, quicktests=qt, autoexport=auto,
     )
+    if len(plan.inspections) != plan.representative_count + plan.independent_targets:
+        raise ValueError("Pilotprüfplan widersprüchlich: QEC-CSV wird nicht geschrieben.")
     target.mkdir(parents=True, exist_ok=True)
     stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     # No personal identifiers or source paths in the output directory name.
@@ -86,6 +90,13 @@ def run_local_analysis(
     (folder / "lokale_aggregatanalyse_NICHT_AUTOMATISCH_HOCHLADEN.json").write_bytes(
         payload
     )
+    # This existing, reviewed GUI import format contains REAL QEC IDs, FINs,
+    # and possibly SSL findings. Never copy it into GitHub workspace, stdout,
+    # stderr, CI artifacts or the aggregate JSON above. The output directory
+    # is a preconfigured local-only path protected by Windows ACLs.
+    private_file = folder / "pilot_fachpruefung_FIN_SSL_NICHT_HOCHLADEN.csv"
+    with private_file.open("w", encoding="utf-8-sig", newline="") as destination:
+        write_pilot_review_template(destination, cases, plan)
     return report
 
 
