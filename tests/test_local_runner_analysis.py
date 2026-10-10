@@ -193,6 +193,6 @@ def test_runner_workflow_requires_main_and_per_run_authorisation():
     assert "ntf-insight-2" not in yaml_text
     assert "persist-credentials: false" in yaml_text
     assert "permissions:\n  contents: read" in yaml_text
-    assert "actions/upload-artifact" not in yaml_text.split("steps:")[1]
+    assert "uses: actions/upload-artifact" not in yaml_text
     assert "pull_request:" not in yaml_text
     assert "\n  push:" not in yaml_text
