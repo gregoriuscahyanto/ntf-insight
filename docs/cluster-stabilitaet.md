@@ -13,7 +13,22 @@ Das Ergebnis ist ein Bericht zur Robustheit *diagnostischer Gruppen*.
 
 ## GUI
 
-Unter **Fälle / FIN → Clusteranalyse** auf **Stabilität prüfen** klicken.
+Unter **Fälle / FIN → Clusteranalyse** die lokale Datenbasis wählen und
+**Clusteranalyse starten** drücken. Dies ist die **einzige Schaltfläche
+zum Erzeugen der Cluster**: Leaf, EOM, Complete-Link Cosinus und – sofern
+mit den gewählten Datenfiltern kompatibel – DTC-Jaccard werden automatisch
+berechnet. Außerdem entstehen im selben Durchlauf die konservativen
+Prüfgruppen und die Robustheitsprüfung. Die GUI startet **nicht automatisch
+schon beim Öffnen des Tabs**, sondern erst auf bewussten Klick.
+
+**Erweiterte Einstellungen anzeigen** öffnet die methodenspezifischen
+Parameter und die Auswahl des **angezeigten Referenzverfahrens** (Standard:
+Leaf). Damit wird kein konkurrierender Analyseablauf aktiviert. In der
+Ergebnistabelle lässt sich weiterhin zwischen Verfahren wechseln; die
+Robustheitstabelle kennzeichnet ihre beim Start verwendete Referenz
+explizit. Ein späterer Wechsel der Ergebnisansicht interpretiert einen
+bereits berechneten Robustheitsbericht nicht stillschweigend um.
+
 Die Berechnung läuft in einem Hintergrundthread und schreibt keine
 QEC-, FIN- oder Diagnose-Rohdaten auf GitHub. Die Tabelle
 **Robustheitsprüfung · Methoden und Datenvarianten** zeigt:
@@ -28,9 +43,10 @@ QEC-, FIN- oder Diagnose-Rohdaten auf GitHub. Die Tabelle
   Das historische DTC-Jaccard-Verfahren kann nicht mit dem
   experimentellen TF-IDF-Häufigkeitsfilter kombiniert werden.
 
-Die Robustheitsausgabe wird nach jeder Neueinstellung ungültig und
-muss neu berechnet werden. Methodenvergleich/Clusterberechnung bleiben
-eigenständig und lassen die Robustheit unberührt.
+Neue Datenbasis- oder Parameterwerte machen **alle** zuvor berechneten
+Ergebnisse ungültig. Ein erneuter Klick startet den gesamten Ablauf
+wieder. Eine reine Auswahl anderer bereits berechneter Verfahren
+zeigt diese an, ohne die methodische Referenz der Robustheit zu ändern.
 
 ## Kennzahlen und Grenzen
 
@@ -65,8 +81,9 @@ eigenständig und lassen die Robustheit unberührt.
   und vordefinierte Ein-Faktor-Szenarien, lokal beschränkter Bericht
   ohne Quellkennungen.
 - `src/ntf_insight/app/widgets/cluster_workspace.py`: kein neuer Tab,
-  sondern Knopf, Tabelle und Hintergrundberechnung in der bestehenden
-  deutschsprachigen Oberfläche.
+  genau ein Hauptbutton, einklappbare Expertenparameter, Vergleichs-
+  und Robustheitstabellen sowie Hintergrundberechnung in der
+  bestehenden deutschsprachigen Oberfläche.
 - Tests ausschließlich mit synthetischen Pumpenfällen in Linux- und
   Windows-CI. Die lokale reale DuckDB wird niemals in GitHub Actions
   eingelesen; keine Telemetrie, API-Aufrufe oder automatischen Berichte.
