@@ -13,11 +13,11 @@ concurrency:
 
 jobs:
   quality:
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-latest, windows-latest]
-    runs-on: ${{ matrix.os }}
+    # Keep GitHub-hosted usage minimal: one Windows job only.
+    # Never run untrusted pull-request code on the local, sensitive
+    # self-hosted Windows data-analysis machines.
+    runs-on: windows-latest
+    timeout-minutes: 20
     env:
       QT_QPA_PLATFORM: offscreen
 
@@ -29,12 +29,6 @@ jobs:
           python-version: "3.11"
           cache: pip
 
-      - name: Install Qt runtime libraries
-        if: runner.os == 'Linux'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libegl1 libgl1
-
       - name: Install project
         run: python -m pip install -e ".[dev]"
 
@@ -44,21 +38,6 @@ jobs:
       - name: Build wheel
         run: python -m build --wheel
 
-      - name: Upload CI reports (optional)
-        if: always()
-        continue-on-error: true
-        uses: actions/upload-artifact@v4
-        with:
-          name: reports-${{ runner.os }}
-          path: reports/
-          if-no-files-found: ignore
-          retention-days: 1
-
-      - name: Upload wheel (optional)
-        if: success()
-        continue-on-error: true
-        uses: actions/upload-artifact@v4
-        with:
-          name: ntf-insight-wheel-${{ runner.os }}
-          path: dist/*.whl
-          retention-days: 1
+      # No artifacts uploaded to GitHub Actions: quota protection.
+      # Test summaries remain in Actions logs, wheel built locally in job.
+      # Explicitly never upload proprietary QEC/FIN/DTC data.
