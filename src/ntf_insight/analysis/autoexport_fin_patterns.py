@@ -161,7 +161,7 @@ def cluster_autoexport_fins(
         )
         common_codes = sorted(
             ((key, count) for key, count in local_frequency.items() if count >= 2),
-            key=lambda item: (-item[1], item[0] != "CPC3", item[0]),
+            key=lambda item: (-item[1], item[0][0] != "CPC3", item[0]),
         )[:16]
         # Median similarity to a centroid is a grouping descriptive score,
         # explicitly NOT P(same component failure).
