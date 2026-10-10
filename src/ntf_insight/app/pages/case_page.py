@@ -53,6 +53,7 @@ from ntf_insight.reporting.markdown import save_case_report
 from ntf_insight.storage.reference_repositories import ReferenceRepository
 from ntf_insight.storage.repositories import CaseRepository
 from ntf_insight.storage.quicktest_store import QuickTestStore
+from ntf_insight.storage.dtc_review_store import DtcReviewStore
 from ntf_insight.storage.source_knowledge_store import SourceKnowledgeStore
 
 
@@ -66,11 +67,14 @@ class CasePage(QWidget):
         repository: CaseRepository,
         references: ReferenceRepository,
         manual_service: ManualCaseService | None = None,
+        *,
+        review_store: DtcReviewStore | None = None,
     ) -> None:
         super().__init__()
         self.repository = repository
         self.references = references
         self.manual_service = manual_service
+        self.review_store = review_store
         self.source_knowledge = (
             SourceKnowledgeStore(manual_service.store)
             if manual_service is not None else None
@@ -105,6 +109,7 @@ class CasePage(QWidget):
                 self.source_knowledge.autoexport_population()
                 if self.source_knowledge is not None else {}
             ),
+            review_store=review_store,
         )
         # Compatibility alias for local FIN navigation and prior tests.
         self.autoexport_fin_workspace = self.cluster_workspace
