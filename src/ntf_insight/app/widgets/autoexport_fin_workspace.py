@@ -153,6 +153,8 @@ class AutoExportFinWorkspace(QWidget):
         super().__init__()
         self.source = source
         self._case_vins = {case.case_id: case.vin for case in cases}
+        self.by_id = {case.case_id: case for case in cases}
+        self._focused_case_id: str | None = None
         self._qec_evidence = qec_fin_evidence(cases)
         self._linked = self._qec_evidence.case_links
         self._pump_swap_dates = self._qec_evidence.pump_swap_dates
@@ -677,6 +679,7 @@ class AutoExportFinWorkspace(QWidget):
         fin = self._case_vins.get(case_id)
         if not fin:
             return False
+        self._focused_case_id = case_id
         self.fin_search.setText(fin)
         if self.result is not None:
             self.find_fin()
@@ -688,6 +691,7 @@ class AutoExportFinWorkspace(QWidget):
         return True
 
     def clear_focus(self) -> None:
+        self._focused_case_id = None
         self._selected_fin = None
         self.plot.set_highlight(None)
         self.fin_status.setText("")
