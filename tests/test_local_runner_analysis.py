@@ -71,6 +71,9 @@ def test_runner_json_contains_diagnostics_only_as_numbers_not_identifiers(tmp_pa
     assert numbers["repraesentanten_zur_pruefung"] == 2
     assert numbers["fachlich_bestaetigte_repraesentanten"] == 0
     assert report["szenario"]["hdbscan"] == "leaf"
+    allowed = approved_public_totals(report)
+    assert set(allowed) == set(APPROVED_TOTAL_KEYS)
+    assert all(type(value) is int for value in allowed.values())
     assert len(report["cluster_nur_lokal"]) == 2
     encoded = json.dumps(report, ensure_ascii=False)
     assert "SECRET_SYNTHETIC_SSL_TEXT_NEVER_LEAVE_LOCAL" not in encoded
