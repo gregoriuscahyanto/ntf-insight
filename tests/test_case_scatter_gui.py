@@ -83,6 +83,8 @@ def test_cluster_workspace_replaces_scatter_tab_and_synchronizes_case_selection(
     assert cluster.cluster_views.currentWidget() is cases.autoexport_fin_workspace
 
     assert cluster.focus_case("DEMO-004")
+    assert cluster.population_mode.currentData() == "qec"
+    assert cluster.cluster_views.currentWidget() is cluster.qec_scroll
     cluster.case_requested.emit("DEMO-004")
     assert cases.detail_tabs.currentWidget() is cases.analysis_tab
     assert cases.selector.currentData() == "DEMO-004"
