@@ -1,4 +1,4 @@
-"""German local-only AutoExport FIN grouping, separate from QEC/NTF clustering.
+"""German FIN clustering inside one Clusteranalyse tab, combining AutoExport/QEC.
 
 The imported AutoExport may hold thousands of vehicles without a documented
 pump replacement. A diagnostic pattern is NOT a failed pump or NTF finding.
@@ -141,7 +141,7 @@ class AutoExportFinWorkspace(QWidget):
         body.setSpacing(12)
 
         body.addWidget(QLabel(
-            "Alle AutoExport-FINs · Diagnosemuster", objectName="PageTitle",
+            "Alle FINs · AutoExport + QEC", objectName="PageTitle",
         ))
         lead = QLabel(
             "Gemeinsame Diagnosemuster aus AutoExport und QEC: "
@@ -158,12 +158,13 @@ class AutoExportFinWorkspace(QWidget):
 
         metrics = self.population_metrics
         self.population_note = QLabel(
-            f"Lokal importiert: {metrics.get('autoexport_unique_fins', 0):,} "
-            f"unterschiedliche FINs · "
-            f"{metrics.get('autoexport_dtc_fins', 0):,} FINs mit DTC-Zeilen. "
-            f"{len(self._linked):,} FINs mit QEC-Pumpenfall zusätzlich verknüpfbar. "
-            "Die gemeinsame Anzahl wird nach FIN-Deduplikation berechnet."
-            .replace(",", "."),
+            (
+                f"Lokal importiert: {metrics.get('autoexport_unique_fins', 0):,} "
+                "AutoExport-FINs · "
+                f"{metrics.get('autoexport_dtc_fins', 0):,} FINs mit DTC-Zeilen · "
+                f"{len(self._linked):,} FINs mit QEC-Pumpenfall. "
+                "Die gemeinsame Anzahl wird nach FIN-Deduplikation berechnet."
+            ).replace(",", "."),
             objectName="PageSubtitle",
         )
         self.population_note.setWordWrap(True)
@@ -330,8 +331,9 @@ class AutoExportFinWorkspace(QWidget):
             "Modus Pumpentausch: nur QEC-FINs mit Rep.-Datum "
             "und Diagnosen an früheren Kalendertagen."
             if checked else
-            "Modus Alle FINs: gesamte AutoExport-DTC-Historie, "
-            "nicht auf Pumpentausch begrenzt."
+            "Modus Alle FINs: AutoExport und QEC gemeinsam. "
+            "Bei FINs mit Pumpentausch werden nur Diagnosemerkmale "
+            "vor dem Austausch verwendet."
         )
 
     def run_analysis(self) -> None:
@@ -384,17 +386,19 @@ class AutoExportFinWorkspace(QWidget):
         scope = (
             "QEC-Pumpentausch-FINs mit DTCs vor dem Austausch"
             if self._analysis_scoped_to_pump else
-            "Alle importierten AutoExport-FINs ohne Pumpentausch-Zeitfilter"
+            "AutoExport und QEC gemeinsam; bei bekannten Tauschen nur vor dem Austausch"
         )
         self.status.setText(
-            f"FIN-Musteranalyse abgeschlossen ({scope}). "
-            f"{result.total_fins:,} FINs insgesamt: "
-            f"{result.autoexport_fin_count:,} aus AutoExport und "
-            f"{result.qec_fin_count:,} mit QEC-Bezug, "
-            f"darunter {result.overlap_fin_count:,} in beiden Quellen; "
-            f"{result.qec_only_fin_count:,} QEC-FINs ohne AutoExport. "
-            f"{len(result.groups)} diagnostische Mustergruppen. "
-            "Eine FIN zählt nur einmal; nicht gruppierte FINs bleiben sichtbar."
+            (
+                f"FIN-Musteranalyse abgeschlossen ({scope}). "
+                f"{result.total_fins:,} FINs insgesamt: "
+                f"{result.autoexport_fin_count:,} aus AutoExport und "
+                f"{result.qec_fin_count:,} mit QEC-Bezug, "
+                f"darunter {result.overlap_fin_count:,} in beiden Quellen; "
+                f"{result.qec_only_fin_count:,} QEC-FINs ohne AutoExport. "
+                f"{len(result.groups)} diagnostische Mustergruppen. "
+                "Eine FIN zählt nur einmal; nicht gruppierte FINs bleiben sichtbar."
+            ).replace(",", ".")
         )
         self.group_model.set_rows([
             (
@@ -478,9 +482,10 @@ class AutoExportFinWorkspace(QWidget):
             "QEC-Pumpentausch berücksichtigt. Ein gemeinsamer Code "
             "beweist trotzdem weder Defekt noch Tauschwirksamkeit."
             if self._analysis_scoped_to_pump else
-            "Es wurde hier nicht geprüft, ob die DTCs vor einem "
-            "Pumpentausch auftraten. Bekannte QEC-FINs werden nur "
-            "als Verknüpfung gekennzeichnet."
+            "Bei FINs mit dokumentiertem Pumpentausch wurden nur "
+            "Vor-Tausch-Diagnosen berücksichtigt. Bei allen übrigen "
+            "FINs wird die vorhandene AutoExport-Diagnosehistorie "
+            "ohne Pumpentausch-Aussage verglichen."
         )
         lines.append(
             "Diese Häufigkeiten und der Ähnlichkeitsindex sind "
