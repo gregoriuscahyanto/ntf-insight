@@ -853,6 +853,13 @@ class ClusterWorkspace(QWidget):
         )
         self.core_export.setEnabled(False)
         self.member_title.setText(self._member_title_default)
+        self.why_heading.setText("Warum gehören diese Fälle zusammen?")
+        self.why_text.setText(
+            "Bitte zuerst die Clusteranalyse starten und einen Cluster wählen."
+        )
+        self.kpi.setText("")
+        for value in self.summary_values.values():
+            value.setText("–")
         self._group_ids = []
         self._member_ids = []
         self._noise_ids = []
@@ -959,14 +966,14 @@ class ClusterWorkspace(QWidget):
     def _show_result(self, result: UnifiedClusterResult) -> None:
         self.result = result
         self._group_ids = [group.cluster_id for group in result.groups]
+        self.summary_values["groups"].setText(str(len(result.groups)))
+        self.summary_values["assigned"].setText(str(result.clustered_count))
+        self.summary_values["noise"].setText(str(len(result.noise_case_ids)))
+        self.summary_values["missing"].setText(str(len(result.excluded_case_ids)))
         self.kpi.setText(
-            f"{len(self._subset())} QEC-Fälle · "
-            f"{len(result.eligible_case_ids)} auswertbar · "
-            f"{len(result.groups)} Cluster · "
-            f"{result.clustered_count} zugeordnet · "
-            f"{len(result.noise_case_ids)} Ausreißer · "
-            f"{len(result.excluded_case_ids)} ohne geeignete Diagnose. "
-            f"{result.note}"
+            f"Grundlage: {len(self._subset())} QEC-Fälle · "
+            f"{len(result.eligible_case_ids)} mit geeigneter Vor-Tausch-Diagnose. "
+            "Ausreißer und Fälle ohne geeignete Diagnose sind getrennt."
         )
         self.group_model.set_rows([
             (
@@ -997,6 +1004,8 @@ class ClusterWorkspace(QWidget):
         self.member_model.set_rows([])
         self._member_ids = []
         self.open_button.setEnabled(False)
+        self.why_heading.setText("Warum gehören diese Fälle zusammen?")
+        self.why_text.setText("Wähle einen Cluster aus der Tabelle.")
         if result.groups:
             selected_id = self._focused_case_id
             match = next(
@@ -1015,9 +1024,21 @@ class ClusterWorkspace(QWidget):
         self, group: UnifiedCluster, *, core: bool,
     ) -> None:
         self.member_title.setText(
-            f"Falltabelle – konservative Prüfgruppe K{group.cluster_id}"
-            if core else self._member_title_default
+            f"4. Fälle in Prüfgruppe K{group.cluster_id}"
+            if core else
+            f"4. Fälle in Cluster C{group.cluster_id}"
         )
+        # All explanatory values use the EXACT locally selected pre-swap
+        # source/time/filter basis, never SSL or supplier outcomes.
+        reference = self._core_result if core else self.result
+        if reference is None:
+            return
+        explanation = explain_cluster(
+            self._subset(), group, reference.parameters,
+            reference.eligible_case_ids, strict_review=core,
+        )
+        self.why_heading.setText(explanation.heading)
+        self.why_text.setText(explanation.text)
         self._member_ids = [member.case_id for member in group.members]
         rows = []
         # One QEC is not one independent vehicle. Only the first target
@@ -1034,9 +1055,7 @@ class ClusterWorkspace(QWidget):
                 seen_fins.add(case.vin)
             else:
                 role = "Clusterfall"
-            common = ", ".join(
-                f"{ecu}:{dtc}" for ecu, dtc in group.common_faults[:7]
-            ) or "Kein durchgängiger ECU:DTC"
+            common = explanation.evidence_for(member.case_id)
             ssl = getattr(
                 case, "qec_ssl_end_finding", None,
             ) or "Nicht dokumentiert"
