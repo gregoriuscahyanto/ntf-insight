@@ -452,6 +452,8 @@ def test_four_everyday_questions_are_visible_without_expert_tables():
     assert panel.summary_values["assigned"].text() == "12"
     assert panel.summary_values["noise"].text() == "1"
     assert panel.summary_values["missing"].text() == "2"
+    assert panel.pie_chart.values == (12, 1, 2)
+    assert "80.0%" in panel.pie_percent_labels["assigned"].text()
     assert panel.plot.items_by_case
     assert panel.group_table.currentIndex().isValid()
     assert "Warum gehören diese" in panel.why_heading.text()
@@ -492,6 +494,7 @@ def test_simple_selection_via_plot_finds_cases_and_reasons():
     assert "CODE-B-" in panel.why_text.text()
     panel.lookback.setCurrentIndex(panel.lookback.findData(90))
     assert panel.summary_values["groups"].text() == "–"
+    assert panel.pie_chart.values is None
     assert panel.group_model.rowCount() == 0
     assert "Bitte zuerst" in panel.why_text.text()
     panel.close()
@@ -556,5 +559,62 @@ def test_3d_left_drag_rotates_tilts_and_click_still_selects_cases():
     assert panel._focused_case_id == hit_case
     assert (plot.yaw, plot.elevation) == (yaw, elevation)
     assert "CODE-B-" in panel.why_text.text()
+    panel.close()
+    app.processEvents()
+
+
+def test_populations_show_imported_autoexport_fins_not_false_qec_cases():
+    """Source totals are metadata aggregates, never VINs or DTC payloads."""
+    app = QApplication.instance() or QApplication([])
+    panel = ClusterWorkspace(
+        sample(),
+        population_metrics={
+            "autoexport_total_rows": 23456,
+            "autoexport_unique_fins": 4321,
+            "autoexport_dtc_rows": 21000,
+            "autoexport_dtc_fins": 4100,
+            "autoexport_repair_rows": 2000,
+            "autoexport_repair_fins": 1500,
+            "autoexport_tips_rows": 456,
+            "autoexport_tips_fins": 400,
+        },
+    )
+    assert "23.456 Rohzeilen" in panel.population_summary.text()
+    assert "4.321 eindeutige FINs" in panel.population_summary.text()
+    assert "QEC-Fälle dieser Bauteilfamilie: 15" in panel.population_summary.text()
+    assert panel.population_detail.isHidden()
+    panel.population_toggle.setChecked(True)
+    assert "21.000 Zeilen" in panel.population_detail.text()
+    assert "2.000 Zeilen" in panel.population_detail.text()
+    assert "456 Zeilen" in panel.population_detail.text()
+    assert "nicht automatisch ein QEC-Pumpenfall" in panel.population_detail.text()
+    # All metrics remain local, no raw FIN is displayed in aggregate blocks.
+    assert "W1TTEST" not in panel.population_summary.text()
+    assert "W1TTEST" not in panel.population_detail.text()
+    panel.close()
+    app.processEvents()
+
+
+def test_pie_is_partition_of_qec_cases_and_updates_on_method_change():
+    app = QApplication.instance() or QApplication([])
+    panel = ClusterWorkspace(sample())
+    _calculate(panel)
+    first = panel.result
+    assert first is not None
+    assert sum(panel.pie_chart.values) == len(sample())
+    assert panel.pie_chart.values == (
+        first.clustered_count, len(first.noise_case_ids),
+        len(first.excluded_case_ids),
+    )
+    panel.display_method.setCurrentIndex(
+        panel.display_method.findData("complete_legacy")
+    )
+    second = panel.result
+    assert second is not None
+    assert panel.pie_chart.values == (
+        second.clustered_count, len(second.noise_case_ids),
+        len(second.excluded_case_ids),
+    )
+    assert sum(panel.pie_chart.values) == len(sample())
     panel.close()
     app.processEvents()
