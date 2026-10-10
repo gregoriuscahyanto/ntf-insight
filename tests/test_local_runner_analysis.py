@@ -6,6 +6,7 @@ import json
 import os
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 import duckdb
@@ -21,8 +22,17 @@ from ntf_insight.storage.source_knowledge_store import SourceKnowledgeStore
 from test_hdbscan_clustering import sample
 
 
-def _database(tmp_path: Path) -> tuple[Path, list]:
-    source = tmp_path / "fictional_synthetic.duckdb"
+@pytest.fixture
+def external_tmp_path():
+    # Pytest's configured .pytest-tmp is INSIDE the repository. The real
+    # runner correctly rejects this. Use OS-level temporary storage instead
+    # of weakening the no-repository-output security invariant.
+    with tempfile.TemporaryDirectory(prefix="ntf-runner-synthetic-") as root:
+        yield Path(root)
+
+
+def _database(external_tmp_path: Path) -> tuple[Path, list]:
+    source = external_tmp_path / "fictional_synthetic.duckdb"
     cases = sample()
     cases[0].qec_ssl_end_finding = "SECRET_SYNTHETIC_SSL_TEXT_NEVER_LEAVE_LOCAL"
     DuckDBStore(source).save_cases(cases)
@@ -33,8 +43,8 @@ def _digest(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
-def test_read_only_store_cannot_write_or_initialize_database(tmp_path):
-    source, cases = _database(tmp_path)
+def test_read_only_store_cannot_write_or_initialize_database(external_tmp_path):
+    source, cases = _database(external_tmp_path)
     before = _digest(source)
     store = ReadOnlyCaseStore(source)
     assert len(store.load_cases()) == len(cases)
@@ -47,8 +57,8 @@ def test_read_only_store_cannot_write_or_initialize_database(tmp_path):
     assert _digest(source) == before
 
 
-def test_opt_out_of_quicktest_and_autoexport_schema_init_in_readonly_mode(tmp_path):
-    source, _ = _database(tmp_path)
+def test_opt_out_of_quicktest_and_autoexport_schema_init_in_readonly_mode(external_tmp_path):
+    source, _ = _database(external_tmp_path)
     before = _digest(source)
     store = ReadOnlyCaseStore(source)
     assert "quicktest_reports" not in store.tables()
@@ -61,8 +71,8 @@ def test_opt_out_of_quicktest_and_autoexport_schema_init_in_readonly_mode(tmp_pa
     assert "source_knowledge_rows" not in store.tables()
 
 
-def test_runner_json_contains_diagnostics_only_as_numbers_not_identifiers(tmp_path):
-    _, cases = _database(tmp_path)
+def test_runner_json_contains_diagnostics_only_as_numbers_not_identifiers(external_tmp_path):
+    _, cases = _database(external_tmp_path)
     report = build_runner_local_report(cases)
     numbers = report["summen"]
     assert numbers["qec_faelle"] == len(cases)
@@ -86,12 +96,12 @@ def test_runner_json_contains_diagnostics_only_as_numbers_not_identifiers(tmp_pa
     assert "dtc_code" not in encoded
 
 
-def test_local_run_only_writes_outside_repo_and_preserves_original_duckdb(tmp_path):
+def test_local_run_only_writes_outside_repo_and_preserves_original_duckdb(external_tmp_path):
     from scripts.runner_local_analysis import run_local_analysis
 
-    source, _ = _database(tmp_path)
+    source, _ = _database(external_tmp_path)
     before = _digest(source)
-    output = tmp_path / "local_private_reports"
+    output = external_tmp_path / "local_private_reports"
     report = run_local_analysis(database=source, output_dir=output)
     assert _digest(source) == before
     folders = list(output.iterdir())
@@ -104,9 +114,9 @@ def test_local_run_only_writes_outside_repo_and_preserves_original_duckdb(tmp_pa
     assert not list(output.rglob("*.zip"))
 
 
-def test_script_stdout_defaults_to_static_marker_only(tmp_path):
-    source, _ = _database(tmp_path)
-    output = tmp_path / "analysis"
+def test_script_stdout_defaults_to_static_marker_only(external_tmp_path):
+    source, _ = _database(external_tmp_path)
+    output = external_tmp_path / "analysis"
     original_hash = _digest(source)
     script = Path(__file__).resolve().parents[1] / "scripts" / "runner_local_analysis.py"
     process = subprocess.run(
@@ -126,8 +136,8 @@ def test_script_stdout_defaults_to_static_marker_only(tmp_path):
     assert list(output.glob("NTF_Lauf_*/*.json"))
 
 
-def test_explicitly_approved_stdout_is_only_whitelisted_ints(tmp_path):
-    source, _ = _database(tmp_path)
+def test_explicitly_approved_stdout_is_only_whitelisted_ints(external_tmp_path):
+    source, _ = _database(external_tmp_path)
     script = Path(__file__).resolve().parents[1] / "scripts" / "runner_local_analysis.py"
     process = subprocess.run(
         [sys.executable, str(script), "--freigabe-summen"],
@@ -135,7 +145,7 @@ def test_explicitly_approved_stdout_is_only_whitelisted_ints(tmp_path):
         env={
             **os.environ,
             "NTF_INSIGHT_RUNNER_DB": str(source),
-            "NTF_INSIGHT_RUNNER_REPORT_DIR": str(tmp_path / "aggregate_output"),
+            "NTF_INSIGHT_RUNNER_REPORT_DIR": str(external_tmp_path / "aggregate_output"),
         },
         capture_output=True, text=True, timeout=100,
     )
@@ -152,16 +162,16 @@ def test_explicitly_approved_stdout_is_only_whitelisted_ints(tmp_path):
     assert str(source) not in process.stdout
 
 
-def test_error_log_does_not_reveal_local_path_or_originals(tmp_path):
+def test_error_log_does_not_reveal_local_path_or_originals(external_tmp_path):
     script = Path(__file__).resolve().parents[1] / "scripts" / "runner_local_analysis.py"
-    hidden = tmp_path / "SECRET_LOCAL_FIN_SOURCE_NAME.duckdb"
+    hidden = external_tmp_path / "SECRET_LOCAL_FIN_SOURCE_NAME.duckdb"
     process = subprocess.run(
         [sys.executable, str(script)],
         cwd=script.parents[1],
         env={
             **os.environ,
             "NTF_INSIGHT_RUNNER_DB": str(hidden),
-            "NTF_INSIGHT_RUNNER_REPORT_DIR": str(tmp_path / "private"),
+            "NTF_INSIGHT_RUNNER_REPORT_DIR": str(external_tmp_path / "private"),
         },
         capture_output=True, text=True, timeout=100,
     )
@@ -169,14 +179,14 @@ def test_error_log_does_not_reveal_local_path_or_originals(tmp_path):
     assert process.stdout == ""
     assert "NTF_LOKALE_ANALYSE_FEHLER" in process.stderr
     assert "SECRET_LOCAL_FIN_SOURCE_NAME" not in process.stderr
-    assert str(tmp_path) not in process.stderr
-    assert not (tmp_path / "private").exists()
+    assert str(external_tmp_path) not in process.stderr
+    assert not (external_tmp_path / "private").exists()
 
 
-def test_runner_refuses_to_write_reports_inside_git_checkout(tmp_path):
+def test_runner_refuses_to_write_reports_inside_git_checkout(external_tmp_path):
     from scripts.runner_local_analysis import run_local_analysis
 
-    source, _ = _database(tmp_path)
+    source, _ = _database(external_tmp_path)
     checkout = Path(__file__).resolve().parents[1]
     with pytest.raises(ValueError, match="außerhalb"):
         run_local_analysis(
