@@ -59,6 +59,15 @@ def plan_representative_transfer(
         finding = labels.get(representative)
         if finding:
             reviewed += 1
+        # Even ONE contradictory expert-reviewed cluster member invalidates
+        # a blanket transfer hypothesis to unreviewed targets. Include
+        # same-FIN discrepancies: the source of the conflict must be checked.
+        contradiction = bool(finding) and any(
+            labels.get(member.case_id) is not None
+            and labels[member.case_id].mechanism_code != finding.mechanism_code
+            for member in cluster.members
+            if member.case_id != representative
+        )
         for member in cluster.members:
             if member.case_id == representative:
                 continue
@@ -78,6 +87,12 @@ def plan_representative_transfer(
             elif existing:
                 status = "Bereits unabhängig bestätigt"
                 explanation = "Mechanismus am Ziel bereits bestätigt; keine Übertragung nötig."
+            elif contradiction:
+                status = "Clusterwiderspruch – Hypothesenübertragung gesperrt"
+                explanation = (
+                    "Mindestens ein anderer Cluster-Fall besitzt einen abweichenden "
+                    "fachlich bestätigten Mechanismus. Erst Widerspruch klären."
+                )
             elif shared > 0 and cosine >= 0.45:
                 # A mixed cluster does not invalidate a strong *individual*
                 # comparison to its medoid, but it requires a stronger warning.

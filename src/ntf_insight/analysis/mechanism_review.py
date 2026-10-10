@@ -90,7 +90,7 @@ def read_confirmed_mechanisms(
     date) must be present. Duplicate QEC IDs are rejected instead of
     silently overwriting earlier manual decisions.
     """
-    available = {case.case_id for case in cases}
+    available = {case.case_id: case.vin for case in cases}
     if len(available) != len(cases):
         raise ValueError("QEC-Fall-IDs im Bestand nicht eindeutig.")
     reader = csv.DictReader(source, delimiter=";")
@@ -123,6 +123,13 @@ def read_confirmed_mechanisms(
             )
         if case_id in found:
             raise ValueError(f"Zeile {line}: QEC-ID ist mehrfach vorhanden.")
+        if "fin" in fields:
+            stated_fin = (row.get("fin") or "").strip()
+            if stated_fin and stated_fin != available[case_id]:
+                raise ValueError(
+                    f"Zeile {line}: FIN stimmt nicht mit der QEC-ID überein. "
+                    "Prüfdatei und Fallbestand kontrollieren."
+                )
         found.add(case_id)
         status = (row.get("review_status") or "").strip().casefold()
         if status in {"", "pending", "unknown"}:
@@ -182,6 +189,41 @@ def write_review_template(
             "reviewer": "",
             "evidence_ref": "",
             "confirmed_on": "",
+        })
+
+
+def write_confirmed_review_backup(
+    output: TextIO,
+    cases: list[NTFCase],
+    confirmations: tuple[ConfirmedMechanism, ...],
+) -> None:
+    """Local-only re-importable backup of ALL explicitly confirmed QEC labels.
+
+    Contains no SSL free-text, but real QEC IDs, FINs and evidence references.
+    Must NEVER enter an external cluster review ZIP or CI artifacts.
+    """
+    by_id = {case.case_id: case for case in cases}
+    if len(by_id) != len(cases):
+        raise ValueError("QEC-Fall-IDs im Bestand nicht eindeutig.")
+    labels = {label.case_id: label for label in confirmations}
+    if len(labels) != len(confirmations) or not set(labels).issubset(by_id):
+        raise ValueError("Sicherung enthält doppelte oder unbekannte Fachlabels.")
+    writer = csv.DictWriter(
+        output, fieldnames=REVIEW_FIELDS,
+        delimiter=";", lineterminator="\n",
+    )
+    writer.writeheader()
+    for case_id, label in sorted(labels.items()):
+        case = by_id[case_id]
+        writer.writerow({
+            "qec_case_id": safe_spreadsheet_cell(case.case_id),
+            "fin": safe_spreadsheet_cell(case.vin),
+            "qec_ssl_end_finding": "",
+            "review_status": "confirmed",
+            "mechanism_code": safe_spreadsheet_cell(label.mechanism_code),
+            "reviewer": safe_spreadsheet_cell(label.reviewer),
+            "evidence_ref": safe_spreadsheet_cell(label.evidence_ref),
+            "confirmed_on": label.confirmed_on.isoformat(),
         })
 
 
