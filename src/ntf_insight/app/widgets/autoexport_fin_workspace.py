@@ -142,6 +142,7 @@ class AutoExportFinWorkspace(QWidget):
     """Single user-facing Clusteranalyse: one FIN, one point, three methods."""
 
     fin_requested = Signal(str)
+    case_requested = Signal(str)
 
     def __init__(
         self,
@@ -151,6 +152,7 @@ class AutoExportFinWorkspace(QWidget):
     ) -> None:
         super().__init__()
         self.source = source
+        self._case_vins = {case.case_id: case.vin for case in cases}
         self._qec_evidence = qec_fin_evidence(cases)
         self._linked = self._qec_evidence.case_links
         self._pump_swap_dates = self._qec_evidence.pump_swap_dates
@@ -669,6 +671,26 @@ class AutoExportFinWorkspace(QWidget):
         self._selected_fin = fin
         self.open_button.setEnabled(True)
         return True
+
+    def focus_case(self, case_id: str) -> bool:
+        """Keep existing QEC case-navigation API on the single FIN view."""
+        fin = self._case_vins.get(case_id)
+        if not fin:
+            return False
+        self.fin_search.setText(fin)
+        if self.result is not None:
+            self.find_fin()
+        else:
+            self.fin_status.setText(
+                "QEC-Fahrzeug ausgewählt. Clusteranalyse starten, um dessen "
+                "Einordnung im gesamten AutoExport+QEC-Bestand zu sehen."
+            )
+        return True
+
+    def clear_focus(self) -> None:
+        self._selected_fin = None
+        self.plot.set_highlight(None)
+        self.fin_status.setText("")
 
     def open_fin(self, *_args) -> None:
         if self._selected_fin:
