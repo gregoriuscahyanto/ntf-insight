@@ -479,19 +479,25 @@ class AutoExportFinWorkspace(QWidget):
             ).replace(",", ".")
         )
         self.summary_note.setText(
-            f"{result.dtc_fins:,} FINs mit DTC-Daten. "
-            f"{len(result.no_dtc_fins):,} FINs ohne geeignete "
-            "DTC-Daten sind nicht geclustert. "
-            "Bei FINs mit dokumentiertem Pumpentausch werden nur "
-            "Diagnosemerkmale vor diesem Tausch verwendet."
-            .replace(",", ".")
+            (
+                f"{result.dtc_fins:,} FINs mit DTC-Daten. "
+                f"{len(result.no_dtc_fins):,} FINs ohne geeignete "
+                "DTC-Daten sind nicht geclustert. "
+                "Bei FINs mit dokumentiertem Pumpentausch werden nur "
+                "Diagnosemerkmale vor diesem Tausch verwendet."
+            ).replace(",", ".")
+        )
+        time_label = (
+            f"{result.runtime_seconds:.1f} s"
+            if result.runtime_seconds is not None else "nicht gemessen"
         )
         self.status.setText(
-            f"{METHOD_TITLES[result.method]}: "
-            f"{len(result.groups)} Cluster · {result.assigned_fins:,} "
-            f"FINs gruppiert · Laufzeit insgesamt: "
-            f"{result.runtime_seconds:.1f} s. "
-            "Methodenwechsel und 2D/3D benötigen keine Neuberechnung."
+            (
+                f"{METHOD_TITLES[result.method]}: "
+                f"{len(result.groups)} Cluster · {result.assigned_fins:,} "
+                f"FINs gruppiert · Laufzeit insgesamt: {time_label}. "
+                "Methodenwechsel und 2D/3D benötigen keine Neuberechnung."
+            ).replace(",", ".")
         )
         self.group_model.set_rows([
             (
