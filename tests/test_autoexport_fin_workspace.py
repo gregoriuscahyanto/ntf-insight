@@ -43,7 +43,7 @@ def test_fin_workspace_groups_all_original_fins_and_opens_history(tmp_path):
     app.processEvents()
     assert panel.result is None
     assert panel.start_button.isEnabled()
-    assert "23 unterschiedliche FINs" in panel.population_note.text()
+    assert "23 AutoExport-FINs" in panel.population_note.text()
     panel.start_button.click()
     assert panel._task is not None
     task = panel._task
@@ -107,10 +107,15 @@ def test_one_clusteranalyse_tab_includes_autoexport_and_qec(tmp_path, monkeypatc
     assert case_page.cluster_workspace.cluster_views.currentWidget() is (
         case_page.autoexport_fin_workspace
     )
+    assert case_page.cluster_workspace.population_mode.currentData() == "all_fins"
+    assert case_page.autoexport_fin_workspace.start_button.text() == (
+        "Clusteranalyse starten"
+    )
     case_page.cluster_workspace.show_qec_mode()
     assert case_page.cluster_workspace.cluster_views.currentWidget() is (
         case_page.cluster_workspace.qec_scroll
     )
+    assert case_page.cluster_workspace.run_button.text() == "Clusteranalyse starten"
     case_page.autoexport_fin_workspace.fin_requested.emit("W1TTEST0000000001")
     assert case_page.detail_tabs.currentWidget() == case_page.analysis_tab
     assert case_page.autoexport_fin_lookup.text() == "W1TTEST0000000001"
