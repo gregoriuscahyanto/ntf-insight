@@ -49,6 +49,11 @@ class FinPatternResult:
     qec_links: dict[str, tuple[str, ...]]
     initial_group_count: int
     feature_count: int
+    sources_by_fin: dict[str, str] | None = None
+    autoexport_fin_count: int = 0
+    qec_fin_count: int = 0
+    overlap_fin_count: int = 0
+    qec_only_fin_count: int = 0
 
     @property
     def assigned_fins(self) -> int:
