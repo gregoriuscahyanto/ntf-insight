@@ -1,6 +1,7 @@
 """Only synthetic cases and temporary DuckDB files: no customer sources."""
 from __future__ import annotations
 
+import csv
 import hashlib
 import json
 import os
@@ -13,7 +14,8 @@ import duckdb
 import pytest
 
 from ntf_insight.analysis.local_runner_report import (
-    APPROVED_TOTAL_KEYS, approved_public_totals, build_runner_local_report,
+    APPROVED_TOTAL_KEYS, approved_public_totals,
+    build_runner_local_analysis, build_runner_local_report,
 )
 from ntf_insight.storage.duckdb_store import DuckDBStore
 from ntf_insight.storage.readonly_case_store import ReadOnlyCaseStore
@@ -106,11 +108,39 @@ def test_local_run_only_writes_outside_repo_and_preserves_original_duckdb(extern
     assert _digest(source) == before
     folders = list(output.iterdir())
     assert len(folders) == 1
-    files = list(folders[0].iterdir())
-    assert len(files) == 1
-    assert files[0].name == "lokale_aggregatanalyse_NICHT_AUTOMATISCH_HOCHLADEN.json"
-    assert json.loads(files[0].read_text(encoding="utf-8")) == report
-    assert not list(output.rglob("*.csv"))
+    files = {file.name: file for file in folders[0].iterdir()}
+    assert set(files) == {
+        "lokale_aggregatanalyse_NICHT_AUTOMATISCH_HOCHLADEN.json",
+        "pilot_fachpruefung_FIN_SSL_NICHT_HOCHLADEN.csv",
+    }
+    assert json.loads(
+        files["lokale_aggregatanalyse_NICHT_AUTOMATISCH_HOCHLADEN.json"]
+        .read_text(encoding="utf-8")
+    ) == report
+    review_csv = files["pilot_fachpruefung_FIN_SSL_NICHT_HOCHLADEN.csv"]
+    with review_csv.open(encoding="utf-8-sig", newline="") as stream:
+        inspections = list(csv.DictReader(stream, delimiter=";"))
+    assert len(inspections) == (
+        report["summen"]["repraesentanten_zur_pruefung"]
+        + report["summen"]["unabhaengige_pilotvergleiche_vorgeschlagen"]
+    )
+    expected_cases = {case.case_id: case for case in sample()}
+    assert all(row["qec_case_id"] in expected_cases for row in inspections)
+    assert all(
+        row["fin"] == expected_cases[row["qec_case_id"]].vin
+        for row in inspections
+    )
+    for group in {row["pilot_group"] for row in inspections}:
+        rows = [row for row in inspections if row["pilot_group"] == group]
+        reps = [row for row in rows if "Repräsentant" in row["pilot_role"]]
+        assert len(reps) == 1
+        assert 1 <= len(rows) <= 3
+        assert len({row["fin"] for row in rows}) == len(rows)
+        assert all(
+            row["representative_qec_id"] == reps[0]["qec_case_id"]
+            for row in rows
+        )
+        assert all(row["review_status"] == "pending" for row in rows)
     assert not list(output.rglob("*.zip"))
 
 
@@ -192,6 +222,45 @@ def test_runner_refuses_to_write_reports_inside_git_checkout(external_tmp_path):
         run_local_analysis(
             database=source, output_dir=checkout / "reports" / "runner",
         )
+
+
+def test_local_analysis_pilot_plan_keeps_ids_out_of_aggregate_json():
+    report, plan = build_runner_local_analysis(sample())
+    assert plan.representative_count == report["summen"]["ml_cluster"]
+    assert len(plan.inspections) == plan.representative_count + plan.independent_targets
+    assert plan.independent_targets == report["summen"][
+        "unabhaengige_pilotvergleiche_vorgeschlagen"
+    ]
+    encoded = json.dumps(report, ensure_ascii=False)
+    for inspection in plan.inspections:
+        assert inspection.case_id not in encoded
+        assert inspection.representative_case_id not in encoded
+    assert "W1TTEST" not in encoded
+
+
+def test_private_local_review_is_not_exposed_with_approved_numeric_logs(external_tmp_path):
+    source, _ = _database(external_tmp_path)
+    output = external_tmp_path / "approved_logs"
+    script = Path(__file__).resolve().parents[1] / "scripts" / "runner_local_analysis.py"
+    process = subprocess.run(
+        [sys.executable, str(script), "--freigabe-summen"],
+        cwd=script.parents[1],
+        env={
+            **os.environ,
+            "NTF_INSIGHT_RUNNER_DB": str(source),
+            "NTF_INSIGHT_RUNNER_REPORT_DIR": str(output),
+        },
+        capture_output=True, text=True, timeout=100,
+    )
+    assert process.returncode == 0
+    confidential = list(output.glob("NTF_Lauf_*/*FIN_SSL_NICHT_HOCHLADEN.csv"))
+    assert len(confidential) == 1
+    assert "qec_case_id" in confidential[0].read_text(encoding="utf-8-sig")
+    assert "qec_case_id" not in process.stdout
+    assert "fin" not in process.stdout.lower()
+    assert "W1TTEST" not in process.stdout
+    assert "CODE-" not in process.stdout
+    assert not process.stderr
 
 
 def test_runner_workflow_requires_main_and_per_run_authorisation():
