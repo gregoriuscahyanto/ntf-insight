@@ -1,0 +1,79 @@
+name: NTF Lokale Kuehlmittelpumpen-Analyse
+
+# No push, pull_request, cron or remote-trigger from untrusted branches.
+on:
+  workflow_dispatch:
+    inputs:
+      analyse_freigegeben:
+        description: "Diesen MANUELLEN lokalen Datenzugriff fuer genau einen Lauf bestaetigen"
+        type: boolean
+        default: false
+        required: true
+      summen_in_actions_log_freigeben:
+        description: "Optional: NUR fest definierte Ganzzahl-Summen an GitHub-Logs senden"
+        type: boolean
+        default: false
+        required: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ntf-lokale-analyse
+  cancel-in-progress: false
+
+jobs:
+  lokale_analyse:
+    name: Lokale Analyse (ntf-insight-1)
+    # The workflow must run from the reviewed default branch.
+    if: ${{ github.repository == 'gregoriuscahyanto/ntf-insight' && github.ref == 'refs/heads/main' && inputs.analyse_freigegeben == true }}
+    runs-on: [self-hosted, Windows, X64, ntf-insight-1]
+    timeout-minutes: 20
+    steps:
+      # Approved source from exactly the manual main commit, never PR code.
+      # No data files belong to this repository.
+      - name: Geprueften Code von main abrufen
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 1
+          persist-credentials: false
+          sparse-checkout: |
+            src
+            scripts/runner_local_analysis.py
+          sparse-checkout-cone-mode: false
+          lfs: false
+          submodules: false
+
+      # Python/dependencies must be preinstalled by the responsible IT/admin.
+      # No pip install, no shell commands from workflow inputs and NO upload.
+      - name: Datenbank lokal und ausschliesslich lesend analysieren
+        shell: powershell
+        env:
+          RELEASE_INTEGER_TOTALS: ${{ inputs.summen_in_actions_log_freigeben }}
+        run: |
+          if ([string]::IsNullOrWhiteSpace($env:NTF_INSIGHT_RUNNER_PYTHON) -or
+              [string]::IsNullOrWhiteSpace($env:NTF_INSIGHT_RUNNER_DB) -or
+              [string]::IsNullOrWhiteSpace($env:NTF_INSIGHT_RUNNER_REPORT_DIR)) {
+            Write-Output 'NTF_RUNNER_KONFIGURATION_FEHLT'
+            exit 2
+          }
+          if (-not (Test-Path -LiteralPath $env:NTF_INSIGHT_RUNNER_PYTHON -PathType Leaf)) {
+            Write-Output 'NTF_RUNNER_PYTHON_NICHT_BEREIT'
+            exit 2
+          }
+          $env:PYTHONPATH = Join-Path $env:GITHUB_WORKSPACE 'src'
+          $analysisArgs = @(
+            (Join-Path $env:GITHUB_WORKSPACE 'scripts\runner_local_analysis.py')
+          )
+          if ($env:RELEASE_INTEGER_TOTALS -eq 'true') {
+            $analysisArgs += '--freigabe-summen'
+          }
+          & $env:NTF_INSIGHT_RUNNER_PYTHON @analysisArgs
+          if ($LASTEXITCODE -ne 0) {
+            exit $LASTEXITCODE
+          }
+          Write-Output 'NTF_RUNNER_FERTIG_NUR_LOKAL'
+
+      # Deliberately NO actions/upload-artifact, cache, git add/push,
+      # webhook, e-mail, source data echo, stdout JSON by default, or PR trigger.
