@@ -80,7 +80,10 @@ def complete_link_same_metric(
         raise ValueError("Complete-Link: QEC-Fallbestand ist nicht eindeutig.")
     if len(ids) != len(set(ids)) or not set(ids).issubset(by_id):
         raise ValueError("Complete-Link: unbekannte oder doppelte QEC-Fälle.")
-    matrix = np.asarray(leaf.distances, dtype=float)
+    matrix = (
+        np.asarray(leaf.distances, dtype=float)
+        if ids else np.zeros((0, 0), dtype=float)
+    )
     if (
         matrix.shape != (len(ids), len(ids))
         or not np.isfinite(matrix).all()
