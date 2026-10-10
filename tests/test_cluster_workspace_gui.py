@@ -272,6 +272,9 @@ def test_search_synthetic_fin_finds_overlapping_projected_case():
         panel.group_table.horizontalHeader().sectionResizeMode(0)
         == QHeaderView.ResizeMode.Interactive
     )
+    # SSL evidence is kept in the expert view, not the four-question UI.
+    assert panel.member_table.isColumnHidden(6)
+    panel.expert_toggle.setChecked(True)
     assert panel.member_table.columnWidth(6) == 480
     panel.close()
     app.processEvents()
