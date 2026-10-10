@@ -167,6 +167,8 @@ def test_population_counts_not_conflated_with_qec_or_failures(tmp_path) -> None:
     numbers = store.autoexport_population()
     assert numbers["autoexport_dtc_rows"] == 3
     assert numbers["autoexport_dtc_fins"] == 2
+    assert numbers["autoexport_total_rows"] == 6
+    assert numbers["autoexport_unique_fins"] == 2
     assert numbers["autoexport_tips_rows"] == 2
     assert numbers["autoexport_tips_fins"] == 1
     assert numbers["tips_distinct_case_ids"] == 1
@@ -223,3 +225,35 @@ def test_scatter_filters_recompute_comparable_clusters_and_coordinates(
     assert coords == [(p.x, p.y) for p in panel.projection.points]
     panel.close()
     app.processEvents()
+
+
+def test_autoexport_unique_fins_deduplicated_across_files_and_categories(tmp_path):
+    """Totals describe successfully imported VINs, not number of QEC claims."""
+    store = SourceKnowledgeStore(DuckDBStore(tmp_path / "local.duckdb"))
+    rows_one = [
+        {"category": "autoexport_dtc", "source_location": "csv:2",
+         "fin": "W1TTEST0000000001", "data": {}},
+        {"category": "autoexport_dtc", "source_location": "csv:3",
+         "fin": "W1TTEST0000000001", "data": {}},
+        {"category": "autoexport_dtc", "source_location": "csv:4",
+         "fin": "W1TTEST0000000002", "data": {}},
+    ]
+    rows_two = [
+        {"category": "autoexport_repair", "source_location": "csv:2",
+         "fin": "W1TTEST0000000001", "data": {}},
+        {"category": "autoexport_tips", "source_location": "csv:3",
+         "fin": "W1TTEST0000000003", "data": {"CaseId": "TEST-1"}},
+        {"category": "autoexport_tips", "source_location": "csv:4",
+         "fin": None, "data": {"CaseId": "TEST-2"}},
+    ]
+    store.save_records("a" * 64, "autoexport_rows", rows_one)
+    store.save_records("b" * 64, "autoexport_rows", rows_two)
+    population = store.autoexport_population()
+    assert population["autoexport_total_rows"] == 6
+    assert population["autoexport_unique_fins"] == 3
+    assert population["autoexport_dtc_fins"] == 2
+    assert population["autoexport_repair_fins"] == 1
+    assert population["autoexport_tips_fins"] == 1
+    # Imported raw DTC observations are NEVER independent QEC pump cases.
+    assert population["qec_primary_rows"] == 0
+    assert population["qec_primary_fins"] == 0
