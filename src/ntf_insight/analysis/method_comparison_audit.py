@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from itertools import combinations
-from math import isfinite, sqrt
+from math import sqrt
 
 import numpy as np
 from scipy.cluster.hierarchy import fcluster, linkage
