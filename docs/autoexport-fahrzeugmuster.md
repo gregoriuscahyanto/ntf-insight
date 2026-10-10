@@ -29,20 +29,32 @@ Pumpen-Schadteilfälle oder technische Ursachencluster.**
 
 1. Im QEC-Reiter **Alle AutoExport-FINs nach Diagnosemustern untersuchen**
    drücken oder **Fahrzeugmuster (AutoExport)** öffnen.
-2. **Alle AutoExport-FINs clustern** starten. Lesen und Berechnung laufen
-   im Hintergrund und ausschließlich lokal aus der vorhandenen DuckDB.
-3. Sechs Summen unterscheiden Gesamt-FINs, FINs mit DTC, FINs in Gruppen,
+2. Mit deaktivierter Option **Nur FINs mit belegtem QEC-Pumpentausch**
+   bleibt die **gesamte AutoExport-DTC-Historie** für alle 11.667
+   importierten FINs durchsuchbar. Dies ist nur eine allgemeine
+   Diagnosemusteranalyse, kein Vor-Tausch-/NTF-Befund.
+   Mit aktivierter Option beschränkt die App die Analyse auf FINs
+   mit gültigem QEC-`Rep.-Datum` zur Kühlmittelpumpe und auf AutoExport-
+   DTC-Beobachtungen von Kalendertagen **streng vor** dem Tausch.
+   Gleicher Tag, Datum unbekannt oder später wird nie als sicher
+   *vor dem Tausch* behandelt. Das generische AutoExport-`RepairDt`
+   begründet ausdrücklich **keinen** Pumpentausch. Mehrere QEC-Tausche
+   derselben FIN werden zunächst konservativ am frühesten
+   dokumentierten Pumpentauschdatum ausgerichtet.
+3. **AutoExport-FINs nach Diagnosemustern gruppieren** starten.
+   Lesen und Berechnung laufen ausschließlich lokal im Hintergrund.
+4. Sechs Summen unterscheiden Gesamt-FINs, FINs mit DTC, FINs in Gruppen,
    FINs mit DTC aber ohne Gruppe, FINs ohne DTC und Mustergruppen.
    Dabei muss *in Gruppen + DTC ohne Gruppe + ohne DTC* genau der
    Gesamtzahl importierter FINs entsprechen.
-4. Das Balkendiagramm zeigt die 14 größten Gruppen; **alle** Gruppen
+5. Das Balkendiagramm zeigt die 14 größten Gruppen; **alle** Gruppen
    stehen in der Tabelle. Eine Gruppe zeigt ihre **echten FINs**,
    häufige ECU:DTC-Schlüssel mit Zahl betroffener FINs sowie
    DTC-Klartexte, soweit sie in importierten AutoExport-Daten vorkommen.
-5. FIN-Suche funktioniert auch bei FINs **ohne Gruppe** oder **ohne DTC**.
+6. FIN-Suche funktioniert auch bei FINs **ohne Gruppe** oder **ohne DTC**.
    Die Schaltfläche öffnet die lokal archivierte AutoExport-Gesamthistorie
    der FIN, auch wenn kein QEC-Fall existiert.
-6. **Davon FINs mit QEC** bedeutet lediglich, dass zur gleichen FIN
+7. **Davon FINs mit QEC** bedeutet lediglich, dass zur gleichen FIN
    mindestens ein QEC-Fall bekannt ist. Es ist **keine** Bestätigung,
    dass die DTC-Historie diesen Pumpenfall erklärt.
 
@@ -102,3 +114,22 @@ Werkstattdiagnose stattfand.
 - Die neue Datenabfrage ist **lesend**; lokale Rohdaten und QEC-Fallanker
   werden nicht überschrieben. Die Rechenroutine erzeugt keine neuen
   QEC-Schadteilfälle und nimmt keine FIN-zu-Pumpen-Reparaturzuordnung vor.
+
+## GitHub-Quota und lokale CI-Artefaktbereinigung
+
+Die PR-CI verwendet ausschließlich `windows-latest`, einen maximal
+20-minütigen Qualitätslauf und **keine Actions-Artefakt-Uploads**.
+Wegen des knappen Runner-Kontingents wird ein PR-Test nur durch
+bewusste Freigabe von *Draft* zu *Ready for review* ausgelöst, nicht
+für jede einzelne Codeänderung. Der manuelle lokale Analyse-Workflow
+mit vertraulichen Pumpendaten bleibt weiterhin getrennt und darf nur
+auf dem geprüften Hauptbranch laufen.
+
+Das Skript `scripts/bereinigung_actions_artifacts.ps1` prüft über die
+bereits angemeldete lokale GitHub CLI (`gh`) ausschließlich
+wegwerfbare CI-Report- und Wheel-Artefakte dieser Repositorys.
+Es löscht sie **erst nach** Aufruf mit `-Loeschen`, nicht bei einer
+normalen Vorschau. Das angeschlossene GitHub-Werkzeug besitzt keine
+Artefakt-DELETE-Funktion; die Löschung muss deshalb bewusst mit
+`gh auth login` lokal ausgeführt werden. Die Speicheranzeige
+von GitHub kann sich erst einige Stunden später aktualisieren.
