@@ -15,7 +15,7 @@ from PySide6.QtCore import Qt, QThread, Signal
 from PySide6.QtWidgets import (
     QAbstractItemView, QCheckBox, QComboBox, QDialog, QDoubleSpinBox,
     QFileDialog, QFrame, QGridLayout, QHBoxLayout, QHeaderView, QLabel,
-    QMessageBox, QPushButton, QScrollArea, QSlider, QSpinBox,
+    QPushButton, QScrollArea, QSlider, QSpinBox,
     QTableView, QVBoxLayout, QWidget,
 )
 
