@@ -1,16 +1,19 @@
 """One-tab GUI with synthetic 2D/3D clustering and method drill-down."""
 from __future__ import annotations
 
+import csv
 import os
+from pathlib import Path
+from tempfile import TemporaryDirectory
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PySide6.QtCore import Qt
 from PySide6.QtTest import QTest
-from PySide6.QtWidgets import QApplication
+from PySide6.QtWidgets import QApplication, QFileDialog, QHeaderView
 
 from ntf_insight.app.widgets.cluster_workspace import ClusterWorkspace
-from test_hdbscan_clustering import sample
+from test_hdbscan_clustering import sample, synthetic
 
 
 def _calculate(panel: ClusterWorkspace, compare: bool = False) -> None:
@@ -144,5 +147,186 @@ def test_select_case_in_map_emits_only_local_id_and_no_remote_access():
     panel.open_selected_case()
     assert emitted
     assert emitted[-1] in panel.by_id
+    panel.close()
+    app.processEvents()
+
+
+def test_conservative_core_group_drilldown_is_inline_and_not_another_tab():
+    app = QApplication.instance() or QApplication([])
+    panel = ClusterWorkspace(sample())
+    _calculate(panel)
+    assert panel._core_result is not None
+    assert panel.core_threshold.value() == 0.45
+    assert panel.core_model.rowCount() == len(panel._core_result.groups)
+    assert panel._core_links
+    assert panel.core_export.isEnabled()
+    first = panel._core_links[0]
+    panel.core_table.selectRow(0)
+    assert panel._active_core_group is first.core
+    assert panel.member_model.rowCount() == first.core.case_count
+    assert "K" in panel.member_title.text()
+    assert panel.plot._emphasis_case_ids == set(first.core.case_ids)
+    assert panel._focused_case_id == first.core.representative_case_id
+
+    # Selecting a primary model cluster restores its FULL member list.
+    another_group_index = 1 if len(panel.result.groups) > 1 else 0
+    panel.group_table.selectRow(another_group_index)
+    assert panel._active_core_group is None
+    assert panel.member_title.text() == panel._member_title_default
+    assert panel.plot._emphasis_case_ids is None
+    assert panel.member_model.rowCount() == (
+        panel.result.groups[another_group_index].case_count
+    )
+
+    panel.core_only_group.setChecked(True)
+    selected_id = panel.result.groups[another_group_index].cluster_id
+    assert panel.core_model.rowCount() == sum(
+        selected_id in link.active_group_ids for link in panel._core_links
+    )
+    panel.close()
+    app.processEvents()
+
+
+def test_core_group_links_follow_selected_method_not_shared_cluster_number():
+    app = QApplication.instance() or QApplication([])
+    panel = ClusterWorkspace(sample())
+    _calculate(panel, compare=True)
+    method_keys = list(panel._run_results)
+    assert "leaf" in method_keys and "eom" in method_keys
+    assert "complete_cosine" in method_keys
+    active_initial = panel.result
+    panel._compare_row_picked(panel.compare_model.index(
+        method_keys.index("eom"), 0,
+    ))
+    assert panel.result.parameters.method == "eom"
+    assert panel._core_result is not None
+    assert panel._core_links
+    assert all(
+        link.dominant_group_id is None or any(
+            link.dominant_group_id == group.cluster_id
+            for group in panel.result.groups
+        )
+        for link in panel._core_links
+    )
+    panel._compare_row_picked(panel.compare_model.index(
+        method_keys.index("leaf"), 0,
+    ))
+    assert panel.result == active_initial
+    panel.close()
+    app.processEvents()
+
+
+def test_strict_details_do_not_count_two_qecs_of_same_fin_as_independent():
+    app = QApplication.instance() or QApplication([])
+    cases = sample()
+    cases[1].vehicle = cases[1].vehicle.model_copy(
+        update={"vin": cases[0].vin},
+    )
+    panel = ClusterWorkspace(cases)
+    _calculate(panel)
+    matching = next(
+        (
+            index for index, link in enumerate(panel._visible_core_links)
+            if {"A0", "A1"}.issubset(link.core.case_ids)
+        ),
+        None,
+    )
+    if matching is not None:
+        panel.core_table.selectRow(matching)
+        rows = panel.member_model.rows
+        same_fin = [row for row in rows if row[2] == cases[0].vin]
+        assert len(same_fin) >= 2
+        assert any("Mehrfachfall" in row[0] for row in same_fin)
+        assert sum("Repräsentant" in row[0] for row in rows) == 1
+    panel.close()
+    app.processEvents()
+
+
+def test_search_synthetic_fin_finds_overlapping_projected_case():
+    app = QApplication.instance() or QApplication([])
+    panel = ClusterWorkspace(sample())
+    _calculate(panel)
+    vin = panel.by_id["A2"].vin
+    panel.case_finder.setText(vin)
+    assert panel.find_case()
+    assert panel._focused_case_id == "A2"
+    assert "1 lokale Treffer" in panel.search_feedback.text()
+    panel.case_finder.setText("does-not-exist")
+    assert not panel.find_case()
+    assert "Keine" in panel.search_feedback.text()
+    # Long DTC/SSL text is elided on screen but remains accessible on hover.
+    index = panel.group_model.index(0, 7)
+    assert panel.group_model.data(index, Qt.ItemDataRole.ToolTipRole)
+    assert (
+        panel.group_table.horizontalHeader().sectionResizeMode(0)
+        == QHeaderView.ResizeMode.Interactive
+    )
+    assert panel.member_table.columnWidth(6) == 480
+    panel.close()
+    app.processEvents()
+
+
+def test_core_csv_is_saved_only_locally_with_pending_mechanism_status(
+    monkeypatch,
+):
+    app = QApplication.instance() or QApplication([])
+    panel = ClusterWorkspace(sample())
+    _calculate(panel)
+    # Repository tests deliberately keep pytest-tmp *inside Git*; genuine
+    # customer data exports must use a completely separate private directory.
+    with TemporaryDirectory(prefix="ntf-private-core-review-") as directory:
+        file = Path(directory) / "Kernpruefgruppen_FIN_QEC_NICHT_HOCHLADEN.csv"
+        monkeypatch.setattr(
+            QFileDialog, "getSaveFileName", lambda *a, **k: (str(file), "CSV"),
+        )
+        panel.core_export.click()
+        assert file.is_file()
+        with file.open("r", encoding="utf-8-sig", newline="") as stream:
+            rows = list(csv.DictReader(stream, delimiter=";"))
+        assert rows
+        assert all(row["review_status"] == "pending" for row in rows)
+        assert all(not row["mechanism_code"] for row in rows)
+        assert all(row["qec_case_id"] in panel.by_id for row in rows)
+        assert "ausschließlich lokal" in panel.status.text()
+    panel.close()
+    app.processEvents()
+
+
+def test_local_core_export_refuses_files_in_git_checkout(tmp_path, monkeypatch):
+    app = QApplication.instance() or QApplication([])
+    panel = ClusterWorkspace(sample())
+    _calculate(panel)
+    forbidden = tmp_path / "NEVER_COMMIT_FIN_QEC.csv"
+    monkeypatch.setattr(
+        QFileDialog, "getSaveFileName",
+        lambda *a, **k: (str(forbidden), "CSV"),
+    )
+    panel.core_export.click()
+    assert not forbidden.exists()
+    assert "Git-Repository" in panel.status.text()
+    panel.close()
+    app.processEvents()
+
+
+def test_synthetic_336_cases_170_eligible_without_publishing_identifiers():
+    """Mirror only the QEC COUNTS of the real pilot, never confidential data."""
+    app = QApplication.instance() or QApplication([])
+    cases = [
+        synthetic(
+            f"QEC-SYN-{i:04d}", "A" if i % 2 == 0 else "B", i + 1000,
+            swap=i < 170,
+        )
+        for i in range(336)
+    ]
+    panel = ClusterWorkspace(cases)
+    _calculate(panel)
+    assert len(panel.result.eligible_case_ids) == 170
+    assert len(panel.result.excluded_case_ids) == 166
+    assert len(panel.plot.items_by_case) == 170
+    assert panel.noise_model.rowCount() == (
+        len(panel.result.noise_case_ids) + 166
+    )
+    assert panel._core_result is not None
+    assert panel.core_threshold.value() == 0.45
     panel.close()
     app.processEvents()

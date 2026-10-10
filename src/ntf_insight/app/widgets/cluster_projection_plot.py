@@ -38,6 +38,7 @@ class ClusterProjectionPlot(QGraphicsView):
         self._cases: dict[str, NTFCase] = {}
         self._selected_group: int | None = None
         self._selected_case: str | None = None
+        self._emphasis_case_ids: frozenset[str] | None = None
         self.items_by_case = {}
         self._scene.setSceneRect(QRectF(0, 0, 760, 400))
 
@@ -54,6 +55,7 @@ class ClusterProjectionPlot(QGraphicsView):
         self._result = result
         self._cases = {case.case_id: case for case in cases}
         self._selected_group = highlighted_cluster
+        self._selected_case = None
         self._draw()
 
     def set_mode(self, mode: str) -> None:
@@ -67,6 +69,13 @@ class ClusterProjectionPlot(QGraphicsView):
         if case_id is not None:
             self._selected_case = case_id
         self._draw()
+
+    def set_emphasis_cases(self, case_ids: tuple[str, ...] | None) -> None:
+        """Highlight strict core group members across different algorithms."""
+        selected = frozenset(case_ids) if case_ids is not None else None
+        if self._emphasis_case_ids != selected:
+            self._emphasis_case_ids = selected
+            self._draw()
 
     def set_rotation(self, yaw: int, elevation: int) -> None:
         self.yaw = int(yaw) % 360
@@ -118,7 +127,7 @@ class ClusterProjectionPlot(QGraphicsView):
             )
             info.setDefaultTextColor(QColor("#8793A3"))
             info.setPos(30, 180)
-            self.reset_zoom()
+            self._refit_preserving_zoom()
             return
         groups = {}
         representatives = {}
@@ -152,7 +161,12 @@ class ClusterProjectionPlot(QGraphicsView):
             radius = 9.5 if selected else 8 if is_rep else 5.4
             border = QColor("#101820") if (selected or is_rep) else QColor("#FFFFFF")
             fill = color_for_cluster(group_id)
-            if self._selected_group is not None and not emphasized:
+            if self._emphasis_case_ids is not None:
+                if case_id not in self._emphasis_case_ids:
+                    fill.setAlpha(54)
+                else:
+                    radius += 1.6
+            elif self._selected_group is not None and not emphasized:
                 fill.setAlpha(72)
             edge = QPen(border, 2.6 if selected else 2.1 if is_rep else 0.9)
             item = self._scene.addEllipse(
@@ -160,7 +174,13 @@ class ClusterProjectionPlot(QGraphicsView):
                 edge, QBrush(fill),
             )
             item.setData(0, case_id)
-            item.setZValue(1 + depth * 0.1)
+            # Selected case must win when multiple MDS points overlap.
+            item.setZValue(
+                50 if selected else 30 if (
+                    self._emphasis_case_ids is not None
+                    and case_id in self._emphasis_case_ids
+                ) else 15 if is_rep else 1 + depth * 0.1
+            )
             case = self._cases.get(case_id)
             vin = case.vin if case is not None else "unbekannt"
             if info is not None:
@@ -185,14 +205,22 @@ class ClusterProjectionPlot(QGraphicsView):
         )
         label.setDefaultTextColor(QColor("#8394A6"))
         label.setPos(37, 358)
-        self.reset_zoom()
+        self._refit_preserving_zoom()
+
+    def _refit_preserving_zoom(self) -> None:
+        # Selection, core-group highlighting or 3D rotation must not throw
+        # away the user's current zoom level.
+        zoom = self._zoom
+        self.resetTransform()
+        self.fitInView(
+            self._scene.sceneRect(), Qt.AspectRatioMode.KeepAspectRatio,
+        )
+        if zoom != 1.0:
+            self.scale(zoom, zoom)
 
     def reset_zoom(self) -> None:
         self._zoom = 1.0
-        self.resetTransform()
-        self.fitInView(
-            self._scene.sceneRect(), Qt.AspectRatioMode.KeepAspectRatio
-        )
+        self._refit_preserving_zoom()
 
     def mousePressEvent(self, event) -> None:  # noqa: N802
         if self._mode == "3d" and event.button() == Qt.MouseButton.RightButton:
@@ -201,6 +229,14 @@ class ClusterProjectionPlot(QGraphicsView):
             return
         item = self.itemAt(event.pos())
         case_id = item.data(0) if item is not None else None
+        if not isinstance(case_id, str):
+            # A text label may be above a projected case point; use the
+            # actual underlying selectable ellipse instead of ignoring it.
+            candidates = self._scene.items(self.mapToScene(event.pos()))
+            case_id = next(
+                (candidate.data(0) for candidate in candidates
+                 if isinstance(candidate.data(0), str)), None,
+            )
         if isinstance(case_id, str):
             self._selected_case = case_id
             self.case_picked.emit(case_id)

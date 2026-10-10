@@ -52,6 +52,64 @@ unveränderte Ansichten.
    Zusätzlich lässt sich die ausgewählte Ergebnismenge als
    **vertrauliche lokale CSV** speichern.
 
+## Konservative Kernprüfgruppen direkt im selben Tab
+
+Unter **Clustertabelle** steht die Tabelle
+**„Konservative Prüfgruppen · Complete-Link Cosinus“**.
+Sie verwendet unabhängig vom aktuell angezeigten Clustering dieselben
+ursprünglichen Vor-Tausch-Diagnoseabstände und eine **separat
+konfigurierbare Mindestpaar-Cosinusähnlichkeit** (Standard 0,45,
+**explorativ, nicht ursachenvalidiert**). Bei jeder Berechnung läuft
+die strenge Gruppierung im GUI-Hintergrund mit; kein neuer Tab,
+keine zusätzliche Originaldatenbeschaffung.
+
+Die Kernprüfgruppen werden mit `K1`, `K2` usw. bezeichnet, die
+jeweils aktive Clustermethode mit `C1`, `C2` usw.
+**Die Zahlen dürfen nicht gleichgesetzt werden.**
+Die „Zugeordneter Cluster“-Spalte entsteht ausschließlich aus
+**wirklichen gemeinsamen QEC-Fall-IDs**. Bei Gruppen, deren Fälle
+zwischen mehreren ML-Clustern verteilt sind, wird die Überlappung
+explizit aufgeführt. Der Filter **„Nur passend zum gewählten Cluster“**
+grenzt die Anzeige auf dessen tatsächlich überlappende Prüfgruppen
+ein; ohne Filter werden alle konservativen Kandidaten dargestellt.
+
+Ein Klick auf eine `K`-Zeile zeigt direkt in der **bestehenden
+Falltabelle darunter** den echten Repräsentanten und die anderen
+QEC-Fälle dieser Kernprüfgruppe. Dieselben QECs werden in
+**beiden** aktiven 2D-/3D-Projektionen hervorgehoben.
+Ein erneuter Klick auf einen Hauptcluster `C` zeigt wieder dessen
+vollständige Falltabelle. Die neue **FIN-/QEC-Suche** unterhalb des
+Plots hilft, Einzelfälle auch bei projizierten Punktüberlagerungen
+aufzufinden. Lange CPC3- und SSL-Texte sind am Tabellenkopf
+nicht unkontrolliert vollbreit; vollständige Zellen sind weiterhin
+per Tooltip zugänglich und Spalten individuell verstellbar.
+
+**„Prüfgruppen zur technischen Fachprüfung lokal exportieren“**
+schreibt eine vertrauliche `*.csv` mit maximal
+drei QECs pro Prüfgruppe: einem echten Medoid,
+einem möglichst ähnlichen QEC einer **anderen FIN** und
+einem kontrastierenden QEC einer weiteren **anderen FIN**,
+falls verfügbar. Mehrere Fälle derselben FIN werden für die
+unabhängige Prüfung nicht mehrfach als Replikation gezählt.
+Die Datei entspricht den bestehenden
+`PILOT_REVIEW_FIELDS` und kann nach einer **echten**
+extern belegten Fachprüfung über den bestehenden
+Fachvalidierungsimport eingelesen werden.
+
+**Alle Zeilen starten mit `review_status=pending`.** Es werden
+weder Mechanismen noch NTF-Klassifikationen aus SSL, DTC-Ähnlichkeit
+oder Cluster-Mitgliedschaft automatisch bestätigt.
+Die QEC-, FIN- und SSL-Daten bleiben ausschließlich in der
+lokalen CSV; die GitHub-Runner-Workflows veröffentlichen
+keine neuen Einzelfall-Daten und keine neue Statistik.
+
+Die im Pilot einmal beobachteten fünf Complete-Link-Gruppen
+(15 Fälle bei Mindest-Cosinus 0,45) sind **keine
+fest verdrahteten Cluster**: Die Tabelle berechnet die
+aktuell vorhandenen QECs neu, berücksichtigt alle gewählten
+DTC-Quellen, Filter und Parameter und kann daher künftig
+mehr, weniger oder andere Gruppen enthalten.
+
 ## Methoden und vergleichbare Merkmale
 
 | Methode | Distanz / Prüfkriterium | Konfiguration |

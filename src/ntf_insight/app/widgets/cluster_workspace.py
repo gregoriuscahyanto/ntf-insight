@@ -15,14 +15,17 @@ from PySide6.QtCore import Qt, QThread, Signal
 from PySide6.QtWidgets import (
     QAbstractItemView, QCheckBox, QComboBox, QDialog, QDoubleSpinBox,
     QFileDialog, QFrame, QGridLayout, QHBoxLayout, QHeaderView, QLabel,
-    QPushButton, QScrollArea, QSlider, QSpinBox,
+    QLineEdit, QPushButton, QScrollArea, QSlider, QSpinBox,
     QTableView, QVBoxLayout, QWidget,
 )
 
 from ntf_insight.analysis.case_clustering import _component_key
 from ntf_insight.analysis.cluster_workspace_engine import (
-    BY_METHOD, METHODS, ClusterParameters, UnifiedClusterResult,
-    calculate_clusters, compare_cluster_runs,
+    BY_METHOD, METHODS, ClusterParameters, UnifiedClusterResult, UnifiedCluster,
+    _project_3d, calculate_clusters, compare_cluster_runs,
+)
+from ntf_insight.analysis.cluster_core_review import (
+    CoreGroupLink, link_core_review_groups, write_core_review_template,
 )
 from ntf_insight.analysis.hdbscan_clustering import cluster_hdbscan_cases
 from ntf_insight.app.models.simple_table_model import SimpleTableModel
@@ -44,11 +47,13 @@ class _ClusterTask(QThread):
         cases: list[NTFCase],
         parameters: ClusterParameters,
         methods: tuple[str, ...],
+        core_threshold: float = 0.45,
     ) -> None:
         super().__init__()
         self.cases = cases
         self.parameters = parameters
         self.methods = methods
+        self.core_threshold = core_threshold
 
     def run(self) -> None:
         try:
@@ -62,13 +67,28 @@ class _ClusterTask(QThread):
                 lookback_days=p.lookback_days,
                 common_dtc_cutoff=p.common_dtc_cutoff,
             )
+            shared_projection = _project_3d(base)
             results = [
                 calculate_clusters(
-                    self.cases, replace(p, method=method), reference=base,
+                    self.cases, replace(p, method=method),
+                    reference=base, projection=shared_projection,
                 )
                 for method in self.methods
             ]
-            self.calculated.emit(results)
+            strict_params = replace(
+                p, method="complete_cosine",
+                minimum_similarity=self.core_threshold,
+            )
+            core = next(
+                (item for item in results if item.parameters == strict_params),
+                None,
+            )
+            if core is None:
+                core = calculate_clusters(
+                    self.cases, strict_params, reference=base,
+                    projection=shared_projection,
+                )
+            self.calculated.emit((results, core))
         except (ValueError, RuntimeError) as exc:
             self.problem.emit(str(exc))
         except Exception:
@@ -80,19 +100,50 @@ class _ClusterTask(QThread):
             )
 
 
-def _table(model: SimpleTableModel, height: int = 190) -> QTableView:
+class _ClusterTableModel(SimpleTableModel):
+    """Compact text on screen, with complete local evidence on hover."""
+
+    def data(self, index, role=Qt.ItemDataRole.DisplayRole):
+        if role == Qt.ItemDataRole.ToolTipRole and index.isValid():
+            value = self.rows[index.row()][index.column()]
+            return str(value) if value is not None else ""
+        return super().data(index, role)
+
+    def headerData(self, section, orientation, role=Qt.ItemDataRole.DisplayRole):
+        if role == Qt.ItemDataRole.ToolTipRole:
+            return super().headerData(
+                section, orientation, Qt.ItemDataRole.DisplayRole,
+            )
+        return super().headerData(section, orientation, role)
+
+
+def _table(
+    model: SimpleTableModel,
+    height: int = 190,
+    widths: tuple[int, ...] = (),
+) -> QTableView:
+    """Readable even with 336 cases and long CPC3/SSL text columns."""
     table = QTableView()
     table.setModel(model)
     table.setMinimumHeight(height)
     table.setAlternatingRowColors(True)
+    table.setWordWrap(False)
+    table.setTextElideMode(Qt.TextElideMode.ElideRight)
+    table.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+    table.setHorizontalScrollMode(QAbstractItemView.ScrollMode.ScrollPerPixel)
     table.setSortingEnabled(False)
     table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
     table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
     table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
     table.verticalHeader().setVisible(False)
+    table.verticalHeader().setDefaultSectionSize(27)
     header = table.horizontalHeader()
-    header.setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
-    header.setStretchLastSection(True)
+    header.setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
+    header.setDefaultSectionSize(136)
+    header.setMinimumSectionSize(65)
+    header.setStretchLastSection(False)
+    for column, width in enumerate(widths):
+        table.setColumnWidth(column, width)
     return table
 
 
@@ -116,10 +167,15 @@ class ClusterWorkspace(QWidget):
         self._task: _ClusterTask | None = None
         self._run_results: dict[str, UnifiedClusterResult] = {}
         self.result: UnifiedClusterResult | None = None
+        self._core_result: UnifiedClusterResult | None = None
+        self._core_links: tuple[CoreGroupLink, ...] = ()
+        self._visible_core_links: list[CoreGroupLink] = []
+        self._active_core_group: UnifiedCluster | None = None
         self._group_ids: list[int] = []
         self._member_ids: list[str] = []
         self._noise_ids: list[str] = []
         self._focused_case_id: str | None = None
+        self._member_title_default = "Falltabelle – gewählter Cluster"
         self._dialogs: list[QDialog] = []
         self._activated = False
 
@@ -257,11 +313,14 @@ class ClusterWorkspace(QWidget):
         self.compare_side.toggled.connect(self._draw_plots)
         comparison_header.addWidget(self.compare_side)
         body.addLayout(comparison_header)
-        self.compare_model = SimpleTableModel((
+        self.compare_model = _ClusterTableModel((
             "Verfahren", "Cluster", "Clusterfälle", "Ausreißer",
             "Mit DTC-Kern", "Mit ≥2 FINs", "Paarübereinstimmung", "Distanzmaß",
         ))
-        self.compare_table = _table(self.compare_model, 145)
+        self.compare_table = _table(
+            self.compare_model, 145,
+            (205, 78, 104, 88, 110, 102, 151, 166),
+        )
         self.compare_table.setMaximumHeight(200)
         self.compare_table.doubleClicked.connect(self._compare_row_picked)
         body.addWidget(self.compare_table)
@@ -327,24 +386,101 @@ class ClusterWorkspace(QWidget):
         plot_note.setWordWrap(True)
         body.addWidget(plot_note)
 
+        search_row = QHBoxLayout()
+        search_row.addWidget(QLabel("FIN oder QEC finden:"))
+        self.case_finder = QLineEdit()
+        self.case_finder.setPlaceholderText(
+            "FIN / QEC lokal suchen – auch bei überlagerten 2D-/3D-Punkten"
+        )
+        self.case_finder.returnPressed.connect(self.find_case)
+        search_row.addWidget(self.case_finder, 1)
+        self.find_button = QPushButton("Fall markieren")
+        self.find_button.clicked.connect(self.find_case)
+        search_row.addWidget(self.find_button)
+        body.addLayout(search_row)
+        self.search_feedback = QLabel(objectName="PageSubtitle")
+        self.search_feedback.setWordWrap(True)
+        body.addWidget(self.search_feedback)
+
         body.addWidget(QLabel("Clustertabelle", objectName="CardTitle"))
-        self.group_model = SimpleTableModel((
+        self.group_model = _ClusterTableModel((
             "Cluster", "Repräsentativer QEC-Fall", "QEC-Fälle", "FINs",
             "Schwächstes Paar", "Median", "Schwache Paare",
             "Gemeinsame ECU:DTC", "Prüfhypothese",
         ))
-        self.group_table = _table(self.group_model, 210)
+        self.group_table = _table(
+            self.group_model, 210,
+            (80, 170, 89, 74, 126, 92, 113, 320, 420),
+        )
         self.group_table.selectionModel().currentRowChanged.connect(
             self._group_changed
         )
         body.addWidget(self.group_table)
 
-        body.addWidget(QLabel("Falltabelle – gewählter Cluster", objectName="CardTitle"))
-        self.member_model = SimpleTableModel((
+        core_header = QHBoxLayout()
+        core_header.addWidget(QLabel(
+            "Konservative Prüfgruppen · Complete-Link Cosinus",
+            objectName="CardTitle",
+        ))
+        core_header.addStretch(1)
+        core_header.addWidget(QLabel("Mindestpaarähnlichkeit"))
+        self.core_threshold = QDoubleSpinBox()
+        self.core_threshold.setRange(0.05, 0.95)
+        self.core_threshold.setDecimals(2)
+        self.core_threshold.setSingleStep(0.05)
+        self.core_threshold.setValue(0.45)
+        self.core_threshold.setToolTip(
+            "Separater konservativer Prüfgruppenfilter, NICHT automatisch "
+            "eine bestätigte Fehlerursache."
+        )
+        core_header.addWidget(self.core_threshold)
+        self.core_only_group = QCheckBox("Nur passend zum gewählten Cluster")
+        self.core_only_group.setChecked(False)
+        self.core_only_group.toggled.connect(self._refresh_core_groups)
+        core_header.addWidget(self.core_only_group)
+        body.addLayout(core_header)
+        self.core_note = QLabel(
+            "Prüfgruppen werden zusammen mit der Clustermethode berechnet. "
+            "Gruppennummern verschiedener Methoden werden nicht gleichgesetzt.",
+            objectName="PageSubtitle",
+        )
+        self.core_note.setWordWrap(True)
+        body.addWidget(self.core_note)
+        self.core_model = _ClusterTableModel((
+            "Prüfgruppe", "Fälle", "FINs", "Zugeordneter Cluster",
+            "Überlappung", "Min. Cosinus", "Gemeinsamer ECU:DTC-Kern",
+            "Fachlicher Hinweis",
+        ))
+        self.core_table = _table(
+            self.core_model, 168,
+            (103, 70, 72, 152, 98, 104, 326, 430),
+        )
+        self.core_table.selectionModel().currentRowChanged.connect(
+            self._core_changed
+        )
+        body.addWidget(self.core_table)
+        core_actions = QHBoxLayout()
+        self.core_export = QPushButton(
+            "Prüfgruppen zur technischen Fachprüfung lokal exportieren"
+        )
+        self.core_export.setEnabled(False)
+        self.core_export.clicked.connect(self.export_core_review)
+        core_actions.addWidget(self.core_export)
+        core_actions.addStretch(1)
+        body.addLayout(core_actions)
+
+        self.member_title = QLabel(
+            self._member_title_default, objectName="CardTitle",
+        )
+        body.addWidget(self.member_title)
+        self.member_model = _ClusterTableModel((
             "Rolle", "QEC-Fall", "FIN", "Index zum Medoid",
             "ML-Zugehörigkeit", "Gemeinsame ECU:DTC", "SSL-Endbefund (post hoc)",
         ))
-        self.member_table = _table(self.member_model, 210)
+        self.member_table = _table(
+            self.member_model, 210,
+            (185, 165, 183, 137, 115, 317, 480),
+        )
         self.member_table.doubleClicked.connect(self._open_member_case)
         body.addWidget(self.member_table)
         open_row = QHBoxLayout()
@@ -359,8 +495,12 @@ class ClusterWorkspace(QWidget):
             "Nicht zugeordnete und diagnostisch ausgeschlossene Fälle",
             objectName="CardTitle",
         ))
-        self.noise_model = SimpleTableModel(("QEC-Fall", "FIN", "Begründung"))
-        self.noise_table = _table(self.noise_model, 190)
+        self.noise_model = _ClusterTableModel(
+            ("QEC-Fall", "FIN", "Begründung"),
+        )
+        self.noise_table = _table(
+            self.noise_model, 190, (190, 230, 540),
+        )
         self.noise_table.doubleClicked.connect(self._open_noise_case)
         body.addWidget(self.noise_table)
 
@@ -400,6 +540,7 @@ class ClusterWorkspace(QWidget):
         ):
             control.valueChanged.connect(self._invalidate_on_input)
         self.filter_common.toggled.connect(self._invalidate_on_input)
+        self.core_threshold.valueChanged.connect(self._invalidate_on_input)
         self._change_dimension()
 
     def _update_parameters(self, *_args) -> None:
@@ -499,7 +640,10 @@ class ClusterWorkspace(QWidget):
         )
         self._running_params = params
         self._running_family = self.family.currentData()
-        task = _ClusterTask(cases, params, methods)
+        self._running_core_threshold = self.core_threshold.value()
+        task = _ClusterTask(
+            cases, params, methods, self._running_core_threshold,
+        )
         _ACTIVE_TASKS.add(task)
         self._task = task
         task.calculated.connect(self._receive_results)
@@ -508,13 +652,18 @@ class ClusterWorkspace(QWidget):
         task.finished.connect(task.deleteLater)
         task.start()
 
-    def _receive_results(self, results: list[UnifiedClusterResult]) -> None:
+    def _receive_results(
+        self,
+        payload: tuple[list[UnifiedClusterResult], UnifiedClusterResult],
+    ) -> None:
+        results, core_result = payload
         self._task = None
         self.run_button.setEnabled(True)
         self.compare_button.setEnabled(True)
         if (
             self._running_params != self._parameters()
             or self._running_family != self.family.currentData()
+            or self._running_core_threshold != self.core_threshold.value()
         ):
             self._clear_results()
             self.status.setText(
@@ -523,6 +672,7 @@ class ClusterWorkspace(QWidget):
             )
             return
         self._run_results = {r.parameters.method: r for r in results}
+        self._core_result = core_result
         self.result = results[0]
         self.export_button.setEnabled(True)
         self.status.setText(
@@ -544,6 +694,17 @@ class ClusterWorkspace(QWidget):
     def _clear_results(self) -> None:
         self.result = None
         self._run_results = {}
+        self._core_result = None
+        self._core_links = ()
+        self._visible_core_links = []
+        self._active_core_group = None
+        self.core_model.set_rows([])
+        self.core_note.setText(
+            "Für die aktuelle Diagnosebasis noch keine konservativen "
+            "Prüfgruppen berechnet."
+        )
+        self.core_export.setEnabled(False)
+        self.member_title.setText(self._member_title_default)
         self._group_ids = []
         self._member_ids = []
         self._noise_ids = []
@@ -552,7 +713,9 @@ class ClusterWorkspace(QWidget):
         self.noise_model.set_rows([])
         self.compare_model.set_rows([])
         self.plot.set_result(None, [])
+        self.plot.set_emphasis_cases(None)
         self.other_plot.set_result(None, [])
+        self.other_plot.set_emphasis_cases(None)
         self.compare_side.setEnabled(False)
         self.compare_side.setChecked(False)
         self.export_button.setEnabled(False)
@@ -657,30 +820,43 @@ class ClusterWorkspace(QWidget):
                 0,
             )
             self.group_table.selectRow(match)
-        elif self._focused_case_id is not None:
-            self.focus_case(self._focused_case_id)
+        else:
+            self._refresh_core_groups()
+            if self._focused_case_id is not None:
+                self.focus_case(self._focused_case_id)
         self._draw_plots()
 
-    def _group_changed(self, index, _previous) -> None:
-        if self.result is None or not index.isValid():
-            return
-        if not 0 <= index.row() < len(self.result.groups):
-            return
-        group = self.result.groups[index.row()]
-        self._member_ids = [m.case_id for m in group.members]
+    def _fill_members(
+        self, group: UnifiedCluster, *, core: bool,
+    ) -> None:
+        self.member_title.setText(
+            f"Falltabelle – konservative Prüfgruppe K{group.cluster_id}"
+            if core else self._member_title_default
+        )
+        self._member_ids = [member.case_id for member in group.members]
         rows = []
+        # One QEC is not one independent vehicle. Only the first target
+        # with a genuinely different FIN is eligible for that designation.
+        seen_fins = {self.by_id[group.representative_case_id].vin}
         for member in group.members:
             case = self.by_id[member.case_id]
-            status = (
-                "Repräsentant" if member.case_id == group.representative_case_id
-                else "Clusterfall"
-            )
+            if member.case_id == group.representative_case_id:
+                role = "Repräsentant (Kern)" if core else "Repräsentant"
+            elif core and case.vin in seen_fins:
+                role = "Mehrfachfall derselben FIN – nicht unabhängig"
+            elif core:
+                role = "Prüffall mit anderer FIN – Mechanismus offen"
+                seen_fins.add(case.vin)
+            else:
+                role = "Clusterfall"
             common = ", ".join(
                 f"{ecu}:{dtc}" for ecu, dtc in group.common_faults[:7]
-            ) or "Kein gemeinsamer Kern"
-            ssl = getattr(case, "qec_ssl_end_finding", None) or "Nicht dokumentiert"
+            ) or "Kein durchgängiger ECU:DTC"
+            ssl = getattr(
+                case, "qec_ssl_end_finding", None,
+            ) or "Nicht dokumentiert"
             rows.append((
-                status, case.case_id, case.vin, f"{member.similarity:.1%}",
+                role, case.case_id, case.vin, f"{member.similarity:.1%}",
                 f"{member.membership_strength:.1%}"
                 if member.membership_strength is not None else "—",
                 common, str(ssl),
@@ -688,12 +864,184 @@ class ClusterWorkspace(QWidget):
         self.member_model.set_rows(rows)
         self.open_button.setEnabled(bool(rows))
         if rows:
-            row = next(
-                (i for i, m in enumerate(group.members)
-                 if m.case_id == self._focused_case_id), 0,
+            target = next(
+                (i for i, member in enumerate(group.members)
+                 if member.case_id == self._focused_case_id),
+                0,
             )
-            self.member_table.selectRow(row)
+            self.member_table.selectRow(target)
+
+    def _group_changed(self, index, _previous) -> None:
+        if self.result is None or not index.isValid():
+            return
+        if not 0 <= index.row() < len(self.result.groups):
+            return
+        group = self.result.groups[index.row()]
+        self._active_core_group = None
+        self._fill_members(group, core=False)
+        self._refresh_core_groups()
         self._draw_plots()
+
+    def _refresh_core_groups(self, *_args) -> None:
+        if self.result is None or self._core_result is None:
+            self._core_links = ()
+            self._visible_core_links = []
+            self.core_model.set_rows([])
+            self.core_export.setEnabled(False)
+            return
+        self._core_links = link_core_review_groups(
+            self.result, self._core_result,
+        )
+        selected = self.group_table.currentIndex()
+        group_id = (
+            self.result.groups[selected.row()].cluster_id
+            if selected.isValid() and selected.row() < len(self.result.groups)
+            else None
+        )
+        self._visible_core_links = [
+            link for link in self._core_links
+            if (
+                not self.core_only_group.isChecked()
+                or group_id is None
+                or group_id in link.active_group_ids
+            )
+        ]
+        previously_selected = (
+            self._active_core_group.cluster_id
+            if self._active_core_group is not None else None
+        )
+        self.core_model.set_rows([
+            (
+                link.label,
+                link.core.case_count,
+                link.core.vehicle_count,
+                ", ".join(f"C{cid}" for cid in link.active_group_ids)
+                or "Keine",
+                (
+                    f"{link.dominant_overlap}/{link.core.case_count}"
+                    if link.dominant_group_id is not None else "0"
+                ),
+                (
+                    f"{link.core.minimum_pair_similarity:.1%}"
+                    if link.core.minimum_pair_similarity is not None else "—"
+                ),
+                ", ".join(
+                    f"{ecu}:{dtc}" for ecu, dtc in link.core.common_faults[:7]
+                ) or "Kein durchgängiger ECU:DTC",
+                link.note + " · Ursache nicht unabhängig bestätigt",
+            ) for link in self._visible_core_links
+        ])
+        count = len(self._core_links)
+        assigned = sum(link.core.case_count for link in self._core_links)
+        self.core_note.setText(
+            f"{count} konservative Prüfgruppen mit {assigned} QEC-Fällen; "
+            f"{len(self._visible_core_links)} hier angezeigt. "
+            f"Schwelle: {self.core_threshold.value():.0%}, "
+            "gleiche originale Diagnoseabstände. "
+            "C- und K-Nummern sind methodenabhängig. "
+            "Klick auf eine K-Gruppe zeigt ihre Einzelfälle unten. "
+            "Technischer Fehlermechanismus weiterhin unbestätigt."
+        )
+        self.core_export.setEnabled(bool(self._core_result.groups))
+        if previously_selected is not None:
+            new_row = next(
+                (i for i, link in enumerate(self._visible_core_links)
+                 if link.core.cluster_id == previously_selected),
+                None,
+            )
+            if new_row is not None:
+                self.core_table.selectRow(new_row)
+            else:
+                # A filtering action must never leave a stale strict case
+                # subset in the detail table when it is no longer visible.
+                self._active_core_group = None
+                if group_id is not None and selected.isValid():
+                    self._fill_members(
+                        self.result.groups[selected.row()], core=False,
+                    )
+                self._draw_plots()
+
+    def _core_changed(self, index, _previous) -> None:
+        if (
+            not index.isValid()
+            or not 0 <= index.row() < len(self._visible_core_links)
+        ):
+            return
+        link = self._visible_core_links[index.row()]
+        self._active_core_group = link.core
+        self._focused_case_id = link.core.representative_case_id
+        self._fill_members(link.core, core=True)
+        self.search_feedback.setText(
+            f"{link.label}: {link.note}. "
+            "Keine automatische Bestätigung von NTF oder Lieferantenursache."
+        )
+        self._draw_plots()
+
+    def find_case(self) -> bool:
+        """Search QEC/FIN locally, also for overlapping MDS points."""
+        query = self.case_finder.text().strip().casefold()
+        if not query:
+            self.search_feedback.setText("Bitte FIN oder QEC-Fall eingeben.")
+            return False
+        matches = [
+            case for case in self._subset()
+            if query in case.case_id.casefold()
+            or query in case.vin.casefold()
+        ]
+        if not matches:
+            self.search_feedback.setText("Keine passende lokale QEC/FIN gefunden.")
+            return False
+        # Prefer exact FIN/QEC matches; when a FIN has multiple QEC records
+        # the count is explicit and the user can select the next case in table.
+        matches.sort(key=lambda case: (
+            query not in {case.case_id.casefold(), case.vin.casefold()},
+            case.case_id,
+        ))
+        picked = matches[0]
+        self.focus_case(picked.case_id)
+        self.search_feedback.setText(
+            f"{len(matches)} lokale Treffer · ausgewählt: "
+            f"{picked.case_id} / FIN {picked.vin}. "
+            "Mehrere QECs derselben FIN sind nicht unabhängige Fahrzeuge."
+        )
+        return True
+
+    def export_core_review(self) -> None:
+        """Save only to a local file chosen by the user, never GitHub."""
+        if self._core_result is None or not self._core_result.groups:
+            return
+        destination, _ = QFileDialog.getSaveFileName(
+            self, "Lokale Complete-Link Fachprüfvorlage speichern",
+            str(Path.home() / ".ntf-insight"
+                / "Kernpruefgruppen_FIN_QEC_NICHT_HOCHLADEN.csv"),
+            "CSV-Dateien (*.csv)",
+        )
+        if not destination:
+            return
+        target = Path(destination).resolve()
+        # In editable installs never permit a confidential export into git.
+        repository_root = Path(__file__).resolve().parents[4]
+        if target == repository_root or repository_root in target.parents:
+            self.status.setText(
+                "Vertrauliche QEC-/FIN-Fachprüfung darf nicht ins Git-Repository."
+            )
+            return
+        try:
+            with target.open("w", encoding="utf-8-sig", newline="") as output:
+                write_core_review_template(
+                    output, self._subset(), self._core_result,
+                )
+        except OSError:
+            self.status.setText(
+                "Lokaler Fachprüf-Export nicht möglich. "
+                "Speicherort und Schreibberechtigung prüfen."
+            )
+            return
+        self.status.setText(
+            "Kernprüfvorlage ausschließlich lokal gespeichert. "
+            "Nur unabhängige Fachbelege können 'confirmed' begründen. "
+            "NIEMALS in GitHub/Chat hochladen."
+        )
 
     def _draw_plots(self, *_args) -> None:
         if self.result is None:
@@ -705,6 +1053,11 @@ class ClusterWorkspace(QWidget):
         self.plot.set_result(self.result, self._subset(), group)
         if self._focused_case_id:
             self.plot.set_highlight(group, self._focused_case_id)
+        strict_cases = (
+            self._active_core_group.case_ids
+            if self._active_core_group is not None else None
+        )
+        self.plot.set_emphasis_cases(strict_cases)
         twin = self.compare_side.isChecked()
         self.other_plot.setVisible(twin)
         if twin:
@@ -721,6 +1074,7 @@ class ClusterWorkspace(QWidget):
                 self.other_plot.set_highlight(
                     other_group, self._focused_case_id,
                 )
+            self.other_plot.set_emphasis_cases(strict_cases)
         self._change_dimension()
 
     def _change_dimension(self, *_args) -> None:
@@ -745,16 +1099,37 @@ class ClusterWorkspace(QWidget):
         self._focused_case_id = case_id
         if self.result is None:
             return True
+
+        # Keep the strict three-case drill-down active when one of its
+        # independently comparable FINs is selected.
+        if self._active_core_group is not None:
+            if case_id in self._active_core_group.case_ids:
+                for row, member in enumerate(self._active_core_group.members):
+                    if member.case_id == case_id:
+                        self.member_table.selectRow(row)
+                        break
+                self._draw_plots()
+                return True
+            self._active_core_group = None
+
         for index, group in enumerate(self.result.groups):
             if case_id in group.case_ids:
                 if self.group_table.currentIndex().row() != index:
                     self.group_table.selectRow(index)
+                else:
+                    self._fill_members(group, core=False)
                 for row, member in enumerate(group.members):
                     if member.case_id == case_id:
                         self.member_table.selectRow(row)
                         break
                 self._draw_plots()
                 return True
+
+        # For eligible noise or excluded cases there is deliberately no
+        # invented similarity or synthetic cluster group.
+        selected = self.group_table.currentIndex()
+        if selected.isValid() and selected.row() < len(self.result.groups):
+            self._fill_members(self.result.groups[selected.row()], core=False)
         for row, cid in enumerate(self._noise_ids):
             if cid == case_id:
                 self.noise_table.selectRow(row)
@@ -764,6 +1139,7 @@ class ClusterWorkspace(QWidget):
 
     def clear_focus(self) -> None:
         self._focused_case_id = None
+        self._active_core_group = None
         self._draw_plots()
 
     def _selected_member(self) -> str | None:

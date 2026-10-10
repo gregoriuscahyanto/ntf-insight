@@ -120,6 +120,24 @@ def test_comparison_rejects_different_pre_swap_cohorts():
         compare_cluster_runs([left, changed])
 
 
+def test_shared_3d_projection_is_identical_for_all_methods():
+    cases = sample()
+    leaf = calculate_clusters(cases, params("leaf"))
+    projected = leaf.positions
+    for method in ("leaf", "eom", "complete_cosine", "complete_legacy"):
+        reused = calculate_clusters(
+            cases, params(method), projection=projected,
+        )
+        standalone = calculate_clusters(cases, params(method))
+        assert reused == standalone
+        assert reused.positions is projected
+    wrong = (("UNKNOWN-SYNTHETIC-QEC", 0.0, 0.0, 0.0),)
+    with pytest.raises(ValueError, match="QEC-Kohorte"):
+        calculate_clusters(
+            cases, params("complete_cosine"), projection=wrong,
+        )
+
+
 def test_legacy_complete_link_never_uses_a_qec_from_another_family():
     cases = sample()
     other = cases[0].model_copy(deep=True)
