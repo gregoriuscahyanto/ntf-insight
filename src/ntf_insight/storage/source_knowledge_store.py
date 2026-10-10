@@ -244,6 +244,15 @@ class SourceKnowledgeStore:
                 GROUP BY category
                 """
             ).fetchall()
+            overall_fins = con.execute(
+                """
+                SELECT COUNT(DISTINCT NULLIF(trim(fin), ''))
+                FROM source_knowledge_rows
+                WHERE category IN (
+                    'autoexport_dtc', 'autoexport_repair', 'autoexport_tips'
+                )
+                """
+            ).fetchone()[0]
             tips_ids = con.execute(
                 """
                 SELECT COUNT(DISTINCT NULLIF(
@@ -271,6 +280,8 @@ class SourceKnowledgeStore:
                 """
             ).fetchone()
         results: dict[str, int] = {
+            "autoexport_unique_fins": int(overall_fins or 0),
+            "autoexport_total_rows": sum(int(row_count) for _, row_count, _ in rows),
             "tips_distinct_case_ids": int(tips_ids or 0),
             "qec_original_rows": int(qec[0]),
             "qec_primary_rows": int(qec[1]),
