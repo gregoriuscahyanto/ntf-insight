@@ -352,70 +352,6 @@ class ClusterWorkspace(QWidget):
         self.kpi.setWordWrap(True)
         body.addWidget(self.kpi)
 
-        comparison_header = QHBoxLayout()
-        comparison_header.addWidget(QLabel("Methodenvergleich", objectName="CardTitle"))
-        comparison_header.addStretch(1)
-        self.compare_side = QCheckBox("Zwei Verfahren nebeneinander")
-        self.compare_side.setEnabled(False)
-        self.compare_side.toggled.connect(self._draw_plots)
-        comparison_header.addWidget(self.compare_side)
-        body.addLayout(comparison_header)
-        self.compare_model = _ClusterTableModel((
-            "Verfahren", "Cluster", "Clusterfälle", "Ausreißer",
-            "Mit DTC-Kern", "Mit ≥2 FINs", "Paarübereinstimmung", "Distanzmaß",
-        ))
-        self.compare_table = _table(
-            self.compare_model, 145,
-            (205, 78, 104, 88, 110, 102, 151, 166),
-        )
-        self.compare_table.setMaximumHeight(200)
-        self.compare_table.doubleClicked.connect(self._compare_row_picked)
-        body.addWidget(self.compare_table)
-        info = QLabel(
-            "Paarübereinstimmung vergleicht echte QEC-Fallpaare, niemals "
-            "zufällige Clusternummern. Jaccard verwendet eine andere Metrik. "
-            "Hohe Übereinstimmung bedeutet nicht gleiche technische Ursache.",
-            objectName="PageSubtitle",
-        )
-        info.setWordWrap(True)
-        body.addWidget(info)
-        body.addWidget(QLabel(
-            "Robustheitsprüfung · Methoden und Datenvarianten",
-            objectName="CardTitle",
-        ))
-        self.stability_note = QLabel(
-            "Noch keine Stabilitätsprüfung ausgeführt.",
-            objectName="PageSubtitle",
-        )
-        self.stability_note.setWordWrap(True)
-        body.addWidget(self.stability_note)
-        self.stability_model = _ClusterTableModel((
-            "Vergleich", "Art", "Beidseitig geeignet",
-            "Referenzfälle", "Paar-Jaccard", "Paarerhalt", "Hinweis",
-        ))
-        self.stability_table = _table(
-            self.stability_model, 190,
-            (245, 120, 145, 92, 115, 110, 400),
-        )
-        body.addWidget(self.stability_table)
-        self.stability_group_model = _ClusterTableModel((
-            "Referenzcluster", "Prüfung", "Mitglieder", "Vergleichbar",
-            "Referenzpaare", "Erhalten", "Erhaltquote", "Neue Verbindungen",
-        ))
-        self.stability_group_table = _table(
-            self.stability_group_model, 155,
-            (126, 210, 105, 100, 126, 100, 120, 160),
-        )
-        self.stability_group_table.setMaximumHeight(240)
-        body.addWidget(self.stability_group_table)
-        self.stability_detail = QLabel(
-            "Paarerhalt und Erhaltquote sind Diagnose-Stabilitätsmaße, "
-            "keine Fehlerursachenwahrscheinlichkeiten.",
-            objectName="PageSubtitle",
-        )
-        self.stability_detail.setWordWrap(True)
-        body.addWidget(self.stability_detail)
-
         map_header = QHBoxLayout()
         map_header.addWidget(QLabel("Fallvisualisierung", objectName="CardTitle"))
         map_header.addStretch(1)
@@ -500,58 +436,6 @@ class ClusterWorkspace(QWidget):
         )
         body.addWidget(self.group_table)
 
-        core_header = QHBoxLayout()
-        core_header.addWidget(QLabel(
-            "Konservative Prüfgruppen · Complete-Link Cosinus",
-            objectName="CardTitle",
-        ))
-        core_header.addStretch(1)
-        core_header.addWidget(QLabel("Mindestpaarähnlichkeit"))
-        self.core_threshold = QDoubleSpinBox()
-        self.core_threshold.setRange(0.05, 0.95)
-        self.core_threshold.setDecimals(2)
-        self.core_threshold.setSingleStep(0.05)
-        self.core_threshold.setValue(0.45)
-        self.core_threshold.setToolTip(
-            "Separater konservativer Prüfgruppenfilter, NICHT automatisch "
-            "eine bestätigte Fehlerursache."
-        )
-        core_header.addWidget(self.core_threshold)
-        self.core_only_group = QCheckBox("Nur passend zum gewählten Cluster")
-        self.core_only_group.setChecked(False)
-        self.core_only_group.toggled.connect(self._refresh_core_groups)
-        core_header.addWidget(self.core_only_group)
-        body.addLayout(core_header)
-        self.core_note = QLabel(
-            "Prüfgruppen werden zusammen mit der Clustermethode berechnet. "
-            "Gruppennummern verschiedener Methoden werden nicht gleichgesetzt.",
-            objectName="PageSubtitle",
-        )
-        self.core_note.setWordWrap(True)
-        body.addWidget(self.core_note)
-        self.core_model = _ClusterTableModel((
-            "Prüfgruppe", "Fälle", "FINs", "Zugeordneter Cluster",
-            "Überlappung", "Min. Cosinus", "Gemeinsamer ECU:DTC-Kern",
-            "Fachlicher Hinweis",
-        ))
-        self.core_table = _table(
-            self.core_model, 168,
-            (103, 70, 72, 152, 98, 104, 326, 430),
-        )
-        self.core_table.selectionModel().currentRowChanged.connect(
-            self._core_changed
-        )
-        body.addWidget(self.core_table)
-        core_actions = QHBoxLayout()
-        self.core_export = QPushButton(
-            "Prüfgruppen zur technischen Fachprüfung lokal exportieren"
-        )
-        self.core_export.setEnabled(False)
-        self.core_export.clicked.connect(self.export_core_review)
-        core_actions.addWidget(self.core_export)
-        core_actions.addStretch(1)
-        body.addLayout(core_actions)
-
         self.member_title = QLabel(
             self._member_title_default, objectName="CardTitle",
         )
@@ -574,7 +458,131 @@ class ClusterWorkspace(QWidget):
         open_row.addStretch(1)
         body.addLayout(open_row)
 
-        body.addWidget(QLabel(
+        # The four everyday questions stay visible; detailed method diagnostics
+        # and review/export tooling remain available, initially collapsed.
+        self.expert_toggle = QCheckBox("Weitere Details für Experten anzeigen")
+        body.addWidget(self.expert_toggle)
+        self.expert_panel = QWidget()
+        expert_body = QVBoxLayout(self.expert_panel)
+        expert_body.setContentsMargins(0, 6, 0, 0)
+        expert_body.setSpacing(10)
+        comparison_header = QHBoxLayout()
+        comparison_header.addWidget(QLabel("Methodenvergleich", objectName="CardTitle"))
+        comparison_header.addStretch(1)
+        self.compare_side = QCheckBox("Zwei Verfahren nebeneinander")
+        self.compare_side.setEnabled(False)
+        self.compare_side.toggled.connect(self._draw_plots)
+        comparison_header.addWidget(self.compare_side)
+        expert_body.addLayout(comparison_header)
+        self.compare_model = _ClusterTableModel((
+            "Verfahren", "Cluster", "Clusterfälle", "Ausreißer",
+            "Mit DTC-Kern", "Mit ≥2 FINs", "Paarübereinstimmung", "Distanzmaß",
+        ))
+        self.compare_table = _table(
+            self.compare_model, 145,
+            (205, 78, 104, 88, 110, 102, 151, 166),
+        )
+        self.compare_table.setMaximumHeight(200)
+        self.compare_table.doubleClicked.connect(self._compare_row_picked)
+        expert_body.addWidget(self.compare_table)
+        info = QLabel(
+            "Paarübereinstimmung vergleicht echte QEC-Fallpaare, niemals "
+            "zufällige Clusternummern. Jaccard verwendet eine andere Metrik. "
+            "Hohe Übereinstimmung bedeutet nicht gleiche technische Ursache.",
+            objectName="PageSubtitle",
+        )
+        info.setWordWrap(True)
+        expert_body.addWidget(info)
+        expert_body.addWidget(QLabel(
+            "Robustheitsprüfung · Methoden und Datenvarianten",
+            objectName="CardTitle",
+        ))
+        self.stability_note = QLabel(
+            "Noch keine Stabilitätsprüfung ausgeführt.",
+            objectName="PageSubtitle",
+        )
+        self.stability_note.setWordWrap(True)
+        expert_body.addWidget(self.stability_note)
+        self.stability_model = _ClusterTableModel((
+            "Vergleich", "Art", "Beidseitig geeignet",
+            "Referenzfälle", "Paar-Jaccard", "Paarerhalt", "Hinweis",
+        ))
+        self.stability_table = _table(
+            self.stability_model, 190,
+            (245, 120, 145, 92, 115, 110, 400),
+        )
+        expert_body.addWidget(self.stability_table)
+        self.stability_group_model = _ClusterTableModel((
+            "Referenzcluster", "Prüfung", "Mitglieder", "Vergleichbar",
+            "Referenzpaare", "Erhalten", "Erhaltquote", "Neue Verbindungen",
+        ))
+        self.stability_group_table = _table(
+            self.stability_group_model, 155,
+            (126, 210, 105, 100, 126, 100, 120, 160),
+        )
+        self.stability_group_table.setMaximumHeight(240)
+        expert_body.addWidget(self.stability_group_table)
+        self.stability_detail = QLabel(
+            "Paarerhalt und Erhaltquote sind Diagnose-Stabilitätsmaße, "
+            "keine Fehlerursachenwahrscheinlichkeiten.",
+            objectName="PageSubtitle",
+        )
+        self.stability_detail.setWordWrap(True)
+        expert_body.addWidget(self.stability_detail)
+
+        core_header = QHBoxLayout()
+        core_header.addWidget(QLabel(
+            "Konservative Prüfgruppen · Complete-Link Cosinus",
+            objectName="CardTitle",
+        ))
+        core_header.addStretch(1)
+        core_header.addWidget(QLabel("Mindestpaarähnlichkeit"))
+        self.core_threshold = QDoubleSpinBox()
+        self.core_threshold.setRange(0.05, 0.95)
+        self.core_threshold.setDecimals(2)
+        self.core_threshold.setSingleStep(0.05)
+        self.core_threshold.setValue(0.45)
+        self.core_threshold.setToolTip(
+            "Separater konservativer Prüfgruppenfilter, NICHT automatisch "
+            "eine bestätigte Fehlerursache."
+        )
+        core_header.addWidget(self.core_threshold)
+        self.core_only_group = QCheckBox("Nur passend zum gewählten Cluster")
+        self.core_only_group.setChecked(False)
+        self.core_only_group.toggled.connect(self._refresh_core_groups)
+        core_header.addWidget(self.core_only_group)
+        expert_body.addLayout(core_header)
+        self.core_note = QLabel(
+            "Prüfgruppen werden zusammen mit der Clustermethode berechnet. "
+            "Gruppennummern verschiedener Methoden werden nicht gleichgesetzt.",
+            objectName="PageSubtitle",
+        )
+        self.core_note.setWordWrap(True)
+        expert_body.addWidget(self.core_note)
+        self.core_model = _ClusterTableModel((
+            "Prüfgruppe", "Fälle", "FINs", "Zugeordneter Cluster",
+            "Überlappung", "Min. Cosinus", "Gemeinsamer ECU:DTC-Kern",
+            "Fachlicher Hinweis",
+        ))
+        self.core_table = _table(
+            self.core_model, 168,
+            (103, 70, 72, 152, 98, 104, 326, 430),
+        )
+        self.core_table.selectionModel().currentRowChanged.connect(
+            self._core_changed
+        )
+        expert_body.addWidget(self.core_table)
+        core_actions = QHBoxLayout()
+        self.core_export = QPushButton(
+            "Prüfgruppen zur technischen Fachprüfung lokal exportieren"
+        )
+        self.core_export.setEnabled(False)
+        self.core_export.clicked.connect(self.export_core_review)
+        core_actions.addWidget(self.core_export)
+        core_actions.addStretch(1)
+        expert_body.addLayout(core_actions)
+
+        expert_body.addWidget(QLabel(
             "Nicht zugeordnete und diagnostisch ausgeschlossene Fälle",
             objectName="CardTitle",
         ))
@@ -585,9 +593,9 @@ class ClusterWorkspace(QWidget):
             self.noise_model, 190, (190, 230, 540),
         )
         self.noise_table.doubleClicked.connect(self._open_noise_case)
-        body.addWidget(self.noise_table)
+        expert_body.addWidget(self.noise_table)
 
-        body.addWidget(QLabel(
+        expert_body.addWidget(QLabel(
             "Fachprüfung und weiterführende Untersuchungen",
             objectName="CardTitle",
         ))
@@ -602,7 +610,7 @@ class ClusterWorkspace(QWidget):
         self.old_scatter_button.clicked.connect(self.open_pair_tools)
         footer.addWidget(self.old_scatter_button)
         footer.addStretch(1)
-        body.addLayout(footer)
+        expert_body.addLayout(footer)
         note = QLabel(
             "Fachbestätigungen, Pilot-Vergleichslisten, CPC3-Brücken, "
             "TIPS-Verknüpfungen und bewährte CSV-Exporte bleiben "
@@ -610,7 +618,11 @@ class ClusterWorkspace(QWidget):
             objectName="PageSubtitle",
         )
         note.setWordWrap(True)
-        body.addWidget(note)
+        expert_body.addWidget(note)
+
+        body.addWidget(self.expert_panel)
+        self.expert_panel.hide()
+        self.expert_toggle.toggled.connect(self.expert_panel.setVisible)
         # New settings must never silently retain a previous grouping as
         # though it had been calculated with the changed parameters.
         for control in (
