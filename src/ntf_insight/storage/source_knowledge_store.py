@@ -320,11 +320,22 @@ class SourceKnowledgeStore:
                 for fin, value in pump_swap_dates.items()
             }
 
+        # QEC canonical_fin strips the known 20-character MBC sales
+        # prefix. Apply EXACTLY the same safe normalization to AutoExport
+        # source FINs so an identical vehicle cannot become two clusters.
+        fin_expression = """
+            CASE
+                WHEN length(trim(fin)) = 20
+                 AND left(upper(trim(fin)), 3) = 'MBC'
+                THEN substr(upper(trim(fin)), 4)
+                ELSE upper(trim(fin))
+            END
+        """
         with self.store.connect() as con:
             all_fins = tuple(
                 row[0] for row in con.execute(
-                    """
-                    SELECT DISTINCT upper(trim(fin))
+                    f"""
+                    SELECT DISTINCT {fin_expression} AS normalized_fin
                     FROM source_knowledge_rows
                     WHERE category IN (
                         'autoexport_dtc', 'autoexport_repair', 'autoexport_tips'
@@ -348,7 +359,7 @@ class SourceKnowledgeStore:
             if anchors is not None:
                 if not include_all_fins:
                     where = (
-                        "AND upper(trim(fin)) IN ("
+                        f"AND ({fin_expression}) IN ("
                         + ", ".join("?" for _ in all_fins) + ")"
                     )
                     parameters.extend(all_fins)
@@ -368,7 +379,7 @@ class SourceKnowledgeStore:
                 group_date = ", 5"
             sql = f"""
                 SELECT
-                    upper(trim(fin)) AS fin,
+                    {fin_expression} AS fin,
                     upper(trim(json_extract_string(payload_json, '$.EcuNm'))) AS ecu,
                     upper(trim(json_extract_string(payload_json, '$.EcuFaultNm'))) AS dtc,
                     max(nullif(trim(
