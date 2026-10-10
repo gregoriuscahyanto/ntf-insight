@@ -22,6 +22,7 @@ from zipfile import ZIP_DEFLATED, ZipFile, ZipInfo
 
 from ntf_insight.analysis.case_clustering import signature_for
 from ntf_insight.analysis.cross_cluster_bridges import build_cluster_bridges
+from ntf_insight.analysis.cluster_pilot_priority import prioritize_cluster_pilots
 from ntf_insight.analysis.recurrence_coverage_audit import (
     RecurrenceCoverageReport, audit_recurrence_coverage,
 )
@@ -47,6 +48,8 @@ PACKAGE_FILES = (
     "ausgeschlossene_faelle.csv",
     "wiederauftreten.csv",
     "cluster_bruecken.csv",
+    "pilot_cluster_prioritaet.csv",
+    "pilot_validierungsfaelle.csv",
     "diagnosesitzungs_pruefung.csv",
     "methodenvergleich.csv",
 )
@@ -216,6 +219,9 @@ def write_cluster_review_zip(
     bridges = build_cluster_bridges(
         cases, result, audit, confirmations=confirmations,
     )
+    pilot = prioritize_cluster_pilots(
+        cases, result, audit, confirmations=confirmations, bridges=bridges,
+    )
     coverage = recurrence_coverage or audit_recurrence_coverage(cases)
     if {row.case_id for row in coverage.cases} != set(by_id):
         raise ValueError("Diagnosesitzungsprüfung enthält andere QEC-Fälle.")
@@ -369,6 +375,28 @@ def write_cluster_review_zip(
             link.reviewed_mechanism_relation,
             link.note,
         ))
+    pilot_group_rows = [
+        (
+            row.priority, row.group, aliases[row.representative_case_id],
+            int(row.representative_confirmed), row.case_count,
+            row.distinct_fins, row.cpc3_core_count, row.weak_pair_count,
+            row.internal_pair_count,
+            ", ".join(row.bridge_neighbors),
+            row.independent_validation_candidates,
+            row.selected_comparison_cases, row.reason,
+        ) for row in pilot.groups
+    ]
+    pilot_inspection_rows = [
+        (
+            row.priority, row.group, row.role,
+            aliases[row.case_id], vin_aliases[by_id[row.case_id].vin],
+            aliases[row.representative_case_id],
+            row.similarity_to_representative,
+            row.shared_cpc3_with_representative,
+            int(row.independent_fin), row.note,
+            "Offen – unabhängige technische Prüfung erforderlich",
+        ) for row in pilot.inspections
+    ]
     session_rows = [
         (
             aliases[row.case_id], vin_aliases[row.vin],
@@ -430,6 +458,11 @@ def write_cluster_review_zip(
         "schwelle_45_prozent_nicht_kalibriert": True,
         "befundtransfer_nur_hypothese": True,
         "clusterbruecken_mit_cpc3_kern_dtc": bridges.cpc3_bridge_pairs,
+        "pilot_repraesentanten": pilot.representative_count,
+        "pilot_gezielt_ausgewaehlte_unabhaengige_vergleichsfaelle": (
+            pilot.independent_targets
+        ),
+        "pilot_prioritaet_heuristisch_nicht_kalibriert": True,
         "wiederauftreten_beurteilbar": coverage.assessable_qec,
         "vorher_dtc_ohne_vorher_sitzung": coverage.pre_dtc_but_no_pre_session,
         "rohe_fin_quicktests_keine_qec_zuordnung": True,
@@ -522,6 +555,21 @@ def write_cluster_review_zip(
             "Gleiche-FIN-Cross-Cluster-Fallpaare",
             "Unabhängige Befundprüfung", "Warnung – keine automatische Ursache",
         ), bridge_rows),
+        "pilot_cluster_prioritaet.csv": _csv_bytes((
+            "Prüfpriorität", "Cluster", "Repräsentanten-Alias",
+            "Repräsentant unabhängig bestätigt", "QEC-Fälle", "Fahrzeuge",
+            "CPC3-Kern-DTCs", "Schwache Cluster-Fallpaare",
+            "Alle Cluster-Fallpaare", "Clusterbrücken",
+            "Unabhängige Vergleichs-FINs", "Ausgewählte Vergleichsfälle",
+            "Priorisierungsgrund",
+        ), pilot_group_rows),
+        "pilot_validierungsfaelle.csv": _csv_bytes((
+            "Prüfpriorität", "Cluster", "Rolle", "Fall-Alias",
+            "Fahrzeug-Alias", "Repräsentanten-Alias",
+            "Cosinus zum Repräsentanten", "Gemeinsame CPC3-DTCs",
+            "Andere FIN als Repräsentant", "Prüfhinweis",
+            "Unabhängiger Zielfallmechanismus",
+        ), pilot_inspection_rows),
         "diagnosesitzungs_pruefung.csv": _csv_bytes((
             "Fall", "Fahrzeug", "Gruppe",
             "Vorher-DTC-Zeilen", "Nachher-DTC-Zeilen",

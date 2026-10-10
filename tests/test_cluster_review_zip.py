@@ -184,3 +184,39 @@ def test_shared_cpc3_bridges_are_pseudonymized_in_zip(tmp_path):
     assert "SENSITIVE_SYNTHETIC_CPC3_SIGNAL" in (
         exported.private_dtc_map.read_text(encoding="utf-8-sig")
     )
+
+
+def test_zip_pilot_plan_contains_only_aliases_and_one_rep_per_group(tmp_path):
+    cases = sample()
+    cases[0].qec_ssl_end_finding = "VERY-PRIVATE-CUSTOMER-SSL-RESULT"
+    model = cluster_hdbscan_cases(cases)
+    audit = audit_diagnostic_evidence(cases)
+    exported = write_cluster_review_zip(
+        tmp_path / "review_pilot.zip", cases, model, audit,
+    )
+    with ZipFile(exported.zip_path) as package:
+        cluster_rows = _csv(package, "pilot_cluster_prioritaet.csv")
+        targets = _csv(package, "pilot_validierungsfaelle.csv")
+        assert len(cluster_rows) == len(model.clusters)
+        assert sum(
+            "Repräsentant" in row["Rolle"] for row in targets
+        ) == len(model.clusters)
+        assert sum(
+            row["Andere FIN als Repräsentant"] == "1" for row in targets
+        ) == len(targets) - len(model.clusters)
+        assert all(
+            row["Fall-Alias"].startswith("F") for row in targets
+        )
+        assert all(
+            row["Fahrzeug-Alias"].startswith("V") for row in targets
+        )
+        manifest = json.loads(package.read("manifest.json"))
+        assert manifest["pilot_repraesentanten"] == len(model.clusters)
+        assert manifest["pilot_prioritaet_heuristisch_nicht_kalibriert"] is True
+        assert manifest["pilot_gezielt_ausgewaehlte_unabhaengige_vergleichsfaelle"] == (
+            len(targets) - len(model.clusters)
+        )
+        data = b"".join(package.read(name) for name in package.namelist())
+        assert b"W1TTEST" not in data
+        assert b"VERY-PRIVATE-CUSTOMER-SSL-RESULT" not in data
+        assert b"CODE-A-ROOT" not in data
