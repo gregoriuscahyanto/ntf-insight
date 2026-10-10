@@ -294,19 +294,30 @@ class SourceKnowledgeStore:
         return results
 
     def autoexport_fin_dtc_signatures(
-        self,
+        self, *,
+        pump_swap_dates: dict[str, str] | None = None,
     ) -> tuple[
         tuple[str, ...],
         dict[str, tuple[tuple[str, str], ...]],
         dict[tuple[str, str], str],
     ]:
-        """Read ALL locally imported AutoExport FINs and distinct ECU:DTC sets.
+        """Read unique AutoExport ECU:DTC keys for all or pump-anchored FINs.
 
-        SQL deduplicates repeated diagnostic readings per FIN. Python receives
-        only FIN + ECU:DTC key + one optional label, never the original
-        workshop texts, row identifiers, source files, or QEC outcomes.
-        There is deliberately NO inference of a pump replacement timestamp.
+        If pump_swap_dates is set, it is an explicit QEC-backed FIN -> ISO
+        date mapping. Only DTCs dated STRICTLY BEFORE the actual pump swap
+        are included. Same-day or undated AutoExport rows are unproven and
+        excluded. This mode never uses generic workshop RepairDt as a pump
+        replacement, and never invents replacement dates.
         """
+        from datetime import date
+
+        anchors: dict[str, date] | None = None
+        if pump_swap_dates is not None:
+            anchors = {
+                fin.strip().upper(): date.fromisoformat(value)
+                for fin, value in pump_swap_dates.items()
+            }
+
         with self.store.connect() as con:
             all_fins = tuple(
                 row[0] for row in con.execute(
@@ -321,15 +332,46 @@ class SourceKnowledgeStore:
                     """
                 ).fetchall()
             )
-            cursor = con.execute(
+            if anchors is not None:
+                all_fins = tuple(
+                    fin for fin in all_fins if fin in anchors
+                )
+            if not all_fins:
+                return (), {}, {}
+
+            parameters: list[str] = []
+            where = ""
+            date_field = "NULL::VARCHAR AS event_date"
+            group_date = ""
+            if anchors is not None:
+                where = (
+                    "AND upper(trim(fin)) IN ("
+                    + ", ".join("?" for _ in all_fins) + ")"
+                )
+                parameters.extend(all_fins)
+                # The original ISO AutoExport fields may represent a date
+                # or precise timestamp. Only its calendar day is safe
+                # against day-only QEC replacement precision.
+                date_field = """
+                    COALESCE(
+                        try_cast(left(
+                            json_extract_string(payload_json, '$.DiagStartTs'), 10
+                        ) AS VARCHAR),
+                        try_cast(left(
+                            json_extract_string(payload_json, '$.DiagStartDt'), 10
+                        ) AS VARCHAR)
+                    ) AS event_date
                 """
+                group_date = ", 5"
+            sql = f"""
                 SELECT
                     upper(trim(fin)) AS fin,
                     upper(trim(json_extract_string(payload_json, '$.EcuNm'))) AS ecu,
                     upper(trim(json_extract_string(payload_json, '$.EcuFaultNm'))) AS dtc,
                     max(nullif(trim(
                         json_extract_string(payload_json, '$.EcuFaultTxt')
-                    ), '')) AS dtc_text
+                    ), '')) AS dtc_text,
+                    {date_field}
                 FROM source_knowledge_rows
                 WHERE category = 'autoexport_dtc'
                   AND NULLIF(trim(fin), '') IS NOT NULL
@@ -339,21 +381,35 @@ class SourceKnowledgeStore:
                   AND NULLIF(trim(
                       json_extract_string(payload_json, '$.EcuFaultNm')
                   ), '') IS NOT NULL
-                GROUP BY 1, 2, 3
+                  {where}
+                GROUP BY 1, 2, 3{group_date}
                 ORDER BY 1, 2, 3
-                """
-            )
-            groups: dict[str, list[tuple[str, str]]] = {}
+            """
+            cursor = con.execute(sql, parameters)
+            groups: dict[str, set[tuple[str, str]]] = {}
             labels: dict[tuple[str, str], str] = {}
             while batch := cursor.fetchmany(5000):
-                for fin, ecu, dtc, dtc_text in batch:
+                for fin, ecu, dtc, dtc_text, event_date in batch:
+                    if anchors is not None:
+                        if not event_date:
+                            continue
+                        try:
+                            event_day = date.fromisoformat(str(event_date)[:10])
+                        except ValueError:
+                            continue
+                        if event_day >= anchors[fin]:
+                            # QEC Rep.-Datum usually only has day precision.
+                            # A diagnostic taken the same day cannot be
+                            # proven to predate the actual replacement.
+                            continue
                     key = (ecu, dtc)
-                    groups.setdefault(fin, []).append(key)
+                    groups.setdefault(fin, set()).add(key)
                     if dtc_text and key not in labels:
                         labels[key] = dtc_text
+
         return (
             all_fins,
-            {fin: tuple(faults) for fin, faults in groups.items()},
+            {fin: tuple(sorted(faults)) for fin, faults in groups.items()},
             labels,
         )
 
