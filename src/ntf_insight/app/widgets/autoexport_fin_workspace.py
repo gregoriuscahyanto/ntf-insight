@@ -14,7 +14,7 @@ from PySide6.QtWidgets import (
 )
 
 from ntf_insight.analysis.autoexport_fin_patterns import (
-    FinPatternGroup, FinPatternResult, cluster_autoexport_fins,
+    FinPatternResult, cluster_autoexport_fins,
 )
 from ntf_insight.app.models.simple_table_model import SimpleTableModel
 from ntf_insight.app.widgets.fin_pattern_bar_chart import FinPatternBarChart
