@@ -17,6 +17,7 @@ from ntf_insight.app.pages.supplier_page import SupplierPage
 from ntf_insight.app.widgets.navigation import NavigationPanel
 from ntf_insight.ingestion.manual_entry import ManualCaseService
 from ntf_insight.storage.duckdb_store import DuckDBStore
+from ntf_insight.storage.dtc_review_store import DtcReviewStore
 from ntf_insight.storage.quicktest_store import QuickTestStore
 from ntf_insight.storage.source_knowledge_store import SourceKnowledgeStore
 
@@ -56,6 +57,10 @@ class MainWindow(QMainWindow):
         self.navigation.select_page("dashboard")
 
     def _create_pages(self) -> dict[str, QWidget]:
+        # Fachmarkierungen bleiben im selben lokalen DuckDB wie die Quellen,
+        # aber in einer separaten, importunabhängigen Tabelle gespeichert.
+        review_store = DtcReviewStore(self.manual_service.store)
+        knowledge = SourceKnowledgeStore(self.manual_service.store)
         pages = {
             "dashboard": DashboardPage(
                 self.repository,
@@ -70,13 +75,15 @@ class MainWindow(QMainWindow):
                 str(self.application_data.paths.raw_dir),
                 str(self.application_data.paths.database_path),
             ),
-            "knowledge": SourceKnowledgePage(
-                SourceKnowledgeStore(self.manual_service.store)
-            ),
+            "knowledge": SourceKnowledgePage(knowledge),
             "cases": CasePage(
-                self.repository, self.reference_repository, self.manual_service
+                self.repository, self.reference_repository, self.manual_service,
+                review_store=review_store,
             ),
-            "dtcs": DTCExplorerPage(self.repository, self.reference_repository),
+            "dtcs": DTCExplorerPage(
+                self.repository, self.reference_repository,
+                source_knowledge=knowledge, review_store=review_store,
+            ),
             "suppliers": SupplierPage(self.repository),
             "prediction": PredictionPage(self.repository, str(self.application_data.paths.database_path), self.application_data.mode),
             "quality": DataQualityPage(self.repository, self.reference_repository),
@@ -120,5 +127,7 @@ class MainWindow(QMainWindow):
         page = self.pages.get(key)
         if page is None:
             return
+        if key == "cases":
+            page.cluster_workspace.refresh_review_priorities()
         self.stack.setCurrentWidget(page)
         self.stack.setFocus(Qt.FocusReason.OtherFocusReason)
