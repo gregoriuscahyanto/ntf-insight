@@ -31,6 +31,7 @@ from ntf_insight.analysis.hdbscan_clustering import cluster_hdbscan_cases
 from ntf_insight.analysis.cluster_explanation import explain_cluster
 from ntf_insight.analysis.cluster_stability import build_stability_report, sensitivity_scenarios
 from ntf_insight.analysis.diagnostic_observations import dtc_description_catalog
+from ntf_insight.analysis.cluster_exclusion_reasons import exclusion_reasons
 from ntf_insight.app.models.simple_table_model import SimpleTableModel
 from ntf_insight.app.widgets.cluster_projection_plot import ClusterProjectionPlot
 from ntf_insight.app.widgets.cluster_case_pie import (
@@ -443,6 +444,12 @@ class ClusterWorkspace(QWidget):
         )
         self.pie_note.setWordWrap(True)
         body.addWidget(self.pie_note)
+        self.exclusion_note = QLabel(objectName="PageSubtitle")
+        self.exclusion_note.setWordWrap(True)
+        self.exclusion_note.setTextInteractionFlags(
+            Qt.TextInteractionFlag.TextSelectableByMouse
+        )
+        body.addWidget(self.exclusion_note)
         self.kpi = QLabel(objectName="PageSubtitle")
         self.kpi.setWordWrap(True)
         body.addWidget(self.kpi)
@@ -1030,6 +1037,7 @@ class ClusterWorkspace(QWidget):
         for value in self.pie_percent_labels.values():
             value.setText("–")
         self.pie_chart.set_values(None)
+        self.exclusion_note.setText("")
         self._group_ids = []
         self._member_ids = []
         self._noise_ids = []
@@ -1180,6 +1188,9 @@ class ClusterWorkspace(QWidget):
         if sum(pie_values) != len(self._subset()):
             raise ValueError("QEC-Fallzahlen der Kreisgrafik sind inkonsistent.")
         self.pie_chart.set_values(pie_values)
+        self.exclusion_note.setText(
+            exclusion_reasons(self._subset(), result).text
+        )
         total = sum(pie_values)
         for key, count in zip(("assigned", "noise", "missing"), pie_values, strict=True):
             self.summary_values[key].setText(str(count))
