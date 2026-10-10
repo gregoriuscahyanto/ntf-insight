@@ -61,6 +61,67 @@ lokalen Quellenabgleich ermittelt.
    Link öffnen die lokale FIN-/Fallhistorie. Echte FINs und
    QEC-Kennungen erscheinen nur in der lokalen Anwendung.
 
+## Kompakte Donut-Übersicht und DTC-Fachmarkierungen
+
+Statt fünf nebeneinanderliegenden Kennzahlkarten zeigt die
+Clusteranalyse **Gefundene Cluster** als große Kennzahl und
+**Verteilung der FINs** als gut lesbares Donutdiagramm.
+Im Donut steht die Zahl **aller eindeutigen FINs**, die Legende
+zeigt absolute Zahlen und den prozentualen Anteil von:
+
+1. FINs in Clustern;
+2. FINs mit DTC-Daten, aber ohne Cluster;
+3. FINs ohne geeignete DTC-Daten.
+
+Die drei Gruppen schließen einander aus und ergeben in Summe
+exakt die Gesamtzahl der FINs. Wird von HDBSCAN Leaf zu EOM
+oder Complete-Link gewechselt, aktualisieren sich Donut,
+Clusterzahl, Tabelle und Punktwolke anhand gecachter Ergebnisse.
+
+### Wichtigere DTCs fachlich hervorheben
+
+Im **DTC-Explorer** erscheint auch der lokal importierte
+AutoExport-Katalog, nicht nur DTCs aus QEC-Fällen.
+Unterschiedliche QEC-/AutoExport-FIN-Zahlen stehen absichtlich
+in getrennten Spalten, damit keine doppelte Fahrzeugzählung entsteht.
+
+Eine DTC-Zeile auswählen und **★ Für Pumpenprüfung markieren**
+drücken. Die Markierung gilt exakt für **ECU:DTC** und wird
+lokal in `dtc_manual_review_marks` gespeichert, getrennt
+von allen importierten Quelldateien. Optional kann man eine
+fachliche Notiz hinterlegen und später ändern. Die Markierung
+kann jederzeit wieder entfernt werden.
+
+Ein Cluster enthält einen **manuell markierten DTC**, wenn
+mindestens eine seiner FINs die exakte ECU:DTC-Kombination
+im zugelassenen Diagnosefenster aufweist.
+
+- **Hohe Prüfpriorität:** mindestens 50 % der FINs im Cluster
+  haben mindestens einen manuell markierten DTC.
+- **Prüfhinweis:** wenigstens eine, aber weniger als 50 %
+  der FINs sind von markierten DTCs betroffen.
+- **Keine Markierung:** keine FIN in diesem Cluster hat
+  einen aktuell markierten ECU:DTC.
+
+Mehrere markierte DTCs derselben FIN erhöhen die Anzahl
+**betroffener FINs nicht künstlich**. Die Spalten
+*Prüfpriorität* und *Markierte FINs* stehen in der
+Clustertabelle. Gruppen mit hoher Priorität werden dort
+zuerst angezeigt; bestehende Clusterkennungen bleiben stabil.
+Die Erklärung nennt die einzelnen markierten
+ECU:DTCs mit der jeweiligen FIN-Häufigkeit und unterscheidet
+sie von der normalen Clusterbegründung.
+
+**Wichtig:** Diese Priorität entsteht **nach** HDBSCAN und
+Complete-Link. Die DTC-Markierung verändert keinerlei
+TF-IDF-Gewichte, Clustergrenzen, Mitglieder oder 2D-/3D-Punkte.
+Sie ist eine **Fachprüf-Reihenfolge**, kein Nachweis einer
+defekten Pumpe, kein NTF-Urteil und keine
+Lieferantenverantwortung. Kommunikations-DTCs können
+beispielsweise auch andere Fehlerursachen haben.
+Beim Zurückwechseln vom Explorer zur Clusteransicht werden
+Prioritäten ohne erneuten Clusterlauf geladen.
+
 ## Diagnose-Zeitregel
 
 Die Clustereingaben sind die pro FIN zusammengeführten
