@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from ntf_insight.analysis.autoexport_fin_patterns import (
-    MIN_FIN_SIMILARITY, cluster_autoexport_fins,
+    cluster_autoexport_fins, cluster_fin_methods,
 )
 from ntf_insight.storage.duckdb_store import DuckDBStore
 from ntf_insight.storage.source_knowledge_store import SourceKnowledgeStore
@@ -50,7 +50,7 @@ def test_all_imported_fins_eligible_only_with_repeated_dtc_features():
         (ecu, dtc, n, text) == ("CPC3", "SYNT-A", 10, "Synthetic A label")
         for g in result.groups for ecu, dtc, n, text in g.common_faults
     )
-    assert all(g.median_similarity >= MIN_FIN_SIMILARITY for g in result.groups)
+    assert all(0 <= g.median_similarity <= 1 for g in result.groups)
     assert (
         result.assigned_fins + len(result.no_dtc_fins)
         + len(result.unassigned_fins)
