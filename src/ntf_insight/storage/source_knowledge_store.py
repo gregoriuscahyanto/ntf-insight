@@ -293,6 +293,70 @@ class SourceKnowledgeStore:
             results[f"{category}_fins"] = int(fin_count)
         return results
 
+    def autoexport_fin_dtc_signatures(
+        self,
+    ) -> tuple[
+        tuple[str, ...],
+        dict[str, tuple[tuple[str, str], ...]],
+        dict[tuple[str, str], str],
+    ]:
+        """Read ALL locally imported AutoExport FINs and distinct ECU:DTC sets.
+
+        SQL deduplicates repeated diagnostic readings per FIN. Python receives
+        only FIN + ECU:DTC key + one optional label, never the original
+        workshop texts, row identifiers, source files, or QEC outcomes.
+        There is deliberately NO inference of a pump replacement timestamp.
+        """
+        with self.store.connect() as con:
+            all_fins = tuple(
+                row[0] for row in con.execute(
+                    """
+                    SELECT DISTINCT upper(trim(fin))
+                    FROM source_knowledge_rows
+                    WHERE category IN (
+                        'autoexport_dtc', 'autoexport_repair', 'autoexport_tips'
+                    )
+                      AND NULLIF(trim(fin), '') IS NOT NULL
+                    ORDER BY 1
+                    """
+                ).fetchall()
+            )
+            cursor = con.execute(
+                """
+                SELECT
+                    upper(trim(fin)) AS fin,
+                    upper(trim(json_extract_string(payload_json, '$.EcuNm'))) AS ecu,
+                    upper(trim(json_extract_string(payload_json, '$.EcuFaultNm'))) AS dtc,
+                    max(nullif(trim(
+                        json_extract_string(payload_json, '$.EcuFaultTxt')
+                    ), '')) AS dtc_text
+                FROM source_knowledge_rows
+                WHERE category = 'autoexport_dtc'
+                  AND NULLIF(trim(fin), '') IS NOT NULL
+                  AND NULLIF(trim(
+                      json_extract_string(payload_json, '$.EcuNm')
+                  ), '') IS NOT NULL
+                  AND NULLIF(trim(
+                      json_extract_string(payload_json, '$.EcuFaultNm')
+                  ), '') IS NOT NULL
+                GROUP BY 1, 2, 3
+                ORDER BY 1, 2, 3
+                """
+            )
+            groups: dict[str, list[tuple[str, str]]] = {}
+            labels: dict[tuple[str, str], str] = {}
+            while batch := cursor.fetchmany(5000):
+                for fin, ecu, dtc, dtc_text in batch:
+                    key = (ecu, dtc)
+                    groups.setdefault(fin, []).append(key)
+                    if dtc_text and key not in labels:
+                        labels[key] = dtc_text
+        return (
+            all_fins,
+            {fin: tuple(faults) for fin, faults in groups.items()},
+            labels,
+        )
+
     def fin_history_counts(self, fin: str) -> dict[str, int]:
         """Counts of immutable original AutoExport rows for a FIN (not DTC rates)."""
         with self.store.connect() as con:
