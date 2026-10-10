@@ -695,6 +695,13 @@ class ClusterWorkspace(QWidget):
         self._core_links = ()
         self._visible_core_links = []
         self._active_core_group = None
+        self.core_model.set_rows([])
+        self.core_note.setText(
+            "Für die aktuelle Diagnosebasis noch keine konservativen "
+            "Prüfgruppen berechnet."
+        )
+        self.core_export.setEnabled(False)
+        self.member_title.setText(self._member_title_default)
         self._group_ids = []
         self._member_ids = []
         self._noise_ids = []
@@ -808,30 +815,37 @@ class ClusterWorkspace(QWidget):
                 0,
             )
             self.group_table.selectRow(match)
-        elif self._focused_case_id is not None:
-            self.focus_case(self._focused_case_id)
+        else:
+            self._refresh_core_groups()
+            if self._focused_case_id is not None:
+                self.focus_case(self._focused_case_id)
         self._draw_plots()
 
-    def _group_changed(self, index, _previous) -> None:
-        if self.result is None or not index.isValid():
-            return
-        if not 0 <= index.row() < len(self.result.groups):
-            return
-        group = self.result.groups[index.row()]
-        self._member_ids = [m.case_id for m in group.members]
+    def _fill_members(
+        self, group: UnifiedCluster, *, core: bool,
+    ) -> None:
+        self.member_title.setText(
+            f"Falltabelle – konservative Prüfgruppe K{group.cluster_id}"
+            if core else self._member_title_default
+        )
+        self._member_ids = [member.case_id for member in group.members]
         rows = []
         for member in group.members:
             case = self.by_id[member.case_id]
-            status = (
-                "Repräsentant" if member.case_id == group.representative_case_id
-                else "Clusterfall"
+            role = (
+                "Repräsentant (Kern)" if core
+                else "Repräsentant"
+            ) if member.case_id == group.representative_case_id else (
+                "Unabhängig zu prüfender Fall" if core else "Clusterfall"
             )
             common = ", ".join(
                 f"{ecu}:{dtc}" for ecu, dtc in group.common_faults[:7]
-            ) or "Kein gemeinsamer Kern"
-            ssl = getattr(case, "qec_ssl_end_finding", None) or "Nicht dokumentiert"
+            ) or "Kein durchgängiger ECU:DTC"
+            ssl = getattr(
+                case, "qec_ssl_end_finding", None,
+            ) or "Nicht dokumentiert"
             rows.append((
-                status, case.case_id, case.vin, f"{member.similarity:.1%}",
+                role, case.case_id, case.vin, f"{member.similarity:.1%}",
                 f"{member.membership_strength:.1%}"
                 if member.membership_strength is not None else "—",
                 common, str(ssl),
@@ -839,12 +853,163 @@ class ClusterWorkspace(QWidget):
         self.member_model.set_rows(rows)
         self.open_button.setEnabled(bool(rows))
         if rows:
-            row = next(
-                (i for i, m in enumerate(group.members)
-                 if m.case_id == self._focused_case_id), 0,
+            target = next(
+                (i for i, member in enumerate(group.members)
+                 if member.case_id == self._focused_case_id),
+                0,
             )
-            self.member_table.selectRow(row)
+            self.member_table.selectRow(target)
+
+    def _group_changed(self, index, _previous) -> None:
+        if self.result is None or not index.isValid():
+            return
+        if not 0 <= index.row() < len(self.result.groups):
+            return
+        group = self.result.groups[index.row()]
+        self._active_core_group = None
+        self._fill_members(group, core=False)
+        self._refresh_core_groups()
         self._draw_plots()
+
+    def _refresh_core_groups(self, *_args) -> None:
+        if self.result is None or self._core_result is None:
+            self._core_links = ()
+            self._visible_core_links = []
+            self.core_model.set_rows([])
+            self.core_export.setEnabled(False)
+            return
+        self._core_links = link_core_review_groups(
+            self.result, self._core_result,
+        )
+        selected = self.group_table.currentIndex()
+        group_id = (
+            self.result.groups[selected.row()].cluster_id
+            if selected.isValid() and selected.row() < len(self.result.groups)
+            else None
+        )
+        self._visible_core_links = [
+            link for link in self._core_links
+            if (
+                not self.core_only_group.isChecked()
+                or group_id is None
+                or group_id in link.active_group_ids
+            )
+        ]
+        self.core_model.set_rows([
+            (
+                link.label,
+                link.core.case_count,
+                link.core.vehicle_count,
+                ", ".join(f"C{cid}" for cid in link.active_group_ids)
+                or "Keine",
+                (
+                    f"{link.dominant_overlap}/{link.core.case_count}"
+                    if link.dominant_group_id is not None else "0"
+                ),
+                (
+                    f"{link.core.minimum_pair_similarity:.1%}"
+                    if link.core.minimum_pair_similarity is not None else "—"
+                ),
+                ", ".join(
+                    f"{ecu}:{dtc}" for ecu, dtc in link.core.common_faults[:7]
+                ) or "Kein durchgängiger ECU:DTC",
+                link.note + " · Ursache nicht unabhängig bestätigt",
+            ) for link in self._visible_core_links
+        ])
+        count = len(self._core_links)
+        assigned = sum(link.core.case_count for link in self._core_links)
+        self.core_note.setText(
+            f"{count} konservative Prüfgruppen mit {assigned} QEC-Fällen; "
+            f"{len(self._visible_core_links)} hier angezeigt. "
+            f"Schwelle: {self.core_threshold.value():.0%}, "
+            "gleiche originale Diagnoseabstände. "
+            "C- und K-Nummern sind methodenabhängig. "
+            "Klick auf eine K-Gruppe zeigt ihre Einzelfälle unten. "
+            "Technischer Fehlermechanismus weiterhin unbestätigt."
+        )
+        self.core_export.setEnabled(bool(self._core_result.groups))
+
+    def _core_changed(self, index, _previous) -> None:
+        if (
+            not index.isValid()
+            or not 0 <= index.row() < len(self._visible_core_links)
+        ):
+            return
+        link = self._visible_core_links[index.row()]
+        self._active_core_group = link.core
+        self._focused_case_id = link.core.representative_case_id
+        self._fill_members(link.core, core=True)
+        self.search_feedback.setText(
+            f"{link.label}: {link.note}. "
+            "Keine automatische Bestätigung von NTF oder Lieferantenursache."
+        )
+        self._draw_plots()
+
+    def find_case(self) -> bool:
+        """Search QEC/FIN locally, also for overlapping MDS points."""
+        query = self.case_finder.text().strip().casefold()
+        if not query:
+            self.search_feedback.setText("Bitte FIN oder QEC-Fall eingeben.")
+            return False
+        matches = [
+            case for case in self._subset()
+            if query in case.case_id.casefold()
+            or query in case.vin.casefold()
+        ]
+        if not matches:
+            self.search_feedback.setText("Keine passende lokale QEC/FIN gefunden.")
+            return False
+        # Prefer exact FIN/QEC matches; when a FIN has multiple QEC records
+        # the count is explicit and the user can select the next case in table.
+        matches.sort(key=lambda case: (
+            query not in {case.case_id.casefold(), case.vin.casefold()},
+            case.case_id,
+        ))
+        picked = matches[0]
+        self.focus_case(picked.case_id)
+        self.search_feedback.setText(
+            f"{len(matches)} lokale Treffer · ausgewählt: "
+            f"{picked.case_id} / FIN {picked.vin}. "
+            "Mehrere QECs derselben FIN sind nicht unabhängige Fahrzeuge."
+        )
+        return True
+
+    def export_core_review(self) -> None:
+        """Save only to a local file chosen by the user, never GitHub."""
+        if self._core_result is None or not self._core_result.groups:
+            return
+        destination, _ = QFileDialog.getSaveFileName(
+            self, "Lokale Complete-Link Fachprüfvorlage speichern",
+            str(Path.home() / ".ntf-insight"
+                / "Kernpruefgruppen_FIN_QEC_NICHT_HOCHLADEN.csv"),
+            "CSV-Dateien (*.csv)",
+        )
+        if not destination:
+            return
+        target = Path(destination).resolve()
+        # In editable installs never permit a confidential export into git.
+        repository_root = Path(__file__).resolve().parents[4]
+        if target == repository_root or repository_root in target.parents:
+            self.status.setText(
+                "Vertrauliche QEC-/FIN-Fachprüfung darf nicht ins Git-Repository."
+            )
+            return
+        try:
+            with target.open("w", encoding="utf-8-sig", newline="") as output:
+                write_core_review_template(
+                    output, self._subset(), self._core_result,
+                )
+        except OSError:
+            self.status.setText(
+                "Lokaler Fachprüf-Export nicht möglich. "
+                "Speicherort und Schreibberechtigung prüfen."
+            )
+            return
+        self.status.setText(
+            "Kernprüfvorlage ausschließlich lokal gespeichert. "
+            "Nur unabhängige Fachbelege können 'confirmed' begründen. "
+            "NIEMALS in GitHub/Chat hochladen."
+        )
 
     def _draw_plots(self, *_args) -> None:
         if self.result is None:
