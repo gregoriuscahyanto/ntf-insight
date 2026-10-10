@@ -11,11 +11,18 @@ unveränderte Ansichten.
 1. **Cluster erstellen:** `Clusteranalyse starten` anklicken.
    Alle zulässigen Methoden werden intern berechnet; in der
    Standardansicht wird **HDBSCAN Leaf** gezeigt.
-2. **Wie viele Cluster?** Die großen Kennzahlen zeigen
-   *Gefundene Cluster*, *Fälle in Clustern*, *Ohne Cluster*
-   und *Ohne Vor-Tausch-Diagnose*. Nur nachweislich geeignete
-   Fälle werden geclustert; die letzte Zahl bedeutet nicht, dass
-   keine Werkstattdiagnose stattgefunden hat.
+2. **Wie viele Cluster?** Eine Kennzahl zeigt die Anzahl der
+   Cluster für das angezeigte Verfahren (z. B. HDBSCAN Leaf). Ein
+   **Kreisdiagramm** teilt die QEC-Fallgrundgesamtheit in genau drei
+   disjunkte Gruppen: **Fälle in Clustern**, **auswertbar, aber ohne
+   Cluster** und **vor dem Tausch nicht auswertbar**. Die Summe muss
+   stets der Anzahl der QEC-Fälle der ausgewählten Bauteilfamilie
+   entsprechen. Die Legende zeigt absolute Fallzahlen und Prozentwerte.
+   Keine dieser Fallzahlen ist automatisch eine Anzahl eindeutiger FINs.
+   Nicht auswertbar bedeutet nicht, dass in der Werkstatt nie eine
+   Diagnose erfolgte: Es kann ein geeigneter DTC, Zeitnachweis oder
+   Tauschanker fehlen; ein experimenteller Filter kann zudem
+   Merkmale entfernen.
 3. **Visuell und Fälle:** Die 2D-Grafik stellt echte QEC-Fälle
    dar, 3D bleibt optional. Über **Clusterverfahren** neben 2D/3D
    werden die tatsächlich angezeigten Cluster, Falllisten und
@@ -38,8 +45,29 @@ unveränderte Ansichten.
    ECU:DTCs, zusätzliche DTCs mit Fallzahlen, die Art der
    Zuordnung sowie schwache Fallpaare. **Alle qualifizierenden
    DTCs werden vollständig gezeigt**, auch nach dem vierten.
+   Wo der DTC-Explorer für **genau die ECU:DTC-Kombination** einen
+   in den Diagnosen dokumentierten **DTC-Klartext** kennt, wird
+   dieser direkt neben dem Fehlercode angezeigt. Bei fehlendem
+   Text bleibt der Code ohne erfundene Interpretation stehen.
+   Klartexte können aus anderen Diagnosesitzungen stammen; sie
+   beschriften die Codes lediglich und fließen **nicht**
+   in Ähnlichkeit oder Clusterbildung ein.
    Das sind beobachtete Gemeinsamkeiten, **keine** mathematische
    Zurechnung zu einer technischen Pumpenursache.
+
+**Gesamtumfang AutoExport:** Direkt unter der gewählten
+Datenbasis zeigt die Clusteranalyse die **Zahl lokal importierter
+AutoExport-Rohzeilen** (DTC, Werkstatt, TIPS) und die **Anzahl
+unterschiedlicher FINs über alle importierten AutoExport-Quellen**.
+Gleiche FINs aus mehreren Dateien oder Kategorien werden nicht
+mehrfach als Fahrzeug gezählt. Daneben werden **QEC-Fälle und
+unterschiedliche QEC-FINs** für die ausgewählte Bauteilfamilie
+ausgewiesen. **AutoExport-Datenumfang aufschlüsseln** zeigt die drei
+Quellkategorien getrennt. Dies sind nur erfolgreich importierte und
+gespeicherte Zeilen, nicht zwingend jede Zeile in einer möglicherweise
+noch nicht vollständig importierten Originaldatei. Der große
+AutoExport umfasst auch FINs ohne QEC-Pumpenfall. Die vollständigen
+Originaldateien und FIN-Listen bleiben ausschließlich lokal.
 
 **Weitere Details für Experten anzeigen** blendet bei Bedarf
 die alten, weiterhin voll funktionsfähigen Methoden-, Stabilitäts-,
