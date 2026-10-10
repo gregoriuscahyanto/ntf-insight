@@ -15,7 +15,9 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from ntf_insight.analysis.diagnostic_observations import unique_diagnostic_observations
+from ntf_insight.analysis.diagnostic_observations import (
+    dtc_description_catalog, unique_diagnostic_observations,
+)
 from ntf_insight.app.models.simple_table_model import SimpleTableModel
 from ntf_insight.storage.reference_repositories import ReferenceRepository
 from ntf_insight.storage.repositories import CaseRepository
@@ -42,17 +44,17 @@ class DTCExplorerPage(QWidget):
         search.setClearButtonEnabled(True)
         layout.addWidget(search)
 
+        all_cases = cases.list_cases()
+        descriptions = dtc_description_catalog(all_cases)
         groups: dict[tuple[str, str], dict[str, object]] = defaultdict(
-            lambda: {"vehicles": set(), "events": 0, "text": None}
+            lambda: {"vehicles": set(), "events": 0}
         )
-        for case in cases.list_cases():
+        for case in all_cases:
             for observation in unique_diagnostic_observations(case.diagnostics):
                 event = observation.event
                 key = event.fault_key
                 groups[key]["vehicles"].add(case.vin)
                 groups[key]["events"] += 1
-                if not groups[key]["text"] and event.dtc_text:
-                    groups[key]["text"] = event.dtc_text
 
         rows: list[tuple[object, ...]] = []
         for (ecu, dtc), data in sorted(groups.items()):
@@ -64,7 +66,7 @@ class DTCExplorerPage(QWidget):
                 (
                     ecu,
                     dtc,
-                    data["text"],
+                    descriptions.get((ecu, dtc)),
                     len(data["vehicles"]),
                     data["events"],
                     len(triggers),
