@@ -40,7 +40,8 @@ def test_all_imported_fins_eligible_only_with_repeated_dtc_features():
     assert result.unassigned_fins == (noise,)
     assert len(result.groups) == 2
     assert result.assigned_fins == 20
-    assert result.feature_count == 4
+    # Sparse TF-IDF keeps all ECU:DTCs, including FIN-individual codes.
+    assert result.feature_count >= 4
     assert all(g.fin_count == 10 for g in result.groups)
     assert {frozenset(fin for fin, _ in g.members) for g in result.groups} == {
         frozenset(first), frozenset(second),
@@ -90,7 +91,9 @@ def test_thousands_of_fins_without_pairwise_quadratic_distance_matrix():
     assert result.assigned_fins == 3000
     assert len(result.groups) == 2
     assert result.feature_count == 2
-    assert result.initial_group_count == 2
+    assert result.initial_group_count == len(result.groups)
+    assert result.method == "leaf"
+    assert len(result.positions) == 3000
 
 
 def test_store_yields_vehicle_codes_deduplicated_across_original_rows(tmp_path):
@@ -230,3 +233,54 @@ def test_autoexport_mbc_sales_prefix_joins_the_same_canonical_qec_fin(tmp_path):
     )
     assert unique == (fin,)
     assert keys == {fin: (("CPC3", "U123456"),)}
+
+
+def test_leaf_eom_and_complete_link_are_real_methods_with_same_fin_population():
+    """Same input features, cached method comparison; Complete-Link has
+    bounded but strict original sparse-cosine within each output group."""
+    from sklearn.feature_extraction import DictVectorizer
+    from sklearn.feature_extraction.text import TfidfTransformer
+    import numpy as np
+
+    all_fins, codes, *_ = _synthetic_population()
+    results = cluster_fin_methods(
+        all_fins, codes, min_cluster_size=5, min_samples=2,
+    )
+    assert set(results) == {"leaf", "eom", "complete_cosine"}
+    for method, result in results.items():
+        assert result.method == method
+        assert result.total_fins == 23
+        assert result.dtc_fins == 21
+        assert len(result.no_dtc_fins) == 2
+        assert len(result.positions) == 21
+        assert result.assigned_fins + len(result.unassigned_fins) == 21
+
+    full_codes = {
+        fin: frozenset((ecu.upper(), dtc.upper()) for ecu, dtc in entries)
+        for fin, entries in codes.items()
+    }
+    eligible = sorted(full_codes)
+    matrix = TfidfTransformer(norm="l2").fit_transform(
+        DictVectorizer(sparse=True).fit_transform([
+            {f"{ecu}:{dtc}": 1.0 for ecu, dtc in sorted(full_codes[fin])}
+            for fin in eligible
+        ])
+    )
+    position = {fin: i for i, fin in enumerate(eligible)}
+    for group in results["complete_cosine"].groups:
+        ids = [position[fin] for fin, _ in group.members]
+        original_cos = (matrix[ids] @ matrix[ids].T).toarray()
+        values = original_cos[np.triu_indices(len(ids), k=1)]
+        assert bool(np.all(values >= 0.45 - 1e-6))
+    assert "KEINE globale" in results["complete_cosine"].notes
+
+
+def test_changing_method_does_not_change_which_fins_have_dtc_evidence():
+    fins, codes, *_ = _synthetic_population()
+    all_runs = cluster_fin_methods(fins, codes, min_cluster_size=5)
+    for run in all_runs.values():
+        assert run.no_dtc_fins == all_runs["leaf"].no_dtc_fins
+        assert run.dtc_fins == all_runs["leaf"].dtc_fins
+        assert tuple(item[0] for item in run.positions) == tuple(
+            item[0] for item in all_runs["leaf"].positions
+        )
