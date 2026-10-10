@@ -28,6 +28,7 @@ from ntf_insight.analysis.cluster_core_review import (
     CoreGroupLink, link_core_review_groups, write_core_review_template,
 )
 from ntf_insight.analysis.hdbscan_clustering import cluster_hdbscan_cases
+from ntf_insight.analysis.cluster_stability import build_stability_report, sensitivity_scenarios
 from ntf_insight.app.models.simple_table_model import SimpleTableModel
 from ntf_insight.app.widgets.cluster_projection_plot import ClusterProjectionPlot
 from ntf_insight.domain.case import NTFCase
@@ -48,12 +49,14 @@ class _ClusterTask(QThread):
         parameters: ClusterParameters,
         methods: tuple[str, ...],
         core_threshold: float = 0.45,
+        include_stability: bool = False,
     ) -> None:
         super().__init__()
         self.cases = cases
         self.parameters = parameters
         self.methods = methods
         self.core_threshold = core_threshold
+        self.include_stability = include_stability
 
     def run(self) -> None:
         try:
@@ -88,7 +91,22 @@ class _ClusterTask(QThread):
                     self.cases, strict_params, reference=base,
                     projection=shared_projection,
                 )
-            self.calculated.emit((results, core))
+            report = None
+            if self.include_stability:
+                reference = next(
+                    result for result in results
+                    if result.parameters.method == p.method
+                )
+                comparisons = [
+                    ("Verfahren", BY_METHOD[item.parameters.method].title, item)
+                    for item in results if item.parameters.method != p.method
+                ]
+                for label, variant in sensitivity_scenarios(p):
+                    # Independently re-evaluate eligible cases per scenario.
+                    run = calculate_clusters(self.cases, variant)
+                    comparisons.append(("Daten/Parameter", label, run))
+                report = build_stability_report(reference, tuple(comparisons))
+            self.calculated.emit((results, core, report))
         except (ValueError, RuntimeError) as exc:
             self.problem.emit(str(exc))
         except Exception:
@@ -168,6 +186,7 @@ class ClusterWorkspace(QWidget):
         self._run_results: dict[str, UnifiedClusterResult] = {}
         self.result: UnifiedClusterResult | None = None
         self._core_result: UnifiedClusterResult | None = None
+        self._stability_report = None
         self._core_links: tuple[CoreGroupLink, ...] = ()
         self._visible_core_links: list[CoreGroupLink] = []
         self._active_core_group: UnifiedCluster | None = None
@@ -291,6 +310,9 @@ class ClusterWorkspace(QWidget):
         self.compare_button = QPushButton("Methoden vergleichen")
         self.compare_button.clicked.connect(self.compare_methods)
         buttons.addWidget(self.compare_button)
+        self.stability_button = QPushButton("Stabilität prüfen")
+        self.stability_button.clicked.connect(self.run_stability)
+        buttons.addWidget(self.stability_button)
         self.export_button = QPushButton("Clustertabelle lokal exportieren")
         self.export_button.setEnabled(False)
         self.export_button.clicked.connect(self.export_csv)
@@ -332,6 +354,42 @@ class ClusterWorkspace(QWidget):
         )
         info.setWordWrap(True)
         body.addWidget(info)
+        body.addWidget(QLabel(
+            "Robustheitsprüfung · Methoden und Datenvarianten",
+            objectName="CardTitle",
+        ))
+        self.stability_note = QLabel(
+            "Noch keine Stabilitätsprüfung ausgeführt.",
+            objectName="PageSubtitle",
+        )
+        self.stability_note.setWordWrap(True)
+        body.addWidget(self.stability_note)
+        self.stability_model = _ClusterTableModel((
+            "Vergleich", "Art", "Beidseitig geeignet",
+            "Referenzfälle", "Paar-Jaccard", "Paarerhalt", "Hinweis",
+        ))
+        self.stability_table = _table(
+            self.stability_model, 190,
+            (245, 120, 145, 92, 115, 110, 400),
+        )
+        body.addWidget(self.stability_table)
+        self.stability_group_model = _ClusterTableModel((
+            "Referenzcluster", "Prüfung", "Mitglieder", "Vergleichbar",
+            "Referenzpaare", "Erhalten", "Erhaltquote", "Neue Verbindungen",
+        ))
+        self.stability_group_table = _table(
+            self.stability_group_model, 155,
+            (126, 210, 105, 100, 126, 100, 120, 160),
+        )
+        self.stability_group_table.setMaximumHeight(240)
+        body.addWidget(self.stability_group_table)
+        self.stability_detail = QLabel(
+            "Paarerhalt und Erhaltquote sind Diagnose-Stabilitätsmaße, "
+            "keine Fehlerursachenwahrscheinlichkeiten.",
+            objectName="PageSubtitle",
+        )
+        self.stability_detail.setWordWrap(True)
+        body.addWidget(self.stability_detail)
 
         map_header = QHBoxLayout()
         map_header.addWidget(QLabel("Fallvisualisierung", objectName="CardTitle"))
@@ -616,7 +674,20 @@ class ClusterWorkspace(QWidget):
         )
         self._start_methods(tuple(options))
 
-    def _start_methods(self, methods: tuple[str, ...]) -> None:
+    def run_stability(self) -> None:
+        p = self._parameters()
+        options = (
+            p.method,
+            *(item.key for item in METHODS
+              if item.key != p.method
+              and (p.common_dtc_cutoff is None
+                   or item.key != "complete_legacy")),
+        )
+        self._start_methods(tuple(options), include_stability=True)
+
+    def _start_methods(
+        self, methods: tuple[str, ...], *, include_stability: bool = False,
+    ) -> None:
         if self._task is not None and self._task.isRunning():
             self.status.setText("Eine Clusterberechnung läuft bereits.")
             return
@@ -634,6 +705,7 @@ class ClusterWorkspace(QWidget):
             return
         self.run_button.setEnabled(False)
         self.compare_button.setEnabled(False)
+        self.stability_button.setEnabled(False)
         self.export_button.setEnabled(False)
         self.status.setText(
             f"Berechne {len(methods)} Methode(n) für {len(cases)} QEC-Fälle …"
@@ -643,6 +715,7 @@ class ClusterWorkspace(QWidget):
         self._running_core_threshold = self.core_threshold.value()
         task = _ClusterTask(
             cases, params, methods, self._running_core_threshold,
+            include_stability=include_stability,
         )
         _ACTIVE_TASKS.add(task)
         self._task = task
@@ -654,12 +727,13 @@ class ClusterWorkspace(QWidget):
 
     def _receive_results(
         self,
-        payload: tuple[list[UnifiedClusterResult], UnifiedClusterResult],
+        payload: tuple[list[UnifiedClusterResult], UnifiedClusterResult, object],
     ) -> None:
-        results, core_result = payload
+        results, core_result, stability_report = payload
         self._task = None
         self.run_button.setEnabled(True)
         self.compare_button.setEnabled(True)
+        self.stability_button.setEnabled(True)
         if (
             self._running_params != self._parameters()
             or self._running_family != self.family.currentData()
@@ -673,6 +747,7 @@ class ClusterWorkspace(QWidget):
             return
         self._run_results = {r.parameters.method: r for r in results}
         self._core_result = core_result
+        self._show_stability(stability_report)
         self.result = results[0]
         self.export_button.setEnabled(True)
         self.status.setText(
@@ -688,6 +763,7 @@ class ClusterWorkspace(QWidget):
         self._task = None
         self.run_button.setEnabled(True)
         self.compare_button.setEnabled(True)
+        self.stability_button.setEnabled(True)
         self.status.setText(f"Clusterberechnung nicht möglich: {message}")
         self._clear_results()
 
@@ -695,6 +771,7 @@ class ClusterWorkspace(QWidget):
         self.result = None
         self._run_results = {}
         self._core_result = None
+        self._show_stability(None)
         self._core_links = ()
         self._visible_core_links = []
         self._active_core_group = None
@@ -720,6 +797,42 @@ class ClusterWorkspace(QWidget):
         self.compare_side.setChecked(False)
         self.export_button.setEnabled(False)
         self.open_button.setEnabled(False)
+
+    def _show_stability(self, report) -> None:
+        self._stability_report = report
+        if report is None:
+            self.stability_model.set_rows([])
+            self.stability_group_model.set_rows([])
+            self.stability_note.setText(
+                "Noch keine Robustheitsprüfung. 'Stabilität prüfen' "
+                "vergleicht vorhandene lokale Vor-Tausch-Diagnosen."
+            )
+            return
+        self.stability_note.setText(
+            f"{len(report.comparisons)} Vergleiche · "
+            f"{report.reference_eligible} geeignete Referenzfälle. "
+            "Methoden = gleiche Diagnosebasis; Daten/Parameter = "
+            "Ein-Faktor-Variationen. Kein Ursachen-Voting."
+        )
+        def percent(value):
+            return f"{value:.1%}" if value is not None else "nicht bestimmbar"
+        self.stability_model.set_rows([
+            (
+                c.label, c.category, c.shared_eligible,
+                c.baseline_eligible, percent(c.pair_jaccard),
+                percent(c.reference_pair_retention), c.warning,
+            )
+            for c in report.comparisons
+        ])
+        self.stability_group_model.set_rows([
+            (
+                f"C{g.group_number}", c.label, g.reference_members,
+                g.comparable_members, g.reference_pairs,
+                g.retained_pairs, percent(g.retention),
+                g.newly_joined_external_pairs,
+            )
+            for c in report.comparisons for g in c.group_rows
+        ])
 
     def _refresh_comparison(
         self, results: list[UnifiedClusterResult],
