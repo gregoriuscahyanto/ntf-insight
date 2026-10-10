@@ -350,6 +350,7 @@ def calculate_clusters(
     *,
     reference: MLClusterResult | None = None,
     projection: tuple[tuple[str, float, float, float], ...] | None = None,
+    include_projection: bool = True,
 ) -> UnifiedClusterResult:
     """Single method registry entry; no QWidget or extra tab per algorithm."""
     params.validate()
@@ -362,6 +363,7 @@ def calculate_clusters(
             common_dtc_cutoff=params.common_dtc_cutoff,
             lookback_days=params.lookback_days,
             dtc_source=params.dtc_source,
+            include_coordinates=include_projection,
         )
     if params.method == "complete_legacy" and params.common_dtc_cutoff is not None:
         raise ValueError("Jaccard-Vergleich nur ohne TF-IDF-Häufigkeitsfilter.")
@@ -369,6 +371,8 @@ def calculate_clusters(
     # recalculating the same symmetric eigenproblem for every method can
     # otherwise make the Qt workspace appear unresponsive on 170+ cases.
     if projection is not None:
+        if not include_projection:
+            raise ValueError("Nur gespeicherte Projektionen können übergeben werden.")
         if (
             len(projection) != len(baseline.eligible_case_ids)
             or tuple(item[0] for item in projection)
@@ -376,8 +380,12 @@ def calculate_clusters(
         ):
             raise ValueError("3D-Projektion gehört zu einer anderen QEC-Kohorte.")
         positions = projection
-    else:
+    elif include_projection:
         positions = _project_3d(baseline)
+    else:
+        # Sensitivity reports compare diagnostic memberships, not pixels.
+        # Skip both 2D and 3D spectral decomposition on offline laptops.
+        positions = ()
     if params.method == "leaf":
         return _from_hdbscan(baseline, params, positions)
     if params.method == "eom":
@@ -386,6 +394,7 @@ def calculate_clusters(
             min_samples=params.min_samples, selection_method="eom",
             common_dtc_cutoff=params.common_dtc_cutoff,
             dtc_source=params.dtc_source, lookback_days=params.lookback_days,
+            include_coordinates=include_projection,
         )
         return _from_hdbscan(model, params, positions)
     if params.method == "complete_cosine":
