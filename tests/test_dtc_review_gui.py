@@ -109,8 +109,8 @@ def test_review_marks_prioritize_groups_without_running_hdbscan_again(tmp_path):
     assert panel.result is ready
     assert panel._task is None
     assert "1 Cluster hoch" in panel.priority_note.text()
-    assert panel.group_model.rows[0][1] == "Hohe Pruefprioritaet"
-    assert "Prüfpriorität: Hohe Pruefprioritaet" in panel.explanation.text()
+    assert panel.group_model.rows[0][1] == "Hohe Prüfpriorität"
+    assert "Prüfpriorität: Hohe Prüfpriorität" in panel.explanation.text()
     assert "★ CPC3:SYNT-A" in panel.explanation.text()
     assert panel.donut.values == (20, 1, 2)
     assert panel.number_labels["groups"].text() == "2"
