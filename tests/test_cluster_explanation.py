@@ -28,7 +28,7 @@ def test_cluster_explanation_names_actual_shared_dtc_and_individual_overlap():
     assert f"Cluster C{group.cluster_id}" in info.heading
     assert f"allen {group.case_count} Fällen" in info.text
     assert "CPC3:CODE-" in info.text
-    assert "Pumpenursache" in info.text
+    assert "Ursache in der Kühlmittelpumpe" in info.text
     assert len(info.per_case) == group.case_count
     assert "Repräsentativer Fall" in info.evidence_for(group.representative_case_id)
     for member in group.members:
