@@ -208,3 +208,25 @@ def test_combined_mode_uses_pre_swap_autoexport_only_for_qec_anchored_fin(tmp_pa
     # In the unrestricted case even the known swap FIN has its full DTCs.
     _, unrestricted, _ = source.autoexport_fin_dtc_signatures()
     assert len(unrestricted[a]) == 4
+
+
+def test_autoexport_mbc_sales_prefix_joins_the_same_canonical_qec_fin(tmp_path):
+    """One FIN, never a duplicate because one import uses MBC+17 characters."""
+    source = SourceKnowledgeStore(DuckDBStore(tmp_path / "mbc-join.duckdb"))
+    fin = "W1TTEST0000000001"
+    source.save_records("a" * 64, "autoexport_rows", [
+        {"category": "autoexport_dtc", "fin": "MBC" + fin, "data": {
+            "EcuNm": "CPC3", "EcuFaultNm": "U123456",
+            "DiagStartDt": "2026-04-01",
+        }},
+        {"category": "autoexport_dtc", "fin": fin, "data": {
+            "EcuNm": "cpc3", "EcuFaultNm": "u123456",
+            "DiagStartDt": "2026-04-01",
+        }},
+    ])
+    unique, keys, _ = source.autoexport_fin_dtc_signatures(
+        pump_swap_dates={fin: "2026-05-10"},
+        include_all_fins=True,
+    )
+    assert unique == (fin,)
+    assert keys == {fin: (("CPC3", "U123456"),)}
