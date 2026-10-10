@@ -178,10 +178,10 @@ def test_case_workspace_has_only_one_clustering_tab(tmp_path, monkeypatch) -> No
     assert tabs.tabText(0) == "Clusteranalyse"
     assert tabs.tabText(1) == "FIN / Fallanalyse"
     assert tabs.tabText(2) == "QuickTests nach FIN"
-    assert cases.cluster_workspace.fin_workspace is cases.autoexport_fin_workspace
+    assert cases.cluster_workspace is cases.autoexport_fin_workspace
     assert cases.cluster_workspace is tabs.widget(0)
-    assert cases.cluster_workspace.representative_button.isEnabled()
-    assert cases.cluster_workspace.expert_button.isEnabled()
+    assert cases.cluster_workspace.method_combo.count() == 3
+    assert cases.cluster_workspace.start_button.isEnabled()
     window.close()
     app.processEvents()
 
