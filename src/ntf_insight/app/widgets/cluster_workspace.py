@@ -16,7 +16,7 @@ from PySide6.QtWidgets import (
     QAbstractItemView, QCheckBox, QComboBox, QDialog, QDoubleSpinBox,
     QFileDialog, QFrame, QGridLayout, QHBoxLayout, QHeaderView, QLabel,
     QLineEdit, QPushButton, QScrollArea, QSlider, QSpinBox,
-    QTableView, QVBoxLayout, QWidget,
+    QStackedWidget, QTableView, QVBoxLayout, QWidget,
 )
 
 from ntf_insight.analysis.case_clustering import _component_key
@@ -215,10 +215,35 @@ class ClusterWorkspace(QWidget):
         self._dialogs: list[QDialog] = []
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
+        self.fin_workspace: QWidget | None = None
+        choice = QHBoxLayout()
+        choice.setContentsMargins(22, 8, 22, 4)
+        choice.addWidget(QLabel("Analysebestand:"))
+        self.population_mode = QComboBox()
+        self.population_mode.addItem(
+            "Alle FINs – AutoExport + QEC gemeinsam", "all_fins"
+        )
+        self.population_mode.addItem(
+            "Nur QEC-Pumpenfälle (Vor-Tausch-Analyse)", "qec"
+        )
+        self.population_mode.setCurrentIndex(1)
+        self.population_mode.setMinimumWidth(380)
+        self.population_mode.setToolTip(
+            "Eine Clusteranalyse mit zwei Datenbeständen: "
+            "Fahrzeuge aus AutoExport und QEC werden über ihre FIN "
+            "verbunden und niemals doppelt gezählt."
+        )
+        self.population_mode.currentIndexChanged.connect(self._switch_population)
+        choice.addWidget(self.population_mode)
+        choice.addStretch(1)
+        layout.addLayout(choice)
+        self.cluster_views = QStackedWidget()
+        layout.addWidget(self.cluster_views, 1)
         scroll = QScrollArea(self)
+        self.qec_scroll = scroll
         scroll.setWidgetResizable(True)
         scroll.setFrameShape(QFrame.Shape.NoFrame)
-        layout.addWidget(scroll)
+        self.cluster_views.addWidget(scroll)
         content = QWidget()
         scroll.setWidget(content)
         body = QVBoxLayout(content)
@@ -316,21 +341,6 @@ class ClusterWorkspace(QWidget):
         body.addWidget(self.population_detail)
         self.family.currentIndexChanged.connect(self._update_population)
         self._update_population()
-        # Important: full VIN-wide diagnostics are a separate population,
-        # not 11,667 fabricated QEC/pump cases.
-        self.all_fin_button = QPushButton(
-            "Alle AutoExport-FINs nach Diagnosemustern untersuchen"
-        )
-        self.all_fin_button.setToolTip(
-            "Öffnet die separate FIN-basierte Analyse aller vorhandenen "
-            "AutoExport-DTCs; kein automatischer NTF- oder Pumpenbefund."
-        )
-        self.all_fin_button.setEnabled(source_knowledge is not None)
-        self.all_fin_button.clicked.connect(
-            lambda: self.autoexport_requested.emit()
-        )
-        body.addWidget(self.all_fin_button)
-
         # Optional professional controls, not separate clustering actions.
         self.advanced_toggle = QCheckBox("Erweiterte Einstellungen anzeigen")
         body.addWidget(self.advanced_toggle)
@@ -796,6 +806,39 @@ class ClusterWorkspace(QWidget):
         self.filter_common.toggled.connect(self._invalidate_on_input)
         self.core_threshold.valueChanged.connect(self._invalidate_on_input)
         self._change_dimension()
+
+    def attach_fin_workspace(self, widget: QWidget) -> None:
+        """Both populations use this ONE Clusteranalyse tab, never two tabs."""
+        if self.fin_workspace is not None:
+            raise ValueError("FIN-Gesamtanalyse ist bereits zugeordnet.")
+        self.fin_workspace = widget
+        self.cluster_views.addWidget(widget)
+        if self._source_knowledge is not None:
+            self.population_mode.setCurrentIndex(
+                self.population_mode.findData("all_fins")
+            )
+        self._switch_population()
+
+    def show_fin_mode(self) -> None:
+        """Display the same combined FIN analysis within Clusteranalyse."""
+        if self.fin_workspace is not None:
+            self.population_mode.setCurrentIndex(
+                self.population_mode.findData("all_fins")
+            )
+
+    def show_qec_mode(self) -> None:
+        self.population_mode.setCurrentIndex(
+            self.population_mode.findData("qec")
+        )
+
+    def _switch_population(self, *_args) -> None:
+        target = (
+            self.fin_workspace
+            if self.population_mode.currentData() == "all_fins"
+            and self.fin_workspace is not None
+            else self.qec_scroll
+        )
+        self.cluster_views.setCurrentWidget(target)
 
     def _update_population(self, *_args) -> None:
         """Explain imported AutoExport FINs vs local QEC pump cases."""
@@ -1552,6 +1595,7 @@ class ClusterWorkspace(QWidget):
     def focus_case(self, case_id: str) -> bool:
         if case_id not in self.by_id:
             return False
+        self.show_qec_mode()
         self._focused_case_id = case_id
         if self.result is None:
             return True
