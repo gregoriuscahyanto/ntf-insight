@@ -710,7 +710,9 @@ class ClusterWorkspace(QWidget):
         self.noise_model.set_rows([])
         self.compare_model.set_rows([])
         self.plot.set_result(None, [])
+        self.plot.set_emphasis_cases(None)
         self.other_plot.set_result(None, [])
+        self.other_plot.set_emphasis_cases(None)
         self.compare_side.setEnabled(False)
         self.compare_side.setChecked(False)
         self.export_button.setEnabled(False)
@@ -1021,6 +1023,11 @@ class ClusterWorkspace(QWidget):
         self.plot.set_result(self.result, self._subset(), group)
         if self._focused_case_id:
             self.plot.set_highlight(group, self._focused_case_id)
+        strict_cases = (
+            self._active_core_group.case_ids
+            if self._active_core_group is not None else None
+        )
+        self.plot.set_emphasis_cases(strict_cases)
         twin = self.compare_side.isChecked()
         self.other_plot.setVisible(twin)
         if twin:
@@ -1037,6 +1044,7 @@ class ClusterWorkspace(QWidget):
                 self.other_plot.set_highlight(
                     other_group, self._focused_case_id,
                 )
+            self.other_plot.set_emphasis_cases(strict_cases)
         self._change_dimension()
 
     def _change_dimension(self, *_args) -> None:
@@ -1061,16 +1069,37 @@ class ClusterWorkspace(QWidget):
         self._focused_case_id = case_id
         if self.result is None:
             return True
+
+        # Keep the strict three-case drill-down active when one of its
+        # independently comparable FINs is selected.
+        if self._active_core_group is not None:
+            if case_id in self._active_core_group.case_ids:
+                for row, member in enumerate(self._active_core_group.members):
+                    if member.case_id == case_id:
+                        self.member_table.selectRow(row)
+                        break
+                self._draw_plots()
+                return True
+            self._active_core_group = None
+
         for index, group in enumerate(self.result.groups):
             if case_id in group.case_ids:
                 if self.group_table.currentIndex().row() != index:
                     self.group_table.selectRow(index)
+                else:
+                    self._fill_members(group, core=False)
                 for row, member in enumerate(group.members):
                     if member.case_id == case_id:
                         self.member_table.selectRow(row)
                         break
                 self._draw_plots()
                 return True
+
+        # For eligible noise or excluded cases there is deliberately no
+        # invented similarity or synthetic cluster group.
+        selected = self.group_table.currentIndex()
+        if selected.isValid() and selected.row() < len(self.result.groups):
+            self._fill_members(self.result.groups[selected.row()], core=False)
         for row, cid in enumerate(self._noise_ids):
             if cid == case_id:
                 self.noise_table.selectRow(row)
@@ -1080,6 +1109,7 @@ class ClusterWorkspace(QWidget):
 
     def clear_focus(self) -> None:
         self._focused_case_id = None
+        self._active_core_group = None
         self._draw_plots()
 
     def _selected_member(self) -> str | None:
