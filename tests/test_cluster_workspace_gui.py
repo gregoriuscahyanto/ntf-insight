@@ -28,6 +28,7 @@ def _calculate(
     else:
         panel.run_analysis()
     assert panel._task is not None
+    task = panel._task
     # A tiny synthetic cohort can finish before a spy is attached. Poll the
     # Qt event loop instead of relying on a racy after-start signal hook.
     for _ in range(2000):
@@ -39,6 +40,10 @@ def _calculate(
         QTest.qWait(10)
     assert panel.result is not None, panel.status.text()
     assert panel.run_button.isEnabled()
+    # Avoid PySide GC collecting the GUI while a previous test's QThread
+    # is still finishing. The UI itself stays asynchronous.
+    assert task.wait(10000)
+    QApplication.processEvents()
 
 
 def test_gui_one_method_parameter_controls_and_graph_case_click():
@@ -353,6 +358,7 @@ def test_single_cluster_start_button_runs_all_methods_and_sensitivities():
     panel.advanced_toggle.setChecked(False)
     QTest.mouseClick(panel.run_button, Qt.MouseButton.LeftButton)
     assert panel._task is not None
+    task = panel._task
     for _ in range(3000):
         QApplication.processEvents()
         if panel._stability_report is not None and panel.run_button.isEnabled():
@@ -361,6 +367,8 @@ def test_single_cluster_start_button_runs_all_methods_and_sensitivities():
             break
         QTest.qWait(10)
     assert panel._stability_report is not None, panel.status.text()
+    assert task.wait(10000)
+    QApplication.processEvents()
     report = panel._stability_report
     assert panel.stability_model.rowCount() == len(report.comparisons)
     assert panel.stability_group_model.rowCount() == sum(
