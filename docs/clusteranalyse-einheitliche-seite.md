@@ -6,6 +6,46 @@ Tab **Clusteranalyse** ersetzt. Der Tab enthält die bisherige Fallauswertung
 nicht selbst: `FIN / Fallanalyse` und `QuickTests nach FIN` bleiben eigene
 unveränderte Ansichten.
 
+## Standardansicht: vier Antworten ohne Statistikkenntnisse
+
+1. **Cluster erstellen:** `Clusteranalyse starten` anklicken.
+   Alle zulässigen Methoden werden intern berechnet; in der
+   Standardansicht wird **HDBSCAN Leaf** gezeigt.
+2. **Wie viele Cluster?** Die großen Kennzahlen zeigen
+   *Gefundene Cluster*, *Fälle in Clustern*, *Ohne Cluster*
+   und *Ohne Vor-Tausch-Diagnose*. Nur nachweislich geeignete
+   Fälle werden geclustert; die letzte Zahl bedeutet nicht, dass
+   keine Werkstattdiagnose stattgefunden hat.
+3. **Visuell und Fälle:** Die 2D-Grafik stellt echte QEC-Fälle
+   dar, 3D bleibt optional. Die Tabelle **Cluster auswählen**
+   zeigt die Cluster mit Anzahl QEC-Fällen, FINs und gemeinsamem
+   ECU:DTC-Kern. Klick auf eine Zeile oder auf einen Punkt zeigt
+   die Fälle im Cluster, einschließlich QEC, FIN und Evidenz
+   im Vergleich zum repräsentativen Fall (Medoid).
+4. **Warum zusammen?** Die Erklärung nennt echte
+   Vor-Tausch-ECU:DTCs, die in **allen Fällen** vorkommen,
+   weitere häufige ECU:DTCs mit Fallzahlen sowie – falls
+   dokumentiert – gemeinsame Beanstandungsbegriffe.
+   Für einzelne QECs erscheint deren ECU:DTC-Überlappung
+   mit dem Medoid. Das Ergebnis verwendet genau die gewählte
+   Quelle, den Zeitraum und ggf. den DTC-Häufigkeitsfilter.
+   Fehlt ein durchgehender DTC-Kern oder sind viele Paar-
+   ähnlichkeiten schwach, steht eine gut sichtbare Warnung.
+   Die Aufzählung erklärt beobachtete Merkmalsgemeinsamkeiten,
+   **nicht** den exakten Modellbeitrag jedes Merkmals.
+
+**Weitere Details für Experten anzeigen** blendet bei Bedarf
+die alten, weiterhin voll funktionsfähigen Methoden-, Stabilitäts-,
+K-Prüfgruppen- und Ausreißertabellen und technischen Werkzeuge ein.
+**Erweiterte Einstellungen anzeigen** ist ein eigener optionaler
+Bereich vor dem Start. Nichts davon ist für die vier Fragen nötig.
+
+**Achtung:** Die Zahl der Cluster ist immer methoden- und
+parameterabhängig. Gleiche Diagnosen und identische DTCs sind
+keine Bestätigung eines mechanischen Pumpendefekts oder einer
+Lieferantenverantwortung. SSL- und Lieferantenbefunde fließen
+nicht in das Clustering oder diese Erklärung ein.
+
 ## Bedienung von oben nach unten
 
 1. **Bauteilfamilie und Datenbasis wählen** (standardmäßig
