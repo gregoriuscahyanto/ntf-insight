@@ -89,19 +89,28 @@ def test_fin_workspace_groups_all_original_fins_and_opens_history(tmp_path):
     app.processEvents()
 
 
-def test_autoexport_tab_is_separate_from_qec_and_fin_history(tmp_path, monkeypatch):
+def test_one_clusteranalyse_tab_includes_autoexport_and_qec(tmp_path, monkeypatch):
     from ntf_insight.app.windows.main_window import MainWindow
 
     monkeypatch.setenv("NTF_INSIGHT_DATA_DIR", str(tmp_path))
     app = QApplication.instance() or QApplication([])
     window = MainWindow()
     case_page = window.pages["cases"]
+    assert case_page.detail_tabs.count() == 3
     assert case_page.detail_tabs.indexOf(
         case_page.autoexport_fin_workspace
-    ) >= 0
+    ) == -1
     assert case_page.detail_tabs.currentWidget() == case_page.cluster_workspace
-    case_page.cluster_workspace.all_fin_button.click()
-    assert case_page.detail_tabs.currentWidget() == case_page.autoexport_fin_workspace
+    assert case_page.cluster_workspace.fin_workspace is case_page.autoexport_fin_workspace
+    case_page.cluster_workspace.show_fin_mode()
+    assert case_page.detail_tabs.currentWidget() == case_page.cluster_workspace
+    assert case_page.cluster_workspace.cluster_views.currentWidget() is (
+        case_page.autoexport_fin_workspace
+    )
+    case_page.cluster_workspace.show_qec_mode()
+    assert case_page.cluster_workspace.cluster_views.currentWidget() is (
+        case_page.cluster_workspace.qec_scroll
+    )
     case_page.autoexport_fin_workspace.fin_requested.emit("W1TTEST0000000001")
     assert case_page.detail_tabs.currentWidget() == case_page.analysis_tab
     assert case_page.autoexport_fin_lookup.text() == "W1TTEST0000000001"
@@ -120,6 +129,9 @@ def test_opt_in_qec_pump_date_excludes_unanchored_fins_and_post_swap_dtc(tmp_pat
     ]
     for case in cases:
         case.qec_reference = case.case_id
+        # This particular test isolates the AutoExport timestamp filter;
+        # QEC DTC co-features are covered by the union regression below.
+        case.diagnostics = []
     source = SourceKnowledgeStore(DuckDBStore(tmp_path / "pump-scope.duckdb"))
     rows = []
     for fin in fins:
