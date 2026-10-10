@@ -332,10 +332,20 @@ def test_synthetic_336_cases_170_eligible_without_publishing_identifiers():
     app.processEvents()
 
 
-def test_stability_button_uses_one_tab_with_synthetic_inputs_only():
+def test_single_cluster_start_button_runs_all_methods_and_sensitivities():
     app = QApplication.instance() or QApplication([])
     panel = ClusterWorkspace(sample())
-    panel.run_stability()
+    assert panel.run_button.text() == "Clusteranalyse starten"
+    assert not hasattr(panel, "compare_button")
+    assert not hasattr(panel, "stability_button")
+    panel.show()
+    app.processEvents()
+    assert panel._task is None  # no expensive surprise on tab opening
+    assert panel.advanced_panel.isHidden()
+    panel.advanced_toggle.setChecked(True)
+    assert not panel.advanced_panel.isHidden()
+    panel.advanced_toggle.setChecked(False)
+    QTest.mouseClick(panel.run_button, Qt.MouseButton.LeftButton)
     assert panel._task is not None
     for _ in range(3000):
         QApplication.processEvents()
@@ -354,10 +364,13 @@ def test_stability_button_uses_one_tab_with_synthetic_inputs_only():
         item.category for item in report.comparisons
     }
     assert panel.result.parameters.method == "leaf"
+    assert len(panel._run_results) == 4
+    assert panel.compare_model.rowCount() == 4
     assert "Kein Ursachen-Voting" in panel.stability_note.text()
     # Parameter changes must invalidate the stale robustness evidence.
     panel.lookback.setCurrentIndex(panel.lookback.findData(90))
     assert panel._stability_report is None
     assert panel.stability_model.rowCount() == 0
+    assert panel.run_button.isEnabled()
     panel.close()
     app.processEvents()
