@@ -225,7 +225,7 @@ class ClusterWorkspace(QWidget):
         fields.addWidget(self.jaccard_threshold, 3, 3)
         fields.addWidget(self.filter_common, 4, 0, 1, 4)
         body.addLayout(fields)
-        self.method.currentIndexChanged.connect(self._update_parameters)
+        self.method.currentIndexChanged.connect(self._method_changed)
         self._update_parameters()
 
         buttons = QHBoxLayout()
@@ -388,6 +388,18 @@ class ClusterWorkspace(QWidget):
         )
         note.setWordWrap(True)
         body.addWidget(note)
+        # New settings must never silently retain a previous grouping as
+        # though it had been calculated with the changed parameters.
+        for control in (
+            self.family, self.source, self.lookback,
+        ):
+            control.currentIndexChanged.connect(self._invalidate_on_input)
+        for control in (
+            self.min_cluster_size, self.min_samples,
+            self.cosine_threshold, self.jaccard_threshold,
+        ):
+            control.valueChanged.connect(self._invalidate_on_input)
+        self.filter_common.toggled.connect(self._invalidate_on_input)
         self._change_dimension()
 
     def _update_parameters(self, *_args) -> None:
@@ -402,6 +414,28 @@ class ClusterWorkspace(QWidget):
         if spec.supports_jaccard_cutoff:
             self.filter_common.setChecked(False)
         self.method_hint.setText(spec.description)
+
+    def _method_changed(self, *_args) -> None:
+        self._update_parameters()
+        key = self.method.currentData()
+        cached = self._run_results.get(key)
+        if cached is not None and cached.parameters == self._parameters():
+            self._show_result(cached)
+        elif self.result is not None:
+            self._clear_results()
+            self.status.setText(
+                "Methode geändert. Bitte 'Cluster berechnen' oder "
+                "'Methoden vergleichen' starten."
+            )
+
+    def _invalidate_on_input(self, *_args) -> None:
+        if self.result is None:
+            return
+        self._clear_results()
+        self.status.setText(
+            "Eingaben geändert. Die alten Cluster wurden ausgeblendet. "
+            "Bitte mit den neuen Parametern berechnen."
+        )
 
     def _parameters(self) -> ClusterParameters:
         return ClusterParameters(
@@ -430,8 +464,15 @@ class ClusterWorkspace(QWidget):
         self._start_methods((self._parameters().method,))
 
     def compare_methods(self) -> None:
-        selected = self._parameters().method
-        options = (selected, *(x.key for x in METHODS if x.key != selected))
+        p = self._parameters()
+        selected = p.method
+        options = (
+            selected,
+            *(x.key for x in METHODS if (
+                x.key != selected
+                and (p.common_dtc_cutoff is None or x.key != "complete_legacy")
+            )),
+        )
         self._start_methods(tuple(options))
 
     def _start_methods(self, methods: tuple[str, ...]) -> None:
@@ -455,6 +496,8 @@ class ClusterWorkspace(QWidget):
         self.status.setText(
             f"Berechne {len(methods)} Methode(n) für {len(cases)} QEC-Fälle …"
         )
+        self._running_params = params
+        self._running_family = self.family.currentData()
         task = _ClusterTask(cases, params, methods)
         _ACTIVE_TASKS.add(task)
         self._task = task
@@ -468,6 +511,16 @@ class ClusterWorkspace(QWidget):
         self._task = None
         self.run_button.setEnabled(True)
         self.compare_button.setEnabled(True)
+        if (
+            self._running_params != self._parameters()
+            or self._running_family != self.family.currentData()
+        ):
+            self._clear_results()
+            self.status.setText(
+                "Parameter während der Berechnung geändert. "
+                "Bitte die aktuelle Auswahl neu berechnen."
+            )
+            return
         self._run_results = {r.parameters.method: r for r in results}
         self.result = results[0]
         self.export_button.setEnabled(True)
@@ -656,9 +709,17 @@ class ClusterWorkspace(QWidget):
         if twin:
             key = self.other_method.currentData()
             other = self._run_results.get(key)
-            self.other_plot.set_result(other, self._subset(), group)
+            # Group IDs are method-local and MUST NOT be treated as
+            # matching IDs across different clustering algorithms.
+            other_group = next(
+                (g.cluster_id for g in other.groups
+                 if self._focused_case_id in g.case_ids), None,
+            ) if other is not None else None
+            self.other_plot.set_result(other, self._subset(), other_group)
             if self._focused_case_id:
-                self.other_plot.set_highlight(group, self._focused_case_id)
+                self.other_plot.set_highlight(
+                    other_group, self._focused_case_id,
+                )
         self._change_dimension()
 
     def _change_dimension(self, *_args) -> None:
