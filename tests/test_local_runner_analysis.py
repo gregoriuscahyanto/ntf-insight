@@ -287,7 +287,17 @@ def test_separately_approved_method_comparison_is_aggregate_only(external_tmp_pa
     assert set(approved) == {
         "methode_leaf", "methode_eom", "methode_complete_link_45",
         "methode_complete_link_65", "geeignete_faelle",
+        "paar_jaccard_leaf_eom_promille",
+        "paar_jaccard_leaf_complete_45_promille",
+        "paar_jaccard_leaf_complete_65_promille",
     }
+    assert all(
+        0 <= approved[key] <= 1000 for key in (
+            "paar_jaccard_leaf_eom_promille",
+            "paar_jaccard_leaf_complete_45_promille",
+            "paar_jaccard_leaf_complete_65_promille",
+        )
+    )
     assert "W1TTEST" not in process.stdout
     assert "SECRET_SYNTHETIC_SSL" not in process.stdout
     assert "CODE-" not in process.stdout
