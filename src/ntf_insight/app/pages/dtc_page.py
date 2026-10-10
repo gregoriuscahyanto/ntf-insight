@@ -172,6 +172,10 @@ class DTCExplorerPage(QWidget):
         )
         self.note_input.setMaxLength(500)
         editor.addWidget(self.note_input, 1)
+        self.save_note_button = QPushButton("Notiz speichern")
+        self.save_note_button.setEnabled(False)
+        self.save_note_button.clicked.connect(self._save_note)
+        editor.addWidget(self.save_note_button)
         layout.addLayout(editor)
         self.review_note = QLabel(
             "ECU:DTC auswählen. Eine Markierung gilt exakt für diese "
@@ -206,6 +210,9 @@ class DTCExplorerPage(QWidget):
         )
         note = self._marks[key].note if marked and key is not None else ""
         self.note_input.setText(note)
+        self.save_note_button.setEnabled(
+            marked and self.review_store is not None
+        )
         self.review_note.setText(
             (
                 f"{key[0]}:{key[1]} ist für die Pumpenprüfung markiert. "
@@ -215,6 +222,21 @@ class DTCExplorerPage(QWidget):
                 "Ausgewählte ECU:DTC-Kombination kann fachlich markiert werden. "
                 "Eine Markierung ist nur ein Prüfhinweis, kein Defektnachweis."
             )
+        )
+
+    def _save_note(self) -> None:
+        if self._selected_key is None or self.review_store is None:
+            return
+        if self._selected_key not in self._marks:
+            return
+        self.review_store.mark(
+            *self._selected_key, relevant=True,
+            note=self.note_input.text(),
+        )
+        self._marks = self.review_store.list_marks()
+        self.review_note.setText(
+            "Fachliche Notiz lokal gespeichert. "
+            "Die HDBSCAN-Cluster bleiben unverändert."
         )
 
     def _toggle_mark(self) -> None:
