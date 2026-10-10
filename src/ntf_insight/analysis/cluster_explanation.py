@@ -27,7 +27,7 @@ class ClusterExplanation:
 
     @property
     def text(self) -> str:
-        return "\n".join(self.lines)
+        return "\n\n".join(self.lines)
 
     def evidence_for(self, case_id: str) -> str:
         return dict(self.per_case).get(case_id, "Keine Einzelfallevidenz.")
@@ -37,10 +37,9 @@ def _format_fault(fault: FaultKey) -> str:
     return f"{fault[0]}:{fault[1]}"
 
 
-def _compact_faults(faults: list[FaultKey], limit: int = 4) -> str:
-    selected = ", ".join(_format_fault(fault) for fault in faults[:limit])
-    extra = len(faults) - limit
-    return selected + (f" (+{extra} weitere)" if extra > 0 else "")
+def _fault_list(faults: list[FaultKey]) -> str:
+    """Display ALL available codes, without hiding evidence after 'weitere'."""
+    return "\n".join(f"• {_format_fault(fault)}" for fault in faults)
 
 
 def explain_cluster(
@@ -105,28 +104,35 @@ def explain_cluster(
     )
 
     label = "Prüfgruppe" if strict_review else "Cluster"
-    heading = f"Warum sind diese {total} Fälle in {label} {'K' if strict_review else 'C'}{group.cluster_id}?"
-    lines = []
+    letter = "K" if strict_review else "C"
+    heading = (
+        f"Warum gehören diese {total} Fälle zu "
+        f"{label} {letter}{group.cluster_id}?"
+    )
+    lines = ["1. Was haben diese Fälle gemeinsam?"]
     if common:
         lines.append(
-            f"Identische ECU:DTC in allen {total} Fällen: "
-            f"{_compact_faults(common)}."
+            f"In allen {total} Fällen sind dieselben {len(common)} "
+            "Steuergerät-Fehlercode-Kombinationen dokumentiert. "
+            "ECU:DTC bedeutet Steuergerät:Fehlercode. "
+            "Die Codes sind vor dem untersuchten Pumpentausch erfasst worden:\n"
+            + _fault_list(common)
         )
     else:
         lines.append(
-            "Kein identischer ECU:DTC ist in allen Fällen vorhanden. "
-            "Die Fälle sind nur aufgrund kombinierter Diagnosemerkmale "
-            "und der Gruppierungsregel zusammengefasst."
+            "Kein einzelner Steuergerät-Fehlercode (ECU:DTC) kommt "
+            f"in allen {total} Fällen vor. Die App berücksichtigt daher "
+            "die Kombination verschiedener Diagnosemerkmale."
         )
+
     if additional:
-        shortlist = ", ".join(
-            f"{_format_fault(fault)} ({count}/{total})"
-            for fault, count in additional[:4]
+        entries = "\n".join(
+            f"• {_format_fault(fault)} – bei {count} von {total} Fällen"
+            for fault, count in additional
         )
         lines.append(
-            "Weitere häufige, aber nicht durchgängige DTCs: "
-            + shortlist
-            + (f" (+{len(additional) - 4} weitere)." if len(additional) > 4 else ".")
+            "Diese weiteren Fehlercodes kommen häufig vor, aber "
+            "nicht in allen Fällen:\n" + entries
         )
 
     complaints = Counter(
@@ -138,88 +144,129 @@ def explain_cluster(
     ]
     shared_complaints.sort(key=lambda item: (-item[1], item[0]))
     if shared_complaints:
-        snippets = ", ".join(
-            f"{token} ({count}/{total})"
-            for token, count in shared_complaints[:3]
+        lines.append(
+            "Auch diese Wörter aus dokumentierten Kundenbeanstandungen "
+            "wiederholen sich:\n"
+            + "\n".join(
+                f"• {token} – bei {count} von {total} Fällen"
+                for token, count in shared_complaints
+            )
         )
-        lines.append(f"Ähnliche dokumentierte Beanstandungsbegriffe: {snippets}.")
 
     if not common:
-        # Show observable alternate overlaps when there is no complete
-        # ECU:DTC core. These low-weight contexts alone cannot prove a
-        # component defect and may also occur across unrelated vehicles.
-        common_software = Counter(
+        # Shared ECU software is context, not proof of a technical defect.
+        software_counts = Counter(
             sw for cid in members for sw in signatures[cid].ecu_software
         )
         software = sorted(
-            ((sw, count) for sw, count in common_software.items()
+            ((sw, count) for sw, count in software_counts.items()
              if count >= 2 and count / total >= 0.5),
             key=lambda item: (-item[1], item[0]),
         )
         if software:
             lines.append(
-                "Häufig dokumentierte Softwarestände: "
-                + ", ".join(
-                    f"{value} ({count}/{total})"
-                    for value, count in software[:2]
-                ) + "."
+                "Diese vor dem Tausch dokumentierten Softwarestände "
+                "wiederholen sich:\n"
+                + "\n".join(
+                    f"• {value} – bei {count} von {total} Fällen"
+                    for value, count in software
+                )
             )
         elif not additional and not shared_complaints:
             lines.append(
-                "Keine starken gemeinsamen Einzelmerkmale gefunden. "
-                "Die Clusterzuordnung beruht auf der Gesamtähnlichkeit "
-                "und ist besonders vorsichtig zu interpretieren."
+                "Es gibt keine stark übereinstimmenden Einzelmerkmale. "
+                "Die Gruppierung stützt sich auf das gesamte Diagnosebild "
+                "und sollte besonders vorsichtig geprüft werden."
             )
 
+    lines.append("2. Weshalb fasst die App diese Fälle zusammen?")
     if parameters.method in {"leaf", "eom"} and not strict_review:
+        variant = "Leaf" if parameters.method == "leaf" else "EOM"
         lines.append(
-            "HDBSCAN bildet Dichtegruppen aus mehreren gewichteten Vor-Tausch-"
-            "Merkmalen (insbesondere ECU:DTC). Einzelne identische DTCs "
-            "bestimmen die Clusterzuordnung nicht allein."
+            f"Das Verfahren HDBSCAN ({variant}) sucht Bereiche mit "
+            "ähnlichen Diagnosefällen; das nennt man Dichtegruppen. "
+            "Es betrachtet die unterschiedlich stark gewichteten "
+            "Vor-Tausch-Merkmale gemeinsam: insbesondere Fehlercodes "
+            "und Steuergeräte, daneben Kundenbeanstandungen, "
+            "Softwarestände und Fahrzeugvarianten. "
+            "Ein einziger gleicher Fehlercode entscheidet nicht "
+            "allein über die Zuordnung."
         )
     elif parameters.method == "complete_legacy" and not strict_review:
         lines.append(
-            "Complete-Link DTC-Jaccard gruppiert nach einer gesonderten "
-            "gewichteten Diagnose-Set-Ähnlichkeit."
+            "Complete-Link mit gewichtetem DTC-Jaccard vergleicht "
+            "die Mengen dokumentierter Diagnosemerkmale und ihre "
+            "Übereinstimmung. Dieses Ähnlichkeitsmaß ist nicht "
+            "unmittelbar mit der HDBSCAN-Bewertung gleichzusetzen."
         )
     else:
         lines.append(
-            "Complete-Link Cosinus gruppiert nur Fälle, deren paarweise "
-            "Diagnoseähnlichkeit die gewählte Schwelle erreicht."
+            "Complete-Link Cosinus vergleicht jeden Fall mit jedem "
+            "anderen Fall in der Gruppe. Die berechnete paarweise "
+            "Diagnoseähnlichkeit muss mindestens "
+            f"{parameters.minimum_similarity:.0%} betragen. "
+            "Das ist eine Ähnlichkeitsschwelle, keine Aussage über "
+            "die Wahrscheinlichkeit eines Pumpendefekts."
         )
 
-    if group.weak_pair_count:
+    lines.append("3. Wie einheitlich ist diese Gruppe?")
+    if group.weak_pair_count and group.internal_pair_count:
         lines.append(
-            f"Achtung: {group.weak_pair_count}/{group.internal_pair_count} "
-            "Fallpaare haben einen Cosinusindex unter 45 %. "
-            "Die Gruppe ist diagnostisch uneinheitlich."
+            f"Es wurden {group.internal_pair_count} Fallpaare verglichen "
+            f"(jeweils zwei Fälle). Davon erreichen "
+            f"{group.weak_pair_count} Paare weniger als 45 % "
+            "Cosinus-Ähnlichkeit. Die Prozentzahl beschreibt nur "
+            "die Ähnlichkeit der Diagnosemerkmale, nicht die "
+            "Wahrscheinlichkeit eines Defekts. "
+            "Achtung: Die Gruppe ist diagnostisch uneinheitlich; "
+            "nicht alle Fälle passen gut zueinander."
         )
-    elif not common:
+    elif group.weak_pair_count == 0 and group.internal_pair_count:
         lines.append(
-            "Achtung: Ohne gemeinsamen DTC-Kern ist eine Übertragung "
-            "technischer Ursachen besonders unsicher."
+            f"Keines der {group.internal_pair_count} Fallpaare liegt "
+            "unter 45 % Cosinus-Ähnlichkeit. Auch das beweist "
+            "keine identische technische Ursache."
+        )
+    else:
+        lines.append(
+            "Hier liegt keine direkt vergleichbare Cosinus-Paarprüfung "
+            "mit der 45-%-Grenze vor. Die Zuordnung beruht "
+            "auf der oben beschriebenen Methode."
+        )
+    if not common:
+        lines.append(
+            "Zusätzliche Vorsicht: Es gibt keinen einzigen "
+            "ECU:DTC-Code, der alle Fälle gemeinsam verbindet. "
+            "Eine technische Ursache darf deshalb nicht "
+            "von einem Fall auf alle anderen übertragen werden."
         )
     if total != group.vehicle_count:
         lines.append(
-            f"{total} QEC-Fälle stammen von {group.vehicle_count} "
-            "verschiedenen FINs; Mehrfachfälle derselben FIN sind "
-            "keine unabhängigen Fahrzeuge."
+            f"Die {total} QEC-Fälle stammen von {group.vehicle_count} "
+            "verschiedenen Fahrzeugen (FINs). Mehrere Fälle "
+            "derselben FIN sind keine unabhängigen Fahrzeuge."
         )
     if excluded_faults:
         lines.append(
-            "Der aktivierte Häufigkeitsfilter hat verbreitete ECU:DTCs "
-            "aus den Clustering-Merkmalen entfernt."
+            "Der eingeschaltete DTC-Häufigkeitsfilter entfernt "
+            "besonders weit verbreitete Fehlercodes aus "
+            "den Merkmalen, mit denen die Gruppen berechnet wurden."
         )
     lines.append(
-        "Wichtig: Diagnoseähnlichkeit ist kein Nachweis einer identischen "
-        "Pumpenursache oder einer Lieferantenverantwortung."
+        "Wichtig: Die App erklärt, welche Diagnosedaten ähnlich sind. "
+        "Sie bestätigt damit weder eine gemeinsame Ursache in "
+        "der Kühlmittelpumpe noch eine Verantwortung des Lieferanten. "
+        "Dafür wären zusätzliche technische Nachweise erforderlich."
     )
 
     representative = fault_sets[group.representative_case_id]
     per_case = []
     for cid in members:
         if cid == group.representative_case_id:
-            reason = "Repräsentativer Fall der Gruppe (Medoid)."
+            reason = (
+                "Repräsentativer Fall (Medoid): Dieser Fall dient "
+                "als Vergleichsbeispiel für die Gruppe."
+            )
         else:
             shared = sorted(
                 fault_sets[cid] & representative,
@@ -227,10 +274,11 @@ def explain_cluster(
             )
             reason = (
                 f"{len(shared)} gleiche ECU:DTC wie der Repräsentant: "
-                f"{_compact_faults(shared, limit=3)}"
+                + ", ".join(_format_fault(fault) for fault in shared)
                 if shared else
                 "Kein identischer ECU:DTC zum Repräsentanten; "
-                "andere Merkmale und die Clusterstruktur können verbinden."
+                "die App berücksichtigt weitere Merkmale und "
+                "die Struktur der Gruppe."
             )
         per_case.append((cid, reason))
     return ClusterExplanation(
