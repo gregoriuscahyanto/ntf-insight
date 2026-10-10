@@ -60,9 +60,17 @@ normalerweise nach einer Stunde verfällt.
 **Das Token niemals im Chat, in Screenshots, im Repository oder in Logs
 veröffentlichen.**
 
-Bei der Konfiguration als **zusätzliches Label exakt
-`ntf-isolated-pilot`** vergeben; die Standardlabels `self-hosted`,
-`Windows` und `X64` müssen ebenfalls vorhanden sein.
+Die beiden bereits registrierten Windows-Runner besitzen die gemeinsamen
+Standardlabels `self-hosted`, `Windows`, `X64` und je **ein eigenes Label**:
+
+- `vehicle-sim-windows-laptop`: `ntf-insight-1`
+- `vehicle-sim-windows-laptop-2`: `ntf-insight-2`
+
+**Kein neues Label und keine erneute Registrierung nötig.** Der manuelle
+Verbindungstest verwendet genau diese beiden bestehenden Labels. Die Labels
+sind lediglich Auswahlkriterien – sie garantieren keine Isolation der
+Dateisysteme oder Prozesse. Bei einem neuen Runner muss er entsprechend
+gekennzeichnet sein.
 
 Für den Test den Runner interaktiv mit `run.cmd` starten und das
 Terminal geöffnet lassen. **Noch nicht als Windows-Dienst aktivieren**:
@@ -77,10 +85,14 @@ Der neue Workflow `runner-smoke.yml` muss zunächst **reviewt und nach
 Schaltfläche erst, wenn das Workflow auf dem Standardbranch vorhanden ist.
 
 Auf GitHub unter **Actions → NTF Runner Verbindungstest → Run workflow**
-`main` auswählen und starten. Der eigens gelabelte Runner muss
-`Online` sein; anderenfalls bleibt der Job in der Warteschlange.
+`main` auswählen und starten. GitHub erstellt **zwei getrennte Jobs**:
+`Verbindungstest (ntf-insight-1)` und
+`Verbindungstest (ntf-insight-2)`. Beide Runner müssen `Online` sein,
+anderenfalls wartet der jeweilige Job auf seinen passenden Runner.
+Jeder Runner verarbeitet höchstens den für seine Labels passenden Testjob;
+die Tests können parallel laufen.
 
-Bei Erfolg erscheint ausschließlich:
+Bei Erfolg erscheint in **beiden** Jobs ausschließlich:
 
 ```text
 NTF_SELF_HOSTED_RUNNER_OK
