@@ -51,8 +51,17 @@ QEC-, FIN- oder Diagnose-Rohdaten auf GitHub. Die Tabelle
 
 Neue Datenbasis- oder Parameterwerte machen **alle** zuvor berechneten
 Ergebnisse ungültig. Ein erneuter Klick startet den gesamten Ablauf
-wieder. Eine reine Auswahl anderer bereits berechneter Verfahren
-zeigt diese an, ohne die methodische Referenz der Robustheit zu ändern.
+wieder. Eine reine Auswahl anderer bereits berechneter Verfahren über
+**Clusterverfahren** direkt neben `2D / 3D` aktualisiert
+Clusterzahl, Grafik, Fallliste und verständliche Erklärung,
+ohne neu zu rechnen oder die ursprüngliche Robustheitsreferenz
+umzudeuten. Das separate **Zweites Verfahren** unter
+den Expertendetails betrifft ausschließlich das optionale
+Vergleichsdiagramm. 3D wird standardmäßig per linker
+gedrückter Maustaste gedreht (horizontal) und geneigt
+(vertikal). Ein Klick wählt weiterhin den Einzelfall.
+Die ursprünglichen Schieberegler bleiben optional
+unter **Weitere Details für Experten**.
 
 ## Kennzahlen und Grenzen
 
