@@ -157,7 +157,12 @@ class DTCExplorerPage(QWidget):
         table.setSortingEnabled(True)
         table.verticalHeader().setVisible(False)
         header = table.horizontalHeader()
-        header.setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
+        # Thousands of AutoExport DTCs: do not scan every text cell at
+        # window creation just to determine column widths.
+        header.setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
+        for column, width in enumerate((105, 105, 145, 300, 88, 112, 108, 130,
+                                        132, 145, 250, 130)):
+            table.setColumnWidth(column, width)
         header.setStretchLastSection(True)
         layout.addWidget(table, 1)
 
