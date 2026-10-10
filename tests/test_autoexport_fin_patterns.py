@@ -172,3 +172,39 @@ def test_pump_date_scope_includes_only_confirmed_fins_and_earlier_dtc_days(tmp_p
     assert result.no_dtc_fins == (b,)
     assert result.unassigned_fins == (a,)
     assert result.groups == ()
+
+
+def test_combined_mode_uses_pre_swap_autoexport_only_for_qec_anchored_fin(tmp_path):
+    """A VIN with a pump swap must not leak post-swap AutoExport diagnoses."""
+    source = SourceKnowledgeStore(DuckDBStore(tmp_path / "all-fins-with-qec.db"))
+    a, b, c = [
+        f"W1TTEST000000{i:04d}" for i in (1, 2, 3)
+    ]
+    rows = []
+    for fin, fault, day in (
+        (a, "EARLY", "2026-04-10"),
+        (a, "AFTER", "2026-05-11"),
+        (a, "SAME-DAY", "2026-05-10"),
+        (a, "UNRECORDED", None),
+        (b, "AFTER", "2026-05-11"),
+        (c, "UNRECORDED", None),
+    ):
+        rows.append({
+            "category": "autoexport_dtc", "fin": fin,
+            "data": {
+                "EcuNm": "CPC3", "EcuFaultNm": fault,
+                "DiagStartDt": day,
+            },
+        })
+    source.save_records("a" * 64, "autoexport_rows", rows)
+    fins, codes, _ = source.autoexport_fin_dtc_signatures(
+        pump_swap_dates={a: "2026-05-10"},
+        include_all_fins=True,
+    )
+    assert fins == (a, b, c)
+    assert codes[a] == (("CPC3", "EARLY"),)
+    assert codes[b] == (("CPC3", "AFTER"),)
+    assert codes[c] == (("CPC3", "UNRECORDED"),)
+    # In the unrestricted case even the known swap FIN has its full DTCs.
+    _, unrestricted, _ = source.autoexport_fin_dtc_signatures()
+    assert len(unrestricted[a]) == 4
