@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from itertools import combinations
-from math import sqrt
+from math import isfinite, sqrt
 
 import numpy as np
 from scipy.cluster.hierarchy import fcluster, linkage
@@ -261,4 +261,26 @@ def approved_method_totals(report: dict) -> dict:
         values = row.values() if isinstance(row, dict) else (row,)
         if any(type(value) is not int or value < 0 for value in values):
             raise ValueError("Freigabe nur für nichtnegative aggregierte Ganzzahlen.")
+
+    # Whole-thousandths of agreement remain integers and permit meaningful
+    # inter-method comparison without publishing confidential case pairs.
+    similarities = {
+        "paar_jaccard_leaf_eom_promille": original[
+            "paaruebereinstimmung_leaf_eom"
+        ],
+        "paar_jaccard_leaf_complete_45_promille": original[
+            "methode_complete_link_45"
+        ]["paaruebereinstimmung_zu_leaf"],
+        "paar_jaccard_leaf_complete_65_promille": original[
+            "methode_complete_link_65"
+        ]["paaruebereinstimmung_zu_leaf"],
+    }
+    for name, score in similarities.items():
+        # If both methods produce no positive pairs, agreement is undefined.
+        # Do NOT report a misleading artificial zero or perfect 100 %.
+        if score is None:
+            continue
+        if type(score) not in (float, int) or not isfinite(score) or not 0 <= score <= 1:
+            raise ValueError("Ungültige Paarübereinstimmung für Methodenfreigabe.")
+        methods[name] = int(round(score * 1000))
     return methods
