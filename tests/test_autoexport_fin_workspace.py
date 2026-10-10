@@ -68,6 +68,11 @@ def test_fin_workspace_groups_all_original_fins_and_opens_history(tmp_path):
     assert panel.method_combo.count() == 3
     assert "Synthetic diagnostic label" in panel.explanation.text()
     assert "Wichtig:" in panel.explanation.text()
+    # A cluster click must render all sections, not leave the placeholder
+    # or fail in a Qt signal with a hidden NameError.
+    assert "Wie wurde gruppiert?" in panel.explanation.text()
+    assert "HDBSCAN findet" in panel.explanation.text()
+    assert panel.result.notes in panel.explanation.text()
     assert panel.fin_model.rowCount() == 10
     # Method selection changes the actual memberships, plot and table,
     # never launches a new background analysis.
@@ -77,11 +82,17 @@ def test_fin_workspace_groups_all_original_fins_and_opens_history(tmp_path):
     assert panel.result is panel._run_results["eom"]
     assert panel.plot._result is panel.result
     assert panel.group_model.rowCount() == len(panel.result.groups)
+    if panel.result.groups:
+        assert "Wie wurde gruppiert?" in panel.explanation.text()
+        assert panel.result.notes in panel.explanation.text()
     panel.method_combo.setCurrentIndex(
         panel.method_combo.findData("complete_cosine")
     )
     assert panel.result is panel._run_results["complete_cosine"]
     assert "Complete-Link" in panel.status.text()
+    if panel.result.groups:
+        assert "Complete-Link prüft" in panel.explanation.text()
+        assert panel.result.notes in panel.explanation.text()
     panel.method_combo.setCurrentIndex(panel.method_combo.findData("leaf"))
     panel.dimension.setCurrentIndex(panel.dimension.findData("3d"))
     assert panel.plot.mode == "3d"
