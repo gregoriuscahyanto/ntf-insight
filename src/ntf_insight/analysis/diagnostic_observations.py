@@ -14,7 +14,10 @@ from __future__ import annotations
 from collections import defaultdict
 from dataclasses import dataclass
 from datetime import date
-from typing import Iterable
+from typing import Iterable, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from ntf_insight.domain.case import NTFCase
 
 from ntf_insight.domain.events import DiagnosticEvent
 
@@ -112,3 +115,29 @@ def unique_diagnostic_observations(
         ))
         observations.append(DiagnosticObservation(event=event, source_refs=refs))
     return observations
+
+
+def dtc_description_catalog(
+    cases: Iterable["NTFCase"],
+) -> dict[tuple[str, str], str]:
+    """Local DTC-Explorer-style labels, keyed by the exact ECU:DTC pair.
+
+    Text is a descriptive label ONLY, never a clustering feature. Use the
+    same deduplicated observation preference as the DTC Explorer, then look
+    at original observations for keys whose collapsed QuickTest lacked text.
+    No text is invented and the catalog never leaves local memory.
+    """
+    cases = list(cases)
+    catalog: dict[tuple[str, str], str] = {}
+    for case in cases:
+        for obs in unique_diagnostic_observations(case.diagnostics):
+            event = obs.event
+            value = (event.dtc_text or "").strip()
+            if value:
+                catalog.setdefault(event.fault_key, value)
+    for case in cases:
+        for event in case.diagnostics:
+            value = (event.dtc_text or "").strip()
+            if value:
+                catalog.setdefault(event.fault_key, value)
+    return catalog
