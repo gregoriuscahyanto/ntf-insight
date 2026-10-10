@@ -131,11 +131,16 @@ def test_select_case_in_map_emits_only_local_id_and_no_remote_access():
     app.processEvents()
     emitted = []
     panel.case_requested.connect(emitted.append)
-    target = "A2"
-    item = panel.plot.items_by_case[target]
+    item = panel.plot.items_by_case["A2"]
     pos = panel.plot.mapFromScene(item.sceneBoundingRect().center())
+    # MDS projection can put multiple real cases on top of one another.
+    # The actual topmost clickable point, not the occluded item, must win.
+    clicked = panel.plot.itemAt(pos)
+    assert clicked is not None
+    visible_case_id = clicked.data(0)
+    assert isinstance(visible_case_id, str)
     QTest.mouseClick(panel.plot.viewport(), Qt.MouseButton.LeftButton, pos=pos)
-    assert panel._focused_case_id == target
+    assert panel._focused_case_id == visible_case_id
     panel.open_selected_case()
     assert emitted
     assert emitted[-1] in panel.by_id
