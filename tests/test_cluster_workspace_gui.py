@@ -374,3 +374,62 @@ def test_single_cluster_start_button_runs_all_methods_and_sensitivities():
     assert panel.run_button.isEnabled()
     panel.close()
     app.processEvents()
+
+
+def test_four_everyday_questions_are_visible_without_expert_tables():
+    app = QApplication.instance() or QApplication([])
+    panel = ClusterWorkspace(sample())
+    panel.show()
+    app.processEvents()
+    assert panel.run_button.text() == "Clusteranalyse starten"
+    assert panel.expert_panel.isHidden()
+    assert panel.advanced_panel.isHidden()
+    assert all(value.text() == "–" for value in panel.summary_values.values())
+    assert panel.group_table.isColumnHidden(4)
+    assert panel.member_table.isColumnHidden(6)
+
+    _calculate(panel)
+    assert panel.summary_values["groups"].text() == "2"
+    assert panel.summary_values["assigned"].text() == "12"
+    assert panel.summary_values["noise"].text() == "1"
+    assert panel.summary_values["missing"].text() == "2"
+    assert panel.plot.items_by_case
+    assert panel.group_table.currentIndex().isValid()
+    assert "Warum sind diese" in panel.why_heading.text()
+    assert "CPC3:CODE-" in panel.why_text.text()
+    assert panel.member_model.rowCount() == 6
+    assert all(row[1] in panel.by_id for row in panel.member_model.rows)
+    assert any("gleiche ECU:DTC" in row[5] for row in panel.member_model.rows)
+    assert "Wichtig:" in panel.why_text.text()
+    initial_group = panel.why_heading.text()
+    panel.group_table.selectRow(1)
+    assert panel.why_heading.text() != initial_group
+    assert "CPC3:CODE-" in panel.why_text.text()
+
+    # Long-standing review and alternative algorithms are not removed.
+    panel.expert_toggle.setChecked(True)
+    assert not panel.expert_panel.isHidden()
+    assert panel.compare_model.rowCount() == 4
+    assert panel.stability_model.rowCount() > 0
+    assert panel.core_model.rowCount() > 0
+    panel.expert_toggle.setChecked(False)
+    assert panel.expert_panel.isHidden()
+    panel.close()
+    app.processEvents()
+
+
+def test_simple_selection_via_plot_finds_cases_and_reasons():
+    app = QApplication.instance() or QApplication([])
+    panel = ClusterWorkspace(sample())
+    _calculate(panel)
+    panel.focus_case("B2")
+    assert "B2" in panel._member_ids
+    assert panel.member_model.rowCount() == 6
+    assert panel.group_table.currentIndex().isValid()
+    assert "CODE-B-" in panel.why_text.text()
+    panel.lookback.setCurrentIndex(panel.lookback.findData(90))
+    assert panel.summary_values["groups"].text() == "–"
+    assert panel.group_model.rowCount() == 0
+    assert "Bitte zuerst" in panel.why_text.text()
+    panel.close()
+    app.processEvents()
