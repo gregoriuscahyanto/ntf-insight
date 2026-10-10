@@ -20,8 +20,10 @@ def test_main_window_can_be_constructed(tmp_path, monkeypatch) -> None:
     assert "dtcs" in window.pages
     assert "clusters" not in window.pages
     assert "clusters" not in window.navigation.buttons
-    assert hasattr(window.pages["cases"], "scatter_panel")
-    assert window.pages["cases"].scatter_panel.plot is not None
+    assert hasattr(window.pages["cases"], "cluster_workspace")
+    assert window.pages["cases"].cluster_workspace.plot is not None
+    assert window.pages["cases"].detail_tabs.tabText(0) == "Clusteranalyse"
+    assert window.pages["cases"].detail_tabs.count() == 3
     assert "suppliers" in window.pages
     assert "quality" in window.pages
     assert window.repository.list_cases()

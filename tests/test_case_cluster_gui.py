@@ -85,7 +85,7 @@ def test_empty_case_repository_does_not_convert_quicktests_to_cases() -> None:
     app.processEvents()
 
 
-def test_case_page_and_scatter_navigate_in_both_directions(
+def test_case_page_and_unified_cluster_workspace_navigate_in_both_directions(
     tmp_path, monkeypatch,
 ) -> None:
     from ntf_insight.app.windows.main_window import MainWindow
@@ -100,21 +100,18 @@ def test_case_page_and_scatter_navigate_in_both_directions(
     assert cases.find_similar_button.isEnabled()
     cases.find_similar_button.click()
 
-    scatter = cases.scatter_panel
-    assert cases.detail_tabs.currentWidget() is scatter
-    assert scatter.focus_id == selected
+    cluster = cases.cluster_workspace
+    assert cases.detail_tabs.currentWidget() is cluster
+    assert cluster._focused_case_id == selected
 
-    # Selecting a different chart point changes the shared FIN/Fall selection
-    # without jumping away from the plot.
-    other = next(case_id for case_id in scatter._visible_case_ids if case_id != selected)
-    scatter._select_point(other)
+    other = next(case_id for case_id in cluster.by_id if case_id != selected)
+    cluster.focus_case(other)
+    cluster.case_requested.emit(other)
     assert cases.selector.currentData() == other
-    assert cases.detail_tabs.currentWidget() is scatter
 
-    # The former nonmatching search must not prevent opening the real case.
     cases.case_search.setText("FIN-DOES-NOT-EXIST")
     assert cases.case_proxy.rowCount() == 0
-    scatter.open_button.click()
+    cluster.case_requested.emit(other)
     assert cases.selector.currentData() == other
     assert cases.case_search.text() == ""
     assert cases.detail_tabs.currentWidget() is cases.analysis_tab

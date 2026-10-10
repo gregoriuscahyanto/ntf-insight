@@ -60,7 +60,7 @@ def test_scatter_empty_data_has_no_fabricated_points() -> None:
     app.processEvents()
 
 
-def test_scatter_is_part_of_case_workspace_and_all_tabs_sync(
+def test_cluster_workspace_replaces_scatter_tab_and_synchronizes_case_selection(
     tmp_path, monkeypatch,
 ) -> None:
     from ntf_insight.app.windows.main_window import MainWindow
@@ -69,36 +69,32 @@ def test_scatter_is_part_of_case_workspace_and_all_tabs_sync(
     app = QApplication.instance() or QApplication([])
     window = MainWindow()
     cases = window.pages["cases"]
-    scatter = cases.scatter_panel
+    cluster = cases.cluster_workspace
 
     assert "clusters" not in window.pages
     assert "clusters" not in window.navigation.buttons
-    assert cases.detail_tabs.widget(0) is scatter
+    assert cases.detail_tabs.widget(0) is cluster
+    assert cases.detail_tabs.tabText(0) == "Clusteranalyse"
     assert cases.detail_tabs.widget(1) is cases.analysis_tab
     assert cases.detail_tabs.widget(2) is cases.quicktest_browser
+    assert cases.detail_tabs.count() == 3
 
-    before = {p.case_id: (p.x, p.y) for p in scatter.projection.points}
-    scatter.threshold.setValue(0.95)
-    assert scatter.result.threshold == 0.95
-    assert {p.case_id: (p.x, p.y) for p in scatter.projection.points} == before
-
-    assert scatter.focus_case("DEMO-004")
-    scatter.open_button.click()
+    assert cluster.focus_case("DEMO-004")
+    cluster.case_requested.emit("DEMO-004")
     assert cases.detail_tabs.currentWidget() is cases.analysis_tab
     assert cases.selector.currentData() == "DEMO-004"
 
     cases.find_similar_button.click()
-    assert cases.detail_tabs.currentWidget() is scatter
-    assert scatter.focus_id == "DEMO-004"
+    assert cases.detail_tabs.currentWidget() is cluster
+    assert cluster._focused_case_id == "DEMO-004"
 
-    scatter.quicktests_button.click()
+    cases.show_quicktests()
     assert cases.detail_tabs.currentWidget() is cases.quicktest_browser
     assert cases.quicktest_browser.fin_selector.currentText() == "DEMO-VIN-000004"
 
-    # Changing the FIN in QuickTests also changes the active case.
     cases.quicktest_browser.select_fin("DEMO-VIN-000003")
     assert cases.selector.currentData() == "DEMO-003"
-    assert scatter.focus_id == "DEMO-003"
+    assert cluster._focused_case_id == "DEMO-003"
     assert cases.detail_tabs.currentWidget() is cases.quicktest_browser
 
     window.close()

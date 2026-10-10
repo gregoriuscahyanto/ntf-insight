@@ -119,24 +119,22 @@ def test_local_hdbscan_csv_contains_only_real_qec_members(tmp_path, monkeypatch)
     app.processEvents()
 
 
-def test_hdbscan_tab_lives_alongside_existing_case_and_strict_cluster_tabs(
-    tmp_path, monkeypatch,
-) -> None:
+def test_hdbscan_tools_are_in_single_cluster_workspace(tmp_path, monkeypatch) -> None:
     from ntf_insight.app.windows.main_window import MainWindow
 
     monkeypatch.setenv("NTF_INSIGHT_DATA_DIR", str(tmp_path / "empty"))
     app = QApplication.instance() or QApplication([])
     window = MainWindow()
     page = window.pages["cases"]
-    assert page.detail_tabs.tabText(0) == "2D-Streudiagramm"
-    assert page.detail_tabs.tabText(3) == "Repräsentative Cluster"
-    assert page.detail_tabs.tabText(4) == "ML-Cluster (HDBSCAN)"
-    assert page.detail_tabs.widget(4) is page.hdbscan_panel
-    assert page.detail_tabs.widget(3) is page.representative_panel
-    assert page.detail_tabs.widget(0) is page.scatter_panel
+    assert page.detail_tabs.count() == 3
+    assert page.detail_tabs.tabText(0) == "Clusteranalyse"
+    panel = page.cluster_workspace
+    assert panel.method.currentData() == "leaf"
+    assert panel.expert_button.isEnabled()
+    assert panel.representative_button.isEnabled()
+    assert panel.old_scatter_button.isEnabled()
     window.close()
     app.processEvents()
-
 
 
 def test_method_comparison_shows_both_on_same_cases_and_export_only_aggregates(
