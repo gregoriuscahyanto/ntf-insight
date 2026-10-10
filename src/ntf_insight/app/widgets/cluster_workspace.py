@@ -28,6 +28,7 @@ from ntf_insight.analysis.cluster_core_review import (
     CoreGroupLink, link_core_review_groups, write_core_review_template,
 )
 from ntf_insight.analysis.hdbscan_clustering import cluster_hdbscan_cases
+from ntf_insight.analysis.cluster_explanation import explain_cluster
 from ntf_insight.analysis.cluster_stability import build_stability_report, sensitivity_scenarios
 from ntf_insight.app.models.simple_table_model import SimpleTableModel
 from ntf_insight.app.widgets.cluster_projection_plot import ClusterProjectionPlot
@@ -203,7 +204,7 @@ class ClusterWorkspace(QWidget):
         self._member_ids: list[str] = []
         self._noise_ids: list[str] = []
         self._focused_case_id: str | None = None
-        self._member_title_default = "Falltabelle – gewählter Cluster"
+        self._member_title_default = "4. Fälle im ausgewählten Cluster"
         self._dialogs: list[QDialog] = []
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -334,26 +335,43 @@ class ClusterWorkspace(QWidget):
         buttons.addStretch(1)
         body.addLayout(buttons)
 
-        export_row = QHBoxLayout()
-        self.export_button = QPushButton("Clustertabelle lokal exportieren")
-        self.export_button.setEnabled(False)
-        self.export_button.clicked.connect(self.export_csv)
-        export_row.addWidget(self.export_button)
-        export_row.addStretch(1)
-        body.addLayout(export_row)
-
         self.status = QLabel(
             "Bereit. 'Clusteranalyse starten' prüft alle Verfahren gemeinsam.",
             objectName="PageSubtitle",
         )
         self.status.setWordWrap(True)
         body.addWidget(self.status)
+
+        # The three everyday KPIs and the separate missing-evidence figure.
+        summary = QHBoxLayout()
+        summary.setSpacing(10)
+        self.summary_values = {}
+        for key, title in (
+            ("groups", "Gefundene Cluster"),
+            ("assigned", "Fälle in Clustern"),
+            ("noise", "Ohne Cluster"),
+            ("missing", "Ohne Vor-Tausch-Diagnose"),
+        ):
+            card = QFrame()
+            card.setObjectName("Card")
+            stack = QVBoxLayout(card)
+            stack.setContentsMargins(14, 10, 14, 10)
+            label = QLabel(title, objectName="CardTitle")
+            label.setWordWrap(True)
+            value = QLabel("–", objectName="CardValue")
+            value.setObjectName("CardValue")
+            value.setAlignment(Qt.AlignmentFlag.AlignLeft)
+            stack.addWidget(label)
+            stack.addWidget(value)
+            summary.addWidget(card, 1)
+            self.summary_values[key] = value
+        body.addLayout(summary)
         self.kpi = QLabel(objectName="PageSubtitle")
         self.kpi.setWordWrap(True)
         body.addWidget(self.kpi)
 
         map_header = QHBoxLayout()
-        map_header.addWidget(QLabel("Fallvisualisierung", objectName="CardTitle"))
+        map_header.addWidget(QLabel("2. Cluster im Überblick", objectName="CardTitle"))
         map_header.addStretch(1)
         map_header.addWidget(QLabel("Darstellung"))
         self.dimension = QComboBox()
@@ -396,10 +414,10 @@ class ClusterWorkspace(QWidget):
         self.plot_row.addWidget(self.other_plot, 1)
         body.addLayout(self.plot_row)
         plot_note = QLabel(
-            "2D/3D sind MDS-Projektionen der Originaldistanzen. "
-            "Cluster entstehen NIE aus 2D/3D-Pixeln. "
-            "Farbige Punkte = gruppiert, Grau = Rauschen, größere Punkte = Medoid. "
-            "Fälle ohne gesicherte Vor-Tausch-Diagnose werden unten dokumentiert.",
+            "Jeder Punkt ist ein QEC-Fall. Farbe = Cluster, "
+            "Grau = nicht zugeordnet, großer Punkt = repräsentativer Fall. "
+            "Klick auf einen Punkt zeigt dessen Cluster. "
+            "Die Grafik zeigt Ähnlichkeiten, keine bewiesenen Defekte.",
             objectName="PageSubtitle",
         )
         plot_note.setWordWrap(True)
@@ -421,7 +439,7 @@ class ClusterWorkspace(QWidget):
         self.search_feedback.setWordWrap(True)
         body.addWidget(self.search_feedback)
 
-        body.addWidget(QLabel("Clustertabelle", objectName="CardTitle"))
+        body.addWidget(QLabel("3. Cluster auswählen – ein Klick zeigt die Fälle", objectName="CardTitle"))
         self.group_model = _ClusterTableModel((
             "Cluster", "Repräsentativer QEC-Fall", "QEC-Fälle", "FINs",
             "Schwächstes Paar", "Median", "Schwache Paare",
@@ -434,7 +452,30 @@ class ClusterWorkspace(QWidget):
         self.group_table.selectionModel().currentRowChanged.connect(
             self._group_changed
         )
+        # Keep technical columns in the model, but remove them from the
+        # everyday view. The advanced details still explain algorithms below.
+        for column in (1, 4, 5, 6, 8):
+            self.group_table.setColumnHidden(column, True)
+        self.group_table.setColumnWidth(7, 630)
         body.addWidget(self.group_table)
+
+        self.why_box = QFrame()
+        self.why_box.setObjectName("Card")
+        why_layout = QVBoxLayout(self.why_box)
+        why_layout.setContentsMargins(14, 12, 14, 12)
+        self.why_heading = QLabel("Warum gehören diese Fälle zusammen?")
+        self.why_heading.setObjectName("CardTitle")
+        self.why_text = QLabel(
+            "Bitte zuerst die Clusteranalyse starten und einen Cluster wählen."
+        )
+        self.why_text.setWordWrap(True)
+        self.why_text.setTextFormat(Qt.TextFormat.PlainText)
+        self.why_text.setTextInteractionFlags(
+            Qt.TextInteractionFlag.TextSelectableByMouse
+        )
+        why_layout.addWidget(self.why_heading)
+        why_layout.addWidget(self.why_text)
+        body.addWidget(self.why_box)
 
         self.member_title = QLabel(
             self._member_title_default, objectName="CardTitle",
@@ -442,12 +483,14 @@ class ClusterWorkspace(QWidget):
         body.addWidget(self.member_title)
         self.member_model = _ClusterTableModel((
             "Rolle", "QEC-Fall", "FIN", "Index zum Medoid",
-            "ML-Zugehörigkeit", "Gemeinsame ECU:DTC", "SSL-Endbefund (post hoc)",
+            "ML-Zugehörigkeit", "Gemeinsam mit Repräsentanten", "SSL-Endbefund (post hoc)",
         ))
         self.member_table = _table(
-            self.member_model, 210,
-            (185, 165, 183, 137, 115, 317, 480),
+            self.member_model, 240,
+            (165, 175, 185, 137, 115, 560, 480),
         )
+        for column in (3, 4, 6):
+            self.member_table.setColumnHidden(column, True)
         self.member_table.doubleClicked.connect(self._open_member_case)
         body.addWidget(self.member_table)
         open_row = QHBoxLayout()
@@ -466,6 +509,14 @@ class ClusterWorkspace(QWidget):
         expert_body = QVBoxLayout(self.expert_panel)
         expert_body.setContentsMargins(0, 6, 0, 0)
         expert_body.setSpacing(10)
+        export_row = QHBoxLayout()
+        self.export_button = QPushButton("Clustertabelle lokal exportieren")
+        self.export_button.setEnabled(False)
+        self.export_button.clicked.connect(self.export_csv)
+        export_row.addWidget(self.export_button)
+        export_row.addStretch(1)
+        expert_body.addLayout(export_row)
+
         comparison_header = QHBoxLayout()
         comparison_header.addWidget(QLabel("Methodenvergleich", objectName="CardTitle"))
         comparison_header.addStretch(1)
