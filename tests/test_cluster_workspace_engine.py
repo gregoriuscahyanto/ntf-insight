@@ -132,7 +132,7 @@ def test_shared_3d_projection_is_identical_for_all_methods():
         assert reused == standalone
         assert reused.positions is projected
     wrong = (("UNKNOWN-SYNTHETIC-QEC", 0.0, 0.0, 0.0),)
-    with pytest.raises(ValueError, match="andere QEC-Kohorte"):
+    with pytest.raises(ValueError, match="QEC-Kohorte"):
         calculate_clusters(
             cases, params("complete_cosine"), projection=wrong,
         )
