@@ -6,7 +6,7 @@ import os
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PySide6.QtCore import Qt
-from PySide6.QtTest import QSignalSpy, QTest
+from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication
 
 from ntf_insight.app.widgets.cluster_workspace import ClusterWorkspace
@@ -18,17 +18,17 @@ def _calculate(panel: ClusterWorkspace, compare: bool = False) -> None:
         panel.compare_methods()
     else:
         panel.run_analysis()
-    task = panel._task
-    assert task is not None
-    spy = QSignalSpy(task.calculated)
-    failed = QSignalSpy(task.problem)
-    if not spy.count():
-        assert spy.wait(45000), (
-            f"GUI worker returned no data: {[args[0] for args in failed]}"
-        )
-    QApplication.processEvents()
-    assert not failed.count()
-    assert panel.result is not None
+    assert panel._task is not None
+    # A tiny synthetic cohort can finish before a spy is attached. Poll the
+    # Qt event loop instead of relying on a racy after-start signal hook.
+    for _ in range(2000):
+        QApplication.processEvents()
+        if panel.result is not None and panel.run_button.isEnabled():
+            break
+        if panel._task is None and "nicht möglich" in panel.status.text():
+            break
+        QTest.qWait(10)
+    assert panel.result is not None, panel.status.text()
     assert panel.run_button.isEnabled()
 
 
