@@ -63,9 +63,31 @@ def test_fin_workspace_groups_all_original_fins_and_opens_history(tmp_path):
     assert panel.number_labels["missing"].text() == "2"
     assert panel.number_labels["groups"].text() == "2"
     assert panel.group_model.rowCount() == 2
+    assert panel.plot._result is panel.result
+    assert len(panel.plot._fins) == 21
+    assert panel.method_combo.count() == 3
     assert "Synthetic diagnostic label" in panel.explanation.text()
     assert "Wichtig:" in panel.explanation.text()
     assert panel.fin_model.rowCount() == 10
+    # Method selection changes the actual memberships, plot and table,
+    # never launches a new background analysis.
+    panel.method_combo.setCurrentIndex(
+        panel.method_combo.findData("eom")
+    )
+    assert panel.result is panel._run_results["eom"]
+    assert panel.plot._result is panel.result
+    assert panel.group_model.rowCount() == len(panel.result.groups)
+    panel.method_combo.setCurrentIndex(
+        panel.method_combo.findData("complete_cosine")
+    )
+    assert panel.result is panel._run_results["complete_cosine"]
+    assert "Complete-Link" in panel.status.text()
+    panel.method_combo.setCurrentIndex(panel.method_combo.findData("leaf"))
+    panel.dimension.setCurrentIndex(panel.dimension.findData("3d"))
+    assert panel.plot.mode == "3d"
+    panel.plot.set_rotation(110, 35)
+    assert (panel.plot.yaw, panel.plot.elevation) == (110, 35)
+    assert panel.result is panel._run_results["leaf"]
 
     target = group_b[1]
     panel.fin_search.setText(target)
