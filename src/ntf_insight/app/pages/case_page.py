@@ -46,9 +46,7 @@ from ntf_insight.app.models.simple_table_model import SimpleTableModel
 from ntf_insight.app.models.timeline_table_model import TimelineTableModel
 from ntf_insight.app.widgets.event_time_plot import EventTimePlot
 from ntf_insight.app.widgets.quicktest_browser import QuickTestBrowser
-from ntf_insight.app.widgets.case_scatter_plot import CaseScatterPanel
-from ntf_insight.app.widgets.representative_case_panel import RepresentativeCasePanel
-from ntf_insight.app.widgets.hdbscan_panel import HDBSCANPanel
+from ntf_insight.app.widgets.cluster_workspace import ClusterWorkspace
 from ntf_insight.ingestion.manual_entry import ManualCaseService, ManualEntryError
 from ntf_insight.ingestion.real_source_parsers import canonical_fin
 from ntf_insight.domain.events import PartReplacement
@@ -99,22 +97,20 @@ class CasePage(QWidget):
         self.detail_tabs = QTabWidget()
         outer_layout.addWidget(self.detail_tabs)
 
-        # One coherent workspace: plot, case analysis and FIN-scoped source tests.
-        # Only true QEC/NTF cases enter the scatter and clustering.
-        self.scatter_panel = CaseScatterPanel(
+        # A SINGLE extensible cluster tab replaces three separate pages.
+        # Source tests and independent case details remain separate and intact.
+        self.cluster_workspace = ClusterWorkspace(
             self.real_cases,
-            cluster_diagnostic_cases(self.real_cases) if self.real_cases else None,
+            store=manual_service.store if manual_service is not None else None,
+            source_knowledge=self.source_knowledge,
             population_metrics=(
                 self.source_knowledge.autoexport_population()
                 if self.source_knowledge is not None else {}
             ),
         )
-        self.detail_tabs.addTab(self.scatter_panel, "2D-Streudiagramm")
-        self.scatter_panel.case_focused.connect(
-            lambda case_id: self.select_case(case_id, show_analysis=False)
-        )
-        self.scatter_panel.case_requested.connect(self.select_case)
-        self.scatter_panel.quicktests_requested.connect(self.show_quicktests)
+        self.detail_tabs.addTab(self.cluster_workspace, "Clusteranalyse")
+        self.cluster_workspace.case_requested.connect(self.select_case)
+        self.cluster_workspace.tips_linked.connect(self._relay_tips_link)
 
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
@@ -131,29 +127,6 @@ class CasePage(QWidget):
             self.detail_tabs.addTab(self.quicktest_browser, "QuickTests nach FIN")
         else:
             self.quicktest_browser = None
-
-        # New, distinct experiment-planning view: does NOT relabel the
-        # original conservative Complete-Link clusters on the scatter tab.
-        self.representative_panel = RepresentativeCasePanel(
-            self.real_cases,
-            source_knowledge=self.source_knowledge,
-            store=manual_service.store if manual_service is not None else None,
-        )
-        self.detail_tabs.addTab(
-            self.representative_panel, "Repräsentative Cluster"
-        )
-        self.representative_panel.case_requested.connect(self.select_case)
-        self.representative_panel.tips_linked.connect(self._relay_tips_link)
-
-        # Experiment, never silently replace/overwrite strict QEC clusters.
-        self.hdbscan_panel = HDBSCANPanel(
-            self.real_cases,
-            store=manual_service.store if manual_service is not None else None,
-        )
-        self.detail_tabs.addTab(
-            self.hdbscan_panel, "ML-Cluster (HDBSCAN)"
-        )
-        self.hdbscan_panel.case_requested.connect(self.select_case)
 
         layout = QVBoxLayout(content)
         layout.setContentsMargins(32, 28, 32, 28)
@@ -206,9 +179,9 @@ class CasePage(QWidget):
         self.add_event_button.clicked.connect(self._add_event)
         selector_row.addWidget(self.add_event_button)
 
-        self.find_similar_button = QPushButton("Im 2D-Streudiagramm zeigen")
+        self.find_similar_button = QPushButton("In Clusteranalyse zeigen")
         self.find_similar_button.setToolTip(
-            "Zeigt den gewählten Schadteilfall in der 2D-Fallübersicht "
+            "Zeigt den gewählten Schadteilfall in der Clusteranalyse "
             "mit Berechnungstabellen. FIN-only-QuickTests bilden keine "
             "zusätzlichen Schadteilfälle."
         )
@@ -585,8 +558,8 @@ class CasePage(QWidget):
     def _request_similar_cases(self) -> None:
         """Show the selected true QEC/NTF case in the local scatter tab."""
         case_id = self.selector.currentData()
-        if isinstance(case_id, str) and self.scatter_panel.focus_case(case_id):
-            self.detail_tabs.setCurrentWidget(self.scatter_panel)
+        if isinstance(case_id, str) and self.cluster_workspace.focus_case(case_id):
+            self.detail_tabs.setCurrentWidget(self.cluster_workspace)
 
     def _on_quicktest_fin_changed(self) -> None:
         """Follow an explicit FIN selection from the QuickTest browser."""
@@ -771,9 +744,9 @@ class CasePage(QWidget):
 
         # Keep selected QEC/NTF case and FIN-specific QuickTests aligned.
         if self.repository.get_case(case.case_id) is not None:
-            self.scatter_panel.focus_case(case.case_id)
+            self.cluster_workspace.focus_case(case.case_id)
         else:
-            self.scatter_panel.clear_focus()
+            self.cluster_workspace.clear_focus()
         # Shared dropdown selection must also highlight the analysis table.
         for source_row in range(self.case_model.rowCount()):
             if self.case_model.case_id_at(source_row) != case.case_id:
