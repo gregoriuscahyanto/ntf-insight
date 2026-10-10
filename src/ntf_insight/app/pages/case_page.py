@@ -46,6 +46,7 @@ from ntf_insight.app.models.timeline_table_model import TimelineTableModel
 from ntf_insight.app.widgets.event_time_plot import EventTimePlot
 from ntf_insight.app.widgets.quicktest_browser import QuickTestBrowser
 from ntf_insight.app.widgets.cluster_workspace import ClusterWorkspace
+from ntf_insight.app.widgets.autoexport_fin_workspace import AutoExportFinWorkspace
 from ntf_insight.ingestion.manual_entry import ManualCaseService, ManualEntryError
 from ntf_insight.ingestion.real_source_parsers import canonical_fin
 from ntf_insight.domain.events import PartReplacement
@@ -110,6 +111,24 @@ class CasePage(QWidget):
         self.detail_tabs.addTab(self.cluster_workspace, "Clusteranalyse")
         self.cluster_workspace.case_requested.connect(self.select_case)
         self.cluster_workspace.tips_linked.connect(self._relay_tips_link)
+        # The full FIN population has no confirmed pump-swap anchor and
+        # deliberately never appears as 11k fake QEC cases.
+        self.autoexport_fin_workspace = AutoExportFinWorkspace(
+            self.source_knowledge, self.real_cases,
+            population_metrics=(
+                self.source_knowledge.autoexport_population()
+                if self.source_knowledge is not None else {}
+            ),
+        )
+        self.detail_tabs.addTab(
+            self.autoexport_fin_workspace, "Fahrzeugmuster (AutoExport)"
+        )
+        self.cluster_workspace.autoexport_requested.connect(
+            lambda: self.detail_tabs.setCurrentWidget(self.autoexport_fin_workspace)
+        )
+        self.autoexport_fin_workspace.fin_requested.connect(
+            self._open_autoexport_fin_history
+        )
 
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
@@ -593,6 +612,12 @@ class CasePage(QWidget):
         self.autoexport_history_note.setText("Keine FIN ausgewählt.")
         self.autoexport_history_count.setText("—")
         self.autoexport_history_more.setEnabled(False)
+
+    def _open_autoexport_fin_history(self, fin: str) -> None:
+        """Show archived FIN history even if the FIN has no QEC case."""
+        self.detail_tabs.setCurrentWidget(self.analysis_tab)
+        self.autoexport_fin_lookup.setText(fin)
+        self._load_autoexport_history(reset=True)
 
     def _load_autoexport_history(self, *, reset: bool = False) -> None:
         """Read bounded FIN-wide raw observations, never infer an NTF case."""
