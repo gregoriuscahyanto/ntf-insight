@@ -453,7 +453,7 @@ def test_four_everyday_questions_are_visible_without_expert_tables():
     assert panel.summary_values["noise"].text() == "1"
     assert panel.summary_values["missing"].text() == "2"
     assert panel.pie_chart.values == (12, 1, 2)
-    assert "80.0%" in panel.pie_percent_labels["assigned"].text()
+    assert "80,0 %" in panel.pie_percent_labels["assigned"].text()
     assert panel.plot.items_by_case
     assert panel.group_table.currentIndex().isValid()
     assert "Warum gehören diese" in panel.why_heading.text()
