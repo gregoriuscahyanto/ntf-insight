@@ -631,7 +631,9 @@ class ClusterWorkspace(QWidget):
         self.filter_common.setEnabled(not spec.supports_jaccard_cutoff)
         if spec.supports_jaccard_cutoff:
             self.filter_common.setChecked(False)
-        self.method_hint.setText(spec.description)
+        self.method_hint.setText(
+            f"Alle Verfahren · Ansicht: {spec.title} · Ursache unbestätigt"
+        )
 
     def _method_changed(self, *_args) -> None:
         self._update_parameters()
@@ -642,8 +644,7 @@ class ClusterWorkspace(QWidget):
         elif self.result is not None:
             self._clear_results()
             self.status.setText(
-                "Methode geändert. Bitte 'Cluster berechnen' oder "
-                "'Methoden vergleichen' starten."
+                "Anzeigeverfahren geändert. Bitte die Clusteranalyse neu starten."
             )
 
     def _invalidate_on_input(self, *_args) -> None:
@@ -652,7 +653,7 @@ class ClusterWorkspace(QWidget):
         self._clear_results()
         self.status.setText(
             "Eingaben geändert. Die alten Cluster wurden ausgeblendet. "
-            "Bitte mit den neuen Parametern berechnen."
+            "Bitte die Clusteranalyse neu starten."
         )
 
     def _parameters(self) -> ClusterParameters:
@@ -672,37 +673,24 @@ class ClusterWorkspace(QWidget):
         return [case for case in self.cases
                 if _component_key(case) == family]
 
-    def showEvent(self, event) -> None:  # noqa: N802
-        super().showEvent(event)
-        if not self._activated:
-            self._activated = True
-            self.run_analysis()
-
     def run_analysis(self) -> None:
-        self._start_methods((self._parameters().method,))
-
-    def compare_methods(self) -> None:
+        """The sole GUI analysis action computes every permissible method."""
         p = self._parameters()
-        selected = p.method
-        options = (
-            selected,
-            *(x.key for x in METHODS if (
-                x.key != selected
-                and (p.common_dtc_cutoff is None or x.key != "complete_legacy")
-            )),
-        )
-        self._start_methods(tuple(options))
-
-    def run_stability(self) -> None:
-        p = self._parameters()
-        options = (
+        methods = (
             p.method,
             *(item.key for item in METHODS
               if item.key != p.method
               and (p.common_dtc_cutoff is None
                    or item.key != "complete_legacy")),
         )
-        self._start_methods(tuple(options), include_stability=True)
+        self._start_methods(tuple(methods), include_stability=True)
+
+    # Internal legacy helpers remain callable, but are no longer UI actions.
+    def compare_methods(self) -> None:
+        self.run_analysis()
+
+    def run_stability(self) -> None:
+        self.run_analysis()
 
     def _start_methods(
         self, methods: tuple[str, ...], *, include_stability: bool = False,
@@ -723,11 +711,10 @@ class ClusterWorkspace(QWidget):
             self.status.setText(str(exc))
             return
         self.run_button.setEnabled(False)
-        self.compare_button.setEnabled(False)
-        self.stability_button.setEnabled(False)
         self.export_button.setEnabled(False)
         self.status.setText(
-            f"Berechne {len(methods)} Methode(n) für {len(cases)} QEC-Fälle …"
+            f"Berechne {len(methods)} Methoden und die Stabilität "
+            f"für {len(cases)} QEC-Fälle …"
         )
         self._running_params = params
         self._running_family = self.family.currentData()
@@ -751,8 +738,6 @@ class ClusterWorkspace(QWidget):
         results, core_result, stability_report = payload
         self._task = None
         self.run_button.setEnabled(True)
-        self.compare_button.setEnabled(True)
-        self.stability_button.setEnabled(True)
         if (
             self._running_params != self._parameters()
             or self._running_family != self.family.currentData()
@@ -770,10 +755,10 @@ class ClusterWorkspace(QWidget):
         self.result = results[0]
         self.export_button.setEnabled(True)
         self.status.setText(
-            f"{len(results)} Methode(n) berechnet · "
-            f"gemeinsame Basis: {len(results[0].eligible_case_ids)} "
-            "QEC-Fälle mit geeigneter Vor-Tausch-Diagnose. "
-            "Keine technisch bestätigten Fehlermechanismen."
+            f"Analyse abgeschlossen: {len(results)} Verfahren und "
+            f"{len(stability_report.comparisons) if stability_report else 0} "
+            f"Stabilitätsvergleiche · {len(results[0].eligible_case_ids)} "
+            "auswertbare QEC-Fälle. Keine Ursachenbestätigung."
         )
         self._refresh_comparison(results)
         self._show_result(results[0])
@@ -781,8 +766,6 @@ class ClusterWorkspace(QWidget):
     def _receive_error(self, message: str) -> None:
         self._task = None
         self.run_button.setEnabled(True)
-        self.compare_button.setEnabled(True)
-        self.stability_button.setEnabled(True)
         self.status.setText(f"Clusterberechnung nicht möglich: {message}")
         self._clear_results()
 
@@ -829,6 +812,7 @@ class ClusterWorkspace(QWidget):
             return
         self.stability_note.setText(
             f"{len(report.comparisons)} Vergleiche · "
+            f"Referenz: {BY_METHOD[report.reference_method].title} · "
             f"{report.reference_eligible} geeignete Referenzfälle. "
             "Methoden = gleiche Diagnosebasis; Daten/Parameter = "
             "Ein-Faktor-Variationen. Kein Ursachen-Voting."
