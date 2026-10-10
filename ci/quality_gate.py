@@ -24,6 +24,7 @@ def main() -> int:
         "-m",
         "pytest",
         "-q",
+        "-x",
         "--junitxml=reports/junit.xml",
         "--cov=ntf_insight",
         "--cov-report=term-missing",
