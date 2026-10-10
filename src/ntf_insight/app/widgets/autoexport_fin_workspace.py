@@ -349,9 +349,9 @@ class AutoExportFinWorkspace(QWidget):
         self.fin_table, self.fin_model = _table(
             (
                 "FIN", "ECU:DTC", "Ähnlichkeit zum Repräsentanten",
-                "QEC-Fälle", "Datenherkunft",
+                "QEC-Fälle", "QEC-Fallkennungen", "Datenherkunft",
             ),
-            (185, 90, 245, 100, 180),
+            (185, 90, 205, 90, 200, 160),
             280,
         )
         self.fin_table.selectionModel().currentRowChanged.connect(
@@ -544,6 +544,7 @@ class AutoExportFinWorkspace(QWidget):
                 self.result.code_counts.get(fin, 0),
                 f"{similarity:.1%}",
                 len(self.result.qec_links.get(fin, ())),
+                ", ".join(self.result.qec_links.get(fin, ())) or "–",
                 (self.result.sources_by_fin or {}).get(fin, "–"),
             )
             for fin, similarity in group.members
@@ -559,7 +560,9 @@ class AutoExportFinWorkspace(QWidget):
             f"Die {group.fin_count} Fahrzeuge teilen wiederkehrende "
             "Steuergerät-Fehlercode-Kombinationen (ECU:DTC). "
             "Zu jeder Kombination steht die Anzahl betroffener FINs. "
-            "Ein Klartext erscheint nur, wenn er in den Daten vorliegt.",
+            "Ein Klartext erscheint nur, wenn er in den Daten vorliegt. "
+            "Ein Klartext kann aus einem anderen Diagnosezeitpunkt "
+            "stammen und war kein eigenes Clustering-Merkmal.",
         ]
         if group.common_faults:
             for ecu, dtc, count, description in group.common_faults:
