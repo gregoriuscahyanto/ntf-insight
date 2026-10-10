@@ -87,6 +87,7 @@ class _FinClusterTask(QThread):
                     qec_only_fin_count=combined.qec_only_fin_count,
                     pre_swap_fins=len(self.qec_evidence.pump_swap_dates),
                     runtime_seconds=round(perf_counter() - started, 2),
+                    dtc_keys_by_fin=combined.faults,
                 )
                 for key, result in results.items()
             }
