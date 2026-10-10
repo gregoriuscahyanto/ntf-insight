@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from dataclasses import replace
+from datetime import datetime
 
 import pytest
 
@@ -9,7 +10,8 @@ from ntf_insight.analysis.cluster_explanation import explain_cluster
 from ntf_insight.analysis.cluster_workspace_engine import (
     ClusterMember, ClusterParameters, UnifiedCluster, calculate_clusters,
 )
-from test_hdbscan_clustering import sample
+from ntf_insight.domain.events import DiagnosticEvent
+from test_hdbscan_clustering import sample, synthetic
 
 
 def _first_group(cases):
@@ -32,7 +34,8 @@ def test_cluster_explanation_names_actual_shared_dtc_and_individual_overlap():
     for member in group.members:
         if member.case_id != group.representative_case_id:
             assert "gleiche ECU:DTC" in info.evidence_for(member.case_id)
-    assert "HDBSCAN bildet Dichtegruppen" in info.text
+    assert "Dichtegruppen" in info.text
+    assert "Wichtig:" in info.text
 
 
 def test_explanation_never_uses_ssl_end_findings_or_post_swap_supplier_labels():
@@ -60,10 +63,10 @@ def test_heterogeneous_cluster_is_described_as_inconclusive():
         internal_pair_count=1,
     )
     info = explain_cluster(cases, invented, ClusterParameters(), eligible)
-    assert "Kein identischer ECU:DTC" in info.text
+    assert "Kein einzelner Steuergerät-Fehlercode" in info.text
     assert "uneinheitlich" in info.text
     assert "Kein identischer ECU:DTC" in info.evidence_for("B0")
-    assert "Lieferantenverantwortung" in info.text
+    assert "Verantwortung des Lieferanten" in info.text
 
 
 def test_enabled_common_dtc_filter_cannot_reintroduce_suppressed_dtc():
@@ -75,7 +78,7 @@ def test_enabled_common_dtc_filter_cannot_reintroduce_suppressed_dtc():
         baseline.eligible_case_ids,
     )
     assert "Häufigkeitsfilter" in info.text
-    assert "Identische ECU:DTC in allen" not in info.text
+    assert "In allen 6 Fällen sind dieselben" not in info.text
     # The filtered-away group root codes must not masquerade as evidence.
     assert "CPC3:CODE-A-ROOT-A" not in info.text
     assert "CPC3:CODE-B-ROOT-A" not in info.text
@@ -105,3 +108,39 @@ def test_strict_review_uses_its_actual_metric_wording():
     )
     assert "Prüfgruppe K" in info.heading
     assert "Complete-Link Cosinus" in info.text
+
+
+def test_explanation_keeps_all_shared_codes_and_warning_pair_denominator():
+    """Seven cases: never truncate fourth/fifth code or a 12/21 warning."""
+    cases = [synthetic(f"S{i}", "S", i) for i in range(7)]
+    extra = ("SHARED-D", "SHARED-E")
+    for case in cases:
+        for code in extra:
+            case.diagnostics.append(DiagnosticEvent(
+                vin=case.vin, event_id=f"{case.case_id}:{code}",
+                ecu="CPC3", dtc_code=code,
+                occurred_at=datetime(2026, 4, 30),
+                source_ref=f"raw:synthetic#csv:{case.case_id}:{code}",
+            ))
+    group = UnifiedCluster(
+        cluster_id=7,
+        representative_case_id="S0",
+        members=tuple(ClusterMember(f"S{i}", 1.0) for i in range(7)),
+        vehicle_count=7,
+        common_faults=(),
+        minimum_pair_similarity=0.1,
+        median_pair_similarity=0.5,
+        weak_pair_count=12,
+        internal_pair_count=21,
+    )
+    ids = tuple(c.case_id for c in cases)
+    info = explain_cluster(cases, group, ClusterParameters(), ids)
+    assert "5 Steuergerät-Fehlercode-Kombinationen" in info.text
+    assert "CPC3:SHARED-D" in info.text
+    assert "CPC3:SHARED-E" in info.text
+    assert "(+" not in info.text
+    assert "21 Fallpaare" in info.text
+    assert "12 Paare" in info.text
+    assert "45 % Cosinus-Ähnlichkeit" in info.text
+    assert "Wichtig:" in info.text
+    assert "CPC3:SHARED-E" in info.evidence_for("S1")
