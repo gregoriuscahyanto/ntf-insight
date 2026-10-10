@@ -17,6 +17,7 @@ from ntf_insight.analysis.hdbscan_clustering import (
     cluster_hdbscan_cases,
     compare_hdbscan_methods,
 )
+from ntf_insight.analysis.method_comparison_audit import build_method_evaluation
 from ntf_insight.analysis.pilot_expert_validation import validate_pilot_evidence
 from ntf_insight.analysis.recurrence_coverage_audit import audit_recurrence_coverage
 from ntf_insight.domain.case import NTFCase
