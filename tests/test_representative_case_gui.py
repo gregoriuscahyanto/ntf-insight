@@ -166,7 +166,7 @@ def test_tips_review_gui_requires_confirmation_and_updates_local_case(
     app.processEvents()
 
 
-def test_case_workspace_has_distinct_representative_tab(tmp_path, monkeypatch) -> None:
+def test_case_workspace_has_only_one_clustering_tab(tmp_path, monkeypatch) -> None:
     from ntf_insight.app.windows.main_window import MainWindow
 
     monkeypatch.setenv("NTF_INSIGHT_DATA_DIR", str(tmp_path / "empty"))
@@ -174,16 +174,15 @@ def test_case_workspace_has_distinct_representative_tab(tmp_path, monkeypatch) -
     window = MainWindow()
     cases = window.pages["cases"]
     tabs = cases.detail_tabs
-    assert tabs.tabText(0) == "2D-Streudiagramm"
+    assert tabs.count() == 3
+    assert tabs.tabText(0) == "Clusteranalyse"
     assert tabs.tabText(1) == "FIN / Fallanalyse"
     assert tabs.tabText(2) == "QuickTests nach FIN"
-    assert tabs.tabText(3) == "Repräsentative Cluster"
-    assert cases.representative_panel is tabs.widget(3)
-    # The original strict cluster and scatter remain separate implementations.
-    assert cases.scatter_panel is tabs.widget(0)
+    assert cases.cluster_workspace is tabs.widget(0)
+    assert cases.cluster_workspace.representative_button.isEnabled()
+    assert cases.cluster_workspace.expert_button.isEnabled()
     window.close()
     app.processEvents()
-
 
 
 def test_local_investigation_plan_csv_contains_real_medoid_and_members(
