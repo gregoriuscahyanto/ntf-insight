@@ -174,11 +174,34 @@ und HDBSCAN-Parameter wie die GUI:
   Ursachenbestätigung** durch DTC-Ähnlichkeit.
 - **EOM/Leaf-Methodenvergleich** ohne Veränderung der ursprünglichen Fälle.
 
-Der lokale Bericht unter
-`<NTF_INSIGHT_RUNNER_REPORT_DIR>\\NTF_Lauf_<Zeit>_<Zufall>\\lokale_aggregatanalyse_NICHT_AUTOMATISCH_HOCHLADEN.json`
-enthält nur **abgeleitete Kennzahlen pro Gruppe und Clusterbrücke**,
-keine Originalkennungen oder Diagnosetexte. Trotzdem bleibt die Datei
-vertraulich, und sie wird **nicht automatisch hochgeladen**.
+Pro Lauf entstehen im vorab konfigurierten **privaten lokalen
+Ergebnisordner** zwei Dateien:
+
+- `lokale_aggregatanalyse_NICHT_AUTOMATISCH_HOCHLADEN.json`:
+  bislang unveränderte aggregierte Auswertung (19 Cluster im bisherigen
+  Kühlmittelpumpenbestand, QEC-Summen, Diagnosequalität, Clusterbrücken).
+- `pilot_fachpruefung_FIN_SSL_NICHT_HOCHLADEN.csv`:
+  eine **priorisierte lokale Prüf- und Fachbestätigungsvorlage** mit einem
+  echten QEC-Repräsentanten samt FIN je HDBSCAN-Cluster sowie bis zu zwei
+  FIN-getrennten Vergleichsfällen pro Gruppe (starker Vergleich und
+  Grenz-/Widerspruchsfall). Die Reihenfolge folgt den bestehenden
+  P1/P2/P3/P4-Diagnoseprioritäten.
+
+Die CSV enthält **echte QEC-IDs, FINs und ggf. SSL-Freitextbefunde**.
+Sie ist deshalb besonders vertraulich, gehört **nicht** in Git,
+Chat, GitHub Actions, Artefakte oder externe ZIP-Pakete.
+Sie bleibt auf dem Runner-Rechner und kann lokal in NTF Insight unter
+`Bestätigte Fehlermechanismen lokal einlesen` verwendet werden,
+nachdem wirklich eigenständig belegte technische Befunde nachgetragen
+wurden. Ausgangszustand aller Einträge: `review_status=pending`.
+Keine Vermutung wird als bestätigter Mechanismus eingetragen.
+
+Die CSV wird automatisch zusammen mit dem Aggregatbericht geschrieben:
+**keine zusätzliche Freigabe in GitHub** und kein zweiter HDBSCAN-Lauf.
+Der normale GitHub-Logmodus enthält nach wie vor nur einen festen
+Erfolgsmarker; selbst `-SummenFreigeben` veröffentlicht **nur dieselben
+zehn ausdrücklich freigegebenen Ganzzahl-Summen**, niemals diese CSV.
+
 Die Quelle wird via DuckDB **`read_only=True`** geöffnet; Tabellen
 werden nicht erzeugt oder migriert.
 
