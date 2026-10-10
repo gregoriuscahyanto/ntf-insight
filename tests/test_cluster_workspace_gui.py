@@ -8,7 +8,8 @@ from tempfile import TemporaryDirectory
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QEvent, QPoint, QPointF, Qt
+from PySide6.QtGui import QMouseEvent
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QFileDialog, QHeaderView
 from shiboken6 import isValid
@@ -105,7 +106,32 @@ def test_method_selector_displays_relevant_controls_and_compare_toggle():
     assert panel.compare_model.rowCount() == 4
     assert len(panel._run_results) == 4
     assert panel.compare_side.isEnabled()
+    assert panel.display_method.currentData() == "leaf"
+    assert "HDBSCAN" in panel.kpi.text()
+    # This is the PROMINENT selector next to 3D, not the second plot.
+    panel.display_method.setCurrentIndex(
+        panel.display_method.findData("eom")
+    )
+    assert panel.result is panel._run_results["eom"]
+    assert panel.plot._result is panel.result
+    assert "EOM" in panel.kpi.text()
+    assert panel.summary_values["groups"].text() == str(
+        len(panel._run_results["eom"].groups)
+    )
+    assert panel.group_model.rowCount() == len(panel.result.groups)
+    assert panel.member_model.rowCount() == panel.result.groups[
+        panel.group_table.currentIndex().row()
+    ].case_count
+    panel.display_method.setCurrentIndex(
+        panel.display_method.findData("complete_cosine")
+    )
+    assert panel.result is panel._run_results["complete_cosine"]
+    assert "Complete-Link" in panel.kpi.text()
+    assert panel.method.currentData() == "complete_cosine"
     panel.compare_side.setChecked(True)
+    panel.other_method.setCurrentIndex(panel.other_method.findData("leaf"))
+    assert panel.other_plot._result is panel._run_results["leaf"]
+    assert panel.plot._result is panel._run_results["complete_cosine"]
     assert panel.other_plot.mode == "2d"
     assert set(panel.other_plot.items_by_case) == set(panel.plot.items_by_case)
     panel.dimension.setCurrentIndex(panel.dimension.findData("3d"))
@@ -127,6 +153,9 @@ def test_method_comparison_selecting_result_replaces_clusters_not_tabs():
     assert panel.result is not None
     assert panel.result.parameters.method == "complete_cosine"
     assert panel.method.currentData() == "complete_cosine"
+    assert panel.display_method.currentData() == "complete_cosine"
+    assert "Complete-Link" in panel.kpi.text()
+    assert panel.plot._result is panel.result
     assert panel.group_model.rowCount() == len(panel.result.groups)
     assert panel.noise_model.rowCount() == (
         len(panel.result.noise_case_ids) + len(panel.result.excluded_case_ids)
@@ -455,5 +484,62 @@ def test_simple_selection_via_plot_finds_cases_and_reasons():
     assert panel.summary_values["groups"].text() == "–"
     assert panel.group_model.rowCount() == 0
     assert "Bitte zuerst" in panel.why_text.text()
+    panel.close()
+    app.processEvents()
+
+
+def test_3d_left_drag_rotates_tilts_and_click_still_selects_cases():
+    """Left drag is rotation, click is selection, no cluster membership changes."""
+    app = QApplication.instance() or QApplication([])
+    panel = ClusterWorkspace(sample())
+    panel.show()
+    app.processEvents()
+    _calculate(panel)
+    panel.dimension.setCurrentIndex(panel.dimension.findData("3d"))
+    app.processEvents()
+    assert panel.plot.mode == "3d"
+    assert panel.rotation_label.parentWidget() is not None
+    assert panel.expert_panel.isHidden()
+
+    plot = panel.plot
+    before = tuple(group.case_ids for group in panel.result.groups)
+    point = plot.mapFromScene(
+        plot.items_by_case["A2"].sceneBoundingRect().center()
+    )
+    initial_focus = panel._focused_case_id
+    yaw0, elev0 = plot.yaw, plot.elevation
+    QTest.mousePress(
+        plot.viewport(), Qt.MouseButton.LeftButton, pos=point,
+    )
+    for offset in (QPoint(26, -14), QPoint(48, -24)):
+        moved = point + offset
+        drag = QMouseEvent(
+            QEvent.Type.MouseMove, QPointF(moved),
+            Qt.MouseButton.NoButton, Qt.MouseButton.LeftButton,
+            Qt.KeyboardModifier.NoModifier,
+        )
+        QApplication.sendEvent(plot.viewport(), drag)
+    QTest.mouseRelease(
+        plot.viewport(), Qt.MouseButton.LeftButton,
+        pos=point + QPoint(48, -24),
+    )
+    assert plot.yaw != yaw0
+    assert plot.elevation != elev0
+    assert panel.yaw.value() == plot.yaw
+    assert panel.elevation.value() == plot.elevation
+    assert panel.other_plot.yaw == plot.yaw
+    assert panel._focused_case_id == initial_focus
+    assert tuple(group.case_ids for group in panel.result.groups) == before
+
+    # A click (without movement) must select the actual point, not rotate.
+    item = plot.items_by_case["B2"]
+    clicked = plot.mapFromScene(item.sceneBoundingRect().center())
+    yaw, elevation = plot.yaw, plot.elevation
+    QTest.mouseClick(
+        plot.viewport(), Qt.MouseButton.LeftButton, pos=clicked,
+    )
+    assert panel._focused_case_id == "B2"
+    assert (plot.yaw, plot.elevation) == (yaw, elevation)
+    assert "CODE-B-" in panel.why_text.text()
     panel.close()
     app.processEvents()
