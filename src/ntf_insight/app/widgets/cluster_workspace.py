@@ -897,6 +897,10 @@ class ClusterWorkspace(QWidget):
                 or group_id in link.active_group_ids
             )
         ]
+        previously_selected = (
+            self._active_core_group.cluster_id
+            if self._active_core_group is not None else None
+        )
         self.core_model.set_rows([
             (
                 link.label,
@@ -930,6 +934,23 @@ class ClusterWorkspace(QWidget):
             "Technischer Fehlermechanismus weiterhin unbestätigt."
         )
         self.core_export.setEnabled(bool(self._core_result.groups))
+        if previously_selected is not None:
+            new_row = next(
+                (i for i, link in enumerate(self._visible_core_links)
+                 if link.core.cluster_id == previously_selected),
+                None,
+            )
+            if new_row is not None:
+                self.core_table.selectRow(new_row)
+            else:
+                # A filtering action must never leave a stale strict case
+                # subset in the detail table when it is no longer visible.
+                self._active_core_group = None
+                if group_id is not None and selected.isValid():
+                    self._fill_members(
+                        self.result.groups[selected.row()], core=False,
+                    )
+                self._draw_plots()
 
     def _core_changed(self, index, _previous) -> None:
         if (
