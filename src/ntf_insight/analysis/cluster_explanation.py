@@ -92,7 +92,10 @@ def explain_cluster(
         fault for cid in members for fault in fault_sets[cid]
     )
     total = len(members)
-    common = sorted(fault for fault, count in counts.items() if count == total)
+    common = sorted(
+        (fault for fault, count in counts.items() if count == total),
+        key=lambda fault: (fault[0] != "CPC3", fault),
+    )
     additional = sorted(
         (
             (fault, count) for fault, count in counts.items()
@@ -140,6 +143,33 @@ def explain_cluster(
             for token, count in shared_complaints[:3]
         )
         lines.append(f"Ähnliche dokumentierte Beanstandungsbegriffe: {snippets}.")
+
+    if not common:
+        # Show observable alternate overlaps when there is no complete
+        # ECU:DTC core. These low-weight contexts alone cannot prove a
+        # component defect and may also occur across unrelated vehicles.
+        common_software = Counter(
+            sw for cid in members for sw in signatures[cid].ecu_software
+        )
+        software = sorted(
+            ((sw, count) for sw, count in common_software.items()
+             if count >= 2 and count / total >= 0.5),
+            key=lambda item: (-item[1], item[0]),
+        )
+        if software:
+            lines.append(
+                "Häufig dokumentierte Softwarestände: "
+                + ", ".join(
+                    f"{value} ({count}/{total})"
+                    for value, count in software[:2]
+                ) + "."
+            )
+        elif not additional and not shared_complaints:
+            lines.append(
+                "Keine starken gemeinsamen Einzelmerkmale gefunden. "
+                "Die Clusterzuordnung beruht auf der Gesamtähnlichkeit "
+                "und ist besonders vorsichtig zu interpretieren."
+            )
 
     if parameters.method in {"leaf", "eom"} and not strict_review:
         lines.append(
@@ -191,7 +221,10 @@ def explain_cluster(
         if cid == group.representative_case_id:
             reason = "Repräsentativer Fall der Gruppe (Medoid)."
         else:
-            shared = sorted(fault_sets[cid] & representative)
+            shared = sorted(
+                fault_sets[cid] & representative,
+                key=lambda fault: (fault[0] != "CPC3", fault),
+            )
             reason = (
                 f"{len(shared)} gleiche ECU:DTC wie der Repräsentant: "
                 f"{_compact_faults(shared, limit=3)}"
