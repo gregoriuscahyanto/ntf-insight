@@ -7,7 +7,7 @@
 #>
 [CmdletBinding()]
 param(
-    [string]$RunnerRoot = 'C:\actions-runner-ntf-1',
+    [string]$RunnerRoot = 'C:\Users\Cahyanto\actions-runner-ntf-1',
     [string]$PythonPath = '',
     [string]$DatabasePath = '',
     [string]$OutputDirectory = '',
