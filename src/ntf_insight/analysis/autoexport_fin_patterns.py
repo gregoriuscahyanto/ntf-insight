@@ -112,7 +112,6 @@ def _prepare(
     fins = tuple(sorted({fin.strip().upper() for fin in all_fins if fin.strip()}))
     if len(fins) > 200_000:
         raise ValueError("Die FIN-Anzahl uebersteigt das sichere lokale Analyselimit.")
-    finset = set(fins)
     faults = {
         fin: frozenset(
             (ecu.strip().upper(), dtc.strip().upper())
