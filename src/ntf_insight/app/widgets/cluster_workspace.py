@@ -378,10 +378,16 @@ class ClusterWorkspace(QWidget):
         self.dimension.addItem("3D · drehbar", "3d")
         self.dimension.currentIndexChanged.connect(self._change_dimension)
         map_header.addWidget(self.dimension)
-        self.other_method = QComboBox()
-        self.other_method.currentIndexChanged.connect(self._draw_plots)
-        self.other_method.setEnabled(False)
-        map_header.addWidget(self.other_method)
+        map_header.addWidget(QLabel("Clusterverfahren"))
+        self.display_method = QComboBox()
+        self.display_method.setToolTip(
+            "Wechselt die tatsächlich angezeigten Cluster, Fälle und Erklärungen."
+        )
+        self.display_method.currentIndexChanged.connect(
+            self._display_method_changed
+        )
+        self.display_method.setEnabled(False)
+        map_header.addWidget(self.display_method)
         self.zoom_reset = QPushButton("Ansicht zurücksetzen")
         self.zoom_reset.clicked.connect(self._reset_zoom)
         map_header.addWidget(self.zoom_reset)
@@ -400,23 +406,28 @@ class ClusterWorkspace(QWidget):
         self.elevation.setValue(24)
         self.elevation.setToolTip("Vertikale Neigung der 3D-Projektion")
         rotate.addWidget(self.elevation, 1)
-        body.addLayout(rotate)
+        # Precise sliders remain accessible under expert details only.
+        # Everyday rotation works by holding and dragging in the 3D plot.
         self.yaw.valueChanged.connect(self._set_rotation)
         self.elevation.valueChanged.connect(self._set_rotation)
         self.plot_row = QHBoxLayout()
         self.plot = ClusterProjectionPlot()
         self.plot.case_picked.connect(self.focus_case)
+        self.plot.rotation_changed.connect(self._plot_rotated)
         self.plot_row.addWidget(self.plot, 1)
         self.other_plot = ClusterProjectionPlot()
         self.other_plot.case_picked.connect(self.focus_case)
+        self.other_plot.rotation_changed.connect(self._plot_rotated)
         self.other_plot.hide()
         self.plot_row.addWidget(self.other_plot, 1)
         body.addLayout(self.plot_row)
         plot_note = QLabel(
             "Jeder Punkt ist ein QEC-Fall. Farbe = Cluster, "
             "Grau = nicht zugeordnet, großer Punkt = repräsentativer Fall. "
-            "Klick auf einen Punkt zeigt dessen Cluster. "
-            "Die Grafik zeigt Ähnlichkeiten, keine bewiesenen Defekte.",
+            "Klick auf einen Punkt zeigt dessen Cluster. In 3D: "
+            "linke Maustaste gedrückt halten und ziehen, um zu drehen "
+            "oder zu neigen. Die Grafik zeigt Ähnlichkeiten, "
+            "keine bewiesenen Defekte.",
             objectName="PageSubtitle",
         )
         plot_note.setWordWrap(True)
@@ -508,6 +519,7 @@ class ClusterWorkspace(QWidget):
         expert_body = QVBoxLayout(self.expert_panel)
         expert_body.setContentsMargins(0, 6, 0, 0)
         expert_body.setSpacing(10)
+        expert_body.addLayout(rotate)
         export_row = QHBoxLayout()
         self.export_button = QPushButton("Clustertabelle lokal exportieren")
         self.export_button.setEnabled(False)
@@ -523,6 +535,14 @@ class ClusterWorkspace(QWidget):
         self.compare_side.setEnabled(False)
         self.compare_side.toggled.connect(self._draw_plots)
         comparison_header.addWidget(self.compare_side)
+        comparison_header.addWidget(QLabel("Zweites Verfahren"))
+        self.other_method = QComboBox()
+        self.other_method.setToolTip(
+            "Nur für den optionalen Vergleich mit der linken Clusteransicht."
+        )
+        self.other_method.currentIndexChanged.connect(self._draw_plots)
+        self.other_method.setEnabled(False)
+        comparison_header.addWidget(self.other_method)
         expert_body.addLayout(comparison_header)
         self.compare_model = _ClusterTableModel((
             "Verfahren", "Cluster", "Clusterfälle", "Ausreißer",
@@ -720,8 +740,27 @@ class ClusterWorkspace(QWidget):
         elif self.result is not None:
             self._clear_results()
             self.status.setText(
-                "Anzeigeverfahren geändert. Bitte die Clusteranalyse neu starten."
+                "Einstellungen verändert. Bitte die Clusteranalyse neu starten."
             )
+
+    def _display_method_changed(self, *_args) -> None:
+        """Main dropdown changes the ACTUAL analysis, not the second plot."""
+        key = self.display_method.currentData()
+        if key in self._run_results:
+            self._activate_method(key)
+
+    def _activate_method(self, key: str) -> None:
+        """Use existing calculated memberships; never infer cluster IDs."""
+        result = self._run_results.get(key)
+        if result is None:
+            return
+        selected = self.method.findData(key)
+        if selected >= 0:
+            self.method.blockSignals(True)
+            self.method.setCurrentIndex(selected)
+            self.method.blockSignals(False)
+            self._update_parameters()
+        self._show_result(result)
 
     def _invalidate_on_input(self, *_args) -> None:
         if self.result is None:
@@ -878,6 +917,11 @@ class ClusterWorkspace(QWidget):
         self.other_plot.set_emphasis_cases(None)
         self.compare_side.setEnabled(False)
         self.compare_side.setChecked(False)
+        for selector in (self.display_method, self.other_method):
+            selector.blockSignals(True)
+            selector.clear()
+            selector.setEnabled(False)
+            selector.blockSignals(False)
         self.export_button.setEnabled(False)
         self.open_button.setEnabled(False)
 
@@ -941,35 +985,49 @@ class ClusterWorkspace(QWidget):
             ))
         self.compare_model.set_rows(values)
         self.compare_side.setEnabled(len(results) > 1)
-        self.other_method.blockSignals(True)
-        self.other_method.clear()
-        for result in results:
-            self.other_method.addItem(
-                BY_METHOD[result.parameters.method].title,
-                result.parameters.method,
-            )
+        for selector in (self.display_method, self.other_method):
+            selector.blockSignals(True)
+            selector.clear()
+            for result in results:
+                selector.addItem(
+                    BY_METHOD[result.parameters.method].title,
+                    result.parameters.method,
+                )
+            selector.setEnabled(len(results) > 1)
+            selector.blockSignals(False)
+
+        # The prominent selector always represents the shown result.
+        active_method = self.result.parameters.method if self.result else None
+        self.display_method.blockSignals(True)
+        self.display_method.setCurrentIndex(
+            self.display_method.findData(active_method)
+        )
+        self.display_method.blockSignals(False)
+
+        # The optional right-side comparison uses a different selector.
         if len(results) > 1:
-            self.other_method.setCurrentIndex(1)
-        self.other_method.setEnabled(len(results) > 1)
-        self.other_method.blockSignals(False)
+            secondary = next(
+                (i for i, result in enumerate(results)
+                 if result.parameters.method != active_method), 1,
+            )
+            self.other_method.blockSignals(True)
+            self.other_method.setCurrentIndex(secondary)
+            self.other_method.blockSignals(False)
         self._draw_plots()
 
     def _compare_row_picked(self, index) -> None:
         if not index.isValid() or index.row() >= len(self._comparison_order):
             return
         key = self._comparison_order[index.row()]
-        if key not in self._run_results:
-            return
-        selected = self.method.findData(key)
-        if selected >= 0:
-            self.method.blockSignals(True)
-            self.method.setCurrentIndex(selected)
-            self.method.blockSignals(False)
-            self._update_parameters()
-        self._show_result(self._run_results[key])
+        self._activate_method(key)
 
     def _show_result(self, result: UnifiedClusterResult) -> None:
         self.result = result
+        selected = self.display_method.findData(result.parameters.method)
+        if selected >= 0:
+            self.display_method.blockSignals(True)
+            self.display_method.setCurrentIndex(selected)
+            self.display_method.blockSignals(False)
         self._group_ids = [group.cluster_id for group in result.groups]
         self.summary_values["groups"].setText(str(len(result.groups)))
         self.summary_values["assigned"].setText(str(result.clustered_count))
@@ -1298,6 +1356,18 @@ class ClusterWorkspace(QWidget):
     def _set_rotation(self, *_args) -> None:
         for plot in (self.plot, self.other_plot):
             plot.set_rotation(self.yaw.value(), self.elevation.value())
+
+    def _plot_rotated(self, yaw: int, elevation: int) -> None:
+        """Mouse dragging controls both plots and the optional expert sliders."""
+        self.yaw.blockSignals(True)
+        self.elevation.blockSignals(True)
+        self.yaw.setValue(yaw)
+        self.elevation.setValue(elevation)
+        self.yaw.blockSignals(False)
+        self.elevation.blockSignals(False)
+        for plot in (self.plot, self.other_plot):
+            if plot.yaw != yaw or plot.elevation != elevation:
+                plot.set_rotation(yaw, elevation)
 
     def _reset_zoom(self) -> None:
         for plot in (self.plot, self.other_plot):
