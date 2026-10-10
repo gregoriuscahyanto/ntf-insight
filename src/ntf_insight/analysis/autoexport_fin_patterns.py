@@ -75,6 +75,7 @@ class FinPatternResult:
     notes: str = ""
     pre_swap_fins: int = 0
     runtime_seconds: float | None = None
+    dtc_keys_by_fin: dict[str, tuple[FaultKey, ...]] | None = None
 
     @property
     def assigned_fins(self) -> int:
