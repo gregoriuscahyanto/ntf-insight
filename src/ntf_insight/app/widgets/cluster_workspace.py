@@ -184,6 +184,7 @@ class ClusterWorkspace(QWidget):
 
     case_requested = Signal(str)
     tips_linked = Signal(str)
+    autoexport_requested = Signal()
 
     def __init__(
         self,
@@ -314,6 +315,18 @@ class ClusterWorkspace(QWidget):
         body.addWidget(self.population_detail)
         self.family.currentIndexChanged.connect(self._update_population)
         self._update_population()
+        # Important: full VIN-wide diagnostics are a separate population,
+        # not 11,667 fabricated QEC/pump cases.
+        self.all_fin_button = QPushButton(
+            "Alle AutoExport-FINs nach Diagnosemustern untersuchen"
+        )
+        self.all_fin_button.setToolTip(
+            "Öffnet die separate FIN-basierte Analyse aller vorhandenen "
+            "AutoExport-DTCs; kein automatischer NTF- oder Pumpenbefund."
+        )
+        self.all_fin_button.setEnabled(source_knowledge is not None)
+        self.all_fin_button.clicked.connect(self.autoexport_requested.emit)
+        body.addWidget(self.all_fin_button)
 
         # Optional professional controls, not separate clustering actions.
         self.advanced_toggle = QCheckBox("Erweiterte Einstellungen anzeigen")
