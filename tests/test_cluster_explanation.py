@@ -166,7 +166,7 @@ def test_dtc_explorer_text_is_shown_only_when_the_exact_key_has_a_text():
     assert "CPC3:CODE-A-ROOT-B —" not in info.text
     assert "OTHER:CODE-A-ROOT-A" not in info.text
     assert "nicht zur Clusterbildung verwendet" in info.text
-    assert "anderem Diagnosezeitpunkt" in info.text
+    assert "anderen Diagnosezeitpunkt" in info.text
     # Only labels changed; the originally eligible pre-swap group is stable.
     unchanged = calculate_clusters(cases, ClusterParameters())
     assert {frozenset(g.case_ids) for g in before.groups} == {
@@ -186,7 +186,7 @@ def test_label_from_later_observation_does_not_add_post_swap_dtc_as_feature():
     ))
     info = explain_cluster(cases, group, before.parameters, before.eligible_case_ids)
     assert "CPC3:CODE-A-ROOT-B — Synthetic descriptive label" in info.text
-    assert "anderem Diagnosezeitpunkt" in info.text
+    assert "anderen Diagnosezeitpunkt" in info.text
     again = calculate_clusters(cases, ClusterParameters())
     assert before.eligible_case_ids == again.eligible_case_ids
     assert [g.case_ids for g in before.groups] == [g.case_ids for g in again.groups]
