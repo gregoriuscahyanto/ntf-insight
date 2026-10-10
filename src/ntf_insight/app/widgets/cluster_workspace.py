@@ -15,14 +15,17 @@ from PySide6.QtCore import Qt, QThread, Signal
 from PySide6.QtWidgets import (
     QAbstractItemView, QCheckBox, QComboBox, QDialog, QDoubleSpinBox,
     QFileDialog, QFrame, QGridLayout, QHBoxLayout, QHeaderView, QLabel,
-    QPushButton, QScrollArea, QSlider, QSpinBox,
+    QLineEdit, QPushButton, QScrollArea, QSlider, QSpinBox,
     QTableView, QVBoxLayout, QWidget,
 )
 
 from ntf_insight.analysis.case_clustering import _component_key
 from ntf_insight.analysis.cluster_workspace_engine import (
-    BY_METHOD, METHODS, ClusterParameters, UnifiedClusterResult,
+    BY_METHOD, METHODS, ClusterParameters, UnifiedClusterResult, UnifiedCluster,
     calculate_clusters, compare_cluster_runs,
+)
+from ntf_insight.analysis.cluster_core_review import (
+    CoreGroupLink, link_core_review_groups, write_core_review_template,
 )
 from ntf_insight.analysis.hdbscan_clustering import cluster_hdbscan_cases
 from ntf_insight.app.models.simple_table_model import SimpleTableModel
@@ -44,11 +47,13 @@ class _ClusterTask(QThread):
         cases: list[NTFCase],
         parameters: ClusterParameters,
         methods: tuple[str, ...],
+        core_threshold: float = 0.45,
     ) -> None:
         super().__init__()
         self.cases = cases
         self.parameters = parameters
         self.methods = methods
+        self.core_threshold = core_threshold
 
     def run(self) -> None:
         try:
@@ -68,7 +73,19 @@ class _ClusterTask(QThread):
                 )
                 for method in self.methods
             ]
-            self.calculated.emit(results)
+            strict_params = replace(
+                p, method="complete_cosine",
+                minimum_similarity=self.core_threshold,
+            )
+            core = next(
+                (item for item in results if item.parameters == strict_params),
+                None,
+            )
+            if core is None:
+                core = calculate_clusters(
+                    self.cases, strict_params, reference=base,
+                )
+            self.calculated.emit((results, core))
         except (ValueError, RuntimeError) as exc:
             self.problem.emit(str(exc))
         except Exception:
@@ -116,10 +133,15 @@ class ClusterWorkspace(QWidget):
         self._task: _ClusterTask | None = None
         self._run_results: dict[str, UnifiedClusterResult] = {}
         self.result: UnifiedClusterResult | None = None
+        self._core_result: UnifiedClusterResult | None = None
+        self._core_links: tuple[CoreGroupLink, ...] = ()
+        self._visible_core_links: list[CoreGroupLink] = []
+        self._active_core_group: UnifiedCluster | None = None
         self._group_ids: list[int] = []
         self._member_ids: list[str] = []
         self._noise_ids: list[str] = []
         self._focused_case_id: str | None = None
+        self._member_title_default = "Falltabelle – gewählter Cluster"
         self._dialogs: list[QDialog] = []
         self._activated = False
 
@@ -499,7 +521,10 @@ class ClusterWorkspace(QWidget):
         )
         self._running_params = params
         self._running_family = self.family.currentData()
-        task = _ClusterTask(cases, params, methods)
+        self._running_core_threshold = self.core_threshold.value()
+        task = _ClusterTask(
+            cases, params, methods, self._running_core_threshold,
+        )
         _ACTIVE_TASKS.add(task)
         self._task = task
         task.calculated.connect(self._receive_results)
@@ -508,13 +533,18 @@ class ClusterWorkspace(QWidget):
         task.finished.connect(task.deleteLater)
         task.start()
 
-    def _receive_results(self, results: list[UnifiedClusterResult]) -> None:
+    def _receive_results(
+        self,
+        payload: tuple[list[UnifiedClusterResult], UnifiedClusterResult],
+    ) -> None:
+        results, core_result = payload
         self._task = None
         self.run_button.setEnabled(True)
         self.compare_button.setEnabled(True)
         if (
             self._running_params != self._parameters()
             or self._running_family != self.family.currentData()
+            or self._running_core_threshold != self.core_threshold.value()
         ):
             self._clear_results()
             self.status.setText(
@@ -523,6 +553,7 @@ class ClusterWorkspace(QWidget):
             )
             return
         self._run_results = {r.parameters.method: r for r in results}
+        self._core_result = core_result
         self.result = results[0]
         self.export_button.setEnabled(True)
         self.status.setText(
@@ -544,6 +575,10 @@ class ClusterWorkspace(QWidget):
     def _clear_results(self) -> None:
         self.result = None
         self._run_results = {}
+        self._core_result = None
+        self._core_links = ()
+        self._visible_core_links = []
+        self._active_core_group = None
         self._group_ids = []
         self._member_ids = []
         self._noise_ids = []
