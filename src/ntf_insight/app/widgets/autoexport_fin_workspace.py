@@ -166,7 +166,7 @@ class AutoExportFinWorkspace(QWidget):
         body.addWidget(self.population_note)
 
         self.only_pump_swap = QCheckBox(
-            "Nur FINs mit belegtem QEC-Pumpentausch (nur DTCs vor dem Tausch)"
+            "Nur FINs mit QEC-Rep.-Datum zur Pumpe (nur frühere DTCs)"
         )
         self.only_pump_swap.setToolTip(
             "Opt-in: nur QEC-Kühlmittelpumpenfälle mit gültigem Rep.-Datum. "
@@ -178,6 +178,8 @@ class AutoExportFinWorkspace(QWidget):
         self.scope_note = QLabel(
             f"Aktuell {len(self._pump_swap_dates):,} FINs mit dokumentiertem "
             "QEC-Pumpentauschdatum im lokalen QEC-Bestand. "
+            "Das Datum ist der dokumentierte QEC-Reparaturanker, "
+            "keine unabhängige Bestätigung eines erfolgreichen Tauschs. "
             "Ohne Haken bleiben alle importierten AutoExport-FINs "
             "für die allgemeine Diagnosemustersuche verfügbar.",
             objectName="PageSubtitle",
