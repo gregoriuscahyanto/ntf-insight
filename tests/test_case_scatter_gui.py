@@ -75,9 +75,10 @@ def test_cluster_workspace_replaces_scatter_tab_and_synchronizes_case_selection(
     assert "clusters" not in window.navigation.buttons
     assert cases.detail_tabs.widget(0) is cluster
     assert cases.detail_tabs.tabText(0) == "Clusteranalyse"
-    assert cases.detail_tabs.widget(1) is cases.analysis_tab
-    assert cases.detail_tabs.widget(2) is cases.quicktest_browser
-    assert cases.detail_tabs.count() == 3
+    assert cases.detail_tabs.widget(1) is cases.autoexport_fin_workspace
+    assert cases.detail_tabs.widget(2) is cases.analysis_tab
+    assert cases.detail_tabs.widget(3) is cases.quicktest_browser
+    assert cases.detail_tabs.count() == 4
 
     assert cluster.focus_case("DEMO-004")
     cluster.case_requested.emit("DEMO-004")
