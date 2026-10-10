@@ -123,3 +123,52 @@ def test_store_yields_vehicle_codes_deduplicated_across_original_rows(tmp_path):
         "Synthetic control unit communication"
     )
     assert f3 not in signatures
+
+
+def test_pump_date_scope_includes_only_confirmed_fins_and_earlier_dtc_days(tmp_path):
+    """No generic RepairDt or same-day DTC is evidence of pre-pump diagnostics."""
+    store = SourceKnowledgeStore(DuckDBStore(tmp_path / "anchored-fin.duckdb"))
+    a, b, c = (
+        "W1TTEST0000000001", "W1TTEST0000000002", "W1TTEST0000000003",
+    )
+    rows = []
+    for fin, dtc, day in (
+        (a, "BEFORE", "2026-02-01"),
+        (a, "SAME-DAY", "2026-05-10"),
+        (a, "AFTER", "2026-05-11"),
+        (a, "UNDATED", None),
+        (b, "AFTER", "2026-06-01"),
+        (c, "BEFORE", "2026-02-01"),
+    ):
+        rows.append({
+            "category": "autoexport_dtc", "fin": fin,
+            "data": {
+                "EcuNm": "CPC3", "EcuFaultNm": dtc,
+                "DiagStartDt": day, "EcuFaultTxt": f"Text-{dtc}",
+            },
+        })
+    rows.append({
+        "category": "autoexport_repair", "fin": c,
+        "data": {
+            "RepairDt": "2026-04-01", "RepairTypeNmGerman": "Workshop repair",
+        },
+    })
+    store.save_records("a" * 64, "autoexport_rows", rows)
+    all_fins, all_keys, _ = store.autoexport_fin_dtc_signatures()
+    assert all_fins == (a, b, c)
+    assert len(all_keys[a]) == 4
+
+    anchored_fins, codes, labels = store.autoexport_fin_dtc_signatures(
+        pump_swap_dates={a: "2026-05-10", b: "2026-05-10"},
+    )
+    assert anchored_fins == (a, b)
+    assert codes == {a: (("CPC3", "BEFORE"),)}
+    assert labels == {("CPC3", "BEFORE"): "Text-BEFORE"}
+    assert c not in codes
+    # A pump date without any pre-swap DTC remains in the scoped FIN count.
+    result = cluster_autoexport_fins(anchored_fins, codes)
+    assert result.total_fins == 2
+    assert result.dtc_fins == 1
+    assert result.no_dtc_fins == (b,)
+    assert result.unassigned_fins == (a,)
+    assert result.groups == ()
