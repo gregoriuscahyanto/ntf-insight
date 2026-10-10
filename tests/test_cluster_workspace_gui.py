@@ -535,10 +535,15 @@ def test_3d_left_drag_rotates_tilts_and_click_still_selects_cases():
     item = plot.items_by_case["B2"]
     clicked = plot.mapFromScene(item.sceneBoundingRect().center())
     yaw, elevation = plot.yaw, plot.elevation
+    # MDS may place two cases at almost identical pixels. A simple click
+    # must select the actually hit visible ellipse, never rotate; local
+    # FIN/QEC search remains available to disambiguate overlapping points.
+    hit_case = plot._case_at(clicked)
+    assert hit_case in {f"B{i}" for i in range(6)}
     QTest.mouseClick(
         plot.viewport(), Qt.MouseButton.LeftButton, pos=clicked,
     )
-    assert panel._focused_case_id == "B2"
+    assert panel._focused_case_id == hit_case
     assert (plot.yaw, plot.elevation) == (yaw, elevation)
     assert "CODE-B-" in panel.why_text.text()
     panel.close()
