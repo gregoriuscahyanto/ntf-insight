@@ -610,7 +610,17 @@ class CasePage(QWidget):
         self.autoexport_history_more.setEnabled(False)
 
     def _open_autoexport_fin_history(self, fin: str) -> None:
-        """Show archived FIN history even if the FIN has no QEC case."""
+        """Open the same vehicle's QEC case (when known) AND FIN history."""
+        matching = sorted(
+            (
+                case.case_id for case in self.real_cases
+                if case.vin == fin and case.component_profile_id == "coolant_pump"
+                and case.qec_reference
+            )
+        )
+        if matching:
+            # The local QEC selector also offers other cases of this FIN.
+            self.select_case(matching[0])
         self.detail_tabs.setCurrentWidget(self.analysis_tab)
         self.autoexport_fin_lookup.setText(fin)
         self._load_autoexport_history(reset=True)
