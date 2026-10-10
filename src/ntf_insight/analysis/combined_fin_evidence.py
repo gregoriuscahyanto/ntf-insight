@@ -48,7 +48,10 @@ def qec_fin_evidence(cases: Sequence[NTFCase]) -> QECFinEvidence:
     anchors: dict[str, str] = {}
     pump_cases: list[NTFCase] = []
     for case in cases:
-        if case.component_profile_id != "coolant_pump" or not case.qec_reference:
+        if (
+            case.component_profile_id != "coolant_pump"
+            or not getattr(case, "qec_reference", None)
+        ):
             continue
         fin = case.vin.strip().upper()
         links[fin].add(case.case_id)
