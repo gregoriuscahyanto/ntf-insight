@@ -137,7 +137,7 @@ def merge_fin_evidence(
         },
         sources=sources,
         autoexport_fin_count=len(auto_set),
-        qec_fin_count=len(qec_set),
+        qec_fin_count=len(actual_qec),
         overlap_fin_count=len(overlap),
         qec_only_fin_count=len(actual_qec - auto_set),
     )
