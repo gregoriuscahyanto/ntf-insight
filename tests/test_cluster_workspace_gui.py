@@ -415,11 +415,15 @@ def test_four_everyday_questions_are_visible_without_expert_tables():
     # Long-standing review and alternative algorithms are not removed.
     panel.expert_toggle.setChecked(True)
     assert not panel.expert_panel.isHidden()
+    assert not panel.group_table.isColumnHidden(4)
+    assert not panel.member_table.isColumnHidden(6)
     assert panel.compare_model.rowCount() == 4
     assert panel.stability_model.rowCount() > 0
     assert panel.core_model.rowCount() > 0
     panel.expert_toggle.setChecked(False)
     assert panel.expert_panel.isHidden()
+    assert panel.group_table.isColumnHidden(4)
+    assert panel.member_table.isColumnHidden(6)
     panel.close()
     app.processEvents()
 
