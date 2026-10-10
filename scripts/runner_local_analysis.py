@@ -9,6 +9,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+from contextlib import redirect_stderr, redirect_stdout
 import secrets
 import sys
 from datetime import datetime, timezone
@@ -101,12 +102,17 @@ def main(argv: list[str] | None = None) -> int:
     )
     args = parser.parse_args(argv)
     try:
-        report = run_local_analysis(
-            database=args.datenbank, output_dir=args.ausgabeordner,
-        )
-        permitted = (
-            approved_public_totals(report) if args.freigabe_summen else None
-        )
+        # 3rd party libraries (e.g. sklearn/HDBSCAN) may emit FutureWarnings
+        # with internal runtime paths or data details to stderr. The runner
+        # must not relay arbitrary analysis output into GitHub Actions.
+        with open(os.devnull, "w", encoding="utf-8") as sink:
+            with redirect_stdout(sink), redirect_stderr(sink):
+                report = run_local_analysis(
+                    database=args.datenbank, output_dir=args.ausgabeordner,
+                )
+                permitted = (
+                    approved_public_totals(report) if args.freigabe_summen else None
+                )
     except Exception:
         # Never print exceptions, Python tracebacks, paths, FINs, SSL,
         # QEC identifiers, SQL fragments, evidence refs or DTC values.
