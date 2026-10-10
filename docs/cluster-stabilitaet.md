@@ -97,3 +97,51 @@ Diagnosesitzungen eine Fehlerursache oder mögliche
 Lieferantenverantwortung untersuchen. Die jetzigen Kennzahlen sind
 für die Priorisierung von Fachprüfungen geeignet, nicht zum Beweis
 einer Pumpenursache.
+
+## Offline-Test unter Windows (nach einmaligem Code-Update)
+
+Auf dem zugelassenen Rechner mit bereits eingerichteter `.venv` die
+freigegebene Programmversion **zunächst bei bestehender GitHub-Verbindung**
+übernehmen:
+
+```powershell
+cd C:\\Pfad\\zu\\ntf-insight
+git switch main
+git pull --ff-only
+```
+
+Nach einem erfolgreichen Merge ist der neue Button in `main` enthalten.
+**Zum Vorabtesten des offenen PR** stattdessen diesen Branch laden:
+
+```powershell
+git fetch origin
+git switch feature/cluster-stabilitaet-verfahren-und-sensitivitaet
+```
+
+Die Anwendung läuft danach – mit vorher installierten Paketen – **ohne
+Internetverbindung**:
+
+```powershell
+.\\.venv\\Scripts\\python.exe -m ntf_insight
+```
+
+Zur Sichtprüfung: **Fälle / FIN → Clusteranalyse**, dann
+**Clusteranalyse starten**. Nach Abschluss müssen
+Methodenvergleich, Robustheitsprüfung und konservative
+K-Prüfgruppen erscheinen; der CSV-Export bleibt eine separate lokale
+Aktion. Erste Anzeige = HDBSCAN Leaf; andere Gruppierungen lassen sich
+per Doppelklick in der Methodenvergleichstabelle anzeigen. Die
+Stabilitätsreferenz steht ausdrücklich über der Robustheitstabelle.
+**Eingänge ändern** invalidiert alte Ergebnisse. Die Variantenberechnung
+überspringt teure, nicht benötigte Plot-Projektionen.
+
+Optional lassen sich ausschließlich die synthetischen Tests ausführen:
+
+```powershell
+.\\.venv\\Scripts\\python.exe -m pytest -q tests/test_cluster_stability.py tests/test_cluster_workspace_engine.py tests/test_cluster_workspace_gui.py
+```
+
+Keine Originaldaten, FINs, DTC-IDs oder Screenshots mit vertraulichen
+Informationen in ein öffentliches Issue hochladen. Für einen
+Rückmelde-Check reichen **nur Anzahlen und der Status**
+(OK / Fehlermeldung ohne Originalkennung).
