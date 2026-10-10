@@ -463,18 +463,19 @@ class AutoExportFinWorkspace(QWidget):
                 lines.append(
                     f"• {ecu}:{dtc}{desc}: {count} von {group.fin_count} FINs"
                 )
+        scope_explanation = (
+            "Es werden ausschließlich DTCs von Tagen VOR dem belegten "
+            "QEC-Pumpentausch berücksichtigt. Ein gemeinsamer Code "
+            "beweist trotzdem weder Defekt noch Tauschwirksamkeit."
+            if self._analysis_scoped_to_pump else
+            "Es wurde hier nicht geprüft, ob die DTCs vor einem "
+            "Pumpentausch auftraten. Bekannte QEC-FINs werden nur "
+            "als Verknüpfung gekennzeichnet."
+        )
         lines.append(
             "Diese Häufigkeiten und der Ähnlichkeitsindex sind "
             "kein Beleg für einen gemeinsamen Kühlmittelpumpenfehler. "
-            (
-                "Es werden ausschließlich DTCs von Tagen VOR dem belegten "
-                "QEC-Pumpentausch berücksichtigt. Ein gemeinsamer Code "
-                "beweist trotzdem weder Defekt noch Tauschwirksamkeit."
-                if self._analysis_scoped_to_pump else
-                "Es wurde hier nicht geprüft, ob die DTCs vor einem "
-                "Pumpentausch auftraten. Bekannte QEC-FINs werden nur "
-                "als Verknüpfung gekennzeichnet."
-            )
+            + scope_explanation
         )
         self.explanation.setText("\n\n".join(lines))
 
