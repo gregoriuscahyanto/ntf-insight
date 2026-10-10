@@ -1,7 +1,8 @@
-"""German FIN clustering inside one Clusteranalyse tab, combining AutoExport/QEC.
+"""Eine FIN-basierte Clusteranalyse, ergänzt aus AutoExport und QEC.
 
-The imported AutoExport may hold thousands of vehicles without a documented
-pump replacement. A diagnostic pattern is NOT a failed pump or NTF finding.
+Ein sichtbarer Startknopf, dieselben Verfahren HDBSCAN Leaf/EOM und
+konservatives Complete-Link. Originaldaten bleiben lokal. Die Darstellung
+ist eine 2D/3D-Punktwolke und NIE die Berechnungsgrundlage.
 """
 from __future__ import annotations
 
@@ -9,81 +10,113 @@ from dataclasses import replace
 
 from PySide6.QtCore import Qt, QThread, Signal
 from PySide6.QtWidgets import (
-    QAbstractItemView, QCheckBox, QFrame, QHBoxLayout, QLabel, QLineEdit,
-    QPushButton, QScrollArea, QTableView, QVBoxLayout, QWidget,
+    QAbstractItemView, QCheckBox, QComboBox, QFrame, QHBoxLayout,
+    QLabel, QLineEdit, QPlainTextEdit, QPushButton, QScrollArea,
+    QSpinBox, QTableView, QVBoxLayout, QWidget,
 )
 
 from ntf_insight.analysis.autoexport_fin_patterns import (
-    FinPatternResult, cluster_autoexport_fins,
+    METHOD_TITLES, FinPatternResult, cluster_fin_methods,
 )
 from ntf_insight.analysis.combined_fin_evidence import (
     QECFinEvidence, merge_fin_evidence, qec_fin_evidence,
 )
 from ntf_insight.app.models.simple_table_model import SimpleTableModel
-from ntf_insight.app.widgets.fin_pattern_bar_chart import FinPatternBarChart
+from ntf_insight.app.widgets.fin_cluster_projection_plot import FinClusterProjectionPlot
 from ntf_insight.domain.case import NTFCase
 from ntf_insight.storage.source_knowledge_store import SourceKnowledgeStore
 
 
-# Ensure QThreads survive window rebuilds after a new source import.
 _ACTIVE_FIN_TASKS: set[QThread] = set()
 
 
-class _FinPatternTask(QThread):
+class _FinClusterTask(QThread):
     calculated = Signal(object)
     failed = Signal(str)
     phase = Signal(str)
 
     def __init__(
         self,
-        source: SourceKnowledgeStore,
+        source: SourceKnowledgeStore | None,
         qec_evidence: QECFinEvidence,
         *,
         only_pump_swap: bool,
+        min_cluster_size: int,
+        min_samples: int,
+        minimum_similarity: float,
     ) -> None:
         super().__init__()
         self.source = source
         self.qec_evidence = qec_evidence
         self.only_pump_swap = only_pump_swap
+        self.min_cluster_size = min_cluster_size
+        self.min_samples = min_samples
+        self.minimum_similarity = minimum_similarity
 
     def run(self) -> None:
         try:
-            self.phase.emit(
-                "Lese eindeutige FINs und ECU:DTC-Muster aus dem lokalen AutoExport …"
-            )
-            fins, patterns, labels = self.source.autoexport_fin_dtc_signatures(
-                pump_swap_dates=self.qec_evidence.pump_swap_dates,
-                include_all_fins=not self.only_pump_swap,
-            )
+            self.phase.emit("Lese AutoExport und QEC als eindeutige FINs …")
+            if self.source is not None:
+                fins, auto_faults, labels = self.source.autoexport_fin_dtc_signatures(
+                    pump_swap_dates=self.qec_evidence.pump_swap_dates,
+                    include_all_fins=not self.only_pump_swap,
+                )
+            else:
+                fins, auto_faults, labels = (), {}, {}
             combined = merge_fin_evidence(
-                fins, patterns, labels, self.qec_evidence,
+                fins, auto_faults, labels, self.qec_evidence,
                 only_pump_swap=self.only_pump_swap,
             )
-            self.phase.emit(
-                "Bilde gemeinsame Diagnosegruppen aus AutoExport- und "
-                "QEC-DTCs je eindeutiger FIN – ohne Fahrzeugpaarmatrix …"
-            )
-            result = cluster_autoexport_fins(
+            results = cluster_fin_methods(
                 combined.fins, combined.faults,
                 combined.labels, combined.case_links,
+                min_cluster_size=self.min_cluster_size,
+                min_samples=self.min_samples,
+                minimum_similarity=self.minimum_similarity,
+                progress=self.phase.emit,
             )
-            self.calculated.emit(replace(
-                result,
-                sources_by_fin=combined.sources,
-                autoexport_fin_count=combined.autoexport_fin_count,
-                qec_fin_count=combined.qec_fin_count,
-                overlap_fin_count=combined.overlap_fin_count,
-                qec_only_fin_count=combined.qec_only_fin_count,
-            ))
-        except (ValueError, RuntimeError) as exc:
-            # Explicit, non-sensitive validation errors only.
+            enriched = {
+                key: replace(
+                    result,
+                    sources_by_fin=combined.sources,
+                    autoexport_fin_count=combined.autoexport_fin_count,
+                    qec_fin_count=combined.qec_fin_count,
+                    overlap_fin_count=combined.overlap_fin_count,
+                    qec_only_fin_count=combined.qec_only_fin_count,
+                    pre_swap_fins=len(self.qec_evidence.pump_swap_dates),
+                )
+                for key, result in results.items()
+            }
+            self.calculated.emit(enriched)
+        except ValueError as exc:
             self.failed.emit(str(exc))
         except Exception:
-            # Unexpected SQL/driver exceptions may include local FINs/paths.
+            # SQL drivers may expose FINs and local file paths in exceptions;
+            # never send untrusted exception text to GUI, CI or a chat export.
             self.failed.emit(
-                "Die lokale FIN-Analyse konnte nicht abgeschlossen werden. "
-                "Bitte den Import und die Datenbank prüfen."
+                "Analyse nicht abgeschlossen. Bitte lokale "
+                "AutoExport-Datenbank und Importzuordnung prüfen."
             )
+
+
+class _SelectableText(QPlainTextEdit):
+    """Read-only, scrollable complete ECU:DTC explanation, test-compatible."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.setReadOnly(True)
+        self.setMinimumHeight(175)
+        self.setMaximumHeight(245)
+        self.setLineWrapMode(QPlainTextEdit.LineWrapMode.WidgetWidth)
+        self.setPlaceholderText(
+            "Cluster auswählen, um die gemeinsamen Diagnosen zu verstehen."
+        )
+
+    def text(self) -> str:
+        return self.toPlainText()
+
+    def setText(self, text: str) -> None:  # noqa: N802
+        self.setPlainText(text)
 
 
 def _table(
@@ -106,7 +139,7 @@ def _table(
 
 
 class AutoExportFinWorkspace(QWidget):
-    """Scalable VIN-wide diagnosis exploration; no NTF claim is fabricated."""
+    """Single user-facing Clusteranalyse: one FIN, one point, three methods."""
 
     fin_requested = Signal(str)
 
@@ -118,178 +151,203 @@ class AutoExportFinWorkspace(QWidget):
     ) -> None:
         super().__init__()
         self.source = source
-        self.population_metrics = population_metrics or {}
         self._qec_evidence = qec_fin_evidence(cases)
         self._linked = self._qec_evidence.case_links
         self._pump_swap_dates = self._qec_evidence.pump_swap_dates
-        self._analysis_scoped_to_pump = False
+        self.population_metrics = population_metrics or {}
+        self._task: _FinClusterTask | None = None
+        self._run_results: dict[str, FinPatternResult] = {}
         self.result: FinPatternResult | None = None
-        self._task: _FinPatternTask | None = None
         self._selected_fin: str | None = None
         self._shown_members: list[str] = []
+        self._group_rows: tuple[int, ...] = ()
+        self._analysis_scoped_to_pump = False
 
-        main = QVBoxLayout(self)
-        main.setContentsMargins(0, 0, 0, 0)
+        shell = QVBoxLayout(self)
+        shell.setContentsMargins(0, 0, 0, 0)
         scroll = QScrollArea(self)
         scroll.setWidgetResizable(True)
         scroll.setFrameShape(QFrame.Shape.NoFrame)
-        main.addWidget(scroll)
+        shell.addWidget(scroll)
         content = QWidget()
         scroll.setWidget(content)
         body = QVBoxLayout(content)
         body.setContentsMargins(22, 18, 22, 25)
         body.setSpacing(12)
 
-        body.addWidget(QLabel(
-            "Alle FINs · AutoExport + QEC", objectName="PageTitle",
-        ))
-        lead = QLabel(
-            "Gemeinsame Diagnosemuster aus AutoExport und QEC: "
-            "Jede FIN wird genau einmal betrachtet. "
-            "QEC-/QuickTest-DTCs vor einem belegten Pumpentausch "
-            "ergänzen den AutoExport derselben FIN. "
-            "Für FINs ohne Tauschanker bleibt die allgemeine AutoExport-"
-            "Historie nutzbar, aber nicht als Vor-Tausch-Beweis. "
-            "Ein Cluster ist kein bestätigter Pumpendefekt oder NTF.",
+        body.addWidget(QLabel("Clusteranalyse", objectName="PageTitle"))
+        intro = QLabel(
+            "AutoExport und QEC werden über die FIN zusammengeführt. "
+            "Ein Fahrzeug zählt genau einmal. Die Cluster zeigen "
+            "ähnliche Diagnosen – nicht bestätigte Pumpenfehler.",
             objectName="PageSubtitle",
         )
-        lead.setWordWrap(True)
-        body.addWidget(lead)
+        intro.setWordWrap(True)
+        body.addWidget(intro)
 
-        metrics = self.population_metrics
+        total_auto = self.population_metrics.get("autoexport_unique_fins", 0)
         self.population_note = QLabel(
             (
-                f"Lokal importiert: {metrics.get('autoexport_unique_fins', 0):,} "
-                "AutoExport-FINs · "
-                f"{metrics.get('autoexport_dtc_fins', 0):,} FINs mit DTC-Zeilen · "
-                f"{len(self._linked):,} FINs mit QEC-Pumpenfall. "
-                "Die gemeinsame Anzahl wird nach FIN-Deduplikation berechnet."
+                f"AutoExport: {total_auto:,} FINs importiert · "
+                f"QEC-Pumpenfälle: {len(self._linked):,} FINs · "
+                "Gesamte eindeutige FIN-Zahl nach gemeinsamer Analyse."
             ).replace(",", "."),
             objectName="PageSubtitle",
         )
         self.population_note.setWordWrap(True)
         body.addWidget(self.population_note)
 
+        # Small everyday parameter row, one actual calculation button.
+        settings = QHBoxLayout()
+        settings.addWidget(QLabel("Mindestgröße"))
+        self.min_cluster_size = QSpinBox()
+        self.min_cluster_size.setRange(2, 100)
+        self.min_cluster_size.setValue(5)
+        self.min_cluster_size.setToolTip(
+            "Kleinste Anzahl unterschiedlicher FINs, die eine Gruppe bilden."
+        )
+        settings.addWidget(self.min_cluster_size)
+        settings.addWidget(QLabel("MinSamples"))
+        self.min_samples = QSpinBox()
+        self.min_samples.setRange(1, 100)
+        self.min_samples.setValue(2)
+        settings.addWidget(self.min_samples)
+        settings.addStretch(1)
+        body.addLayout(settings)
+
         self.only_pump_swap = QCheckBox(
-            "Nur FINs mit belegtem QEC-Pumpentausch (nur frühere DTCs)"
+            "Nur FINs mit QEC-Pumpentauschdatum"
         )
         self.only_pump_swap.setToolTip(
-            "Opt-in: nur QEC-Kühlmittelpumpenfälle mit gültigem Rep.-Datum. "
-            "Diagnosen am selben Tag, danach oder ohne Datum gelten nicht als "
-            "sicher vor dem Pumpentausch. AutoExport RepairDt genügt nicht."
+            "Ohne Haken: AutoExport und QEC gemeinsam; FINs ohne "
+            "Pumpentausch bleiben Teil der allgemeinen Diagnosemustersuche. "
+            "Mit Haken: nur nachgewiesen vorherige Diagnosen "
+            "mit dem Tauschdatum aus QEC Rep.-Datum."
         )
-        self.only_pump_swap.toggled.connect(self._scope_changed)
         body.addWidget(self.only_pump_swap)
-        self.scope_note = QLabel(
-            f"Aktuell {len(self._pump_swap_dates):,} FINs mit dokumentiertem "
-            "QEC-Pumpentauschdatum. Das Datum stammt aus QEC Rep.-Datum. "
-            "Ohne Haken: AutoExport + QEC-Diagnosen zusammen je FIN. "
-            "Mit Haken: nur FINs mit Pumpentausch und nur DTCs davor.",
-            objectName="PageSubtitle",
-        )
-        self.scope_note.setWordWrap(True)
-        body.addWidget(self.scope_note)
-        start_row = QHBoxLayout()
+
+        actions = QHBoxLayout()
         self.start_button = QPushButton("Clusteranalyse starten")
         self.start_button.setObjectName("ClusterStartButton")
-        self.start_button.setEnabled(source is not None)
         self.start_button.clicked.connect(self.run_analysis)
-        start_row.addWidget(self.start_button)
-        start_row.addStretch(1)
-        body.addLayout(start_row)
-
+        actions.addWidget(self.start_button)
+        actions.addStretch(1)
+        body.addLayout(actions)
         self.status = QLabel(
-            "Bereit. Die Analyse liest ausschließlich lokale, "
-            "bereits importierte AutoExport-Daten.",
+            "Bereit. Nur lokal importierte AutoExport- und QEC-Daten "
+            "werden ausgewertet.",
             objectName="PageSubtitle",
         )
         self.status.setWordWrap(True)
         body.addWidget(self.status)
 
-        kpis = QHBoxLayout()
-        self.number_labels = {}
+        self.number_labels: dict[str, QLabel] = {}
+        summary = QHBoxLayout()
+        summary.setSpacing(9)
         for key, title in (
-            ("total", "FINs im AutoExport"),
-            ("dtc", "FINs mit DTC"),
-            ("assigned", "FINs in Mustergruppen"),
-            ("unassigned", "Mit DTC, ohne Gruppe"),
-            ("missing", "FINs ohne DTC"),
-            ("groups", "Mustergruppen"),
+            ("total", "FINs insgesamt"),
+            ("groups", "Gefundene Cluster"),
+            ("assigned", "FINs in Clustern"),
+            ("unassigned", "Mit DTC, ohne Cluster"),
+            ("missing", "Ohne geeignete DTC"),
         ):
             card = QFrame()
             card.setObjectName("Card")
-            stack = QVBoxLayout(card)
-            stack.setContentsMargins(10, 10, 10, 10)
-            label = QLabel(title, objectName="CardTitle")
-            label.setWordWrap(True)
-            stack.addWidget(label)
+            inner = QVBoxLayout(card)
+            inner.setContentsMargins(10, 9, 10, 9)
+            heading = QLabel(title, objectName="CardTitle")
+            heading.setWordWrap(True)
+            inner.addWidget(heading)
             value = QLabel("–", objectName="CardValue")
-            stack.addWidget(value)
+            inner.addWidget(value)
             self.number_labels[key] = value
-            kpis.addWidget(card, 1)
-        body.addLayout(kpis)
-
-        body.addWidget(QLabel(
-            "Größte Fahrzeug-Diagnosemuster", objectName="CardTitle",
-        ))
-        chart_info = QLabel(
-            "Die Balken zeigen die 14 größten Gruppen. "
-            "Alle Gruppen und FINs stehen in den Tabellen. "
-            "Klick auf einen Balken wählt die Gruppe aus.",
+            summary.addWidget(card, 1)
+        # Kept as a counted field for detailed tests and optional summaries.
+        self.number_labels["dtc"] = QLabel("–")
+        body.addLayout(summary)
+        self.summary_note = QLabel(
+            "FINs ohne geeignete DTC werden nicht geclustert, bleiben "
+            "aber in der Gesamtanzahl sichtbar.",
             objectName="PageSubtitle",
         )
-        chart_info.setWordWrap(True)
-        body.addWidget(chart_info)
-        self.chart = FinPatternBarChart()
-        self.chart.group_picked.connect(self.select_group)
-        body.addWidget(self.chart)
+        self.summary_note.setWordWrap(True)
+        body.addWidget(self.summary_note)
+
+        plot_header = QHBoxLayout()
+        plot_header.addWidget(QLabel(
+            "FIN-Punktwolke · Diagnoseähnlichkeit", objectName="CardTitle",
+        ))
+        plot_header.addStretch(1)
+        plot_header.addWidget(QLabel("Verfahren"))
+        self.method_combo = QComboBox()
+        for key in ("leaf", "eom", "complete_cosine"):
+            self.method_combo.addItem(METHOD_TITLES[key], key)
+        self.method_combo.setMinimumWidth(208)
+        self.method_combo.currentIndexChanged.connect(self._method_changed)
+        plot_header.addWidget(self.method_combo)
+        self.dimension = QComboBox()
+        self.dimension.addItem("2D", "2d")
+        self.dimension.addItem("3D · drehbar", "3d")
+        self.dimension.currentIndexChanged.connect(self._dimension_changed)
+        plot_header.addWidget(self.dimension)
+        reset = QPushButton("Ansicht zurücksetzen")
+        reset.clicked.connect(self._reset_view)
+        plot_header.addWidget(reset)
+        body.addLayout(plot_header)
+        self.plot = FinClusterProjectionPlot()
+        self.plot.fin_picked.connect(self._point_picked)
+        self.chart = self.plot
+        body.addWidget(self.plot)
 
         self.group_table, self.group_model = _table(
-            ("Gruppe", "FINs", "Davon FINs mit QEC", "Median Ähnlichkeit",
-             "Häufigster ECU:DTC"),
-            (75, 100, 165, 165, 380),
-            245,
+            (
+                "Cluster", "FINs", "Mit QEC", "Repräsentative FIN",
+                "DTC-Kern", "Diagnoseähnlichkeit",
+            ),
+            (77, 75, 90, 190, 100, 170),
+            235,
         )
         self.group_table.selectionModel().currentRowChanged.connect(
             self._group_changed
         )
-        body.addWidget(QLabel("Mustergruppe auswählen", objectName="CardTitle"))
+        body.addWidget(QLabel(
+            "Cluster auswählen", objectName="CardTitle",
+        ))
         body.addWidget(self.group_table)
 
-        self.explanation = QLabel(
-            "Nach der Berechnung eine Gruppe auswählen.",
-            objectName="PageSubtitle",
+        self.why_heading = QLabel(
+            "Warum gehören diese FINs zusammen?", objectName="CardTitle",
         )
-        self.explanation.setWordWrap(True)
-        self.explanation.setTextFormat(Qt.TextFormat.PlainText)
-        self.explanation.setTextInteractionFlags(
-            Qt.TextInteractionFlag.TextSelectableByMouse
-        )
+        self.why_heading.setWordWrap(True)
+        body.addWidget(self.why_heading)
+        self.explanation = _SelectableText()
         body.addWidget(self.explanation)
 
-        search = QHBoxLayout()
-        search.addWidget(QLabel("FIN suchen:"))
+        find = QHBoxLayout()
+        find.addWidget(QLabel("FIN suchen"))
         self.fin_search = QLineEdit()
         self.fin_search.setPlaceholderText(
-            "FIN aus dem AutoExport – auch ohne QEC-Fall"
+            "Auch FINs ohne Cluster oder ohne QEC finden"
         )
         self.fin_search.returnPressed.connect(self.find_fin)
-        search.addWidget(self.fin_search, 1)
+        find.addWidget(self.fin_search, 1)
         self.find_button = QPushButton("FIN finden")
         self.find_button.clicked.connect(self.find_fin)
-        search.addWidget(self.find_button)
-        body.addLayout(search)
+        find.addWidget(self.find_button)
+        body.addLayout(find)
         self.fin_status = QLabel(objectName="PageSubtitle")
         self.fin_status.setWordWrap(True)
         body.addWidget(self.fin_status)
 
         body.addWidget(QLabel(
-            "FINs in der ausgewählten Mustergruppe", objectName="CardTitle",
+            "FINs im ausgewählten Cluster", objectName="CardTitle",
         ))
         self.fin_table, self.fin_model = _table(
-            ("FIN", "Eindeutige ECU:DTC", "Ähnlichkeit zum Muster",
-             "Zugeordnete QEC-Fälle", "Diagnosequelle"),
-            (195, 165, 190, 170, 180),
+            (
+                "FIN", "ECU:DTC", "Ähnlichkeit zum Repräsentanten",
+                "QEC-Fälle", "Datenherkunft",
+            ),
+            (185, 90, 245, 100, 180),
             280,
         )
         self.fin_table.selectionModel().currentRowChanged.connect(
@@ -297,63 +355,57 @@ class AutoExportFinWorkspace(QWidget):
         )
         self.fin_table.doubleClicked.connect(self.open_fin)
         body.addWidget(self.fin_table)
-
         self.open_button = QPushButton(
-            "Ausgewählte FIN in AutoExport-Gesamthistorie öffnen"
+            "Ausgewählte FIN und vorhandene QEC-Fälle öffnen"
         )
         self.open_button.setEnabled(False)
         self.open_button.clicked.connect(self.open_fin)
         body.addWidget(self.open_button)
-        end = QLabel(
-            "Wichtig: Eine Gruppe bedeutet nur ähnliche gespeicherte "
-            "ECU:DTC-Muster. Die Zuordnung ist experimentell und nicht "
-            "auf technische Pumpenursachen kalibriert. "
-            "Die Prozentzahl ist ein Cosinus-Ähnlichkeitsindex, "
-            "keine Fehlerwahrscheinlichkeit. "
-            "Ein QEC-Bezug bedeutet lediglich dieselbe FIN.",
-            objectName="PageSubtitle",
-        )
-        end.setWordWrap(True)
-        body.addWidget(end)
 
-    def _scope_changed(self, checked: bool) -> None:
-        if self.result is not None:
-            self.result = None
-            self.group_model.set_rows([])
-            self.fin_model.set_rows([])
-            self.chart.set_groups(())
-            for value in self.number_labels.values():
-                value.setText("–")
-            self.explanation.setText(
-                "Datenumfang verändert. Analyse bitte erneut starten."
-            )
-        self.status.setText(
-            "Modus Pumpentausch: nur QEC-FINs mit Rep.-Datum "
-            "und Diagnosen an früheren Kalendertagen."
-            if checked else
-            "Modus Alle FINs: AutoExport und QEC gemeinsam. "
-            "Bei FINs mit Pumpentausch werden nur Diagnosemerkmale "
-            "vor dem Austausch verwendet."
-        )
+        for control in (self.min_cluster_size, self.min_samples):
+            control.valueChanged.connect(self._invalidate)
+        self.only_pump_swap.toggled.connect(self._invalidate)
+        # Keep one static plot and cached results for fast method switching.
+        self._show_empty()
 
-    def run_analysis(self) -> None:
-        if self.source is None:
-            self.status.setText("Keine lokale AutoExport-Datenbank verfügbar.")
-            return
-        if self._task is not None and self._task.isRunning():
-            return
-        self.start_button.setEnabled(False)
+    def _show_empty(self) -> None:
+        self.plot.set_result(None)
         self.group_model.set_rows([])
         self.fin_model.set_rows([])
+        self.explanation.setText(
+            "Clusteranalyse starten und danach einen Cluster auswählen."
+        )
+        for label in self.number_labels.values():
+            label.setText("–")
+
+    def _invalidate(self, *_args) -> None:
+        if self._task is not None:
+            return
+        if self._run_results:
+            self._run_results = {}
+            self.result = None
+            self._show_empty()
+            self.status.setText(
+                "Parameter geändert. Clusteranalyse bitte erneut starten."
+            )
+
+    def run_analysis(self) -> None:
+        if self._task is not None:
+            return
+        self._run_results = {}
         self.result = None
-        self.chart.set_groups(())
-        for value in self.number_labels.values():
-            value.setText("–")
+        self._show_empty()
         self._analysis_scoped_to_pump = self.only_pump_swap.isChecked()
+        self.start_button.setEnabled(False)
         self.only_pump_swap.setEnabled(False)
-        task = _FinPatternTask(
+        self.min_cluster_size.setEnabled(False)
+        self.min_samples.setEnabled(False)
+        task = _FinClusterTask(
             self.source, self._qec_evidence,
             only_pump_swap=self._analysis_scoped_to_pump,
+            min_cluster_size=self.min_cluster_size.value(),
+            min_samples=self.min_samples.value(),
+            minimum_similarity=0.45,
         )
         self._task = task
         _ACTIVE_FIN_TASKS.add(task)
@@ -364,86 +416,123 @@ class AutoExportFinWorkspace(QWidget):
         task.finished.connect(task.deleteLater)
         task.start()
 
-    def _receive(self, result: FinPatternResult) -> None:
+    def _enable_controls(self) -> None:
         self._task = None
-        self.result = result
         self.start_button.setEnabled(True)
         self.only_pump_swap.setEnabled(True)
-        stats = {
+        self.min_cluster_size.setEnabled(True)
+        self.min_samples.setEnabled(True)
+
+    def _receive(self, results: dict[str, FinPatternResult]) -> None:
+        self._enable_controls()
+        self._run_results = results
+        key = self.method_combo.currentData()
+        self._show_result(results.get(key) or results["leaf"])
+
+    def _failed(self, message: str) -> None:
+        self._enable_controls()
+        self.status.setText("Clusteranalyse nicht möglich: " + message)
+
+    def _method_changed(self, *_args) -> None:
+        key = self.method_combo.currentData()
+        if key in self._run_results:
+            self._show_result(self._run_results[key])
+
+    def _dimension_changed(self, *_args) -> None:
+        self.plot.set_mode(self.dimension.currentData() or "2d")
+
+    def _reset_view(self) -> None:
+        self.plot.reset_view()
+
+    def _show_result(self, result: FinPatternResult) -> None:
+        self.result = result
+        summary = {
             "total": result.total_fins,
             "dtc": result.dtc_fins,
+            "groups": len(result.groups),
             "assigned": result.assigned_fins,
             "unassigned": len(result.unassigned_fins),
             "missing": len(result.no_dtc_fins),
-            "groups": len(result.groups),
         }
-        assert (
-            stats["assigned"] + stats["unassigned"] + stats["missing"]
-            == stats["total"]
+        if (
+            summary["assigned"] + summary["unassigned"] + summary["missing"]
+            != summary["total"]
+        ):
+            raise ValueError("FIN-Clusterzahlen passen nicht zum importierten Bestand.")
+        for key, number in summary.items():
+            self.number_labels[key].setText(f"{number:,}".replace(",", "."))
+        self.population_note.setText(
+            (
+                f"Gemeinsamer FIN-Bestand: {result.total_fins:,} eindeutige FINs. "
+                f"AutoExport: {result.autoexport_fin_count:,} · "
+                f"QEC: {result.qec_fin_count:,} FINs, davon "
+                f"{result.overlap_fin_count:,} bereits im AutoExport · "
+                f"QEC zusätzlich: {result.qec_only_fin_count:,}. "
+                "Kein Fahrzeug doppelt gezählt."
+            ).replace(",", ".")
         )
-        for key, count in stats.items():
-            self.number_labels[key].setText(f"{count:,}".replace(",", "."))
-        scope = (
-            "QEC-Pumpentausch-FINs mit DTCs vor dem Austausch"
-            if self._analysis_scoped_to_pump else
-            "AutoExport und QEC gemeinsam; bei bekannten Tauschen nur vor dem Austausch"
+        self.summary_note.setText(
+            f"{result.dtc_fins:,} FINs mit DTC-Daten. "
+            f"{len(result.no_dtc_fins):,} FINs ohne geeignete "
+            "DTC-Daten sind nicht geclustert. "
+            "Bei FINs mit dokumentiertem Pumpentausch werden nur "
+            "Diagnosemerkmale vor diesem Tausch verwendet."
+            .replace(",", ".")
         )
         self.status.setText(
-            (
-                f"FIN-Musteranalyse abgeschlossen ({scope}). "
-                f"{result.total_fins:,} FINs insgesamt: "
-                f"{result.autoexport_fin_count:,} aus AutoExport und "
-                f"{result.qec_fin_count:,} mit QEC-Bezug, "
-                f"darunter {result.overlap_fin_count:,} in beiden Quellen; "
-                f"{result.qec_only_fin_count:,} QEC-FINs ohne AutoExport. "
-                f"{len(result.groups)} diagnostische Mustergruppen. "
-                "Eine FIN zählt nur einmal; nicht gruppierte FINs bleiben sichtbar."
-            ).replace(",", ".")
+            f"{METHOD_TITLES[result.method]}: "
+            f"{len(result.groups)} Cluster · {result.assigned_fins:,} "
+            f"FINs gruppiert. Methodenwechsel und 2D/3D benötigen "
+            "keine Neuberechnung."
         )
         self.group_model.set_rows([
             (
-                f"G{group.group_id}", group.fin_count, group.qec_fin_count,
+                f"C{group.group_id}",
+                group.fin_count,
+                group.qec_fin_count,
+                group.representative_fin,
+                group.shared_fault_count,
                 f"{group.median_similarity:.1%}",
-                (
-                    f"{group.common_faults[0][0]}:{group.common_faults[0][1]}"
-                    if group.common_faults else "Kein wiederkehrender DTC"
-                ),
             )
             for group in result.groups
         ])
-        self.chart.set_groups(result.groups)
+        self.plot.set_result(result)
+        self.plot.set_mode(self.dimension.currentData() or "2d")
+        self._selected_fin = None
+        self.fin_model.set_rows([])
+        self._shown_members = []
+        self.open_button.setEnabled(False)
         self.explanation.setText(
-            "Gruppe wählen, um häufig gemeinsame Fehlercodes "
-            "und alle zugehörigen FINs zu sehen."
+            "Wähle einen Cluster in der Tabelle oder klicke "
+            "auf einen Punkt in der FIN-Punktwolke."
+        )
+        self.why_heading.setText(
+            "Warum gehören diese FINs zusammen?"
         )
         if result.groups:
             self.group_table.selectRow(0)
         else:
             self.explanation.setText(
-                "Mit der experimentellen Mindestähnlichkeit wurden "
-                "keine ausreichend großen Fahrzeugmuster erkannt. "
-                "Das ist keine Aussage über Pumpendefekte."
+                "Das Verfahren hat bei diesen Einstellungen keine "
+                "geeigneten Cluster gebildet. Das beweist nicht, "
+                "dass keine Kühlmittelpumpenstörung vorliegt."
             )
-
-    def _failed(self, message: str) -> None:
-        self._task = None
-        self.start_button.setEnabled(self.source is not None)
-        self.only_pump_swap.setEnabled(True)
-        self.status.setText("FIN-Clusteranalyse nicht möglich: " + message)
 
     def select_group(self, group_id: int) -> None:
         if self.result is None:
             return
-        for i, group in enumerate(self.result.groups):
+        for row, group in enumerate(self.result.groups):
             if group.group_id == group_id:
-                self.group_table.selectRow(i)
+                self.group_table.selectRow(row)
                 return
 
     def _group_changed(self, index, _previous) -> None:
         if self.result is None or not index.isValid():
             return
+        if index.row() >= len(self.result.groups):
+            return
         group = self.result.groups[index.row()]
-        self.chart.set_selected(group.group_id)
+        self.plot.set_highlight(group.group_id)
         self._shown_members = [fin for fin, _ in group.members]
         self.fin_model.set_rows([
             (
@@ -451,60 +540,104 @@ class AutoExportFinWorkspace(QWidget):
                 self.result.code_counts.get(fin, 0),
                 f"{similarity:.1%}",
                 len(self.result.qec_links.get(fin, ())),
-                (self.result.sources_by_fin or {}).get(fin, "—"),
+                (self.result.sources_by_fin or {}).get(fin, "–"),
             )
             for fin, similarity in group.members
         ])
         self._selected_fin = None
         self.open_button.setEnabled(False)
+        self.why_heading.setText(
+            f"Warum gehören diese {group.fin_count} FINs zu Cluster "
+            f"C{group.group_id}?"
+        )
         lines = [
-            f"Warum sind {group.fin_count} FINs in Mustergruppe "
-            f"G{group.group_id}?",
-            "AutoExport- und QEC-/QuickTest-Fehlercodes werden je FIN "
-            "als ein gemeinsames Diagnosemuster verglichen. Eine FIN "
-            "wird nicht doppelt gezählt. "
-            "Folgende Codes wurden in mehreren Fahrzeugen dieser "
-            "Gruppe beobachtet (pro FIN höchstens einmal gezählt):",
+            "1. Gemeinsame Diagnosemerkmale",
+            f"Die {group.fin_count} Fahrzeuge teilen wiederkehrende "
+            "Steuergerät-Fehlercode-Kombinationen (ECU:DTC). "
+            "Zu jeder Kombination steht die Anzahl betroffener FINs. "
+            "Ein Klartext erscheint nur, wenn er in den Daten vorliegt.",
         ]
-        if not group.common_faults:
-            lines.append(
-                "Kein einzelner ECU:DTC tritt wiederholt auf. "
-                "Diese Gruppe braucht besondere fachliche Prüfung."
-            )
-        else:
-            for ecu, dtc, count, label in group.common_faults:
-                desc = f" – {label}" if label else ""
+        if group.common_faults:
+            for ecu, dtc, count, description in group.common_faults:
+                label = f" — {description}" if description else ""
                 lines.append(
-                    f"• {ecu}:{dtc}{desc}: {count} von {group.fin_count} FINs"
+                    f"• {ecu}:{dtc}{label} – bei {count} "
+                    f"von {group.fin_count} FINs"
                 )
-        scope_explanation = (
-            "Es werden ausschließlich DTCs von Tagen VOR dem belegten "
-            "QEC-Pumpentausch berücksichtigt. Ein gemeinsamer Code "
-            "beweist trotzdem weder Defekt noch Tauschwirksamkeit."
-            if self._analysis_scoped_to_pump else
-            "Bei FINs mit dokumentiertem Pumpentausch wurden nur "
-            "Vor-Tausch-Diagnosen berücksichtigt. Bei allen übrigen "
-            "FINs wird die vorhandene AutoExport-Diagnosehistorie "
-            "ohne Pumpentausch-Aussage verglichen."
-        )
-        lines.append(
-            "Diese Häufigkeiten und der Ähnlichkeitsindex sind "
-            "kein Beleg für einen gemeinsamen Kühlmittelpumpenfehler. "
-            + scope_explanation
-        )
-        self.explanation.setText("\n\n".join(lines))
+        else:
+            lines.append(
+                "Kein ECU:DTC ist in mehr als einer FIN dieser Gruppe "
+                "gemeinsam. Das Muster ist besonders kritisch zu prüfen."
+            )
+        lines.extend([
+            "",
+            "2. Wie wurde gruppiert?",
+            (
+                "HDBSCAN findet ähnliche Diagnosemuster mithilfe einer "
+                "effizienten 16-dimensionalen Modellprojektion der "
+                "ECU:DTC-TF-IDF-Merkmale."
+                if result.method in ("leaf", "eom") else
+                "Complete-Link prüft innerhalb begrenzter Leaf-Teilgruppen, "
+                "ob jede Paarähnlichkeit mindestens 45 % beträgt."
+            ),
+            result.notes,
+            "",
+            "3. Wie sicher ist die Ähnlichkeit?",
+            (
+                f"Es wurden {group.checked_pair_count} Diagnosepaare "
+                "stichprobenartig oder vollständig geprüft. "
+                f"Bei {group.pair_weak_count} Paaren lag die "
+                "Cosinus-Ähnlichkeit unter 45 %. "
+                "Das bedeutet diagnostische Uneinheitlichkeit, "
+                "nicht eine Defektwahrscheinlichkeit."
+            ),
+            f"{group.qec_fin_count} der FINs haben einen QEC-Bezug. "
+            "DTCs nach dem Pumpentausch sind keine Clustering-Merkmale. "
+            "Bei FINs ohne Tauschanker ist eine allgemeine "
+            "Diagnosehistorie mit den vorhandenen DTCs ausgewertet.",
+            "Wichtig: Diese Cluster erklären Diagnoseähnlichkeit. "
+            "Sie beweisen weder die Ursache in der Kühlmittelpumpe "
+            "noch eine Verantwortung des Lieferanten.",
+        ])
+        self.explanation.setText("\n".join(lines))
+
+    def _point_picked(self, fin: str) -> None:
+        if self.result is None:
+            return
+        group = self.result.group_for(fin)
+        if group is not None:
+            self.select_group(group.group_id)
+            self._select_fin_in_group(fin)
+        else:
+            self._selected_fin = fin
+            self.open_button.setEnabled(True)
+            self.fin_status.setText(
+                "FIN hat DTCs, gehört aber zu keinem Cluster "
+                "dieses Verfahrens."
+            )
 
     def _fin_changed(self, index, _previous) -> None:
         if not index.isValid() or index.row() >= len(self._shown_members):
             return
         self._selected_fin = self._shown_members[index.row()]
         self.open_button.setEnabled(True)
+        if self.result is not None:
+            group = self.result.group_for(self._selected_fin)
+            self.plot.set_highlight(
+                group.group_id if group is not None else None,
+                self._selected_fin,
+            )
+
+    def _select_fin_in_group(self, fin: str) -> None:
+        for row, existing in enumerate(self._shown_members):
+            if existing == fin:
+                self.fin_table.selectRow(row)
+                self.fin_table.scrollTo(self.fin_model.index(row, 0))
+                break
 
     def find_fin(self) -> bool:
         if self.result is None:
-            self.fin_status.setText(
-                "Bitte zuerst die AutoExport-FIN-Analyse starten."
-            )
+            self.fin_status.setText("Bitte zuerst die Clusteranalyse starten.")
             return False
         fin = self.fin_search.text().strip().upper()
         if not fin:
@@ -513,30 +646,24 @@ class AutoExportFinWorkspace(QWidget):
         group = self.result.group_for(fin)
         if group is not None:
             self.select_group(group.group_id)
-            for i, found in enumerate(self._shown_members):
-                if found == fin:
-                    self.fin_table.selectRow(i)
-                    self.fin_table.scrollTo(self.fin_model.index(i, 0))
-                    break
+            self._select_fin_in_group(fin)
             self.fin_status.setText(
-                f"FIN in Mustergruppe G{group.group_id} gefunden. "
-                "Ein Pumpendefekt ist damit nicht bewiesen."
+                f"FIN liegt in Cluster C{group.group_id}."
             )
             return True
         if fin in self.result.no_dtc_fins:
             self.fin_status.setText(
-                "FIN im AutoExport vorhanden, aber ohne importierte "
-                "DTC-Beobachtung. Keine Diagnosemuster-Zuordnung möglich."
+                "FIN vorhanden, aber ohne geeignete DTC-Merkmale "
+                "für diese Clusteranalyse."
             )
         elif fin in self.result.unassigned_fins:
             self.fin_status.setText(
-                "FIN hat DTC-Daten, erfüllt aber nicht die "
-                "experimentellen Mustergruppen-Kriterien."
+                "FIN hat Diagnosemerkmale, wurde aber keinem "
+                "Cluster zugeordnet."
             )
         else:
             self.fin_status.setText(
-                "Diese FIN ist in den aktuell importierten "
-                "AutoExport-Daten nicht vorhanden."
+                "FIN nicht in der ausgewählten Datenbasis vorhanden."
             )
             return False
         self._selected_fin = fin
