@@ -1,4 +1,4 @@
-"""Donahtdiagramm fuer eindeutig partitionierte FINs, lokal ohne Web-Charts."""
+"""Donutdiagramm fuer eindeutig partitionierte FINs, lokal ohne Web-Charts."""
 from __future__ import annotations
 
 from PySide6.QtCore import QRectF, QSize, Qt
