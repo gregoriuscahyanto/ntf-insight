@@ -87,6 +87,9 @@ def test_approved_method_statistics_contain_only_whitelisted_nonnegative_ints():
     assert set(payload) == {
         "methode_leaf", "methode_eom", "methode_complete_link_45",
         "methode_complete_link_65", "geeignete_faelle",
+        "paar_jaccard_leaf_eom_promille",
+        "paar_jaccard_leaf_complete_45_promille",
+        "paar_jaccard_leaf_complete_65_promille",
     }
     dumped = json.dumps(payload, ensure_ascii=False)
     assert "SECRET_" not in dumped
@@ -108,6 +111,10 @@ def test_approved_method_statistics_reject_injected_string_and_negative_count():
         approved_method_totals(report)
     report["methodenbewertung"]["methode_eom"]["cluster"] = -1
     with pytest.raises(ValueError, match="Ganzzahlen"):
+        approved_method_totals(report)
+    report["methodenbewertung"]["methode_eom"]["cluster"] = 2
+    report["methodenbewertung"]["paaruebereinstimmung_leaf_eom"] = "QEC_SECRET"
+    with pytest.raises(ValueError, match="Paarübereinstimmung"):
         approved_method_totals(report)
 
 
