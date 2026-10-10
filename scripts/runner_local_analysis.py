@@ -110,6 +110,10 @@ def main(argv: list[str] | None = None) -> int:
         "--freigabe-summen", action="store_true",
         help="Nur explizit erlaubte aggregierte Ganzzahlen in Actions-Logs ausgeben.",
     )
+    parser.add_argument(
+        "--methodenvergleich-freigeben", action="store_true",
+        help="Separater Opt-in: ausschließlich vier aggregierte Methodenstatistiken.",
+    )
     args = parser.parse_args(argv)
     try:
         # 3rd party libraries (e.g. sklearn/HDBSCAN) may emit FutureWarnings
@@ -127,6 +131,13 @@ def main(argv: list[str] | None = None) -> int:
                     permitted = approved_public_totals(report)
                 else:
                     permitted = None
+                if args.methodenvergleich_freigeben:
+                    from ntf_insight.analysis.method_comparison_audit import (
+                        approved_method_totals,
+                    )
+                    method_totals = approved_method_totals(report)
+                else:
+                    method_totals = None
     except Exception:
         # Never print exceptions, Python tracebacks, paths, FINs, SSL,
         # QEC identifiers, SQL fragments, evidence refs or DTC values.
@@ -143,6 +154,13 @@ def main(argv: list[str] | None = None) -> int:
         print(
             "NTF_FREIGEGEBENE_SUMMEN_JSON="
             + json.dumps(permitted, ensure_ascii=True, sort_keys=True)
+        )
+    if method_totals is not None:
+        # This is a SEPARATE manual opt-in, never implied by summen_freigeben.
+        # No group labels, individual cases, FINs, QECs or original DTCs.
+        print(
+            "NTF_FREIGEGEBENER_METHODENVERGLEICH_JSON="
+            + json.dumps(method_totals, ensure_ascii=True, sort_keys=True)
         )
     return 0
 

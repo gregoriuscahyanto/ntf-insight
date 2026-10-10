@@ -228,6 +228,73 @@ aus. Bei Fehlern gibt sie einen **statischen, nicht identifizierenden**
 Fehlerstatus aus; Pfade und Exception-Texte werden nicht an GitHub
 weitergegeben. Fehlerursachen gegebenenfalls **lokal** prüfen.
 
+## Methodenauswahl: Leaf, EOM und Complete-Link
+
+Im **lokalen** vertraulichen JSON gibt es nun den Abschnitt
+`methodenbewertung`, zusätzlich zum unveränderten `methodenvergleich`.
+
+Die vier Szenarien arbeiten mit **genau den gleichen 170
+vor dem Pumpentausch diagnostisch geeigneten QEC-Fällen**, sofern der
+aktuelle Bestand weiterhin so groß ist. Das Modell benutzt exakt
+dieselben ursprünglichen Merkmale und Abstandswerte:
+
+- `methode_leaf`: HDBSCAN mit Leaf-Auswahl, Mindestgröße 3,
+  `min_samples=2`; dient als explorativer Ausgangspunkt.
+- `methode_eom`: HDBSCAN EOM mit identischen Parametern und Daten.
+- `methode_complete_link_45`: hierarchische Complete-Link-Methode auf
+  **derselben HDBSCAN-Euklid-Distanzmatrix**, alle Fallpaare einer Gruppe
+  mit Cosinusindex mindestens 0,45; Gruppen mit weniger als 3 Fällen
+  gelten als nicht zugeordnet.
+- `methode_complete_link_65`: dasselbe, aber Mindest-Cosinus 0,65
+  als strengere Sensitivitätsvariante.
+
+Dies ist **nicht** exakt derselbe Algorithmus wie die ältere
+Complete-Link-Darstellung in der GUI, die ein *anderes, gewichtetes
+Jaccard-Ähnlichkeitsmaß* nutzt. Die neue Variante erlaubt erstmals
+einen **fairen Vergleich des Gruppierungsverfahrens bei identischen
+Eingabemerkmalen**.
+
+Gemessen werden u. a. Clusterfälle, Ausreißer, Cluster mit
+durchgängigem ECU:DTC-Kern, Cluster mit mindestens zwei
+unterschiedlichen FINs, schwache Fallpaare und Paarzuordnungs-
+Übereinstimmung. Die Complete-Link-Grenzwerte 0,45 und 0,65 sind
+**explorative Engineering-Annahmen und nicht fachlich validierte
+Ursachenschwellen**. Dass Complete-Link keine schwachen Paare
+zulässt, ist durch den Algorithmus erzwungen und **kein unabhängiger
+Qualitätsbeweis**.
+
+Bis technische Laborbefunde vorliegen, ist eine klare beste Methode
+für die Erkennung **gleicher Fehlermechanismen** noch nicht
+wissenschaftlich ableitbar. Praktisch bleibt Leaf die Suchmethode,
+Complete-Link ist eine strengere Plausibilitätsprüfung und EOM eine
+Sensitivitätskontrolle. Keine der Methoden erzeugt bestätigte
+Lieferanten-/NTF-Ursachen.
+
+### Separater Opt-in für den Methodenvergleich in GitHub
+
+Beim manuellen Workflow-Start gibt es neu die Eingabe
+`methodenvergleich_freigeben`, **standardmäßig false**.
+Sie ist von `summen_in_actions_log_freigeben` unabhängig.
+Der Opt-in gibt **ausschließlich vorab erlaubte Ganzzahl-Aggregate**
+für vier Szenarien aus, niemals Fälle, FINs, QEC-IDs, einzelne Cluster,
+CPC3-DTC-Schlüssel oder lokale Dateien.
+
+Nur nach interner Freigabe dieser zusätzlichen Statistik:
+
+```powershell
+.\scripts\konfiguriere_ntf_runner.ps1 -RunnerRoot "$HOME\actions-runner-ntf-1" -AnalyseStarten -MethodenFreigeben
+```
+
+In GitHub Actions ist dann die Zeile
+`NTF_FREIGEGEBENER_METHODENVERGLEICH_JSON=` auswertbar.
+`-SummenFreigeben` **allein** veröffentlicht weiterhin ausschließlich
+die früheren zehn Aggregatsummen.
+
+Die statistischen Kennzahlen geben erst nach dem realen lokalen Lauf
+Aufschluss darüber, ob EOM oder strengere Complete-Link-Gruppen in
+unserem aktuellen Datenbestand einen besseren Kompromiss aus
+Gruppenhomogenität, Querevidenz und Abdeckung bieten.
+
 ## Nicht implementiert / bewusst gesperrt
 
 - Autonomer Abruf von SSL/Labor/Fachberichten, die noch fehlen.

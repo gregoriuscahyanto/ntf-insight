@@ -17,6 +17,7 @@ from ntf_insight.analysis.hdbscan_clustering import (
     cluster_hdbscan_cases,
     compare_hdbscan_methods,
 )
+from ntf_insight.analysis.method_comparison_audit import build_method_evaluation
 from ntf_insight.analysis.pilot_expert_validation import validate_pilot_evidence
 from ntf_insight.analysis.recurrence_coverage_audit import audit_recurrence_coverage
 from ntf_insight.domain.case import NTFCase
@@ -61,6 +62,7 @@ def build_runner_local_analysis(
         scoped, model, audit, bridges=bridges,
     )
     expert = validate_pilot_evidence(scoped, model, ())
+    method_assessment = build_method_evaluation(scoped, model, methods)
     if audit.scoped_cases != model.case_count:
         raise ValueError("Kohortengrößen sind inkonsistent.")
     if model.clustered_count + len(model.noise_case_ids) != len(model.eligible_case_ids):
@@ -98,7 +100,7 @@ def build_runner_local_analysis(
 
     report = {
         "format": "ntf-insight-lokale-aggregatanalyse",
-        "version": 1,
+        "version": 2,
         "ausgabe": "NUR_LOKAL_VERTRAULICH",
         "urspuengliche_fallkennungen_enthalten": False,
         "technische_original_dtc_enthalten": False,
@@ -162,6 +164,10 @@ def build_runner_local_analysis(
             "leaf_gruppierte_faelle": methods.leaf.clustered_cases,
             "eom_leaf_paar_jaccard": methods.pair_coassignment_jaccard,
         },
+        # Three methods on the same cohort/distance: Leaf, EOM,
+        # strict Complete-Link at two exploratory cosine cutoffs.
+        # Counts only, never actual memberships or case identifiers.
+        "methodenbewertung": method_assessment,
         "cluster_nur_lokal": group_rows,
         "cpc3_bruecken_nur_lokal": links,
         "pilot_prioritaeten_nur_lokal": dict(

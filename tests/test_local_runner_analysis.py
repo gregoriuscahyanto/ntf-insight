@@ -263,6 +263,55 @@ def test_private_local_review_is_not_exposed_with_approved_numeric_logs(external
     assert not process.stderr
 
 
+def test_separately_approved_method_comparison_is_aggregate_only(external_tmp_path):
+    source, _ = _database(external_tmp_path)
+    output = external_tmp_path / "methods_local"
+    script = Path(__file__).resolve().parents[1] / "scripts" / "runner_local_analysis.py"
+    process = subprocess.run(
+        [sys.executable, str(script), "--methodenvergleich-freigeben"],
+        cwd=script.parents[1],
+        env={
+            **os.environ,
+            "NTF_INSIGHT_RUNNER_DB": str(source),
+            "NTF_INSIGHT_RUNNER_REPORT_DIR": str(output),
+        },
+        capture_output=True, text=True, timeout=120,
+    )
+    assert process.returncode == 0, "CLI did not complete successfully"
+    lines = process.stdout.splitlines()
+    assert len(lines) == 2 and lines[0] == "NTF_LOKALE_ANALYSE_OK"
+    assert lines[1].startswith("NTF_FREIGEGEBENER_METHODENVERGLEICH_JSON=")
+    assert "NTF_FREIGEGEBENE_SUMMEN_JSON" not in process.stdout
+    approved = json.loads(lines[1].split("=", 1)[1])
+    assert approved["methode_leaf"]["cluster"] == 2
+    assert set(approved) == {
+        "methode_leaf", "methode_eom", "methode_complete_link_45",
+        "methode_complete_link_65", "geeignete_faelle",
+        "paar_jaccard_leaf_eom_promille",
+        "paar_jaccard_leaf_complete_45_promille",
+        "paar_jaccard_leaf_complete_65_promille",
+    }
+    assert all(
+        0 <= approved[key] <= 1000 for key in (
+            "paar_jaccard_leaf_eom_promille",
+            "paar_jaccard_leaf_complete_45_promille",
+            "paar_jaccard_leaf_complete_65_promille",
+        )
+    )
+    assert "W1TTEST" not in process.stdout
+    assert "SECRET_SYNTHETIC_SSL" not in process.stdout
+    assert "CODE-" not in process.stdout
+    assert str(source) not in process.stdout
+    assert not process.stderr
+    stored = list(output.glob("NTF_Lauf_*/*.json"))
+    assert len(stored) == 1
+    report = json.loads(stored[0].read_text(encoding="utf-8"))
+    assert report["methodenbewertung"]["methode_leaf"]["cluster"] == 2
+    assert report["methodenbewertung"]["methode_complete_link_45"][
+        "clusterfaelle"
+    ] >= report["methodenbewertung"]["methode_complete_link_65"]["clusterfaelle"]
+
+
 def test_runner_workflow_requires_main_and_per_run_authorisation():
     yaml_text = (
         Path(__file__).resolve().parents[1] / ".github" / "workflows"
@@ -270,6 +319,10 @@ def test_runner_workflow_requires_main_and_per_run_authorisation():
     ).read_text(encoding="utf-8")
     assert "workflow_dispatch:" in yaml_text
     assert "inputs.analyse_freigegeben == true" in yaml_text
+    assert "methodenvergleich_freigeben:" in yaml_text
+    assert "RELEASE_METHOD_TOTALS:" in yaml_text
+    assert "inputs.methodenvergleich_freigeben" in yaml_text
+    assert "--methodenvergleich-freigeben" in yaml_text
     assert "refs/heads/main" in yaml_text
     assert "ntf-insight-1" in yaml_text
     assert "ntf-insight-2" not in yaml_text
