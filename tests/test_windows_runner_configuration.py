@@ -128,4 +128,7 @@ def test_script_guards_real_data_and_never_auto_dispatches():
     assert "workflow run local-analysis.yml" in script
     assert "analyse_freigegeben=true" in script
     assert "summen_in_actions_log_freigeben=$release" in script
+    assert "[switch]$MethodenFreigeben" in script
+    assert "methodenvergleich_freigeben=$methods" in script
+    assert "if ($MethodenFreigeben)" in script
     assert "NTF_RUNNER_KONFIGURIERT_LOKAL" in script
