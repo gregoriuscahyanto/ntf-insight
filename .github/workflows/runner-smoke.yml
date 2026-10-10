@@ -1,0 +1,23 @@
+name: NTF Runner Verbindungstest
+
+# Manuell ausgeloest; KEIN push-, pull_request- oder schedule-Trigger.
+on:
+  workflow_dispatch:
+
+# Dieser Job braucht weder GitHub-API-Rechte noch Secrets.
+permissions: {}
+
+jobs:
+  verbindungstest:
+    # Ausschliesslich manueller Aufruf vom geschuetzten Standardbranch.
+    if: ${{ github.repository == 'gregoriuscahyanto/ntf-insight' && github.ref == 'refs/heads/main' }}
+    runs-on: [self-hosted, Windows, X64, ntf-isolated-pilot]
+    timeout-minutes: 3
+    steps:
+      # Absichtlich KEIN checkout, Setup, Install oder Artefakt-Upload.
+      # Es werden keine lokalen Datentraeger oder Projektdateien gelesen.
+      - name: Nur Verbindung bestaetigen
+        shell: powershell
+        run: |
+          Write-Output 'NTF_SELF_HOSTED_RUNNER_OK'
+          Write-Output 'Keine lokalen QEC-, FIN-, SSL-, QuickTest- oder Datenbankdateien gelesen.'
