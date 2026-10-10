@@ -15,19 +15,13 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
-from ntf_insight.analysis.local_runner_report import (
-    approved_public_totals, build_runner_local_report,
-)
-from ntf_insight.app.settings import AppPaths
-from ntf_insight.storage.quicktest_store import QuickTestStore
-from ntf_insight.storage.readonly_case_store import ReadOnlyCaseStore
-from ntf_insight.storage.source_knowledge_store import SourceKnowledgeStore
-
-
 ROOT = Path(__file__).resolve().parent.parent
 
 
 def _local_paths(database: Path | None, output_dir: Path | None) -> tuple[Path, Path]:
+    # Delay project/ML imports until stdout/stderr is isolated by main().
+    from ntf_insight.app.settings import AppPaths
+
     source = (
         database
         if database is not None
@@ -58,6 +52,11 @@ def run_local_analysis(
     output_dir: Path | None = None,
 ) -> dict:
     """Read from an existing DB with DuckDB read_only=True. Write local JSON."""
+    from ntf_insight.analysis.local_runner_report import build_runner_local_report
+    from ntf_insight.storage.quicktest_store import QuickTestStore
+    from ntf_insight.storage.readonly_case_store import ReadOnlyCaseStore
+    from ntf_insight.storage.source_knowledge_store import SourceKnowledgeStore
+
     db_path, target = _local_paths(database, output_dir)
     store = ReadOnlyCaseStore(db_path)
     available_tables = store.tables()
@@ -110,9 +109,13 @@ def main(argv: list[str] | None = None) -> int:
                 report = run_local_analysis(
                     database=args.datenbank, output_dir=args.ausgabeordner,
                 )
-                permitted = (
-                    approved_public_totals(report) if args.freigabe_summen else None
-                )
+                if args.freigabe_summen:
+                    from ntf_insight.analysis.local_runner_report import (
+                        approved_public_totals,
+                    )
+                    permitted = approved_public_totals(report)
+                else:
+                    permitted = None
     except Exception:
         # Never print exceptions, Python tracebacks, paths, FINs, SSL,
         # QEC identifiers, SQL fragments, evidence refs or DTC values.
