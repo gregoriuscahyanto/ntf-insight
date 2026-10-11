@@ -135,3 +135,32 @@ def test_source_donuts_count_overlapping_fins_once_each():
         stats.part_number_fins, stats.qec_fins,
         stats.tips_fins, stats.quicktest_fins,
     )) > stats.total_fins  # overlapping source memberships, not a pie!
+
+
+def test_synthetic_qec_import_preserves_end_finding_code_and_label(tmp_path):
+    """Import only a fictional QEC workbook with a real FIN column."""
+    from datetime import datetime
+    from openpyxl import Workbook
+    from ntf_insight.ingestion.real_source_parsers import QECWorkbookParser
+
+    wb = Workbook()
+    sheet = wb.active
+    sheet.title = "Schadteile QEC"
+    sheet.append((
+        "Referenznr.", "FIN", "Rep.-Datum", "Benennung",
+        "Sachnr. Teil", "SSL Endbefund", "SSL-Endbefund Benennung",
+    ))
+    sheet.append((
+        "SYNTH-REF-1", "W1TTEST0000000001", datetime(2026, 5, 10),
+        "KÜHLMITTELPUMPE", "SYNTH-PART-1", "SYNTH-SSL-17",
+        "Synthetische Fachprüfung",
+    ))
+    path = tmp_path / "synthetic-qec.xlsx"
+    wb.save(path)
+    wb.close()
+    parsed = QECWorkbookParser("a" * 64).parse(path)
+    assert len(parsed.cases) == 1
+    case = parsed.cases[0]
+    assert case.qec_ssl_end_finding == "Synthetische Fachprüfung"
+    assert case.qec_ssl_end_code == "SYNTH-SSL-17"
+    assert selected_qec_cases((case,), search="ssl-17") == (case,)
