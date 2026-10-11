@@ -8,6 +8,8 @@ import pytest
 
 from ntf_insight.analysis.autoexport_fin_patterns import (
     QEC_REPRESENTATIVE_MIN_CENTRALITY_RATIO,
+    _make_result,
+    _prepare,
     _representative_position,
     cluster_fin_methods,
 )
@@ -115,5 +117,67 @@ def test_gui_identifies_qec_representative_and_explains_selection():
     assert "FIN mit QEC-Fall" in panel.explanation.text()
     assert "mittlerer Diagnose-Cosinuswert" in panel.explanation.text()
     assert panel.result is current
+    panel.close()
+    app.processEvents()
+
+
+def _one_diagnostic_group(qec_indices: tuple[int, ...]):
+    """Force the SAME assigned group: A-D typical, E has many rare DTCs."""
+    fins = tuple(f"SYNTH-VEHICLE-{i}" for i in range(5))
+    faults = {fin: [("CPC3", "SHARED")] for fin in fins}
+    faults[fins[-1]] += [
+        ("CPC3", f"RARE-{i}") for i in range(15)
+    ]
+    qec = {
+        fins[index]: (f"QEC-SYNTH-{index}",)
+        for index in qec_indices
+    }
+    prepared = _prepare(fins, faults, None, qec)
+    result = _make_result(
+        prepared, "leaf", np.zeros(5, dtype=int),
+        np.ones(5, dtype=float), min_cluster_size=3,
+        notes="Synthetische Gruppenbewertung",
+    )
+    assert len(result.groups) == 1
+    return result.groups[0], result
+
+
+def test_real_sparse_cosine_keeps_best_when_only_qec_member_is_atypical():
+    group, result = _one_diagnostic_group((4,))
+    assert group.fin_count == 5
+    assert group.qec_fin_count == 1
+    assert not group.representative_has_qec
+    assert group.representative_fin != "SYNTH-VEHICLE-4"
+    assert group.representative_centrality_ratio == 1.0
+    assert dict(group.members)[group.representative_fin] == 1.0
+    assert result.assigned_fins == 5
+
+
+def test_real_sparse_cosine_prefers_typical_qec_over_an_atypical_qec():
+    group, _ = _one_diagnostic_group((1, 4))
+    assert group.qec_fin_count == 2
+    assert group.representative_fin == "SYNTH-VEHICLE-1"
+    assert group.representative_has_qec
+    assert group.unconstrained_representative_fin == "SYNTH-VEHICLE-0"
+    assert group.representative_centrality_ratio == 1.0
+
+
+def test_gui_explains_fallback_if_qec_in_cluster_is_atypical():
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from PySide6.QtWidgets import QApplication
+    from ntf_insight.app.widgets.autoexport_fin_workspace import (
+        AutoExportFinWorkspace,
+    )
+
+    app = QApplication.instance() or QApplication([])
+    _group, result = _one_diagnostic_group((4,))
+    panel = AutoExportFinWorkspace(None, [])
+    panel._show_result(result)
+    app.processEvents()
+    assert panel.group_model.rows[0][6] == "Nein"
+    assert "Diese sind jedoch diagnostisch weniger typisch" in (
+        panel.explanation.text()
+    )
+    assert "Repräsentant:" in panel.explanation.text()
     panel.close()
     app.processEvents()
