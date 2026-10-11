@@ -17,8 +17,16 @@ class ClusterDtcFilter:
     exclude_ecus: frozenset[str] = frozenset()
     include_faults: frozenset[FaultKey] = frozenset()
     exclude_faults: frozenset[FaultKey] = frozenset()
+    include_findings: frozenset[str] = frozenset()
+    exclude_findings: frozenset[str] = frozenset()
 
     def __post_init__(self) -> None:
+        for name in ("include_findings", "exclude_findings"):
+            object.__setattr__(
+                self, name,
+                frozenset(" ".join(str(value).split()).casefold()
+                          for value in getattr(self, name)),
+            )
         for name in ("include_ecus", "exclude_ecus"):
             object.__setattr__(
                 self, name,
@@ -54,8 +62,16 @@ class ClusterDtcFilter:
         }
 
     @property
+    def dtc_active(self) -> bool:
+        return bool(
+            self.include_ecus or self.exclude_ecus
+            or self.include_faults or self.exclude_faults
+        )
+
+    @property
+    def finding_active(self) -> bool:
+        return bool(self.include_findings or self.exclude_findings)
+
+    @property
     def active(self) -> bool:
-        return any((
-            self.include_ecus, self.exclude_ecus,
-            self.include_faults, self.exclude_faults,
-        ))
+        return self.dtc_active or self.finding_active
