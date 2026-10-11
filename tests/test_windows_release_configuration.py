@@ -15,6 +15,9 @@ def test_windows_release_is_manual_and_hosted() -> None:
     assert "self-hosted" not in workflow
     assert "persist-credentials: false" in workflow
     assert "NTF-Insight-Wheel-Offline-" in workflow
+    assert "ntf-insight-wheel-gui-stderr.txt" in workflow
+    assert "-RedirectStandardError" in workflow
+    assert "NTF_WHEEL_IMPORT_OK" in workflow
     assert "paket:" in workflow
     assert "GH_TOKEN:" in workflow
 

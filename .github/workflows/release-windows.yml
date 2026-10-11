@@ -115,14 +115,39 @@ jobs:
           $exe = Join-Path $installation "venv\Scripts\python.exe"
           & $exe -m pip check
           if ($LASTEXITCODE -ne 0) { throw "Offline-Abhaengigkeiten unvollstaendig." }
+          # Das Wheel muss sich unabhaengig vom Repository importieren lassen.
+          Push-Location $installation
+          try {
+            & $exe -c "import ntf_insight; import ntf_insight.app.application; print('NTF_WHEEL_IMPORT_OK')"
+            if ($LASTEXITCODE -ne 0) {
+              throw "Das installierte Wheel laesst sich nicht vollstaendig importieren."
+            }
+          }
+          finally { Pop-Location }
+
           $env:NTF_INSIGHT_SMOKE_TEST = "1"
           $env:NTF_INSIGHT_DATA_DIR = Join-Path $env:RUNNER_TEMP "ntf-insight-wheel-testdaten"
-          $app = Start-Process -FilePath $exe -ArgumentList "-m ntf_insight" -PassThru
+          $stdoutLog = Join-Path $env:RUNNER_TEMP "ntf-insight-wheel-gui-stdout.txt"
+          $stderrLog = Join-Path $env:RUNNER_TEMP "ntf-insight-wheel-gui-stderr.txt"
+          # Standardausgabe und Python-Traceback des kurzlebigen Testprozesses erfassen.
+          # Ausschliesslich synthetische Daten im privaten GitHub-hosted Runner.
+          $app = Start-Process -FilePath $exe -ArgumentList "-m ntf_insight" -WorkingDirectory $installation -PassThru -RedirectStandardOutput $stdoutLog -RedirectStandardError $stderrLog
           if (-not $app.WaitForExit(60000)) {
             Stop-Process -Id $app.Id -Force
             throw "Wheel-GUI hat das Zeitlimit beim Starttest ueberschritten."
           }
-          if ($app.ExitCode -ne 0) { throw "Wheel-GUI startet nicht." }
+          if ($app.ExitCode -ne 0) {
+            Write-Host "Wheel-GUI fehlgeschlagen: Exitcode $($app.ExitCode)."
+            if (Test-Path -LiteralPath $stderrLog) {
+              Write-Host "Python-/Qt-Fehlermeldungen (max. 75 Zeilen):"
+              Get-Content -LiteralPath $stderrLog -Tail 75 | ForEach-Object { Write-Host $_ }
+            }
+            if (Test-Path -LiteralPath $stdoutLog) {
+              Write-Host "Letzte Standardausgabe (max. 25 Zeilen):"
+              Get-Content -LiteralPath $stdoutLog -Tail 25 | ForEach-Object { Write-Host $_ }
+            }
+            throw "Wheel-GUI startet nicht. Die konkrete Fehlermeldung steht unmittelbar darueber."
+          }
           if (-not (Test-Path (Join-Path $env:NTF_INSIGHT_DATA_DIR "logs\ntf-insight.log"))) {
             throw "Der Wheel-GUI-Start wurde nicht protokolliert."
           }
