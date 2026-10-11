@@ -8,7 +8,7 @@ import os
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PySide6.QtWidgets import QApplication, QLineEdit
+from PySide6.QtWidgets import QApplication, QFrame, QLineEdit
 
 from ntf_insight.analysis.cluster_dtc_filters import ClusterDtcFilter
 from ntf_insight.app.widgets.cluster_dtc_filter_dialog import (
@@ -91,6 +91,7 @@ def test_ssl_search_selection_removal_and_exclusion_precedence():
         excluded_findings=rules.exclude_findings,
     ) == ()
 
+    excluded_view.selectRow(0)
     dialog._change("exclude_findings", False)
     assert not dialog.selected_rules().exclude_findings
     dialog._reset()
@@ -115,3 +116,38 @@ def test_ecu_and_fault_lists_stay_separate():
     assert rules.exclude_faults == frozenset({("CPC3", "P100")})
     assert not rules.accepts("CPC3", "P100")
     dialog.close()
+
+
+def test_cluster_workspace_uses_one_card_and_independent_qec_anchor():
+    from ntf_insight.app.widgets.autoexport_fin_workspace import (
+        AutoExportFinWorkspace,
+    )
+
+    app = QApplication.instance() or QApplication([])
+    panel = AutoExportFinWorkspace(None, [])
+    panel.show()
+    app.processEvents()
+    assert panel.filter_button.text() == "Filter"
+    assert "Steuergeräte" in panel.filter_summary.text()
+    assert "ECU:DTC" in panel.filter_summary.text()
+    assert "SSL-Endbefund" in panel.filter_summary.text()
+    assert panel.plot.mode == "3d"
+    assert not hasattr(panel, "dimension")
+    assert panel.overview_card.isVisible()
+    # One compact overview Card + the separate 3D plot Card.
+    cards = [
+        frame for frame in panel.findChildren(QFrame)
+        if frame.objectName() == "Card"
+    ]
+    assert len(cards) == 2
+    assert panel.only_qec.isChecked()
+    assert panel.qec_anchor_mode.isVisible()
+    assert panel.qec_anchor_mode.isEnabled()
+    panel.qec_anchor_mode.setChecked(True)
+    assert panel.only_qec.isChecked()
+    assert panel.qec_anchor_mode.isChecked()
+    panel.only_qec.setChecked(False)
+    assert panel.qec_anchor_mode.isVisible()
+    assert panel.qec_anchor_mode.isChecked()
+    panel.close()
+    app.processEvents()
