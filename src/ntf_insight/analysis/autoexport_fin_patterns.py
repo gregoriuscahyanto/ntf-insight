@@ -54,6 +54,7 @@ class FinPatternGroup:
     checked_pair_count: int = 0
     representative_has_qec: bool = False
     representative_centrality_ratio: float = 1.0
+    unconstrained_representative_fin: str = ""
 
     @property
     def fin_count(self) -> int:
@@ -300,6 +301,12 @@ def _make_result(
         submatrix = prepared.x[positions]
         centroid = np.asarray(submatrix.mean(axis=0)).ravel()
         centrality = np.asarray(submatrix @ centroid).ravel()
+        # Keep the original diagnostic ranking independent of QEC labels:
+        # cluster IDs must remain stable when only QEC links are added.
+        diagnostic_best = min(
+            range(len(fins)),
+            key=lambda index: (-float(centrality[index]), fins[index]),
+        )
         best, representative_ratio = _representative_position(
             fins, centrality, prepared.links,
         )
@@ -357,11 +364,12 @@ def _make_result(
             checked_pair_count=len(pair_cos),
             representative_has_qec=rep_fin in prepared.links,
             representative_centrality_ratio=representative_ratio,
+            unconstrained_representative_fin=fins[diagnostic_best],
         ))
-    # Changing the representative (or adding QEC links) must NOT rename
-    # otherwise identical member sets when groups have the same size.
+    # Retain the historic grouping order based on the unconstrained
+    # diagnostic representative. Adding QEC labels must not rename C IDs.
     groups.sort(key=lambda g: (
-        -g.fin_count, min(fin for fin, _ in g.members),
+        -g.fin_count, g.unconstrained_representative_fin,
     ))
     groups = [
         replace(group, group_id=index)
