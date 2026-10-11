@@ -68,6 +68,30 @@ def test_end_finding_exact_multiple_and_substring_compose_without_metadata_leak(
     assert part_numbers(cases) == ("FAKE-PART-B", "FAKE-PART-A")
 
 
+
+def test_ssl_includes_and_excludes_with_exclusion_priority():
+    cases = [
+        _case(1, "Synthetisch NTF", "PART-1"),
+        _case(2, "Synthetisch NTF", "PART-1"),
+        _case(3, "Synthetisch bestätigt", "PART-1"),
+        _case(4, None, "PART-1"),
+    ]
+    assert len(selected_qec_cases(
+        cases, exact_findings=("SYNTHETISCH NTF",),
+    )) == 2
+    assert len(selected_qec_cases(
+        cases, excluded_findings=("synthetisch ntf",),
+    )) == 2
+    assert selected_qec_cases(
+        cases,
+        exact_findings=("Synthetisch NTF",),
+        excluded_findings=("synthetisch ntf",),
+    ) == ()
+    assert selected_qec_cases(
+        cases, excluded_findings=(MISSING_END_FINDING,),
+    ) == tuple(cases[:3])
+
+
 def test_qec_fins_scope_includes_missing_pump_swap_date_and_overlap_once():
     first = _case(1, "NTF Test", "FAKE-PART", swap=False)
     second = _case(2, "NTF Test", "FAKE-PART")
