@@ -140,9 +140,12 @@ QEC-gestützte Diagnosezuordnung** verwendet. Es handelt sich
 **nicht** um ein weiteres HDBSCAN-Verfahren:
 
 1. Jede QEC-Pumpenfall-FIN mit geeigneten Diagnosemerkmalen wird
-   zum möglichen **echten QEC-Anker**. Mehrere QEC-FINs mit
-   identischen ursprünglichen ECU:DTC-Merkmalen teilen sich
-   einen kanonischen Anker. Das verhindert Doppelgruppen.
+   zum möglichen **echten QEC-Anker**. Diagnostisch **ähnliche
+   QEC-FINs** teilen denselben realen QEC-Anker, wenn ihre
+   originalen ECU:DTC-TF-IDF-Cosinusmerkmale die Schwelle von
+   mindestens 45 % erreichen. Das verhindert viele
+   künstliche Einzelfall-Ankergruppen, gerade bei der
+   standardmäßig QEC-beschränkten Grundgesamtheit.
 2. Eine andere FIN – auch eine FIN nur aus AutoExport – wird ihrem
    diagnostisch ähnlichsten QEC-Anker zugeordnet, **aber nur bei
    mindestens 45 % originaler Sparse-TF-IDF-Cosinusähnlichkeit
