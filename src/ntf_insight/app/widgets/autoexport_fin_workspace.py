@@ -345,7 +345,7 @@ class AutoExportFinWorkspace(QWidget):
         finding_row.addWidget(self.finding_button)
         finding_row.addWidget(QLabel("oder Text enthält"))
         self.finding_search = QLineEdit()
-        self.finding_search.setPlaceholderText("Endbefund-Suchbegriff")
+        self.finding_search.setPlaceholderText("Endbefundtext oder -code")
         self.finding_search.setClearButtonEnabled(True)
         self.finding_search.setToolTip(
             "Groß-/Kleinschreibung egal; mehrere ausgewählte Endbefunde "
