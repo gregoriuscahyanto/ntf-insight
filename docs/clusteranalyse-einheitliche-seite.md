@@ -61,6 +61,65 @@ lokalen Quellenabgleich ermittelt.
    Link öffnen die lokale FIN-/Fallhistorie. Echte FINs und
    QEC-Kennungen erscheinen nur in der lokalen Anwendung.
 
+## Alternative mit Checkbox: Cluster um QEC-Fälle bilden
+
+Das Kästchen **„QEC-Fälle als Anker für die Clusterbildung verwenden“**
+ist **standardmäßig AUS**. Dann bleiben die bisherige
+HDBSCAN-Leaf-/EOM- und konservative Complete-Link-Cosinus-Analyse
+sowie die in diesem PR ergänzte QEC-Präferenz bei der
+*Repräsentantenauswahl* unverändert.
+
+Mit **aktiviertem** Kästchen wird dagegen eine **andere,
+QEC-gestützte Diagnosezuordnung** verwendet. Es handelt sich
+**nicht** um ein weiteres HDBSCAN-Verfahren:
+
+1. Jede QEC-Pumpenfall-FIN mit geeigneten Diagnosemerkmalen wird
+   zum möglichen **echten QEC-Anker**. Mehrere QEC-FINs mit
+   identischen ursprünglichen ECU:DTC-Merkmalen teilen sich
+   einen kanonischen Anker. Das verhindert Doppelgruppen.
+2. Eine andere FIN – auch eine FIN nur aus AutoExport – wird ihrem
+   diagnostisch ähnlichsten QEC-Anker zugeordnet, **aber nur bei
+   mindestens 45 % originaler Sparse-TF-IDF-Cosinusähnlichkeit
+   zur repräsentativen QEC-FIN**. In gleicher Ähnlichkeit
+   entscheidet der alphabetisch erste Anker deterministisch.
+   FINs ohne passende Anker bleiben **unzugeordnet**.
+3. Nur Ankergruppen mit der eingestellten
+   **Mindestclustergröße** werden als Cluster ausgewiesen.
+   Kleinere Gruppen werden **nicht künstlich aufgefüllt**:
+   deren FINs bleiben als „mit DTC, ohne Cluster“ sichtbar.
+   Auch QEC-FINs ohne geeignete ECU:DTC-Daten werden nicht
+   als Anker eingesetzt.
+4. Jede ausgegebene Gruppe besitzt somit einen echten
+   **QEC-Repräsentanten**. Die erklärte Ähnlichkeit misst die
+   jeweilige FIN **zu diesem Anker** und bedeutet nicht,
+   dass alle FIN-Paare der Gruppe die 45-%-Schwelle einhalten.
+   Anders als Complete-Link ist dieses Verfahren kein
+   Paarweise-Ähnlichkeitsnachweis, und im Gegensatz zu HDBSCAN
+   keine unüberwachte Dichtegruppenbildung.
+
+Der **gleiche AutoExport+QEC-FIN-Bestand**, die zugelassenen
+vor dem dokumentierten Pumpentausch liegenden DTCs und dieselben
+Originalmerkmale werden verwendet. Der Ankerlauf und
+HDBSCAN/EOM/Complete-Link werden beim einmaligen Klick auf
+**„Clusteranalyse starten“** zusammen berechnet und
+im Arbeitsspeicher vorgehalten. Danach kann die Checkbox
+**ohne Neuberechnung** ein- und ausgeschaltet werden.
+Die Verfahrenauswahl zeigt bei aktiviertem Ankerverfahren
+dessen eigene Bezeichnung und ist gesperrt. Beim Ausschalten
+kehrt sie zum **zuvor ausgewählten HDBSCAN- bzw.
+Complete-Link-Verfahren** zurück.
+
+**Achtung:** Clusteranzahl, Zuordnung und C-Nummern können sich
+durch das alternative Verfahren ändern. Nur innerhalb eines
+Verfahrens bleiben Clusterkennungen stabil. Die Donutgrafik,
+Punktwolke, DTC-Erklärung, FIN-Tabelle und die manuelle
+DTC-Prüfpriorität beziehen sich jeweils klar auf das
+ausgewählte Verfahren. DTC-Markierungen sind keine Seed-
+Auswahlbedingung und beeinflussen keine Ähnlichkeitswerte.
+QEC-Ankerzuordnung ist **kein Nachweis**, dass ein Fahrzeug
+einen Pumpendefekt hat, dass ein Pumpentausch geholfen hätte
+oder dass ein Lieferant verantwortlich ist.
+
 ## Repräsentant: vorzugsweise eine FIN mit QEC-Fall
 
 Ein Cluster repräsentiert weiterhin **eine echte FIN aus dem Cluster**,
