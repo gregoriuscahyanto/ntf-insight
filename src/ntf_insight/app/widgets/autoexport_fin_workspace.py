@@ -2,7 +2,7 @@
 
 Ein sichtbarer Startknopf, dieselben Verfahren HDBSCAN Leaf/EOM und
 konservatives Complete-Link. Originaldaten bleiben lokal. Die Darstellung
-ist eine 2D/3D-Punktwolke und NIE die Berechnungsgrundlage.
+ist eine drehbare 3D-Punktwolke und NIE die Berechnungsgrundlage.
 """
 from __future__ import annotations
 
@@ -1000,7 +1000,7 @@ class AutoExportFinWorkspace(QWidget):
                 f"{METHOD_TITLES[result.method]}: "
                 f"{len(result.groups)} Cluster · {result.assigned_fins:,} "
                 f"FINs gruppiert · Laufzeit insgesamt: {time_label}. "
-                "Methodenwechsel und 2D/3D benötigen keine Neuberechnung."
+                "Methodenwechsel und Drehung der 3D-Ansicht benötigen keine Neuberechnung."
             ).replace(",", ".")
         )
         self._refresh_review_table()
