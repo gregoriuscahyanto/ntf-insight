@@ -17,7 +17,7 @@ class FinCoverageDonut(QWidget):
         self.color = QColor(color)
         self.count = 0
         self.total = 0
-        self.setMinimumSize(92, 100)
+        self.setMinimumSize(78, 84)
         self.setAccessibleName(f"FIN-Abdeckung: {title}")
 
     def set_counts(self, count: int, total: int) -> None:
@@ -32,7 +32,7 @@ class FinCoverageDonut(QWidget):
         self.update()
 
     def sizeHint(self) -> QSize:  # noqa: N802
-        return QSize(105, 110)
+        return QSize(94, 94)
 
     def paintEvent(self, event) -> None:  # noqa: N802
         super().paintEvent(event)
