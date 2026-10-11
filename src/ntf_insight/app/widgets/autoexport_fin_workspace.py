@@ -663,14 +663,14 @@ class AutoExportFinWorkspace(QWidget):
         }
         for key, donut in self.coverage_donuts.items():
             donut.set_counts(min(counts[key], total), total)
+        total_text = f"{total:,}".replace(",", ".")
         self.coverage_note.setText(
-            f"Jeweils von {total:,} eindeutigen FINs der aktuell "
+            f"Jeweils von {total_text} eindeutigen FINs der aktuell "
             "gewählten Datenbasis. Die Quellen können sich überschneiden. "
             "Sachnummer zählt ausschließlich QEC-belegte FINs, "
             "TIPS-Fälle stammen aus importiertem AutoExport, "
             "QuickTests aus lokal gespeicherten QuickTest-Berichten. "
             "Ein QEC-Fall kann mehrfach pro FIN vorliegen."
-            .replace(",", ".")
         )
 
     def _show_empty(self) -> None:
@@ -867,19 +867,34 @@ class AutoExportFinWorkspace(QWidget):
                 "Kein Fahrzeug doppelt gezählt."
             ).replace(",", ".")
         )
-        self.summary_note.setText(
-            (
-                f"{result.dtc_fins:,} FINs mit DTC-Daten. "
-                f"{len(result.no_dtc_fins):,} FINs ohne geeignete DTCs: "
-                f"{result.no_dtc_without_records:,} ohne importierten "
-                "DTC-Eintrag; "
-                f"{result.no_dtc_with_records_excluded:,} mit vorhandenen, "
-                "aber nicht nutzbaren DTCs (z. B. unzulässiger "
-                "Zeitpunkt oder fehlender ECU:DTC-Code). "
-                "Bei dokumentiertem Pumpentausch zählen für die "
-                "Clusterbildung nur sicher frühere Diagnosen."
-            ).replace(",", ".")
+        def de_count(value: int) -> str:
+            return f"{value:,}".replace(",", ".")
+
+        explanation = (
+            f"{de_count(result.dtc_fins)} FINs mit DTC-Daten. "
+            f"{de_count(len(result.no_dtc_fins))} FINs ohne geeignete DTCs. "
         )
+        if (
+            result.no_dtc_without_records
+            + result.no_dtc_with_records_excluded
+            == len(result.no_dtc_fins)
+        ):
+            explanation += (
+                f"Davon {de_count(result.no_dtc_without_records)} ohne "
+                "importierten DTC-Eintrag und "
+                f"{de_count(result.no_dtc_with_records_excluded)} mit "
+                "vorhandenen, aber nicht nutzbaren DTCs "
+                "(beispielsweise wegen eines unzulässigen Zeitpunkts "
+                "oder fehlender ECU-/DTC-Kennung). "
+            )
+        else:
+            explanation += "Die Detailgründe sind noch nicht ermittelt. "
+        explanation += (
+            "Bei dokumentiertem Pumpentausch werden nur DTCs von "
+            "sicher früheren Tagen geclustert. "
+            "Nicht auswertbar bedeutet nicht fehlerfrei."
+        )
+        self.summary_note.setText(explanation)
         time_label = (
             f"{result.runtime_seconds:.1f} s"
             if result.runtime_seconds is not None else "nicht gemessen"
