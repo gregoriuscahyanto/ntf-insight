@@ -710,15 +710,31 @@ class AutoExportFinWorkspace(QWidget):
         self._run_results = {}
         self.result = None
         self._show_empty()
-        self._analysis_scoped_to_pump = self.only_pump_swap.isChecked()
+        self._analysis_scoped_to_qec = self.only_qec.isChecked()
+        self._running_qec_cases = self._matched_qec_cases()
+        if self._analysis_scoped_to_qec and not self._running_qec_cases:
+            self.status.setText(
+                "Kein QEC-Fall entspricht dem Endbefundfilter. "
+                "Bitte die Auswahl oder den Suchbegriff ändern."
+            )
+            return
+        qec_evidence = qec_fin_evidence(
+            self._running_qec_cases,
+            global_pump_swap_dates=self._pump_swap_dates,
+        )
         self.start_button.setEnabled(False)
-        self.only_pump_swap.setEnabled(False)
+        self.only_qec.setEnabled(False)
+        self.finding_button.setEnabled(False)
+        self.finding_search.setEnabled(False)
         self.qec_anchor_mode.setEnabled(False)
         self.min_cluster_size.setEnabled(False)
         self.min_samples.setEnabled(False)
         task = _FinClusterTask(
-            self.source, self._qec_evidence,
-            only_pump_swap=self._analysis_scoped_to_pump,
+            self.source, qec_evidence,
+            only_qec=self._analysis_scoped_to_qec,
+            qec_cases=self._running_qec_cases,
+            part_number=self.part_number_combo.currentData() or "",
+            quicktest_fins=self._quicktest_fins,
             min_cluster_size=self.min_cluster_size.value(),
             min_samples=self.min_samples.value(),
             minimum_similarity=0.45,
@@ -735,7 +751,9 @@ class AutoExportFinWorkspace(QWidget):
     def _enable_controls(self) -> None:
         self._task = None
         self.start_button.setEnabled(True)
-        self.only_pump_swap.setEnabled(True)
+        self.only_qec.setEnabled(True)
+        self.finding_button.setEnabled(True)
+        self.finding_search.setEnabled(True)
         self.qec_anchor_mode.setEnabled(True)
         self.min_cluster_size.setEnabled(True)
         self.min_samples.setEnabled(not self.qec_anchor_mode.isChecked())
