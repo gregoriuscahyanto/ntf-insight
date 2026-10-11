@@ -61,6 +61,30 @@ lokalen Quellenabgleich ermittelt.
    Link öffnen die lokale FIN-/Fallhistorie. Echte FINs und
    QEC-Kennungen erscheinen nur in der lokalen Anwendung.
 
+## Repräsentant: vorzugsweise eine FIN mit QEC-Fall
+
+Ein Cluster repräsentiert weiterhin **eine echte FIN aus dem Cluster**,
+niemals einen künstlich berechneten Durchschnittsfall. Für jede Gruppe
+wird zuerst der diagnostisch zentralste Kandidat auf den originalen
+Sparse-TF-IDF-Cosinusmerkmalen ermittelt. Existiert eine FIN mit
+zugeordnetem QEC-Pumpenfall, wird die **diagnostisch zentralste
+QEC-FIN** bevorzugt, sofern ihr mittlerer Cosinuswert zu den übrigen
+Cluster-FINs **mindestens 90 % des optimalen Werts** erreicht.
+
+Falls QEC-FINs dafür zu untypisch sind, bleibt die diagnostisch
+zentralste FIN **ohne** QEC-Bezug Repräsentant. Existiert überhaupt
+kein QEC-Fall im Cluster, wird ebenfalls der gewöhnliche
+Diagnoserepräsentant gewählt. Im Clustertableau steht die Spalte
+**Rep. QEC? (Ja/Nein)**. Die Clustererklärung begründet die Auswahl
+oder den Rückgriff auf die diagnostisch bessere FIN.
+
+**Die QEC-Präferenz verändert weder HDBSCAN/Complete-Link, deren
+Merkmalsgewichtung, Distanzen, Clusterzuordnung noch Clusternummern.**
+Lediglich die Repräsentanten-FIN und die auf diese FIN bezogenen
+Cosinusähnlichkeiten/Mediane ändern sich gegebenenfalls. So ist der
+Repräsentant leichter fachlich über QEC überprüfbar, ohne einen
+untypischen Schadteilfall zum vermeintlichen Gruppenbeweis zu machen.
+
 ## Kompakte Donut-Übersicht und DTC-Fachmarkierungen
 
 Statt fünf nebeneinanderliegenden Kennzahlkarten zeigt die
