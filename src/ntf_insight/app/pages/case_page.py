@@ -110,6 +110,10 @@ class CasePage(QWidget):
                 if self.source_knowledge is not None else {}
             ),
             review_store=review_store,
+            quicktest_fins=(
+                tuple(QuickTestStore(manual_service.store).list_fins())
+                if manual_service is not None else ()
+            ),
         )
         # Compatibility alias for local FIN navigation and prior tests.
         self.autoexport_fin_workspace = self.cluster_workspace
