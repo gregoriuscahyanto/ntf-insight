@@ -137,7 +137,11 @@ class ClusterDtcFilterDialog(QDialog):
         layout.addWidget(search)
         self._source_rows[name] = list(data)
         self._source_keys[name] = [
-            (str(row[0]), str(row[1])) if kind == "faults" else str(row[0])
+            (str(row[0]).strip().upper(), str(row[1]).strip().upper())
+            if kind == "faults"
+            else " ".join(str(row[0]).split()).casefold()
+            if kind == "findings"
+            else str(row[0]).strip().upper()
             for row in data
         ]
         model = SimpleTableModel(("Gewählt", *headers), [])
