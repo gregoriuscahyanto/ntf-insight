@@ -7,13 +7,15 @@ ist eine 2D/3D-Punktwolke und NIE die Berechnungsgrundlage.
 from __future__ import annotations
 
 from dataclasses import replace
+from collections import defaultdict
 from time import perf_counter
 
 from PySide6.QtCore import QModelIndex, QThread, Signal
+from PySide6.QtGui import QAction
 from PySide6.QtWidgets import (
     QAbstractItemView, QCheckBox, QComboBox, QFrame, QHBoxLayout,
-    QLabel, QLineEdit, QPlainTextEdit, QPushButton, QScrollArea,
-    QSpinBox, QTableView, QVBoxLayout, QWidget,
+    QLabel, QLineEdit, QMenu, QPlainTextEdit, QPushButton, QScrollArea,
+    QSpinBox, QTableView, QToolButton, QVBoxLayout, QWidget,
 )
 
 from ntf_insight.analysis.autoexport_fin_patterns import (
@@ -24,6 +26,11 @@ from ntf_insight.analysis.combined_fin_evidence import (
 )
 from ntf_insight.app.models.simple_table_model import SimpleTableModel
 from ntf_insight.app.widgets.fin_cluster_projection_plot import FinClusterProjectionPlot
+from ntf_insight.app.widgets.fin_coverage_donut import FinCoverageDonut
+from ntf_insight.analysis.qec_end_finding_filter import (
+    finding_counts, part_numbers, qec_pump_cases, selected_qec_cases,
+    source_coverage,
+)
 from ntf_insight.app.widgets.fin_status_donut import (
     FIN_COLORS, FIN_LABELS, FinStatusDonut,
 )
@@ -48,7 +55,10 @@ class _FinClusterTask(QThread):
         source: SourceKnowledgeStore | None,
         qec_evidence: QECFinEvidence,
         *,
-        only_pump_swap: bool,
+        only_qec: bool,
+        qec_cases: tuple[NTFCase, ...],
+        part_number: str,
+        quicktest_fins: tuple[str, ...],
         min_cluster_size: int,
         min_samples: int,
         minimum_similarity: float,
@@ -56,7 +66,10 @@ class _FinClusterTask(QThread):
         super().__init__()
         self.source = source
         self.qec_evidence = qec_evidence
-        self.only_pump_swap = only_pump_swap
+        self.only_qec = only_qec
+        self.qec_cases = qec_cases
+        self.part_number = part_number
+        self.quicktest_fins = quicktest_fins
         self.min_cluster_size = min_cluster_size
         self.min_samples = min_samples
         self.minimum_similarity = minimum_similarity
@@ -68,14 +81,49 @@ class _FinClusterTask(QThread):
             if self.source is not None:
                 fins, auto_faults, labels = self.source.autoexport_fin_dtc_signatures(
                     pump_swap_dates=self.qec_evidence.pump_swap_dates,
-                    include_all_fins=not self.only_pump_swap,
+                    include_all_fins=True,
+                    fin_filter=(
+                        tuple(self.qec_evidence.case_links)
+                        if self.only_qec else None
+                    ),
                 )
+                tips_fins = self.source.autoexport_source_fins("autoexport_tips")
+                raw_dtc_fins = self.source.autoexport_source_fins("autoexport_dtc")
             else:
                 fins, auto_faults, labels = (), {}, {}
+                tips_fins = frozenset()
+                raw_dtc_fins = frozenset()
             combined = merge_fin_evidence(
                 fins, auto_faults, labels, self.qec_evidence,
-                only_pump_swap=self.only_pump_swap,
+                only_qec=self.only_qec,
             )
+            cover = source_coverage(
+                combined.fins, self.qec_cases,
+                part_number=self.part_number,
+                tips_fins=tips_fins, quicktest_fins=self.quicktest_fins,
+            )
+            part_fins: dict[str, set[str]] = defaultdict(set)
+            for case in self.qec_cases:
+                number = str(getattr(case, "qec_part_number", "") or "").strip()
+                if number and case.vin.strip().upper() in combined.fins:
+                    part_fins[number].add(case.vin.strip().upper())
+            observed = set(raw_dtc_fins) | {
+                case.vin.strip().upper()
+                for case in self.qec_cases if case.diagnostics
+            }
+            no_records = sum(
+                fin not in observed
+                for fin in combined.fins if not combined.faults[fin]
+            )
+            unsuitable = sum(not combined.faults[fin] for fin in combined.fins)
+            coverage_counts = {
+                "total": cover.total_fins,
+                "part": cover.part_number_fins,
+                "qec": cover.qec_fins,
+                "tips": cover.tips_fins,
+                "quicktest": cover.quicktest_fins,
+                "qec_cases": cover.qec_case_count,
+            }
             results = cluster_fin_methods(
                 combined.fins, combined.faults,
                 combined.labels, combined.case_links,
@@ -96,6 +144,13 @@ class _FinClusterTask(QThread):
                     pre_swap_fins=len(self.qec_evidence.pump_swap_dates),
                     runtime_seconds=round(perf_counter() - started, 2),
                     dtc_keys_by_fin=combined.faults,
+                    source_coverage_counts=coverage_counts,
+                    qec_part_number_counts={
+                        number: len(members)
+                        for number, members in part_fins.items()
+                    },
+                    no_dtc_without_records=no_records,
+                    no_dtc_with_records_excluded=unsuitable - no_records,
                 )
                 for key, result in results.items()
             }
