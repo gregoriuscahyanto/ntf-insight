@@ -18,6 +18,21 @@ class ClusterDtcFilter:
     include_faults: frozenset[FaultKey] = frozenset()
     exclude_faults: frozenset[FaultKey] = frozenset()
 
+    def __post_init__(self) -> None:
+        for name in ("include_ecus", "exclude_ecus"):
+            object.__setattr__(
+                self, name,
+                frozenset(value.strip().upper() for value in getattr(self, name)),
+            )
+        for name in ("include_faults", "exclude_faults"):
+            object.__setattr__(
+                self, name,
+                frozenset(
+                    (ecu.strip().upper(), dtc.strip().upper())
+                    for ecu, dtc in getattr(self, name)
+                ),
+            )
+
     def accepts(self, ecu: str, dtc: str) -> bool:
         key = (ecu.strip().upper(), dtc.strip().upper())
         if key[0] in self.exclude_ecus or key in self.exclude_faults:
