@@ -321,7 +321,7 @@ class AutoExportFinWorkspace(QWidget):
 
         # These are TWO independent analysis options. The QEC-anchor method
         # is never hidden or disabled by the QEC-only population checkbox.
-        scope_row = QHBoxLayout()
+        scope_row = QVBoxLayout()
         self.only_qec = QCheckBox("Nur FINs mit QEC-Fällen")
         self.only_qec.setChecked(True)
         self.only_qec.setToolTip(
@@ -330,7 +330,6 @@ class AutoExportFinWorkspace(QWidget):
             "gesamte AutoExport+QEC-Grundgesamtheit."
         )
         scope_row.addWidget(self.only_qec)
-        scope_row.addSpacing(24)
         self.qec_anchor_mode = QCheckBox(
             "QEC-Fälle als Anker für die Clusterbildung verwenden"
         )
@@ -341,7 +340,6 @@ class AutoExportFinWorkspace(QWidget):
             "zu einem echten QEC-Anker werden zugeordnet."
         )
         scope_row.addWidget(self.qec_anchor_mode)
-        scope_row.addStretch(1)
         body.addLayout(scope_row)
         self.finding_summary = QLabel(objectName="PageSubtitle")
         self.finding_summary.setWordWrap(True)
