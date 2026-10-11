@@ -335,7 +335,7 @@ class SourcesPage(QWidget):
             f"{summary.cases_created} neue Fälle, "
             f"{summary.qec_findings_linked} QEC-Fälle mit SSL-Endbefunden ergänzt, "
             f"{summary.qec_findings_conflicted} Referenzkonflikte, "
-            f"{summary.quicktests_saved} QuickTest(s) dauerhaft nach FIN gespeichert, 
+            f"{summary.quicktests_saved} QuickTest(s) dauerhaft nach FIN gespeichert, "
             f"{summary.events_linked} zugeordnete Ereignisse · "
             f"{summary.events_unassigned} Ereignisse ohne eindeutige QEC-Zuordnung · "
             f"{summary.rows_scanned} gepruefte CSV-Zeilen, "
