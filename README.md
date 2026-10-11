@@ -53,35 +53,43 @@ Der detaillierte Entwicklungsstand steht in der [Roadmap](ROADMAP.md).
 
 **Stand:** Die App ist noch eine Testversion. Einige Funktionen und Datenformate werden weiterentwickelt.
 
-## Download und Installation (Windows)
+## Download und Installation (Windows 64 Bit)
 
-**[NTF Insight herunterladen – GitHub Releases](https://github.com/gregoriuscahyanto/ntf-insight/releases)**
+**[NTF Insight auf GitHub herunterladen](https://github.com/gregoriuscahyanto/ntf-insight/releases)**
 
-Für die Nutzung auf einem **Windows-PC mit 64 Bit**:
+Du kannst zwischen zwei Installationswegen wählen.
 
-1. Auf einem PC mit Internet unter **Releases** die Datei `NTF-Insight-Setup-0.1.0.exe` (oder eine neuere Version) herunterladen.
-2. Die Datei über einen freigegebenen Weg auf den Ziel-PC übertragen.
-3. Das **Setup per Doppelklick** starten und den Installationsschritten folgen.
-4. NTF Insight danach über die **Desktop-Verknüpfung** oder das **Startmenü** öffnen.
+### Weg 1: Windows-Setup (empfohlen)
 
-**Fertig!** Die App bringt Python und ihre Bibliotheken mit. Anwender brauchen weder Python noch `pip`, eine virtuelle Umgebung oder PowerShell. Für die eigentliche Installation ist kein Internet nötig.
+1. `NTF-Insight-Setup-0.1.0.exe` oder eine neuere Version aus **Releases** herunterladen.
+2. Auf den Ziel-PC übertragen und das Setup **doppelklicken**.
+3. NTF Insight über die **Desktop-Verknüpfung** oder das **Startmenü** öffnen.
 
-**Noch kein Setup auf der Releases-Seite?** Dann wurde noch keine installierbare Version veröffentlicht. Das Setup kann über den unten beschriebenen GitHub-Workflow erstellt werden.
+**Python ist nicht nötig.** Alles wird mit dem Setup installiert. Auch auf einem PC ohne Internet nutzbar.
 
-**Hinweis für Firmen-PCs:** Der Installer ist derzeit nicht mit einem Mercedes-Benz-Unternehmenszertifikat signiert. Falls Windows oder die Unternehmensrichtlinien die Installation blockieren, ist die Freigabe durch die zuständige IT notwendig. Sicherheitsrichtlinien nicht umgehen.
+### Weg 2: Wheel mit automatischer Offline-Installation
 
-## Neue Version über GitHub veröffentlichen (Entwicklung)
+Dieser Weg eignet sich, wenn du Python bereits installiert hast oder das Wheel weitergeben möchtest.
 
-1. Bei einer neuen Version zuerst die Versionsnummer in [`pyproject.toml`](pyproject.toml) anpassen.
-2. In GitHub **[Actions → Windows Setup und Release](https://github.com/gregoriuscahyanto/ntf-insight/actions/workflows/release-windows.yml)** öffnen.
-3. **Run workflow** auswählen und den Branch `main` verwenden.
-4. GitHub prüft die App, erstellt das Windows-Setup und veröffentlicht es automatisch unter **[Releases](https://github.com/gregoriuscahyanto/ntf-insight/releases)**.
+1. Falls noch nicht vorhanden: [**Python 3.11.9 für Windows 64 Bit herunterladen**](https://www.python.org/ftp/python/3.11.9/python-3.11.9-amd64.exe) und auf dem Ziel-PC installieren.
+2. Aus **Releases** das Paket `NTF-Insight-Wheel-Offline-0.1.0-Windows-x64-Python311.zip` (oder eine neuere Version) herunterladen und vollständig entpacken.
+3. Die Datei **`installiere_offline.cmd` doppelklicken**.
+4. NTF Insight danach über die angelegte Verknüpfung starten.
 
-Das Paket wird direkt auf GitHub gebaut. Die fehlerhafte Python-Installation auf dem Entwickler-PC ist dafür nicht nötig. Der Workflow startet nur manuell und verwendet einen GitHub-gehosteten Windows-Rechner.
+Das Skript richtet automatisch eine `venv` ein und installiert alle mitgelieferten Wheels **ohne Internetverbindung**. **Eine einzelne `.whl`-Datei allein reicht für einen Offline-PC nicht**, weil weitere Python-Pakete benötigt werden.
 
-**Optional nur für Entwickler:** [Python 3.11.9 für Windows 64 Bit direkt herunterladen](https://www.python.org/ftp/python/3.11.9/python-3.11.9-amd64.exe). Auf dem Anwender-PC wird Python **nicht** benötigt.
+**Noch kein Download sichtbar?** Die Pakete müssen erst über den GitHub-Workflow veröffentlicht werden.
 
-[Technische Anleitung für Windows-Setup und Fehlersuche](docs/windows-setup.md)
+## Neue Version auf GitHub veröffentlichen (Entwicklung)
+
+1. [**Actions → Windows Release – Setup und Wheel**](https://github.com/gregoriuscahyanto/ntf-insight/actions/workflows/release-windows.yml) öffnen.
+2. **Run workflow → main** auswählen.
+3. Unter **paket** `beide` (empfohlen), `setup` oder `wheel` auswählen.
+4. Workflow starten. Nach erfolgreichem Test erscheinen die Dateien unter **[Releases](https://github.com/gregoriuscahyanto/ntf-insight/releases)**.
+
+**Wenn du bereits ein eigenes Wheel erstellt hast:** Du kannst es direkt als Datei in einen GitHub Release hochladen. Für die Installation ohne Internet müssen die passenden Abhängigkeiten mitgeliefert werden. Dafür gibt es das Skript `scripts/baue_offline_wheel_paket.ps1`. Die [technische Anleitung](docs/windows-setup.md) erklärt beide Wege.
+
+**Sicherheit:** Beide Pakete werden standardmäßig auf einem isolierten GitHub-Windows-Runner gebaut, nicht auf den Self-Hosted-Runnern mit vertraulichen Fahrzeugdaten. Das Setup ist derzeit **nicht unternehmenssigniert**; auf Firmen-PCs kann eine IT-Freigabe nötig sein.
 
 ## Daten und Datenschutz
 

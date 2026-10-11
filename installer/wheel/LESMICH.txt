@@ -1,0 +1,17 @@
+NTF Insight - Wheel-Offline-Installation (Windows 64 Bit)
+
+1. Python 3.11 (64 Bit) muss installiert sein:
+   https://www.python.org/ftp/python/3.11.9/python-3.11.9-amd64.exe
+2. Das gesamte ZIP in einen Ordner entpacken.
+3. "installiere_offline.cmd" doppelklicken.
+4. Nach der Installation NTF Insight ueber Desktop oder Startmenue starten.
+
+Das Skript erstellt automatisch eine lokale venv, installiert NTF Insight
+und alle Pakete aus dem mitgelieferten Ordner "wheels".
+Fuer die Installation wird kein Internet benoetigt.
+
+Falls Python oder PowerShell durch eine Firmenrichtlinie gesperrt ist:
+bitte die IT um Freigabe bitten. Keine Sicherheitsrichtlinien umgehen.
+
+Fahrzeugdaten werden standardmaessig unter %USERPROFILE%\.ntf-insight
+gespeichert, getrennt vom Programm.

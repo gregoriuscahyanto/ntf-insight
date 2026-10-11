@@ -1,0 +1,22 @@
+name: Oracle Build Runner Verbindungstest
+
+# Nur eigens isolierter NTF-Build-Runner, nicht die bisherigen VPS-Datenrunner.
+on:
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  oracle-verbindung:
+    if: github.ref == 'refs/heads/main'
+    runs-on: [self-hosted, Linux, X64, ntf-build-oracle-x64]
+    timeout-minutes: 5
+    steps:
+      - name: Runner-Identitaet ohne Code- oder Datenzugriff pruefen
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$RUNNER_OS" = "Linux"
+          test "$RUNNER_ARCH" = "X64"
+          printf '%s\n' "NTF_ORACLE_BUILD_RUNNER_BEREIT"
+          printf '%s\n' "Kein Checkout, keine Fahrzeugdaten, keine Artefakte."
