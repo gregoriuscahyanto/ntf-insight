@@ -59,6 +59,9 @@ def selected_qec_cases(
         and (
             not needle
             or needle in finding_for(case).casefold()
+            or needle in _text(
+                getattr(case, "qec_ssl_end_code", None)
+            ).casefold()
         )
     )
 
