@@ -72,7 +72,7 @@ class _SourceImportWorker(QThread):
 class SourcesPage(QWidget):
     sources_updated = Signal(str, int)
     SOURCE_LABELS = {
-        SourceType.VEHICLE_CASE_LIST: "Fall-/FIN-Liste",
+        SourceType.VEHICLE_CASE_LIST: "QEC-Fall-/SSL-Endbefundliste",
         SourceType.SHORT_TEST: "Kurztest",
         SourceType.REPLACEMENT_LIST: "Tauschliste",
         SourceType.SUPPLIER_FINDING: "Lieferantenbefund",
@@ -333,7 +333,9 @@ class SourcesPage(QWidget):
             f"Import: {summary.files_archived} neue Originaldateien, "
             f"{summary.files_parsed} geparst, {summary.files_pending} noch ohne Parser · "
             f"{summary.cases_created} neue Fälle, "
-            f"{summary.quicktests_saved} QuickTest(s) dauerhaft nach FIN gespeichert, "
+            f"{summary.qec_findings_linked} QEC-Fälle mit SSL-Endbefunden ergänzt, "
+            f"{summary.qec_findings_conflicted} Referenzkonflikte, "
+            f"{summary.quicktests_saved} QuickTest(s) dauerhaft nach FIN gespeichert, 
             f"{summary.events_linked} zugeordnete Ereignisse · "
             f"{summary.events_unassigned} Ereignisse ohne eindeutige QEC-Zuordnung · "
             f"{summary.rows_scanned} gepruefte CSV-Zeilen, "
@@ -354,7 +356,7 @@ class SourcesPage(QWidget):
         self._quicktests_added = summary.quicktests_saved
         self._pending_reload = bool(
             summary.cases_created or summary.events_linked or summary.quicktests_saved
-            or summary.reference_sources
+            or summary.reference_sources or summary.qec_findings_linked
         )
         self._refresh_all()
 
