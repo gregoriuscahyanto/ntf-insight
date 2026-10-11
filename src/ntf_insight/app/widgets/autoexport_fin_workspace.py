@@ -218,6 +218,7 @@ class AutoExportFinWorkspace(QWidget):
         population_metrics: dict[str, int] | None = None,
         *,
         review_store: DtcReviewStore | None = None,
+        quicktest_fins: tuple[str, ...] = (),
     ) -> None:
         super().__init__()
         self.source = source
@@ -229,9 +230,14 @@ class AutoExportFinWorkspace(QWidget):
         self._case_vins = {case.case_id: case.vin for case in cases}
         self.by_id = {case.case_id: case for case in cases}
         self._focused_case_id: str | None = None
+        self._all_qec_cases = qec_pump_cases(cases)
         self._qec_evidence = qec_fin_evidence(cases)
         self._linked = self._qec_evidence.case_links
         self._pump_swap_dates = self._qec_evidence.pump_swap_dates
+        self._finding_counts = finding_counts(cases)
+        self._selected_findings: set[str] = set()
+        self._running_qec_cases = self._all_qec_cases
+        self._quicktest_fins = tuple(quicktest_fins)
         self.population_metrics = population_metrics or {}
         self._task: _FinClusterTask | None = None
         self._run_results: dict[str, FinPatternResult] = {}
@@ -239,7 +245,7 @@ class AutoExportFinWorkspace(QWidget):
         self._selected_fin: str | None = None
         self._shown_members: list[str] = []
         self._group_rows: tuple[int, ...] = ()
-        self._analysis_scoped_to_pump = False
+        self._analysis_scoped_to_qec = True
         self._normal_method = "leaf"
 
         shell = QVBoxLayout(self)
@@ -294,16 +300,56 @@ class AutoExportFinWorkspace(QWidget):
         settings.addStretch(1)
         body.addLayout(settings)
 
-        self.only_pump_swap = QCheckBox(
-            "Nur FINs mit QEC-Pumpentauschdatum"
+        self.only_qec = QCheckBox("Nur FINs mit QEC-Fällen")
+        self.only_qec.setChecked(True)
+        self.only_qec.setToolTip(
+            "Standard: Nur Fahrzeug-FINs mit mindestens einem verknüpften "
+            "QEC-Kühlmittelpumpenfall. Ein Tauschdatum ist nicht erforderlich. "
+            "Ohne Haken: gesamte AutoExport+QEC-FIN-Grundgesamtheit. "
+            "Das QEC-Ankerverfahren ist bei BEIDEN Varianten verfügbar."
         )
-        self.only_pump_swap.setToolTip(
-            "Ohne Haken: AutoExport und QEC gemeinsam; FINs ohne "
-            "Pumpentausch bleiben Teil der allgemeinen Diagnosemustersuche. "
-            "Mit Haken: nur nachgewiesen vorherige Diagnosen "
-            "mit dem Tauschdatum aus QEC Rep.-Datum."
+        body.addWidget(self.only_qec)
+
+        finding_row = QHBoxLayout()
+        finding_row.addWidget(QLabel("SSL-Endbefund"))
+        self.finding_menu = QMenu(self)
+        self.finding_actions: dict[str, QAction] = {}
+        for finding, count in self._finding_counts.items():
+            action = QAction(
+                f"{finding[:74]}{'…' if len(finding) > 74 else ''} ({count})",
+                self.finding_menu,
+            )
+            action.setToolTip(finding)
+            action.setCheckable(True)
+            action.toggled.connect(
+                lambda checked, name=finding: self._finding_toggled(name, checked)
+            )
+            self.finding_menu.addAction(action)
+            self.finding_actions[finding] = action
+        self.finding_button = QToolButton()
+        self.finding_button.setText("Alle Endbefunde")
+        self.finding_button.setPopupMode(
+            QToolButton.ToolButtonPopupMode.InstantPopup
         )
-        body.addWidget(self.only_pump_swap)
+        self.finding_button.setMenu(self.finding_menu)
+        self.finding_button.setToolTip(
+            "Mehrfachauswahl: Ein Häkchen an mehreren Endbefunden erlaubt "
+            "alle ausgewählten Werte. Ohne Auswahl gelten alle Endbefunde."
+        )
+        finding_row.addWidget(self.finding_button)
+        finding_row.addWidget(QLabel("oder Text enthält"))
+        self.finding_search = QLineEdit()
+        self.finding_search.setPlaceholderText("Endbefund-Suchbegriff")
+        self.finding_search.setClearButtonEnabled(True)
+        self.finding_search.setToolTip(
+            "Groß-/Kleinschreibung egal; mehrere ausgewählte Endbefunde "
+            "UND Suchtext werden gemeinsam angewendet."
+        )
+        finding_row.addWidget(self.finding_search, 1)
+        body.addLayout(finding_row)
+        self.finding_summary = QLabel(objectName="PageSubtitle")
+        self.finding_summary.setWordWrap(True)
+        body.addWidget(self.finding_summary)
 
         self.qec_anchor_mode = QCheckBox(
             "QEC-Fälle als Anker für die Clusterbildung verwenden"
@@ -508,7 +554,9 @@ class AutoExportFinWorkspace(QWidget):
 
         for control in (self.min_cluster_size, self.min_samples):
             control.valueChanged.connect(self._invalidate)
-        self.only_pump_swap.toggled.connect(self._invalidate)
+        self.only_qec.toggled.connect(self._invalidate)
+        self.finding_search.textChanged.connect(self._qec_filter_changed)
+        self._update_finding_summary()
         # Keep one static plot and cached results for fast method switching.
         self._show_empty()
 
