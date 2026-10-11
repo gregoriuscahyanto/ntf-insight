@@ -11,11 +11,10 @@ from collections import defaultdict
 from time import perf_counter
 
 from PySide6.QtCore import QModelIndex, Qt, QThread, Signal
-from PySide6.QtGui import QAction
 from PySide6.QtWidgets import (
     QAbstractItemView, QCheckBox, QComboBox, QFrame, QHBoxLayout,
-    QLabel, QLineEdit, QMenu, QPlainTextEdit, QPushButton, QScrollArea,
-    QSpinBox, QTableView, QToolButton, QVBoxLayout, QWidget, QFileDialog, QMessageBox,
+    QLabel, QLineEdit, QPlainTextEdit, QPushButton, QScrollArea,
+    QSpinBox, QTableView, QVBoxLayout, QWidget, QFileDialog, QMessageBox,
 )
 
 from ntf_insight.analysis.cluster_dtc_filters import ClusterDtcFilter
@@ -31,8 +30,8 @@ from ntf_insight.app.models.simple_table_model import SimpleTableModel
 from ntf_insight.app.widgets.fin_cluster_projection_plot import FinClusterProjectionPlot
 from ntf_insight.app.widgets.fin_coverage_donut import FinCoverageDonut
 from ntf_insight.analysis.qec_end_finding_filter import (
-    MISSING_END_FINDING, finding_counts, part_numbers, qec_pump_cases,
-    selected_qec_cases, source_coverage,
+    MISSING_END_FINDING, finding_counts, finding_for, part_numbers,
+    qec_pump_cases, selected_qec_cases, source_coverage,
 )
 from ntf_insight.app.widgets.fin_status_donut import (
     FIN_COLORS, FIN_LABELS, FinStatusDonut,
@@ -255,7 +254,6 @@ class AutoExportFinWorkspace(QWidget):
         self._linked = self._qec_evidence.case_links
         self._pump_swap_dates = self._qec_evidence.pump_swap_dates
         self._finding_counts = finding_counts(cases)
-        self._selected_findings: set[str] = set()
         self._running_qec_cases = self._all_qec_cases
         self._quicktest_fins = tuple(quicktest_fins)
         self.population_metrics = population_metrics or {}
@@ -321,76 +319,42 @@ class AutoExportFinWorkspace(QWidget):
         settings.addStretch(1)
         body.addLayout(settings)
 
+        # These are TWO independent analysis options. The QEC-anchor method
+        # is never hidden or disabled by the QEC-only population checkbox.
+        scope_row = QHBoxLayout()
         self.only_qec = QCheckBox("Nur FINs mit QEC-Fällen")
         self.only_qec.setChecked(True)
         self.only_qec.setToolTip(
-            "Standard: Nur Fahrzeug-FINs mit mindestens einem verknüpften "
-            "QEC-Kühlmittelpumpenfall. Ein Tauschdatum ist nicht erforderlich. "
-            "Ohne Haken: gesamte AutoExport+QEC-FIN-Grundgesamtheit. "
-            "Das QEC-Ankerverfahren ist bei BEIDEN Varianten verfügbar."
+            "Standard: FINs mit mindestens einem QEC-Pumpenfall; "
+            "ein Tauschdatum ist nicht erforderlich. Ohne Haken: "
+            "gesamte AutoExport+QEC-Grundgesamtheit."
         )
-        body.addWidget(self.only_qec)
-
-        finding_row = QHBoxLayout()
-        finding_row.addWidget(QLabel("SSL-Endbefund"))
-        self.finding_menu = QMenu(self)
-        self.finding_actions: dict[str, QAction] = {}
-        for finding, count in self._finding_counts.items():
-            action = QAction(
-                f"{finding[:74]}{'…' if len(finding) > 74 else ''} ({count})",
-                self.finding_menu,
-            )
-            action.setToolTip(finding)
-            action.setCheckable(True)
-            action.toggled.connect(
-                lambda checked, name=finding: self._finding_toggled(name, checked)
-            )
-            self.finding_menu.addAction(action)
-            self.finding_actions[finding] = action
-        self.finding_button = QToolButton()
-        self.finding_button.setText("Alle Endbefunde")
-        self.finding_button.setPopupMode(
-            QToolButton.ToolButtonPopupMode.InstantPopup
-        )
-        self.finding_button.setMenu(self.finding_menu)
-        self.finding_button.setToolTip(
-            "Mehrfachauswahl: Ein Häkchen an mehreren Endbefunden erlaubt "
-            "alle ausgewählten Werte. Ohne Auswahl gelten alle Endbefunde."
-        )
-        finding_row.addWidget(self.finding_button)
-        finding_row.addWidget(QLabel("Suchtext (optional, UND)"))
-        self.finding_search = QLineEdit()
-        self.finding_search.setPlaceholderText("Endbefundtext oder -code")
-        self.finding_search.setClearButtonEnabled(True)
-        self.finding_search.setToolTip(
-            "Groß-/Kleinschreibung egal; mehrere ausgewählte Endbefunde "
-            "UND Suchtext werden gemeinsam angewendet."
-        )
-        finding_row.addWidget(self.finding_search, 1)
-        body.addLayout(finding_row)
-        self.finding_summary = QLabel(objectName="PageSubtitle")
-        self.finding_summary.setWordWrap(True)
-        body.addWidget(self.finding_summary)
-
+        scope_row.addWidget(self.only_qec)
+        scope_row.addSpacing(24)
         self.qec_anchor_mode = QCheckBox(
             "QEC-Fälle als Anker für die Clusterbildung verwenden"
         )
         self.qec_anchor_mode.setToolTip(
-            "Optionales eigenes Zuordnungsverfahren (KEIN HDBSCAN): "
-            "Jede geeignete QEC-FIN ist ein Diagnose-Anker; "
-            "AutoExport-FINs kommen nur bei mindestens 45 % "
-            "ECU:DTC-Cosinusähnlichkeit zu ihrem nächsten Anker dazu. "
-            "Gruppen benötigen die eingestellte Mindestgröße. "
-            "Ohne Haken: bisherige HDBSCAN-/Complete-Link-Methoden."
+            "Unabhängig von 'Nur FINs mit QEC-Fällen' verfügbar. "
+            "Optionales QEC-Cosinus-Ankerverfahren (kein HDBSCAN): "
+            "nur FINs mit mindestens 45 % Diagnoseähnlichkeit "
+            "zu einem echten QEC-Anker werden zugeordnet."
         )
-        body.addWidget(self.qec_anchor_mode)
+        scope_row.addWidget(self.qec_anchor_mode)
+        scope_row.addStretch(1)
+        body.addLayout(scope_row)
+        self.finding_summary = QLabel(objectName="PageSubtitle")
+        self.finding_summary.setWordWrap(True)
+        body.addWidget(self.finding_summary)
 
         actions = QHBoxLayout()
         self.start_button = QPushButton("Clusteranalyse starten")
         self.start_button.setObjectName("ClusterStartButton")
         self.start_button.clicked.connect(self.run_analysis)
         actions.addWidget(self.start_button)
-        self.filter_button = QPushButton("Steuergeräte / DTCs filtern …")
+        self.filter_button = QPushButton("Filter")
+        self.filter_button.setObjectName("ClusterFilterButton")
+        self.filter_button.setToolTip("Steuergeräte, ECU:DTCs und SSL-Endbefunde ein- oder ausschließen.")
         self.filter_button.clicked.connect(self._edit_dtc_filters)
         actions.addWidget(self.filter_button)
         self.export_button = QPushButton("Alle Cluster-Repräsentanten als Excel")
@@ -399,11 +363,11 @@ class AutoExportFinWorkspace(QWidget):
         actions.addWidget(self.export_button)
         actions.addStretch(1)
         body.addLayout(actions)
-        self.filter_summary = QLabel(
-            "DTC-Filter: Alle Steuergeräte und DTCs zulassen.",
-            objectName="PageSubtitle",
-        )
+        self.filter_summary = QLabel(objectName="PageSubtitle")
+        self.filter_summary.setWordWrap(True)
+        self.filter_summary.setAccessibleName("Übersicht der aktiven Clusterfilter")
         body.addWidget(self.filter_summary)
+        self._update_filter_summary()
         self.status = QLabel(
             "Bereit. Nur lokal importierte AutoExport- und QEC-Daten "
             "werden ausgewertet.",
@@ -548,7 +512,7 @@ class AutoExportFinWorkspace(QWidget):
 
         plot_header = QHBoxLayout()
         plot_header.addWidget(QLabel(
-            "FIN-Punktwolke · Diagnoseähnlichkeit", objectName="CardTitle",
+            "FIN-Punktwolke · 3D-Diagnoseähnlichkeit (drehbar)", objectName="CardTitle",
         ))
         plot_header.addStretch(1)
         plot_header.addWidget(QLabel("Verfahren"))
@@ -559,16 +523,12 @@ class AutoExportFinWorkspace(QWidget):
         self.method_combo.currentIndexChanged.connect(self._method_changed)
         self.qec_anchor_mode.toggled.connect(self._anchor_mode_changed)
         plot_header.addWidget(self.method_combo)
-        self.dimension = QComboBox()
-        self.dimension.addItem("2D", "2d")
-        self.dimension.addItem("3D · drehbar", "3d")
-        self.dimension.currentIndexChanged.connect(self._dimension_changed)
-        plot_header.addWidget(self.dimension)
         reset = QPushButton("Ansicht zurücksetzen")
         reset.clicked.connect(self._reset_view)
         plot_header.addWidget(reset)
         body.addLayout(plot_header)
         self.plot = FinClusterProjectionPlot()
+        self.plot.set_mode("3d")
         self.plot.fin_picked.connect(self._point_picked)
         self.chart = self.plot
         body.addWidget(self.plot)
@@ -640,7 +600,6 @@ class AutoExportFinWorkspace(QWidget):
         for control in (self.min_cluster_size, self.min_samples):
             control.valueChanged.connect(self._invalidate)
         self.only_qec.toggled.connect(self._invalidate)
-        self.finding_search.textChanged.connect(self._qec_filter_changed)
         self._update_finding_summary()
         # Keep one static plot and cached results for fast method switching.
         self._show_empty()
@@ -649,29 +608,65 @@ class AutoExportFinWorkspace(QWidget):
         if self._task is not None:
             return
         catalog = self.source.autoexport_dtc_overview() if self.source else {}
-        # Include codes seen in locally imported QEC diagnostics too.
+        # Include codes already known from imported QEC/QuickTest data.
         for case in self._all_qec_cases:
             for event in case.diagnostics:
                 key = event.fault_key
                 if key not in catalog and key[0] and key[1]:
                     catalog[key] = (0, 0, "")
-        dialog = ClusterDtcFilterDialog(catalog, self._dtc_filter, self)
+        finding_codes: dict[str, set[str]] = defaultdict(set)
+        for case in self._all_qec_cases:
+            code = str(getattr(case, "qec_ssl_end_code", "") or "").strip()
+            if code:
+                finding_codes[finding_for(case)].add(code)
+        findings = {
+            finding: (count, ", ".join(sorted(finding_codes[finding])))
+            for finding, count in self._finding_counts.items()
+        }
+        dialog = ClusterDtcFilterDialog(
+            catalog, self._dtc_filter, self, findings=findings,
+        )
         if dialog.exec() != dialog.DialogCode.Accepted:
             return
         rules = dialog.selected_rules()
         if rules == self._dtc_filter:
             return
         self._dtc_filter = rules
-        self.filter_summary.setText(
-            "DTC-Filter: "
-            f"{len(rules.include_ecus)} Steuergeräte und "
-            f"{len(rules.include_faults)} ECU:DTCs einschließen; "
-            f"{len(rules.exclude_ecus)} Steuergeräte und "
-            f"{len(rules.exclude_faults)} ECU:DTCs ausschließen. "
-            "Änderung wird beim nächsten Start der Clusteranalyse angewendet."
-            if rules.active else "DTC-Filter: Alle Steuergeräte und DTCs zulassen."
-        )
+        self._update_filter_summary()
+        self._update_finding_summary()
         self._invalidate()
+
+    def _update_filter_summary(self) -> None:
+        rules = self._dtc_filter
+        human_findings = {
+            value.casefold(): value for value in self._finding_counts
+        }
+
+        def sample(items: frozenset, *, ssl: bool = False) -> str:
+            if not items:
+                return "keine"
+            values = sorted(
+                human_findings.get(value, value) if ssl
+                else ":".join(value) if isinstance(value, tuple)
+                else value
+                for value in items
+            )
+            suffix = f" (+{len(values) - 3} weitere)" if len(values) > 3 else ""
+            return ", ".join(values[:3]) + suffix
+
+        def summary(allowed: frozenset, denied: frozenset, *, ssl: bool = False) -> str:
+            if not allowed and not denied:
+                return "alle"
+            included = f"ein: {sample(allowed, ssl=ssl)}" if allowed else "ein: alle"
+            excluded = f"aus: {sample(denied, ssl=ssl)}" if denied else "aus: keine"
+            return f"{included} · {excluded}"
+
+        self.filter_summary.setText(
+            "Aktive Filter (Änderungen gelten für den nächsten Analyselauf):\n"
+            f"Steuergeräte  · {summary(rules.include_ecus, rules.exclude_ecus)}\n"
+            f"ECU:DTC  · {summary(rules.include_faults, rules.exclude_faults)}\n"
+            f"SSL-Endbefund  · {summary(rules.include_findings, rules.exclude_findings, ssl=True)}"
+        )
 
     def _export_representatives(self) -> None:
         if self.result is None or not self.result.groups:
@@ -687,7 +682,9 @@ class AutoExportFinWorkspace(QWidget):
         rules = self._dtc_filter
         description = (
             f"ECU +{sorted(rules.include_ecus)} / -{sorted(rules.exclude_ecus)}; "
-            f"ECU:DTC +{sorted(rules.include_faults)} / -{sorted(rules.exclude_faults)}"
+            f"ECU:DTC +{sorted(rules.include_faults)} / -{sorted(rules.exclude_faults)}; "
+            f"SSL-Endbefund +{sorted(rules.include_findings)} / -{sorted(rules.exclude_findings)}; "
+            f"Nur QEC-FINs: {self._analysis_scoped_to_qec}"
         ) if rules.active else "Keine"
         try:
             count = export_cluster_representatives(
@@ -707,46 +704,30 @@ class AutoExportFinWorkspace(QWidget):
     def _matched_qec_cases(self) -> tuple[NTFCase, ...]:
         return selected_qec_cases(
             self._all_qec_cases,
-            exact_findings=self._selected_findings,
-            search=self.finding_search.text(),
+            exact_findings=self._dtc_filter.include_findings,
+            excluded_findings=self._dtc_filter.exclude_findings,
         )
 
     def _update_finding_summary(self) -> None:
         cases = self._matched_qec_cases()
         fins = {case.vin.strip().upper() for case in cases}
-        self.finding_button.setText(
-            f"{len(self._selected_findings)} Endbefunde ausgewählt"
-            if self._selected_findings else "Alle Endbefunde"
-        )
         missing = self._finding_counts.get(MISSING_END_FINDING, 0)
         if missing == len(self._all_qec_cases) and missing:
             self.finding_summary.setText(
                 f"Bei allen {missing} QEC-Pumpenfällen fehlen aktuell "
-                "SSL-Endbefunde. Deshalb gibt es keine unterschiedlichen "
-                "Endbefunde zur Auswahl. Unter Datenquellen die QEC-SSL-Liste "
-                "mit 'Referenznr.' und 'SSL-Endbefund Benennung' importieren; "
-                "sie wird ausschließlich über passende QEC-Referenznummern "
-                "zu vorhandenen FIN-Fällen ergänzt."
+                "SSL-Endbefunde. Unter Datenquellen die QEC-SSL-Liste "
+                "mit Referenznummer importieren und die Anwendung "
+                "aktualisieren. Fehlende Endbefunde lassen sich "
+                "im Filter gezielt ein- oder ausschließen."
             )
             return
         self.finding_summary.setText(
-            f"Endbefundfilter: {len(cases)} QEC-Fälle · "
-            f"{len(fins)} unterschiedliche FINs. "
-            f"Bei {missing} QEC-Fällen fehlt der SSL-Endbefund. "
-            "Ohne Endbefund-Auswahl/Suchtext sind alle zugelassen. "
-            "Der Endbefund dient nur der Fallauswahl, nicht als Clustering-DTC."
+            f"QEC-Fallauswahl: {len(cases)} von {len(self._all_qec_cases)} "
+            f"QEC-Fällen · {len(fins)} unterschiedliche FINs. "
+            f"{missing} Fälle ohne SSL-Endbefund. "
+            "SSL-Endbefunde beeinflussen nur die QEC-Kohorte, "
+            "niemals direkt die DTC-Ähnlichkeit."
         )
-
-    def _finding_toggled(self, finding: str, checked: bool) -> None:
-        if checked:
-            self._selected_findings.add(finding)
-        else:
-            self._selected_findings.discard(finding)
-        self._qec_filter_changed()
-
-    def _qec_filter_changed(self, *_args) -> None:
-        self._update_finding_summary()
-        self._invalidate()
 
     def _part_changed(self, *_args) -> None:
         # Sachnummer selection only changes the coverage metric,
@@ -820,7 +801,7 @@ class AutoExportFinWorkspace(QWidget):
         if self._analysis_scoped_to_qec and not self._running_qec_cases:
             self.status.setText(
                 "Kein QEC-Fall entspricht dem Endbefundfilter. "
-                "Bitte die Auswahl oder den Suchbegriff ändern."
+                "Bitte die SSL-Endbefund-Ein-/Ausschlüsse im Filter ändern."
             )
             return
         qec_evidence = qec_fin_evidence(
@@ -830,8 +811,6 @@ class AutoExportFinWorkspace(QWidget):
         self.start_button.setEnabled(False)
         self.filter_button.setEnabled(False)
         self.only_qec.setEnabled(False)
-        self.finding_button.setEnabled(False)
-        self.finding_search.setEnabled(False)
         self.qec_anchor_mode.setEnabled(False)
         self.min_cluster_size.setEnabled(False)
         self.min_samples.setEnabled(False)
@@ -861,8 +840,6 @@ class AutoExportFinWorkspace(QWidget):
         self.start_button.setEnabled(True)
         self.filter_button.setEnabled(True)
         self.only_qec.setEnabled(True)
-        self.finding_button.setEnabled(True)
-        self.finding_search.setEnabled(True)
         self.qec_anchor_mode.setEnabled(True)
         self.min_cluster_size.setEnabled(True)
         self.min_samples.setEnabled(not self.qec_anchor_mode.isChecked())
@@ -934,9 +911,6 @@ class AutoExportFinWorkspace(QWidget):
         if key in self._run_results:
             self._show_result(self._run_results[key])
 
-    def _dimension_changed(self, *_args) -> None:
-        self.plot.set_mode(self.dimension.currentData() or "2d")
-
     def _reset_view(self) -> None:
         self.plot.reset_view()
 
@@ -999,7 +973,7 @@ class AutoExportFinWorkspace(QWidget):
             )
         else:
             explanation += "Die Detailgründe sind noch nicht ermittelt. "
-        if self._dtc_filter.active:
+        if self._dtc_filter.dtc_active:
             explanation += (
                 f"{result.filter_excluded_fins} FINs verlieren durch den "
                 "ECU-/DTC-Filter alle zuvor geeigneten Merkmale. "
@@ -1024,7 +998,7 @@ class AutoExportFinWorkspace(QWidget):
         )
         self._refresh_review_table()
         self.plot.set_result(result)
-        self.plot.set_mode(self.dimension.currentData() or "2d")
+        self.plot.set_mode("3d")
         self._selected_fin = None
         self.fin_model.set_rows([])
         self._shown_members = []
