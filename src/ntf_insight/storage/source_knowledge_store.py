@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import json
 from datetime import datetime
-from typing import Any, Iterable
+from typing import Any, Iterable, Sequence
 
 from ntf_insight.storage.duckdb_store import DuckDBStore
 
