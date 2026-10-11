@@ -342,9 +342,14 @@ class SourceKnowledgeStore:
         """
         if category not in {"autoexport_dtc", "autoexport_tips"}:
             raise ValueError("Unbekannte AutoExport-Datenquelle.")
+        tips_case_constraint = (
+            "AND NULLIF(trim(json_extract_string("
+            "payload_json, '$.CaseId')), '') IS NOT NULL"
+            if category == "autoexport_tips" else ""
+        )
         with self.store.connect() as con:
             rows = con.execute(
-                """
+                f"""
                 SELECT DISTINCT CASE
                     WHEN length(trim(fin)) = 20
                      AND left(upper(trim(fin)), 3) = 'MBC'
@@ -354,6 +359,7 @@ class SourceKnowledgeStore:
                 FROM source_knowledge_rows
                 WHERE category = ?
                   AND NULLIF(trim(fin), '') IS NOT NULL
+                  {tips_case_constraint}
                 """,
                 [category],
             ).fetchall()
