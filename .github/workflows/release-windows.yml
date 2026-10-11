@@ -42,8 +42,12 @@ jobs:
           $version = (python -c "import tomllib; print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])").Trim()
           if ($version -notmatch '^\d+\.\d+\.\d+$') { throw "Ungueltige Versionsnummer" }
           $tag = "v$version"
-          gh release view $tag --repo $env:GITHUB_REPOSITORY --json tagName 2>$null | Out-Null
-          if ($LASTEXITCODE -eq 0) { throw "Release $tag existiert bereits. Zuerst Versionsnummer erhoehen." }
+          # 'gh release view' liefert bei fehlendem Release einen Fehlerstatus.
+          # Stattdessen eine erfolgreiche Listenabfrage verwenden, auch beim allerersten Release.
+          $releaseJson = gh release list --repo $env:GITHUB_REPOSITORY --limit 1000 --json tagName
+          if ($LASTEXITCODE -ne 0) { throw "Die vorhandenen Releases konnten nicht abgefragt werden." }
+          $existingTags = @($releaseJson | ConvertFrom-Json | ForEach-Object { $_.tagName })
+          if ($existingTags -contains $tag) { throw "Release $tag existiert bereits. Zuerst Versionsnummer erhoehen." }
 
       - name: Code und GUI testen
         shell: pwsh
