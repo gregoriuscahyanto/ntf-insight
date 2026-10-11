@@ -53,6 +53,34 @@ def test_filter_model_normalizes_ssl_findings_independently_of_dtc():
     }
 
 
+
+def test_ecu_filter_changes_real_cluster_features_but_not_fin_population():
+    from ntf_insight.analysis.autoexport_fin_patterns import cluster_fin_methods
+
+    fins = tuple(f"SYNTH-FIN-{number}" for number in range(6))
+    original = {
+        fin: (("CPC3", "PUMP-DTC"), ("BMS", "OTHER-DTC"))
+        for fin in fins
+    }
+    before = cluster_fin_methods(
+        fins, original, min_cluster_size=2, min_samples=1,
+    )["leaf"]
+    rules = ClusterDtcFilter(exclude_ecus=frozenset(("BMS",)))
+    filtered = rules.filter_signatures(original)
+    after = cluster_fin_methods(
+        fins, filtered, min_cluster_size=2, min_samples=1,
+    )["leaf"]
+    assert before.total_fins == after.total_fins == 6
+    assert before.feature_count == 2
+    assert after.feature_count == 1
+    assert after.dtc_fins == 6
+    assert original[fins[0]] == (
+        ("CPC3", "PUMP-DTC"), ("BMS", "OTHER-DTC"),
+    )
+    assert filtered[fins[0]] == (("CPC3", "PUMP-DTC"),)
+
+
+
 def test_representative_excel_contains_only_real_cluster_fins_and_safe_text(tmp_path):
     fin = "W1TTEST0000000001"
     group = FinPatternGroup(
