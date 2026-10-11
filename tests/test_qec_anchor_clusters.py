@@ -213,3 +213,32 @@ def test_alternative_mode_available_through_explicit_single_method_api():
     assert result.method == "qec_anchor"
     assert len(result.groups) == 2
     assert all(group.representative_is_fixed_anchor for group in result.groups)
+
+
+def test_qec_only_cohort_groups_similar_but_nonidentical_qec_fins():
+    """A QEC-only population must not degenerate into singleton seeds."""
+    qec_fins = tuple(f"SYNTH-QEC-ONLY-{i:02d}" for i in range(7))
+    features = {
+        fin: [
+            *[("CPC3", f"COMMON-{j}") for j in range(7)],
+            ("CPC3", f"INDIVIDUAL-{i}"),
+        ]
+        for i, fin in enumerate(qec_fins)
+    }
+    linked = {
+        fin: (f"QEC-SYNTH-{i}",)
+        for i, fin in enumerate(qec_fins)
+    }
+    run = cluster_fin_methods(
+        qec_fins, features, qec_links=linked,
+        min_cluster_size=5, include_qec_anchors=True,
+    )["qec_anchor"]
+    assert run.total_fins == len(qec_fins)
+    assert len(run.groups) == 1
+    assert run.groups[0].fin_count == len(qec_fins)
+    assert run.groups[0].representative_fin in linked
+    assert run.groups[0].representative_is_fixed_anchor
+    assert run.unassigned_fins == ()
+    assert all(
+        value >= 0.45 for _, value in run.groups[0].members
+    )
