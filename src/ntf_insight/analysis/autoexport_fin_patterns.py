@@ -318,6 +318,7 @@ def _qec_anchor_labels(
     for group_id, size in enumerate(counts):
         if size < min_cluster_size:
             labels[labels == group_id] = -1
+    strengths[labels == -1] = 0.0
     return labels, strengths, anchor_names
 
 
@@ -580,10 +581,11 @@ def cluster_autoexport_fins(
     min_cluster_size: int = 5,
     min_samples: int = 2,
 ) -> FinPatternResult:
-    """Legacy local API, but no KMeans: returns actual requested method."""
-    if method not in METHODS:
+    """Local API for an explicit method; anchored mode is opt-in."""
+    if method not in (*METHODS, "qec_anchor"):
         raise ValueError("Unbekannte Clustermethode.")
     return cluster_fin_methods(
         all_fins, fin_faults, dtc_labels, qec_links,
         min_cluster_size=min_cluster_size, min_samples=min_samples,
+        include_qec_anchors=method == "qec_anchor",
     )[method]
