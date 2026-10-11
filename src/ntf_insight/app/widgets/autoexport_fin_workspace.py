@@ -55,6 +55,7 @@ class _FinClusterTask(QThread):
         source: SourceKnowledgeStore | None,
         qec_evidence: QECFinEvidence,
         *,
+        all_pump_swap_dates: dict[str, str],
         only_qec: bool,
         qec_cases: tuple[NTFCase, ...],
         part_number: str,
@@ -66,6 +67,7 @@ class _FinClusterTask(QThread):
         super().__init__()
         self.source = source
         self.qec_evidence = qec_evidence
+        self.all_pump_swap_dates = dict(all_pump_swap_dates)
         self.only_qec = only_qec
         self.qec_cases = qec_cases
         self.part_number = part_number
@@ -80,7 +82,10 @@ class _FinClusterTask(QThread):
             self.phase.emit("Lese AutoExport und QEC als eindeutige FINs …")
             if self.source is not None:
                 fins, auto_faults, labels = self.source.autoexport_fin_dtc_signatures(
-                    pump_swap_dates=self.qec_evidence.pump_swap_dates,
+                    # The SSL-Endbefund filter must NOT permit late
+                    # AutoExport-DTCs from excluded QEC cases. Always use
+                    # the earliest swaps known from the FULL QEC corpus.
+                    pump_swap_dates=self.all_pump_swap_dates,
                     include_all_fins=True,
                     fin_filter=(
                         tuple(self.qec_evidence.case_links)
@@ -103,9 +108,10 @@ class _FinClusterTask(QThread):
                 tips_fins=tips_fins, quicktest_fins=self.quicktest_fins,
             )
             part_fins: dict[str, set[str]] = defaultdict(set)
+            analysis_fins = set(combined.fins)
             for case in self.qec_cases:
                 number = str(getattr(case, "qec_part_number", "") or "").strip()
-                if number and case.vin.strip().upper() in combined.fins:
+                if number and case.vin.strip().upper() in analysis_fins:
                     part_fins[number].add(case.vin.strip().upper())
             observed = set(raw_dtc_fins) | {
                 case.vin.strip().upper()
@@ -731,6 +737,7 @@ class AutoExportFinWorkspace(QWidget):
         self.min_samples.setEnabled(False)
         task = _FinClusterTask(
             self.source, qec_evidence,
+            all_pump_swap_dates=self._pump_swap_dates,
             only_qec=self._analysis_scoped_to_qec,
             qec_cases=self._running_qec_cases,
             part_number=self.part_number_combo.currentData() or "",
