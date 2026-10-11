@@ -19,7 +19,7 @@ def test_installer_creates_shortcuts_without_admin() -> None:
     assert "PrivilegesRequired=lowest" in installer
     assert r"{group}\NTF Insight" in installer
     assert r"{autodesktop}\NTF Insight" in installer
-    assert r"Source: ..\dist\NTF Insight" in installer
+    assert r"..\dist\NTF Insight\*" in installer
     assert "NTF_INSIGHT_DATA_DIR" not in installer
     assert "UninstallDelete" not in installer
 
