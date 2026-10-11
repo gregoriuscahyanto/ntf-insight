@@ -15,9 +15,12 @@ from PySide6.QtGui import QAction
 from PySide6.QtWidgets import (
     QAbstractItemView, QCheckBox, QComboBox, QFrame, QHBoxLayout,
     QLabel, QLineEdit, QMenu, QPlainTextEdit, QPushButton, QScrollArea,
-    QSpinBox, QTableView, QToolButton, QVBoxLayout, QWidget,
+    QSpinBox, QTableView, QToolButton, QVBoxLayout, QWidget, QFileDialog, QMessageBox,
 )
 
+from ntf_insight.analysis.cluster_dtc_filters import ClusterDtcFilter
+from ntf_insight.analysis.cluster_representative_excel import export_cluster_representatives
+from ntf_insight.app.widgets.cluster_dtc_filter_dialog import ClusterDtcFilterDialog
 from ntf_insight.analysis.autoexport_fin_patterns import (
     METHOD_TITLES, FinPatternResult, cluster_fin_methods,
 )
@@ -63,6 +66,7 @@ class _FinClusterTask(QThread):
         min_cluster_size: int,
         min_samples: int,
         minimum_similarity: float,
+        dtc_filter: ClusterDtcFilter | None = None,
     ) -> None:
         super().__init__()
         self.source = source
@@ -75,6 +79,7 @@ class _FinClusterTask(QThread):
         self.min_cluster_size = min_cluster_size
         self.min_samples = min_samples
         self.minimum_similarity = minimum_similarity
+        self.dtc_filter = dtc_filter or ClusterDtcFilter()
 
     def run(self) -> None:
         started = perf_counter()
@@ -102,6 +107,14 @@ class _FinClusterTask(QThread):
                 fins, auto_faults, labels, self.qec_evidence,
                 only_qec=self.only_qec,
             )
+            # Apply only to the clustering features, never original source rows.
+            original_faults = combined.faults
+            filtered_faults = self.dtc_filter.filter_signatures(original_faults)
+            excluded_fins = sum(
+                bool(original_faults[fin]) and not filtered_faults[fin]
+                for fin in combined.fins
+            )
+            combined = replace(combined, faults=filtered_faults)
             cover = source_coverage(
                 combined.fins, self.qec_cases,
                 part_number=self.part_number,
@@ -157,6 +170,7 @@ class _FinClusterTask(QThread):
                     },
                     no_dtc_without_records=no_records,
                     no_dtc_with_records_excluded=unsuitable - no_records,
+                    filter_excluded_fins=excluded_fins,
                 )
                 for key, result in results.items()
             }
@@ -253,6 +267,7 @@ class AutoExportFinWorkspace(QWidget):
         self._group_rows: tuple[int, ...] = ()
         self._analysis_scoped_to_qec = True
         self._normal_method = "leaf"
+        self._dtc_filter = ClusterDtcFilter()
 
         shell = QVBoxLayout(self)
         shell.setContentsMargins(0, 0, 0, 0)
@@ -375,8 +390,20 @@ class AutoExportFinWorkspace(QWidget):
         self.start_button.setObjectName("ClusterStartButton")
         self.start_button.clicked.connect(self.run_analysis)
         actions.addWidget(self.start_button)
+        self.filter_button = QPushButton("Steuergeräte / DTCs filtern …")
+        self.filter_button.clicked.connect(self._edit_dtc_filters)
+        actions.addWidget(self.filter_button)
+        self.export_button = QPushButton("Alle Cluster-Repräsentanten als Excel")
+        self.export_button.setEnabled(False)
+        self.export_button.clicked.connect(self._export_representatives)
+        actions.addWidget(self.export_button)
         actions.addStretch(1)
         body.addLayout(actions)
+        self.filter_summary = QLabel(
+            "DTC-Filter: Alle Steuergeräte und DTCs zulassen.",
+            objectName="PageSubtitle",
+        )
+        body.addWidget(self.filter_summary)
         self.status = QLabel(
             "Bereit. Nur lokal importierte AutoExport- und QEC-Daten "
             "werden ausgewertet.",
@@ -618,6 +645,65 @@ class AutoExportFinWorkspace(QWidget):
         # Keep one static plot and cached results for fast method switching.
         self._show_empty()
 
+    def _edit_dtc_filters(self) -> None:
+        if self._task is not None:
+            return
+        catalog = self.source.autoexport_dtc_overview() if self.source else {}
+        # Include codes seen in locally imported QEC diagnostics too.
+        for case in self._all_qec_cases:
+            for event in case.diagnostics:
+                key = event.fault_key
+                if key not in catalog and key[0] and key[1]:
+                    catalog[key] = (0, 0, "")
+        dialog = ClusterDtcFilterDialog(catalog, self._dtc_filter, self)
+        if dialog.exec() != dialog.DialogCode.Accepted:
+            return
+        rules = dialog.selected_rules()
+        if rules == self._dtc_filter:
+            return
+        self._dtc_filter = rules
+        self.filter_summary.setText(
+            "DTC-Filter: "
+            f"{len(rules.include_ecus)} Steuergeräte und "
+            f"{len(rules.include_faults)} ECU:DTCs einschließen; "
+            f"{len(rules.exclude_ecus)} Steuergeräte und "
+            f"{len(rules.exclude_faults)} ECU:DTCs ausschließen. "
+            "Änderung wird beim nächsten Start der Clusteranalyse angewendet."
+            if rules.active else "DTC-Filter: Alle Steuergeräte und DTCs zulassen."
+        )
+        self._invalidate()
+
+    def _export_representatives(self) -> None:
+        if self.result is None or not self.result.groups:
+            return
+        filename, _selected_filter = QFileDialog.getSaveFileName(
+            self, "Cluster-Repräsentanten lokal als Excel speichern",
+            "NTF_Cluster_Repraesentanten.xlsx", "Excel (*.xlsx)",
+        )
+        if not filename:
+            return
+        if not filename.lower().endswith(".xlsx"):
+            filename += ".xlsx"
+        rules = self._dtc_filter
+        description = (
+            f"ECU +{sorted(rules.include_ecus)} / -{sorted(rules.exclude_ecus)}; "
+            f"ECU:DTC +{sorted(rules.include_faults)} / -{sorted(rules.exclude_faults)}"
+        ) if rules.active else "Keine"
+        try:
+            count = export_cluster_representatives(
+                filename, self.result, filter_description=description,
+            )
+        except (OSError, PermissionError, ValueError):
+            QMessageBox.warning(
+                self, "Excel-Export",
+                "Die lokale Excel-Datei konnte nicht gespeichert werden. "
+                "Bitte Dateipfad und Schreibberechtigung überprüfen.",
+            )
+            return
+        self.status.setText(
+            f"{count} echte Cluster-Repräsentanten lokal in Excel gespeichert."
+        )
+
     def _matched_qec_cases(self) -> tuple[NTFCase, ...]:
         return selected_qec_cases(
             self._all_qec_cases,
@@ -680,6 +766,7 @@ class AutoExportFinWorkspace(QWidget):
         )
 
     def _show_empty(self) -> None:
+        self.export_button.setEnabled(False)
         self.plot.set_result(None)
         self.group_model.set_rows([])
         self.fin_model.set_rows([])
@@ -729,6 +816,7 @@ class AutoExportFinWorkspace(QWidget):
             global_pump_swap_dates=self._pump_swap_dates,
         )
         self.start_button.setEnabled(False)
+        self.filter_button.setEnabled(False)
         self.only_qec.setEnabled(False)
         self.finding_button.setEnabled(False)
         self.finding_search.setEnabled(False)
@@ -745,6 +833,7 @@ class AutoExportFinWorkspace(QWidget):
             min_cluster_size=self.min_cluster_size.value(),
             min_samples=self.min_samples.value(),
             minimum_similarity=0.45,
+            dtc_filter=self._dtc_filter,
         )
         self._task = task
         _ACTIVE_FIN_TASKS.add(task)
@@ -758,6 +847,7 @@ class AutoExportFinWorkspace(QWidget):
     def _enable_controls(self) -> None:
         self._task = None
         self.start_button.setEnabled(True)
+        self.filter_button.setEnabled(True)
         self.only_qec.setEnabled(True)
         self.finding_button.setEnabled(True)
         self.finding_search.setEnabled(True)
@@ -840,6 +930,7 @@ class AutoExportFinWorkspace(QWidget):
 
     def _show_result(self, result: FinPatternResult) -> None:
         self.result = result
+        self.export_button.setEnabled(bool(result.groups))
         summary = {
             "total": result.total_fins,
             "dtc": result.dtc_fins,
@@ -896,6 +987,11 @@ class AutoExportFinWorkspace(QWidget):
             )
         else:
             explanation += "Die Detailgründe sind noch nicht ermittelt. "
+        if self._dtc_filter.active:
+            explanation += (
+                f"{result.filter_excluded_fins} FINs verlieren durch den "
+                "ECU-/DTC-Filter alle zuvor geeigneten Merkmale. "
+            )
         explanation += (
             "Bei dokumentiertem Pumpentausch werden nur DTCs von "
             "sicher früheren Tagen geclustert. "
