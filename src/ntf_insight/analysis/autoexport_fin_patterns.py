@@ -31,10 +31,13 @@ METHOD_TITLES = {
     "leaf": "HDBSCAN · Leaf",
     "eom": "HDBSCAN · EOM",
     "complete_cosine": "Complete-Link · Cosinus (konservative Prüfgruppen)",
+    "qec_anchor": "QEC-Ankergruppen · Cosinus (keine HDBSCAN-Gruppen)",
 }
 MAX_SVD_DIM = 16
 MAX_COMPLETE_BLOCK = 450
 MIN_COMPLETE_SIMILARITY = 0.45
+QEC_ANCHOR_MIN_SIMILARITY = 0.45
+QEC_ANCHOR_BATCH_SIZE = 512
 # A QEC-backed FIN is preferred when its mean ORIGINAL TF-IDF cosine
 # similarity to the whole group is at least 90% of the best candidate.
 # This affects only the displayed representative, never cluster membership.
@@ -55,6 +58,7 @@ class FinPatternGroup:
     representative_has_qec: bool = False
     representative_centrality_ratio: float = 1.0
     unconstrained_representative_fin: str = ""
+    representative_is_fixed_anchor: bool = False
 
     @property
     def fin_count(self) -> int:
@@ -245,6 +249,78 @@ def _complete_link_labels(
     return labels, strengths
 
 
+def _qec_anchor_labels(
+    prepared: _PreparedFins,
+    min_cluster_size: int,
+    minimum_similarity: float,
+) -> tuple[np.ndarray, np.ndarray, dict[int, str]]:
+    """Groups around ACTUAL QEC vehicles using ORIGINAL sparse TF-IDF cosine.
+
+    This is not HDBSCAN or globally linked Complete-Link. Eligible QEC FINs
+    are anchors. Identical QEC signatures share a canonical lexical anchor.
+    Other FINs join the nearest one only above the explicit cosine limit.
+    No unlabeled/absent vehicle is forced into any group. Sparse blocks avoid
+    an all-vehicle NxN distance matrix even for 11k+ FINs.
+    """
+    n = len(prepared.eligible)
+    labels = np.full(n, -1, dtype=int)
+    strengths = np.zeros(n, dtype=float)
+    if not n or prepared.x is None:
+        return labels, strengths, {}
+    signatures: dict[frozenset[FaultKey], int] = {}
+    qec_members: dict[int, int] = {}
+    # Eligible FINs are lexical and unique. Equal QEC signatures define
+    # one anchor, not two competing identical groups.
+    for index, fin in enumerate(prepared.eligible):
+        if not prepared.links.get(fin):
+            continue
+        signature = prepared.faults[fin]
+        if signature not in signatures:
+            signatures[signature] = index
+        qec_members[index] = signatures[signature]
+    if not signatures:
+        return labels, strengths, {}
+
+    anchor_indices = tuple(sorted(set(qec_members.values())))
+    anchor_ids = {
+        index: group_id for group_id, index in enumerate(anchor_indices)
+    }
+    anchor_names = {
+        group_id: prepared.eligible[index]
+        for index, group_id in anchor_ids.items()
+    }
+    for index, anchor in qec_members.items():
+        labels[index] = anchor_ids[anchor]
+        strengths[index] = 1.0
+
+    anchor_x = prepared.x[list(anchor_indices)]
+    # Sparse (vehicles x ECU:DTC) @ sparse (DTC x QEC anchors):
+    # bounded dense blocks are at most 512 x number_of_QEC_anchors.
+    for start in range(0, n, QEC_ANCHOR_BATCH_SIZE):
+        end = min(n, start + QEC_ANCHOR_BATCH_SIZE)
+        similarities = (prepared.x[start:end] @ anchor_x.T).toarray()
+        winners = np.argmax(similarities, axis=1)
+        highest = similarities[
+            np.arange(end - start), winners
+        ]
+        for offset in range(end - start):
+            index = start + offset
+            if index in qec_members:
+                continue
+            if float(highest[offset]) + 1e-7 < minimum_similarity:
+                continue
+            winner_anchor = anchor_indices[int(winners[offset])]
+            labels[index] = anchor_ids[winner_anchor]
+            strengths[index] = float(highest[offset])
+    # An anchor with fewer than the minimum FINs is not a claimed
+    # cluster; all its FINs remain unassigned/visible as noise.
+    counts = np.bincount(labels[labels >= 0], minlength=len(anchor_ids))
+    for group_id, size in enumerate(counts):
+        if size < min_cluster_size:
+            labels[labels == group_id] = -1
+    return labels, strengths, anchor_names
+
+
 def _representative_position(
     fins: tuple[str, ...],
     centrality: np.ndarray,
@@ -287,6 +363,7 @@ def _make_result(
     *,
     min_cluster_size: int,
     notes: str,
+    fixed_representatives: Mapping[int, str] | None = None,
 ) -> FinPatternResult:
     groups = []
     assigned: set[str] = set()
@@ -307,9 +384,25 @@ def _make_result(
             range(len(fins)),
             key=lambda index: (-float(centrality[index]), fins[index]),
         )
-        best, representative_ratio = _representative_position(
-            fins, centrality, prepared.links,
+        fixed_fin = (
+            fixed_representatives.get(int(raw))
+            if fixed_representatives is not None else None
         )
+        if fixed_fin is not None:
+            if fixed_fin not in fins or not prepared.links.get(fixed_fin):
+                raise ValueError(
+                    "QEC-Anker muss FIN dieser Gruppe mit QEC-Bezug sein."
+                )
+            best = fins.index(fixed_fin)
+            strongest = float(centrality[diagnostic_best])
+            representative_ratio = round(
+                float(centrality[best]) / strongest
+                if strongest > 0 else 1.0, 4,
+            )
+        else:
+            best, representative_ratio = _representative_position(
+                fins, centrality, prepared.links,
+            )
         rep_fin = fins[best]
         cos_to_rep = np.clip(
             (submatrix @ submatrix[best].T).toarray().ravel(), 0.0, 1.0,
@@ -365,6 +458,7 @@ def _make_result(
             representative_has_qec=rep_fin in prepared.links,
             representative_centrality_ratio=representative_ratio,
             unconstrained_representative_fin=fins[diagnostic_best],
+            representative_is_fixed_anchor=fixed_fin is not None,
         ))
     # Retain the historic grouping order based on the unconstrained
     # diagnostic representative. Adding QEC labels must not rename C IDs.
@@ -403,9 +497,10 @@ def cluster_fin_methods(
     min_cluster_size: int = 5,
     min_samples: int = 2,
     minimum_similarity: float = MIN_COMPLETE_SIMILARITY,
+    include_qec_anchors: bool = False,
     progress: Callable[[str], None] | None = None,
 ) -> dict[str, FinPatternResult]:
-    """One computation, three genuine methods, same FIN feature space."""
+    """One shared FIN feature space; optional separate QEC-seeded analysis."""
     if not 2 <= min_cluster_size <= 100:
         raise ValueError("Mindestclustergröße muss zwischen 2 und 100 liegen.")
     if not 1 <= min_samples <= 100:
@@ -448,6 +543,30 @@ def cluster_fin_methods(
             "Das ist ausdrücklich KEINE globale Complete-Link-Partition."
         ),
     )
+    if include_qec_anchors:
+        if progress:
+            progress("Ordne AutoExport-FINs den nächsten QEC-Ankern zu …")
+        labels, strengths, fixed = _qec_anchor_labels(
+            prepared, min_cluster_size, minimum_similarity,
+        )
+        out["qec_anchor"] = _make_result(
+            prepared, "qec_anchor", labels, strengths,
+            min_cluster_size=min_cluster_size,
+            fixed_representatives=fixed,
+            notes=(
+                "Separates QEC-Ankerverfahren, KEIN HDBSCAN: "
+                "Jede ausgegebene Gruppe hat eine echte QEC-FIN als Anker. "
+                f"Andere Fahrzeuge werden nur bei mindestens "
+                f"{minimum_similarity:.0%} originaler ECU:DTC-TF-IDF-"
+                "Cosinusähnlichkeit zu ihrem nächsten QEC-Anker zugeordnet. "
+                "Identische QEC-Signaturen teilen einen Anker. "
+                "Nicht passende FINs sowie Gruppen unter Mindestgröße "
+                "bleiben unzugeordnet. Die Mindestähnlichkeit gilt "
+                "jeweils zum Anker, NICHT zwischen jedem Fahrzeugpaar. "
+                "Die Gruppen sind eine explorative Diagnosezuordnung, "
+                "kein Pumpenursachen- oder NTF-Nachweis."
+            ),
+        )
     return out
 
 
