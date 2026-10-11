@@ -18,7 +18,9 @@ def test_ecu_dtc_filter_inclusions_exclusions_and_empty_fins():
         "FIN-B": (("BMS", "P200"),),
         "FIN-C": (),
     }
-    assert ClusterDtcFilter().filter_signatures(faults) == faults
+    assert ClusterDtcFilter().filter_signatures(faults) == {
+        fin: tuple(sorted(values)) for fin, values in faults.items()
+    }
     rules = ClusterDtcFilter(
         include_ecus=frozenset({"cpc3"}),
         include_faults=frozenset({("BMS", "P200")}),
