@@ -1,7 +1,12 @@
-"""Lokaler Suchdialog für tausende importierte Steuergeräte und ECU:DTCs."""
+"""Gemeinsamer lokaler Clusterfilter: Steuergeräte, ECU:DTC und SSL-Endbefund.
+
+Jeder Fachbereich besitzt eigene Unterreiter für Ein- und Ausschlüsse.
+Die Suchtabellen bleiben bei vielen tausend DTC-Zeilen scrollbar.
+"""
 from __future__ import annotations
 
 from collections import Counter
+from typing import Mapping
 
 from PySide6.QtCore import Qt, QSortFilterProxyModel
 from PySide6.QtWidgets import (
@@ -14,82 +19,88 @@ from ntf_insight.app.models.simple_table_model import SimpleTableModel
 
 
 class ClusterDtcFilterDialog(QDialog):
-    """Vier Regellisten, editierbar durch Suche und Mehrfach-Zeilenauswahl."""
+    """Drei Fachbereiche mit jeweils Ein- und Ausschluss-Unterreitern."""
 
-    def __init__(self, catalog: dict[tuple[str, str], tuple[int, int, str]],
-                 rules: ClusterDtcFilter, parent=None) -> None:
+    _SECTIONS = (
+        ("Steuergeräte", "ecus", ("Steuergerät", "DTC-Arten")),
+        ("ECU:DTC", "faults", ("Steuergerät", "DTC", "FINs", "Beschreibung")),
+        ("SSL-Endbefund", "findings", ("Endbefund", "QEC-Fälle", "SSL-Code")),
+    )
+
+    def __init__(
+        self,
+        catalog: Mapping[tuple[str, str], tuple[int, int, str]],
+        rules: ClusterDtcFilter,
+        parent=None,
+        *,
+        findings: Mapping[str, tuple[int, str]] | None = None,
+    ) -> None:
         super().__init__(parent)
-        self.setWindowTitle("Steuergeräte und DTCs für Cluster auswählen")
-        self.resize(910, 620)
-        self._sets = {
-            "include_ecus": set(rules.include_ecus),
-            "exclude_ecus": set(rules.exclude_ecus),
-            "include_faults": set(rules.include_faults),
-            "exclude_faults": set(rules.exclude_faults),
+        self.setWindowTitle("Filter · Clusteranalyse")
+        self.resize(940, 650)
+        self.setMinimumSize(640, 450)
+        self._sets: dict[str, set] = {
+            name: set(getattr(rules, name))
+            for name in (
+                "include_ecus", "exclude_ecus",
+                "include_faults", "exclude_faults",
+                "include_findings", "exclude_findings",
+            )
         }
+        self._views: dict[str, tuple[QTableView, QSortFilterProxyModel, SimpleTableModel, QLabel]] = {}
+        self._source_rows: dict[str, list[tuple[object, ...]]] = {}
+        self._source_keys: dict[str, list[str | tuple[str, str]]] = {}
+        self._subtabs: dict[str, QTabWidget] = {}
+
         outer = QVBoxLayout(self)
-        note = QLabel(
-            "Einschließen: nur gewählte Steuergeräte ODER ECU:DTCs verwenden. "
-            "Ohne Einschluss gelten alle. Ausschlüsse haben immer Vorrang. "
-            "Mehrere Zeilen mit Strg/Umschalt wählen; Suchfeld durchsucht "
-            "Steuergerät, DTC und Beschreibung. Originaldaten bleiben erhalten."
+        outer.setSpacing(10)
+        introduction = QLabel(
+            "Einschließen begrenzt die Auswahl, Ausschließen entfernt Treffer. "
+            "Ausschlüsse haben immer Vorrang. Ohne Einschluss sind alle "
+            "Einträge zugelassen. SSL-Endbefunde wählen QEC-Fälle aus; "
+            "Steuergeräte und ECU:DTCs bestimmen die Diagnosemerkmale. "
+            "Originaldaten bleiben unverändert."
         )
-        note.setWordWrap(True)
-        outer.addWidget(note)
-        self.tabs = QTabWidget()
-        outer.addWidget(self.tabs)
-        ecu_counts: Counter[str] = Counter()
-        for ecu, _dtc in catalog:
-            ecu_counts[ecu] += 1
-        ecus = [(ecu, str(count)) for ecu, count in sorted(ecu_counts.items())]
-        faults = [
-            (ecu, dtc, str(values[0]), values[2])
-            for (ecu, dtc), values in sorted(catalog.items())
-        ]
-        self._views = {}
-        for name, title, rows, headers in (
-            ("include_ecus", "Steuergeräte einschließen", ecus, ("Steuergerät", "DTC-Arten")),
-            ("exclude_ecus", "Steuergeräte ausschließen", ecus, ("Steuergerät", "DTC-Arten")),
-            ("include_faults", "ECU:DTC einschließen", faults, ("Steuergerät", "DTC", "FINs", "Beschreibung")),
-            ("exclude_faults", "ECU:DTC ausschließen", faults, ("Steuergerät", "DTC", "FINs", "Beschreibung")),
-        ):
-            page = QWidget()
-            layout = QVBoxLayout(page)
-            search = QLineEdit()
-            search.setPlaceholderText("Suchen …")
-            search.setClearButtonEnabled(True)
-            layout.addWidget(search)
-            model = SimpleTableModel(headers, rows)
-            proxy = QSortFilterProxyModel(self)
-            proxy.setSourceModel(model)
-            proxy.setFilterKeyColumn(-1)
-            proxy.setFilterCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
-            search.textChanged.connect(proxy.setFilterFixedString)
-            view = QTableView()
-            view.setModel(proxy)
-            view.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
-            view.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
-            view.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
-            view.setAlternatingRowColors(True)
-            view.setSortingEnabled(True)
-            view.horizontalHeader().setStretchLastSection(True)
-            layout.addWidget(view)
-            row = QHBoxLayout()
-            add = QPushButton("Markierte hinzufügen")
-            remove = QPushButton("Markierte entfernen")
-            clear = QPushButton("Diese Regelliste leeren")
-            row.addWidget(add)
-            row.addWidget(remove)
-            row.addWidget(clear)
-            layout.addLayout(row)
-            status = QLabel()
-            layout.addWidget(status)
-            self._views[name] = (view, proxy, model, status)
-            add.clicked.connect(lambda _=False, n=name: self._change(n, True))
-            remove.clicked.connect(lambda _=False, n=name: self._change(n, False))
-            clear.clicked.connect(lambda _=False, n=name: self._clear(n))
-            self.tabs.addTab(page, title)
-            self._update_count(name)
+        introduction.setWordWrap(True)
+        outer.addWidget(introduction)
+
+        count_ecus: Counter[str] = Counter(ecu for ecu, _ in catalog)
+        datasets = {
+            "ecus": [
+                (ecu, count)
+                for ecu, count in sorted(count_ecus.items())
+            ],
+            "faults": [
+                (ecu, dtc, values[0], values[2])
+                for (ecu, dtc), values in sorted(catalog.items())
+            ],
+            "findings": [
+                (finding, count, codes)
+                for finding, (count, codes) in sorted(
+                    (findings or {}).items(),
+                    key=lambda row: (-row[1][0], row[0].casefold()),
+                )
+            ],
+        }
+
+        self.tabs = QTabWidget(self)
+        outer.addWidget(self.tabs, 1)
+        for title, kind, headers in self._SECTIONS:
+            section = QWidget()
+            section_layout = QVBoxLayout(section)
+            nested = QTabWidget()
+            self._subtabs[kind] = nested
+            section_layout.addWidget(nested)
+            for action, tab_title in (
+                ("include", "Einschließen"),
+                ("exclude", "Ausschließen"),
+            ):
+                key = f"{action}_{kind}"
+                self._add_rule_tab(
+                    nested, key, tab_title, headers, datasets[kind], kind
+                )
+            self.tabs.addTab(section, title)
+
         footer = QHBoxLayout()
         footer.addStretch()
         reset = QPushButton("Alle Filter zurücksetzen")
@@ -99,18 +110,81 @@ class ClusterDtcFilterDialog(QDialog):
         cancel.clicked.connect(self.reject)
         footer.addWidget(cancel)
         apply = QPushButton("Filter übernehmen")
-        apply.clicked.connect(self.accept)
         apply.setDefault(True)
+        apply.clicked.connect(self.accept)
         footer.addWidget(apply)
         outer.addLayout(footer)
 
+    def _add_rule_tab(
+        self,
+        nested: QTabWidget,
+        name: str,
+        title: str,
+        headers: tuple[str, ...],
+        data: list[tuple[object, ...]],
+        kind: str,
+    ) -> None:
+        page = QWidget()
+        layout = QVBoxLayout(page)
+        search = QLineEdit()
+        search.setObjectName(f"Suche_{name}")
+        search.setPlaceholderText(
+            "Suchen nach Endbefund oder SSL-Code …"
+            if kind == "findings"
+            else "Suchen nach Steuergerät, DTC oder Beschreibung …"
+        )
+        search.setClearButtonEnabled(True)
+        layout.addWidget(search)
+        self._source_rows[name] = list(data)
+        self._source_keys[name] = [
+            (str(row[0]), str(row[1])) if kind == "faults" else str(row[0])
+            for row in data
+        ]
+        model = SimpleTableModel(("Gewählt", *headers), [])
+        proxy = QSortFilterProxyModel(self)
+        proxy.setSourceModel(model)
+        proxy.setFilterKeyColumn(-1)
+        proxy.setFilterCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
+        search.textChanged.connect(proxy.setFilterFixedString)
+        view = QTableView()
+        view.setModel(proxy)
+        view.setObjectName(f"Tabelle_{name}")
+        view.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        view.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
+        view.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        view.setAlternatingRowColors(True)
+        view.setSortingEnabled(True)
+        view.verticalHeader().setVisible(False)
+        view.setColumnWidth(0, 70)
+        view.setColumnWidth(1, 250 if kind == "findings" else 160)
+        view.horizontalHeader().setStretchLastSection(True)
+        layout.addWidget(view, 1)
+        commands = QHBoxLayout()
+        add = QPushButton("Markierte hinzufügen")
+        remove = QPushButton("Markierte entfernen")
+        clear = QPushButton("Auswahl dieser Liste leeren")
+        commands.addWidget(add)
+        commands.addWidget(remove)
+        commands.addWidget(clear)
+        commands.addStretch(1)
+        layout.addLayout(commands)
+        status = QLabel()
+        status.setWordWrap(True)
+        layout.addWidget(status)
+        self._views[name] = (view, proxy, model, status)
+        add.clicked.connect(lambda _checked=False, k=name: self._change(k, True))
+        remove.clicked.connect(lambda _checked=False, k=name: self._change(k, False))
+        clear.clicked.connect(lambda _checked=False, k=name: self._clear(k))
+        nested.addTab(page, title)
+        self._update_count(name)
+
     def _change(self, name: str, add: bool) -> None:
-        view, proxy, model, _status = self._views[name]
-        rows = {index.row() for index in view.selectionModel().selectedRows()}
-        for row in rows:
-            original = proxy.mapToSource(proxy.index(row, 0)).row()
-            values = model.rows[original]
-            key = values[0] if name.endswith("ecus") else (values[0], values[1])
+        view, proxy, _model, _status = self._views[name]
+        selected_keys = [
+            self._source_keys[name][proxy.mapToSource(index).row()]
+            for index in view.selectionModel().selectedRows()
+        ]
+        for key in selected_keys:
             if add:
                 self._sets[name].add(key)
             else:
@@ -126,12 +200,20 @@ class ClusterDtcFilterDialog(QDialog):
             self._clear(name)
 
     def _update_count(self, name: str) -> None:
-        self._views[name][3].setText(
-            f"{len(self._sets[name])} Regeln ausgewählt. "
-            "Nicht markierte Zeilen bleiben unverändert."
+        _view, _proxy, model, status = self._views[name]
+        keys = self._source_keys[name]
+        model.set_rows([
+            ("✓" if key in self._sets[name] else "", *row)
+            for key, row in zip(keys, self._source_rows[name], strict=True)
+        ])
+        selected = len(self._sets[name])
+        status.setText(
+            f"{selected} Einträge gewählt · {len(keys)} im Katalog. "
+            "Die Spalte „Gewählt“ zeigt die dauerhaft übernommene Auswahl."
         )
 
     def selected_rules(self) -> ClusterDtcFilter:
         return ClusterDtcFilter(**{
-            name: frozenset(values) for name, values in self._sets.items()
+            name: frozenset(values)
+            for name, values in self._sets.items()
         })
