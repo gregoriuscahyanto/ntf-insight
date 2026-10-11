@@ -116,7 +116,8 @@ def test_qec_anchor_uses_original_sparse_cosine_not_3d_plot_proximity():
     assert len({by_fin[fin] for fin in group_a}) == 1
     assert by_fin[group_a[0]] >= 0
     assert by_fin[lonely] == -1
-    assert strengths.shape == (prepared.eligible.__len__(),)
+    assert strengths.shape == (len(prepared.eligible),)
+    assert strengths[prepared.eligible.index(lonely)] == 0.0
     assert np.all(np.isfinite(strengths))
 
 
@@ -166,3 +167,49 @@ def test_fin_checkbox_instantly_switches_cached_mode_and_back_to_eom():
     assert panel.result is runs["qec_anchor"]
     panel.close()
     app.processEvents()
+
+
+def test_weak_autoexport_signature_is_not_assigned_to_qec_anchor():
+    """SVD visual proximity must not override sparse-original threshold."""
+    cluster = tuple(f"SYNTH-PUMP-{i:02d}" for i in range(6))
+    weak = "SYNTH-PUMP-WEAK"
+    codes = {
+        fin: [("CPC3", "SHARED-A"), ("CTRL", "SHARED-B")]
+        for fin in cluster
+    }
+    codes[weak] = [
+        ("CPC3", "SHARED-A"),
+        *[("CTRL", f"UNIQUE-{i:03d}") for i in range(30)],
+    ]
+    links = {cluster[0]: ("QEC-SYNTH",)}
+    result = cluster_fin_methods(
+        (*cluster, weak), codes, qec_links=links,
+        min_cluster_size=5, include_qec_anchors=True,
+    )["qec_anchor"]
+    assert len(result.groups) == 1
+    assert frozenset(fin for fin, _ in result.groups[0].members) == (
+        frozenset(cluster)
+    )
+    assert result.groups[0].representative_fin == cluster[0]
+    assert weak in result.unassigned_fins
+    assert result.assigned_fins + len(result.unassigned_fins) == (
+        result.dtc_fins
+    )
+
+
+def test_alternative_mode_available_through_explicit_single_method_api():
+    from ntf_insight.analysis.autoexport_fin_patterns import (
+        cluster_autoexport_fins,
+    )
+
+    fins, codes, a, b, *_ = _population()
+    links = {
+        a[0]: ("QEC-SYNTH-A",),
+        b[0]: ("QEC-SYNTH-B",),
+    }
+    result = cluster_autoexport_fins(
+        fins, codes, qec_links=links, method="qec_anchor",
+    )
+    assert result.method == "qec_anchor"
+    assert len(result.groups) == 2
+    assert all(group.representative_is_fixed_anchor for group in result.groups)
