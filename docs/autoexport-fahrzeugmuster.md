@@ -40,19 +40,22 @@ lokalen AutoExport-FINs in dieselbe Clusteranalyse.
 AutoExport-`RepairDt` belegt keinen Pumpentausch;
 das untersuchte QEC-`Rep.-Datum` dient als zeitlicher Anker.
 
-Der **SSL-Endbefundfilter** kann mehrere gespeicherte
-Endbefundbezeichnungen oder einen frei eingegebenen
-Suchbegriff (auch kombiniert) verwenden. Er begrenzt die
-QEC-Fälle, die in den Diagnoseabgleich und in die
-QEC-Ankerbildung gelangen. Ein SSL-Befund ist niemals
-ein Diagnose-/DTC-Merkmal. Die Checkbox
+Der gemeinsame **Filter** enthält drei Hauptbereiche
+(Steuergeräte, ECU:DTC, SSL-Endbefund) mit jeweils
+**Einschließen** und **Ausschließen**. Die Suche dient der
+Auswahl konkreter Regeln; Ausschlüsse haben Vorrang.
+Der SSL-Bereich begrenzt die QEC-Fälle, die in den
+Diagnoseabgleich und in die QEC-Ankerbildung gelangen.
+Ein SSL-Befund ist niemals ein Diagnose-/DTC-Merkmal.
+Die Hauptansicht zeigt alle gesetzten Filterregeln. Die Checkbox
 **QEC-Fälle als Anker für die Clusterbildung verwenden**
 bleibt mit und ohne eingeschränkte FIN-Grundgesamtheit
 verfügbar. Die beiden Verfahren lassen sich nach dem
 Clusterlauf per Checkbox aus dem Cache vergleichen.
 
-Unterhalb der FIN-Clusterverteilung zeigen vier separate
-Donuts den Anteil der aktuellen FIN-Grundgesamtheit mit
+Die FIN-Clusterverteilung und vier separate
+Quellen-Donuts befinden sich in einer kompakten Übersichtskarte;
+die Quellenringe zeigen jeweils den Anteil der FIN-Grundgesamtheit mit
 **gewählter QEC-Sachnummer, QEC-Fall, TIPS-Fall bzw.
 QuickTest-Bericht**. Die Mengen überlappen sich und
 werden nicht addiert. „Ohne geeignete DTCs“ wird
