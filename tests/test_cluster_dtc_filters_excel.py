@@ -38,6 +38,21 @@ def test_ecu_dtc_filter_inclusions_exclusions_and_empty_fins():
     assert denied.filter_signatures(faults)["FIN-A"] == ()
 
 
+
+def test_filter_model_normalizes_ssl_findings_independently_of_dtc():
+    rules = ClusterDtcFilter(
+        include_findings=frozenset(("Prüfung bestätigt",)),
+        exclude_findings=frozenset(("OHNE SSL-ENDBEFUND",)),
+    )
+    assert rules.finding_active
+    assert not rules.dtc_active
+    assert rules.active
+    assert rules.include_findings == frozenset(("prüfung bestätigt",))
+    assert rules.filter_signatures({"FIN-A": (("CPC3", "P100"),)}) == {
+        "FIN-A": (("CPC3", "P100"),),
+    }
+
+
 def test_representative_excel_contains_only_real_cluster_fins_and_safe_text(tmp_path):
     fin = "W1TTEST0000000001"
     group = FinPatternGroup(
