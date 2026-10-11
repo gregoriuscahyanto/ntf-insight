@@ -35,13 +35,13 @@ lokalen Quellenabgleich ermittelt.
    Teil der Gesamtzahl, aber erhalten **keine erfundene Gruppe**.
    Die Summe der drei FIN-Statuszahlen entspricht immer dem
    gesamten betrachteten FIN-Bestand.
-4. **FIN-Punktwolke in 2D oder 3D** zeigt die echten FIN-Diagnosemuster.
+4. **FIN-Punktwolke ausschließlich in 3D** zeigt die Diagnosemuster.
    Farben markieren Cluster, grau steht für DTC-FINs ohne Cluster.
    Repräsentative FINs erhalten eine Umrandung. Klick auf einen
-   Punkt wählt FIN bzw. Cluster; in 3D dreht/gekippt die linke
-   gedrückte Maustaste beim Ziehen die Darstellung. Das Mausrad zoomt.
-   **Die Plotkoordinaten sind niemals Clustering-Merkmale.**
-5. **Verfahren wählen** neben 2D/3D wechselt wirklich die
+   Punkt wählt FIN bzw. Cluster; mit gehaltener linker Maustaste
+   wird gedreht und geneigt. Das Mausrad zoomt. Es gibt keinen
+   2D-Umschalter. **Die Plotkoordinaten sind niemals Clustering-Merkmale.**
+5. **Verfahren wählen** neben der 3D-Ansicht wechselt wirklich die
    Clusterzuordnung, die Kennzahlen, Tabelle und Erklärung:
    HDBSCAN Leaf, HDBSCAN EOM oder Complete-Link Cosinus.
    Alle werden beim Start berechnet und bleiben für sofortige
@@ -66,17 +66,25 @@ lokalen Quellenabgleich ermittelt.
 
 ## QEC-Endbefunde auswählen und Quellenabdeckung verstehen
 
-Direkt bei den Clustereinstellungen lassen sich die in lokalen
-QEC-Pumpenfällen vorhandenen **SSL-Endbefund Benennungen**
-über ein anklickbares Menü **mehrfach auswählen**. Alternativ
-kann ein **Suchbegriff** (Groß-/Kleinschreibung egal) in
-Endbefundtext oder dokumentiertem Endbefundcode
-(`SSL Endbefund`) eingegeben werden. Ohne Einschränkung
-gelten alle QEC-Pumpenfälle, einschließlich Fälle ohne
-dokumentierten Endbefund. Bei gleichzeitiger Mehrfachauswahl
-und Suchtext müssen beide Bedingungen erfüllt sein (**UND**).
-Die GUI zeigt dazu die resultierenden QEC-Fälle und
-**unterschiedlichen FINs**, damit die Auswahl transparent bleibt.
+Die Schaltfläche **„Filter“** öffnet **drei Hauptbereiche**:
+**Steuergeräte**, **ECU:DTC** und **SSL-Endbefund**. Jeder
+Bereich besitzt die Unterreiter **Einschließen** und **Ausschließen**.
+Eine durchsuchbare Tabelle bietet Mehrfachauswahl auch bei tausenden
+ECU:DTC-Kombinationen. Der SSL-Bereich zeigt vorhandene
+**SSL-Endbefund Benennungen**, Fallzahlen und importierte Codes;
+auch „(Ohne SSL-Endbefund)“ kann explizit gewählt werden.
+
+Ohne ausgewählten Einschluss sind alle Werte zulässig.
+Eine Einschlussauswahl lässt nur die gewählten Werte passieren.
+Ausschlüsse haben **Vorrang** und entfernen Treffer auch dann,
+wenn diese gleichzeitig eingeschlossen wurden. Im ECU-/DTC-Bereich
+werden eingeschlossene Steuergeräte und ECU:DTC-Paare **ODER**
+verknüpft; entsprechende Ausschlüsse gelten danach.
+Im SSL-Bereich gilt der Ein-/Ausschluss für ganze QEC-Fälle,
+nicht als Diagnosemerkmal. Ein Suchtext in den Tabellen dient
+zum Finden/Auswählen von Werten und ist kein versteckter
+zusätzlicher Filter. Die Hauptansicht zeigt die aktiven Regeln
+dauerhaft als dreizeilige Zusammenfassung.
 
 Der Filter verändert, **welche QEC-Fälle als Quelle und
 gegebenenfalls als Anker** in den nächsten Clusterlauf
@@ -87,15 +95,16 @@ ausgewählten QEC-Fälle untersucht. Bei deaktiviertem
 QEC-FIN-Filter bleibt der gesamte AutoExport-FIN-Bestand
 enthalten; die gefilterten QECs bestimmen lediglich die
 zusätzlichen QEC-Daten und möglichen QEC-Anker.
-Ein leerer Suchtreffer führt **nicht** zu einer erfundenen
+Ein leerer SSL-Filtertreffer führt **nicht** zu einer erfundenen
 QEC-Ankergruppe. Ein vorhandener frühester QEC-Pumpentausch
 bleibt auch bei weggefilterten anderen QEC-Fällen als
 **zeitliche Sicherheitsgrenze** erhalten.
 
-Im Dashboard stehen neben Clusteranzahl und
-gegenseitig ausschließender FIN-Verteilung **vier getrennte
-Donutdiagramme**, jeweils mit der aktuellen analysierten
-FIN-Grundgesamtheit als Nenner:
+Die **kompakte Übersicht in einer einzigen Karte** kombiniert
+Clusteranzahl, die gegenseitig ausschließende FIN-Verteilung
+und vier unabhängige Quellen-Donuts (keine sechs gerahmten
+Einzelkarten). Die Quellen-Donuts verwenden jeweils die aktuelle
+analysierte FIN-Grundgesamtheit als Nenner:
 
 - **FINs mit gewählter Sachnummer:** Aus lokalen, über eine
   FIN verknüpften QEC-Pumpenfällen. Sachnummer im Dropdown
@@ -216,9 +225,11 @@ untypischen Schadteilfall zum vermeintlichen Gruppenbeweis zu machen.
 
 ## Kompakte Donut-Übersicht und DTC-Fachmarkierungen
 
-Statt fünf nebeneinanderliegenden Kennzahlkarten zeigt die
-Clusteranalyse **Gefundene Cluster** als große Kennzahl und
+Eine gemeinsame, kompakte Dashboardkarte zeigt
+**Gefundene Cluster** als große Kennzahl und die
 **Verteilung der FINs** als gut lesbares Donutdiagramm.
+Darunter stehen die vier weiterhin getrennten
+Quellenabdeckungen ohne zusätzliche Kartenrahmen.
 Im Donut steht die Zahl **aller eindeutigen FINs**, die Legende
 zeigt absolute Zahlen und den prozentualen Anteil von:
 
@@ -342,17 +353,25 @@ Lieferantenverantwortung. Die bekannten QEC-Fälle
 markieren nur den tatsächlich vorliegenden Quellenbezug.
 
 
-## ECU-/DTC-Filter und Excel-Liste der Repräsentanten
+## Filter für Steuergeräte, ECU:DTCs und SSL-Endbefunde und Excel-Liste
 
-Die Aktion **„Steuergeräte / DTCs filtern …“** öffnet eine lokal
-durchsuchbare Tabelle mit vier Regellisten: Steuergeräte einschließen,
-Steuergeräte ausschließen, ECU:DTC einschließen und ECU:DTC ausschließen.
-Die Suche durchsucht auch importierte DTC-Beschreibungen und arbeitet ohne
-Beachtung der Groß-/Kleinschreibung. Mehrere Tabellenzeilen lassen sich
-mit Strg oder Umschalt auswählen und gemeinsam hinzufügen oder entfernen.
-Ohne Einschlussauswahl gelten alle; werden Einschlussregeln gesetzt,
-bleiben die von ihnen getroffenen Steuergeräte **ODER** konkreten
-ECU:DTC-Kombinationen übrig. Ausschlüsse haben anschließend Vorrang.
+Der Button **„Filter“** öffnet drei Hauptreiter mit jeweils
+**Einschließen** und **Ausschließen** als Unterreiter. Für jedes
+Steuergerät, jedes konkrete ECU:DTC-Merkmal und jeden importierten
+SSL-Endbefund können Regeln unabhängig gesetzt werden.
+Alle Unterreiter enthalten durchsuchbare, sortierbare Tabellen,
+Mehrfachauswahl, Hinzufügen, Entfernen und Zurücksetzen.
+Die Tabelle zeigt auch, welche Einträge schon gewählt sind.
+Die Suche findet importierte DTC-Klartexte oder SSL-Codes
+unabhängig von Groß-/Kleinschreibung. Die Hauptseite zeigt
+die tatsächlichen Ein- und Ausschlüsse nach dem Übernehmen an.
+
+**Steuergeräte und ECU:DTC** filtern nur die erlaubten
+Vor-Tausch-Diagnosemerkmale; einschließende Auswahlen bilden
+die ODER-Menge, danach haben Ausschlüsse Vorrang.
+**SSL-Endbefunde** filtern stattdessen die QEC-Fallkohorte,
+damit gegebenenfalls auch FIN-Grundgesamtheit und QEC-Anker.
+Endbefunde sind niemals Ähnlichkeitsmerkmale.
 
 Die Regeln werden **erst nach der Vor-Tausch-Zeitprüfung** auf die
 zusammengeführten QEC-/AutoExport-Diagnosemerkmale angewendet.
@@ -371,7 +390,7 @@ des Repräsentanten, Diagnosemerkmale, Ähnlichkeit und Datenherkunft.
 Die Spalten „Befundungsbericht herunterladen“, „Bericht geprüft“
 und „Notizen“ sind als Arbeitsliste für das spätere Nachladen gedacht.
 Im Blatt „Analyseinformationen“ stehen Methode, FIN-Umfang und
-gewählte DTC-Filter. Speichern erfolgt ausschließlich in einem
+gewählte Steuergeräte-, ECU:DTC- und SSL-Filter. Speichern erfolgt ausschließlich in einem
 durch die Benutzerin gewählten lokalen Pfad. Achtung: Die Datei
 enthält echte FINs und darf nicht in öffentliche Repositories,
 GitHub Actions oder unfreigegebene Speicherorte gelangen.
