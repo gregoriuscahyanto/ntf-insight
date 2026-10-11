@@ -18,10 +18,13 @@ lokalen Quellenabgleich ermittelt.
 ## Bedienung von oben nach unten
 
 1. **Kleine Parameter**: Mindestclustergröße (Standard 5) und
-   `MinSamples` (Standard 2). Die optionale Auswahl
-   **Nur FINs mit QEC-Pumpentauschdatum** grenzt den Analysebestand
-   für eine tauschbezogene Prüfung ein. Normalerweise ist sie **aus**,
-   damit die vollständige AutoExport-FIN-Population einbezogen wird.
+   `MinSamples` (Standard 2). Die Checkbox **Nur FINs mit QEC-Fällen**
+   ist **standardmäßig AN**. Sie begrenzt die Grundgesamtheit auf
+   eindeutige FINs mit lokal verknüpftem QEC-Pumpenfall; ein
+   **Pumpentauschdatum ist dazu nicht erforderlich**. Ohne Haken
+   werden auch FINs nur aus AutoExport in denselben Clustermethoden
+   untersucht. **QEC-Fälle als Anker für die Clusterbildung verwenden**
+   ist bei beiden Grundgesamtheiten unabhängig verfügbar.
 2. **Clusteranalyse starten** ist die einzige Berechnungsaktion.
    Ein Hintergrundthread liest die lokalen AutoExport- und QEC-Merkmale
    und berechnet auf derselben FIN-Grundlage HDBSCAN Leaf,
@@ -60,6 +63,69 @@ lokalen Quellenabgleich ermittelt.
    **AutoExport, QEC/QuickTest oder beides**. FIN-Suche und ein
    Link öffnen die lokale FIN-/Fallhistorie. Echte FINs und
    QEC-Kennungen erscheinen nur in der lokalen Anwendung.
+
+## QEC-Endbefunde auswählen und Quellenabdeckung verstehen
+
+Direkt bei den Clustereinstellungen lassen sich die in lokalen
+QEC-Pumpenfällen vorhandenen **SSL-Endbefund Benennungen**
+über ein anklickbares Menü **mehrfach auswählen**. Alternativ
+kann ein **Suchbegriff** (Groß-/Kleinschreibung egal) in
+den Endbefundtext eingegeben werden. Ohne Einschränkung
+gelten alle QEC-Pumpenfälle, einschließlich Fälle ohne
+dokumentierten Endbefund. Bei gleichzeitiger Mehrfachauswahl
+und Suchtext müssen beide Bedingungen erfüllt sein (**UND**).
+Die GUI zeigt dazu die resultierenden QEC-Fälle und
+**unterschiedlichen FINs**, damit die Auswahl transparent bleibt.
+
+Der Filter verändert, **welche QEC-Fälle als Quelle und
+gegebenenfalls als Anker** in den nächsten Clusterlauf
+eingehen, NICHT den ECU:DTC-Code einer FIN und niemals
+einen Reparatur- oder SSL-Endbefund als Merkmalsdimension.
+Bei aktivem QEC-FIN-Filter werden nur die FINs dieser
+ausgewählten QEC-Fälle untersucht. Bei deaktiviertem
+QEC-FIN-Filter bleibt der gesamte AutoExport-FIN-Bestand
+enthalten; die gefilterten QECs bestimmen lediglich die
+zusätzlichen QEC-Daten und möglichen QEC-Anker.
+Ein leerer Suchtreffer führt **nicht** zu einer erfundenen
+QEC-Ankergruppe. Ein vorhandener frühester QEC-Pumpentausch
+bleibt auch bei weggefilterten anderen QEC-Fällen als
+**zeitliche Sicherheitsgrenze** erhalten.
+
+Im Dashboard stehen neben Clusteranzahl und
+gegenseitig ausschließender FIN-Verteilung **vier getrennte
+Donutdiagramme**, jeweils mit der aktuellen analysierten
+FIN-Grundgesamtheit als Nenner:
+
+- **FINs mit gewählter Sachnummer:** Aus lokalen, über eine
+  FIN verknüpften QEC-Pumpenfällen. Sachnummer im Dropdown
+  änderbar – das ändert keine Cluster.
+- **FINs mit QEC-Fall:** Mindestens ein im QEC-Endbefundfilter
+  zugelassener Pumpenfall je FIN.
+- **FINs mit TIPS-Fall:** Vorhandener importierter
+  AutoExport-TIPS-Eintrag je FIN.
+- **FINs mit QuickTest:** Vorhandener lokal gespeicherter
+  QuickTest-Bericht je FIN.
+
+Das sind **vier sich möglicherweise überlappende Mengen**:
+die Donuts dürfen **nicht** zu einem einzigen Pie addiert
+werden. Ein Fahrzeug kann dieselbe Sachnummer, QEC,
+TIPS und QuickTest zugleich haben. QEC-Fallzeilen
+werden pro FIN dedupliziert.
+
+**„Ohne geeignete DTCs“ bedeutet NICHT automatisch „kein
+DTC jemals vorhanden“.** Der erste Anteil sind FINs,
+für die kein importierter DTC-Datensatz in den
+relevanten Quellen vorliegt. Der zweite Anteil sind
+FINs mit importierten DTC-Einträgen, bei denen nach
+den fachlichen Regeln keine ECU:DTC-Signatur
+verwendet werden darf (z. B. ausschließlich DTCs
+am oder nach dem dokumentierten Pumpentausch,
+ohne belegbaren Vor-Tausch-Zeitpunkt oder ohne
+vollständigen ECU-/DTC-Schlüssel). Beide Teilmengen
+werden separat in der Erklärung unterhalb der
+Clusterverteilung angegeben. Eine solche FIN ist
+**nicht nachweislich fehlerfrei**, sondern im
+aktuellen Clustering nicht diagnostisch vergleichbar.
 
 ## Alternative mit Checkbox: Cluster um QEC-Fälle bilden
 
@@ -221,9 +287,12 @@ hinzugefügt, nicht als zusätzlicher QEC-Fall-Cluster gezählt.
   Diagnosemustersuche dürfen AutoExport-DTCs aus der vorhandenen
   Diagnosehistorie verwendet werden. Es wird **kein** Tauschzeitpunkt
   behauptet.
-- **Nur Tausch-FINs:** Der optionale Filter schließt FINs
-  ohne QEC-Tauschanker vollständig aus. Das reduziert
-  verständlicherweise die Fahrzeuganzahl stark.
+- **Nur FINs mit QEC-Fällen (Standard):** Ein lokaler QEC-Pumpenfall
+  genügt, auch ohne Tauschdatum. Bei belegtem Tausch bleibt die
+  konservative Vor-Tausch-DTC-Regel aktiv. Unbelegte Zeiträume
+  werden nicht als sichere Vor-Tausch-Diagnosen ausgegeben.
+- **Gesamter FIN-Bestand (Checkbox aus):** alle importierten
+  AutoExport- und QEC-FINs, eindeutige FINs nur einmal.
 
 Das generische AutoExport-`RepairDt` ist ein **Werkstattdatum,
 kein bestätigtes Pumpentauschdatum**. Diagnosen nach dem Tausch
