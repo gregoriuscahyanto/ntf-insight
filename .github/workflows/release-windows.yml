@@ -69,14 +69,22 @@ jobs:
           $version = (python -c "import tomllib; print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])").Trim()
           $setup = Join-Path (Get-Location) "dist\installer\NTF-Insight-Setup-$version.exe"
           $installDir = Join-Path $env:RUNNER_TEMP "NTF-Insight-Testinstallation"
-          $args = "/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /DIR=`"$installDir`""
-          $installer = Start-Process -FilePath $setup -ArgumentList $args -Wait -PassThru
+          $installArguments = "/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /DIR=`"$installDir`""
+          $installer = Start-Process -FilePath $setup -ArgumentList $installArguments -PassThru
+          if (-not $installer.WaitForExit(180000)) {
+            Stop-Process -Id $installer.Id -Force
+            throw "Setup-Installation hat das Zeitlimit überschritten."
+          }
           if ($installer.ExitCode -ne 0) { throw "Setup-Installation fehlgeschlagen: $($installer.ExitCode)" }
           $exe = Join-Path $installDir "NTF Insight.exe"
           if (-not (Test-Path $exe)) { throw "Installierte GUI fehlt." }
           $env:NTF_INSIGHT_SMOKE_TEST = "1"
           $env:NTF_INSIGHT_DATA_DIR = Join-Path $env:RUNNER_TEMP "ntf-insight-testdaten"
-          $app = Start-Process -FilePath $exe -Wait -PassThru
+          $app = Start-Process -FilePath $exe -PassThru
+          if (-not $app.WaitForExit(60000)) {
+            Stop-Process -Id $app.Id -Force
+            throw "Die installierte GUI hat das Zeitlimit beim Starttest überschritten."
+          }
           if ($app.ExitCode -ne 0) { throw "Die installierte GUI startet nicht: $($app.ExitCode)" }
           if (-not (Test-Path (Join-Path $env:NTF_INSIGHT_DATA_DIR "logs\ntf-insight.log"))) {
             throw "Der GUI-Start wurde nicht im Log dokumentiert."
