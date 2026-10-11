@@ -181,8 +181,12 @@ def test_qec_finding_exclusion_cannot_admit_post_swap_autoexport_dtc(tmp_path):
         source, cases, source.autoexport_population(),
     )
     panel.only_qec.setChecked(False)
-    panel.finding_search.setText("kein Fehler reproduzierbar")
-    assert "1 QEC-Fälle" in panel.finding_summary.text()
+    panel._dtc_filter = ClusterDtcFilter(
+        include_findings=frozenset(("Synthetisch kein Fehler reproduzierbar",))
+    )
+    panel._update_filter_summary()
+    panel._update_finding_summary()
+    assert "1 von 2 QEC-Fällen" in panel.finding_summary.text()
     panel.start_button.click()
     _wait(panel, app)
     assert panel.result.total_fins == len(fins)
