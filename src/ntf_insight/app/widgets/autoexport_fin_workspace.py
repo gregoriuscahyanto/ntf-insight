@@ -31,8 +31,8 @@ from ntf_insight.app.models.simple_table_model import SimpleTableModel
 from ntf_insight.app.widgets.fin_cluster_projection_plot import FinClusterProjectionPlot
 from ntf_insight.app.widgets.fin_coverage_donut import FinCoverageDonut
 from ntf_insight.analysis.qec_end_finding_filter import (
-    finding_counts, part_numbers, qec_pump_cases, selected_qec_cases,
-    source_coverage,
+    MISSING_END_FINDING, finding_counts, part_numbers, qec_pump_cases,
+    selected_qec_cases, source_coverage,
 )
 from ntf_insight.app.widgets.fin_status_donut import (
     FIN_COLORS, FIN_LABELS, FinStatusDonut,
@@ -718,9 +718,21 @@ class AutoExportFinWorkspace(QWidget):
             f"{len(self._selected_findings)} Endbefunde ausgewählt"
             if self._selected_findings else "Alle Endbefunde"
         )
+        missing = self._finding_counts.get(MISSING_END_FINDING, 0)
+        if missing == len(self._all_qec_cases) and missing:
+            self.finding_summary.setText(
+                f"Bei allen {missing} QEC-Pumpenfällen fehlen aktuell "
+                "SSL-Endbefunde. Deshalb gibt es keine unterschiedlichen "
+                "Endbefunde zur Auswahl. Unter Datenquellen die QEC-SSL-Liste "
+                "mit 'Referenznr.' und 'SSL-Endbefund Benennung' importieren; "
+                "sie wird ausschließlich über passende QEC-Referenznummern "
+                "zu vorhandenen FIN-Fällen ergänzt."
+            )
+            return
         self.finding_summary.setText(
             f"Endbefundfilter: {len(cases)} QEC-Fälle · "
             f"{len(fins)} unterschiedliche FINs. "
+            f"Bei {missing} QEC-Fällen fehlt der SSL-Endbefund. "
             "Ohne Endbefund-Auswahl/Suchtext sind alle zugelassen. "
             "Der Endbefund dient nur der Fallauswahl, nicht als Clustering-DTC."
         )
