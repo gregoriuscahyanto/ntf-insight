@@ -58,7 +58,7 @@ def _wait(panel, app):
         assert task.wait(10000)
 
 
-def test_default_qec_filter_exact_selection_search_and_source_donuts(tmp_path):
+def test_default_qec_filter_include_and_source_donuts(tmp_path):
     app = QApplication.instance() or QApplication([])
     source, qec, fins = _fixtures(tmp_path)
     panel = AutoExportFinWorkspace(
