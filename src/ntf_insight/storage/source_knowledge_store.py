@@ -201,6 +201,62 @@ class SourceKnowledgeStore:
             for row in rows
         ]
 
+    def qec_ssl_findings_by_reference(
+        self,
+    ) -> tuple[dict[str, dict[str, str]], frozenset[str]]:
+        """Unique SSL findings keyed by real QEC reference, never by guessed FIN.
+
+        Read previously archived QEC details as well as newly imported ones.
+        A conflicting label/code/part for one reference is *ambiguous*: such a
+        reference must not silently change any vehicle case.
+        """
+        with self.store.connect() as con:
+            rows = con.execute(
+                """
+                SELECT reference, payload_json, source_sha256, source_location
+                FROM source_knowledge_rows
+                WHERE category = 'qec_row'
+                  AND NULLIF(trim(reference), '') IS NOT NULL
+                  AND (
+                      source_location LIKE 'Schadteile!%'
+                      OR source_location LIKE 'Schadteile QEC!%'
+                  )
+                ORDER BY reference, source_sha256, source_location
+                """
+            ).fetchall()
+        candidates: dict[str, list[dict[str, str]]] = {}
+        for reference, payload, sha, location in rows:
+            data = json.loads(payload)
+            finding = str(data.get("SSL-Endbefund Benennung") or "").strip()
+            code = str(data.get("SSL Endbefund") or "").strip()
+            if not finding and not code:
+                continue
+            candidate = {
+                "finding": finding,
+                "code": code,
+                "part_number": str(data.get("Sachnr. Teil") or "").strip(),
+                "end_date": str(data.get("Bef.abschl.datum") or "").strip(),
+                "source_ref": f"{sha}:{location}",
+            }
+            candidates.setdefault(str(reference).strip(), []).append(candidate)
+        unique: dict[str, dict[str, str]] = {}
+        ambiguous: set[str] = set()
+        for reference, entries in candidates.items():
+            variants = {
+                (item["finding"], item["code"], item["part_number"])
+                for item in entries
+            }
+            if len(variants) != 1:
+                ambiguous.add(reference)
+                continue
+            # Prefer the version with an explicit completion date, then
+            # deterministic source provenance. Never fabricate a date.
+            unique[reference] = sorted(
+                entries,
+                key=lambda item: (not bool(item["end_date"]), item["source_ref"]),
+            )[0]
+        return unique, frozenset(ambiguous)
+
     def diagnostic_times_for_fins(
         self, fins: set[str]
     ) -> dict[str, list[tuple[str | None, str | None, int]]]:
