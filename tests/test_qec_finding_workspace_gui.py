@@ -154,3 +154,34 @@ def test_unusable_dtc_is_not_identical_to_no_dtc_record(tmp_path):
     assert sum(panel.donut.values) == 2
     panel.close()
     app.processEvents()
+
+
+def test_qec_finding_exclusion_cannot_admit_post_swap_autoexport_dtc(tmp_path):
+    """Even a filtered-out QEC still anchors its FIN's diagnostic history."""
+    app = QApplication.instance() or QApplication([])
+    source, cases, fins = _fixtures(tmp_path)
+    # First FIN has a documented QEC replacement, but its QEC finding
+    # will be filtered out below. Post-swap AutoExport rows must not enter
+    # the all-FIN feature space as if the vehicle had no repair date.
+    source.save_records("e" * 64, "autoexport_rows", [
+        {"category": "autoexport_dtc", "fin": fins[0], "data": {
+            "EcuNm": "CPC3", "EcuFaultNm": "ONLY-POST-SWAP",
+            "DiagStartDt": "2026-07-01",
+        }},
+    ])
+    panel = AutoExportFinWorkspace(
+        source, cases, source.autoexport_population(),
+    )
+    panel.only_qec.setChecked(False)
+    panel.finding_search.setText("kein Fehler reproduzierbar")
+    assert "1 QEC-Fälle" in panel.finding_summary.text()
+    panel.start_button.click()
+    _wait(panel, app)
+    assert panel.result.total_fins == len(fins)
+    assert ("CPC3", "ONLY-POST-SWAP") not in (
+        panel.result.dtc_keys_by_fin[fins[0]]
+    )
+    assert cases[0].vin not in panel.result.qec_links
+    assert cases[1].vin in panel.result.qec_links
+    panel.close()
+    app.processEvents()
