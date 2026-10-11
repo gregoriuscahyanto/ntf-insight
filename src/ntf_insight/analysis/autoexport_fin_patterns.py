@@ -557,7 +557,7 @@ def cluster_fin_methods(
             notes=(
                 "Separates QEC-Ankerverfahren, KEIN HDBSCAN: "
                 "Jede ausgegebene Gruppe hat eine echte QEC-FIN als Anker. "
-                f"Andere Fahrzeuge werden nur bei mindestens "
+                "Andere Fahrzeuge werden nur bei mindestens "
                 f"{minimum_similarity:.0%} originaler ECU:DTC-TF-IDF-"
                 "Cosinusähnlichkeit zu ihrem nächsten QEC-Anker zugeordnet. "
                 "Identische QEC-Signaturen teilen einen Anker. "
