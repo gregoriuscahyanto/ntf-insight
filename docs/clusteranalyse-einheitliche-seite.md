@@ -340,3 +340,38 @@ HDBSCAN-Dichtegruppen sind keine bestätigten Pumpenfehler,
 keine NTF-Feststellungen und kein Nachweis für eine
 Lieferantenverantwortung. Die bekannten QEC-Fälle
 markieren nur den tatsächlich vorliegenden Quellenbezug.
+
+
+## ECU-/DTC-Filter und Excel-Liste der Repräsentanten
+
+Die Aktion **„Steuergeräte / DTCs filtern …“** öffnet eine lokal
+durchsuchbare Tabelle mit vier Regellisten: Steuergeräte einschließen,
+Steuergeräte ausschließen, ECU:DTC einschließen und ECU:DTC ausschließen.
+Die Suche durchsucht auch importierte DTC-Beschreibungen und arbeitet ohne
+Beachtung der Groß-/Kleinschreibung. Mehrere Tabellenzeilen lassen sich
+mit Strg oder Umschalt auswählen und gemeinsam hinzufügen oder entfernen.
+Ohne Einschlussauswahl gelten alle; werden Einschlussregeln gesetzt,
+bleiben die von ihnen getroffenen Steuergeräte **ODER** konkreten
+ECU:DTC-Kombinationen übrig. Ausschlüsse haben anschließend Vorrang.
+
+Die Regeln werden **erst nach der Vor-Tausch-Zeitprüfung** auf die
+zusammengeführten QEC-/AutoExport-Diagnosemerkmale angewendet.
+Sie werden nicht in die importierten Quelldaten geschrieben und
+verändern weder das QEC-Original noch den Vorher-/Nachher-Vergleich.
+Nach einer Regeländerung muss die Clusteranalyse erneut gestartet
+werden. FINs, denen nur durch die Benutzerfilter die letzten
+zulässigen DTC-Merkmale entfallen, werden zusätzlich gezählt und
+wie andere FINs ohne geeignete Clustermerkmale ohne Cluster geführt.
+
+Die Aktion **„Alle Cluster-Repräsentanten als Excel“** wird nach einem
+erfolgreichen Lauf mit mindestens einem Cluster freigeschaltet.
+Sie erstellt **eine echte FIN je Cluster** im Blatt
+„FIN-Repräsentanten“, ergänzt um Clustergröße, QEC-Fallkennungen
+des Repräsentanten, Diagnosemerkmale, Ähnlichkeit und Datenherkunft.
+Die Spalten „Befundungsbericht herunterladen“, „Bericht geprüft“
+und „Notizen“ sind als Arbeitsliste für das spätere Nachladen gedacht.
+Im Blatt „Analyseinformationen“ stehen Methode, FIN-Umfang und
+gewählte DTC-Filter. Speichern erfolgt ausschließlich in einem
+durch die Benutzerin gewählten lokalen Pfad. Achtung: Die Datei
+enthält echte FINs und darf nicht in öffentliche Repositories,
+GitHub Actions oder unfreigegebene Speicherorte gelangen.
