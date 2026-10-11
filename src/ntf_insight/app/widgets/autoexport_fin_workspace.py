@@ -722,7 +722,9 @@ class AutoExportFinWorkspace(QWidget):
         if missing == len(self._all_qec_cases) and missing:
             self.finding_summary.setText(
                 f"Bei allen {missing} QEC-Pumpenfällen fehlen aktuell "
-                "SSL-Endbefunde. Unter Datenquellen die QEC-SSL-Liste "
+                f"SSL-Endbefunde. Aktuelle Filterauswahl: {len(cases)} "
+                f"QEC-Fälle und {len(fins)} unterschiedliche FINs. "
+                "Unter Datenquellen die QEC-SSL-Liste "
                 "mit Referenznummer importieren und die Anwendung "
                 "aktualisieren. Fehlende Endbefunde lassen sich "
                 "im Filter gezielt ein- oder ausschließen."
