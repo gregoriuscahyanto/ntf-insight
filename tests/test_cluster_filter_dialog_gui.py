@@ -8,7 +8,7 @@ import os
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PySide6.QtWidgets import QApplication, QFrame, QLineEdit
+from PySide6.QtWidgets import QApplication, QDialog, QFrame, QLineEdit
 
 from ntf_insight.analysis.cluster_dtc_filters import ClusterDtcFilter
 from ntf_insight.app.widgets.cluster_dtc_filter_dialog import (
@@ -156,5 +156,46 @@ def test_cluster_workspace_uses_one_card_and_independent_qec_anchor():
     panel.only_qec.setChecked(False)
     assert panel.qec_anchor_mode.isVisible()
     assert panel.qec_anchor_mode.isChecked()
+    panel.close()
+    app.processEvents()
+
+
+def test_filter_button_applies_ssl_exclusion_and_updates_main_overview(monkeypatch):
+    from ntf_insight.app.widgets import autoexport_fin_workspace as workspace
+    from test_hdbscan_clustering import synthetic
+
+    app = QApplication.instance() or QApplication([])
+    case = synthetic("SYNTH-QEC", "X", 1)
+    case.qec_reference = case.case_id
+    case.qec_ssl_end_finding = "Synthetischer SSL-Endbefund"
+    panel = workspace.AutoExportFinWorkspace(None, [case])
+    panel.show()
+    app.processEvents()
+    dialogs_opened = []
+
+    class FakeDialog:
+        DialogCode = QDialog.DialogCode
+
+        def __init__(self, catalog, rules, parent, *, findings):
+            assert parent is panel
+            assert "Synthetischer SSL-Endbefund" in findings
+            dialogs_opened.append(True)
+
+        def exec(self):
+            return self.DialogCode.Accepted
+
+        def selected_rules(self):
+            return ClusterDtcFilter(
+                exclude_findings=frozenset(("Synthetischer SSL-Endbefund",))
+            )
+
+    monkeypatch.setattr(workspace, "ClusterDtcFilterDialog", FakeDialog)
+    panel.filter_button.click()
+    assert dialogs_opened
+    assert not panel._matched_qec_cases()
+    assert "Synthetischer SSL-Endbefund" in panel.filter_summary.text()
+    assert "0 von 1 QEC-Fällen" in panel.finding_summary.text()
+    assert panel.qec_anchor_mode.isVisible()
+    assert panel.qec_anchor_mode.isEnabled()
     panel.close()
     app.processEvents()
