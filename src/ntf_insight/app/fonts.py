@@ -116,7 +116,13 @@ def resolve_fonts(font_dir: Path | None = None) -> FontSelection:
     corporate_heading = heading is not None
 
     if body is None:
-        body = _find_family(available, SYSTEM_BODY_FALLBACKS) or available[0]
+        # In headless Windows-/Qt-Offscreen-Läufen kann Qt eine leere
+        # Schriftartenliste liefern. Trotzdem eine gültige Familie an Qt
+        # übergeben; Qt nutzt auf regulären PCs die tatsächlich installierten Fonts.
+        body = (
+            _find_family(available, SYSTEM_BODY_FALLBACKS)
+            or (available[0] if available else SYSTEM_BODY_FALLBACKS[0])
+        )
 
     if heading is None:
         heading = _find_family(available, SYSTEM_HEADING_FALLBACKS) or body
