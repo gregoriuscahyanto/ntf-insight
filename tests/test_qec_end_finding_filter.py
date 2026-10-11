@@ -85,8 +85,8 @@ def test_qec_fins_scope_includes_missing_pump_swap_date_and_overlap_once():
 
 
 def test_end_finding_filter_never_weakens_first_pump_swap_anchor():
-    before = _case(1, "Unselected synthetic", "FAKE-PART")
-    later = _case(1, "Selected synthetic", "FAKE-PART")
+    before = _case(1, "Synthetischer Befund Alpha", "FAKE-PART")
+    later = _case(1, "Synthetischer Befund Beta", "FAKE-PART")
     later.case_id = "QEC-LATER"
     later.qec_reference = "QEC-LATER"
     later.replacements[0].occurred_at = datetime(2026, 7, 10)
@@ -97,7 +97,7 @@ def test_end_finding_filter_never_weakens_first_pump_swap_anchor():
     ))
     global_dates = qec_fin_evidence([before, later]).pump_swap_dates
     selection = selected_qec_cases(
-        [before, later], search="Selected synthetic",
+        [before, later], search="Befund Beta",
     )
     assert len(selection) == 1
     filtered = qec_fin_evidence(
