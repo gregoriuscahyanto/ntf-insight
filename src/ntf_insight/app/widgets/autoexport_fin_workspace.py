@@ -376,17 +376,21 @@ class AutoExportFinWorkspace(QWidget):
         self.status.setWordWrap(True)
         body.addWidget(self.status)
 
-        # Clear overview: one cluster count, one FIN donut with three
-        # mutually exclusive categories. No chart library, no data upload.
+        # One Mercedes-style overview panel instead of six disconnected cards.
+        # The four source rings remain independent because FIN sets overlap.
         self.number_labels: dict[str, QLabel] = {}
+        self.overview_card = QFrame()
+        self.overview_card.setObjectName("Card")
+        overview_stack = QVBoxLayout(self.overview_card)
+        overview_stack.setContentsMargins(18, 14, 18, 12)
+        overview_stack.setSpacing(8)
         overview = QHBoxLayout()
-        overview.setSpacing(10)
+        overview.setSpacing(18)
 
-        count_card = QFrame()
-        count_card.setObjectName("Card")
-        count_card.setMinimumWidth(210)
-        cluster_stack = QVBoxLayout(count_card)
-        cluster_stack.setContentsMargins(17, 15, 17, 15)
+        count_box = QWidget()
+        count_box.setMinimumWidth(165)
+        cluster_stack = QVBoxLayout(count_box)
+        cluster_stack.setContentsMargins(8, 4, 8, 4)
         cluster_stack.addWidget(QLabel(
             "Gefundene Cluster", objectName="CardTitle",
         ))
@@ -395,12 +399,11 @@ class AutoExportFinWorkspace(QWidget):
         self.number_labels["groups"] = number
         cluster_stack.addWidget(number)
         cluster_stack.addStretch(1)
-        overview.addWidget(count_card, 1)
+        overview.addWidget(count_box, 1)
 
-        distribution_card = QFrame()
-        distribution_card.setObjectName("Card")
-        distribution_box = QHBoxLayout(distribution_card)
-        distribution_box.setContentsMargins(15, 12, 19, 12)
+        distribution_box_widget = QWidget()
+        distribution_box = QHBoxLayout(distribution_box_widget)
+        distribution_box.setContentsMargins(5, 2, 7, 2)
         distribution_box.setSpacing(15)
         self.donut = FinStatusDonut()
         distribution_box.addWidget(self.donut, 0)
@@ -438,8 +441,13 @@ class AutoExportFinWorkspace(QWidget):
             legend.addLayout(line)
         legend.addStretch(1)
         distribution_box.addLayout(legend, 1)
-        overview.addWidget(distribution_card, 3)
-        body.addLayout(overview)
+        overview.addWidget(distribution_box_widget, 4)
+        overview_stack.addLayout(overview)
+
+        separator = QFrame()
+        separator.setFrameShape(QFrame.Shape.HLine)
+        separator.setStyleSheet("color: #DDE3E8;")
+        overview_stack.addWidget(separator)
 
         # Four overlapping source coverages require FOUR independent donuts.
         # A shared pie would misleadingly count the same FIN multiple times.
@@ -461,7 +469,7 @@ class AutoExportFinWorkspace(QWidget):
         )
         self.part_number_combo.currentIndexChanged.connect(self._part_changed)
         coverage_header.addWidget(self.part_number_combo)
-        body.addLayout(coverage_header)
+        overview_stack.addLayout(coverage_header)
         source_row = QHBoxLayout()
         source_row.setSpacing(8)
         self.coverage_donuts: dict[str, FinCoverageDonut] = {}
@@ -471,10 +479,10 @@ class AutoExportFinWorkspace(QWidget):
             ("tips", "FINs mit TIPS-Fall", "#9B865A"),
             ("quicktest", "FINs mit QuickTest", "#398279"),
         ):
-            card = QFrame()
-            card.setObjectName("Card")
-            stack = QVBoxLayout(card)
-            stack.setContentsMargins(10, 8, 10, 9)
+            indicator = QWidget()
+            stack = QVBoxLayout(indicator)
+            stack.setContentsMargins(5, 3, 5, 3)
+            stack.setSpacing(1)
             heading = QLabel(label, objectName="CardTitle")
             heading.setWordWrap(True)
             stack.addWidget(heading)
@@ -482,15 +490,16 @@ class AutoExportFinWorkspace(QWidget):
             self.coverage_donuts[key] = donut
             stack.addWidget(donut, 0)
             stack.setAlignment(donut, Qt.AlignmentFlag.AlignHCenter)
-            source_row.addWidget(card, 1)
-        body.addLayout(source_row)
+            source_row.addWidget(indicator, 1)
+        overview_stack.addLayout(source_row)
         self.coverage_note = QLabel(
             "Die vier Angaben können sich überschneiden: Ein Fahrzeug "
             "kann QEC-, TIPS- und QuickTest-Daten zugleich besitzen.",
             objectName="PageSubtitle",
         )
         self.coverage_note.setWordWrap(True)
-        body.addWidget(self.coverage_note)
+        overview_stack.addWidget(self.coverage_note)
+        body.addWidget(self.overview_card)
 
         # Compatibility: number of FINs with suitable DTCs; also in caption.
         self.number_labels["dtc"] = QLabel("–")
