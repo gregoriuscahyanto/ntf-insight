@@ -10,7 +10,7 @@ from dataclasses import replace
 from collections import defaultdict
 from time import perf_counter
 
-from PySide6.QtCore import QModelIndex, QThread, Signal
+from PySide6.QtCore import QModelIndex, Qt, QThread, Signal
 from PySide6.QtGui import QAction
 from PySide6.QtWidgets import (
     QAbstractItemView, QCheckBox, QComboBox, QFrame, QHBoxLayout,
@@ -443,6 +443,58 @@ class AutoExportFinWorkspace(QWidget):
         distribution_box.addLayout(legend, 1)
         overview.addWidget(distribution_card, 3)
         body.addLayout(overview)
+
+        # Four overlapping source coverages require FOUR independent donuts.
+        # A shared pie would misleadingly count the same FIN multiple times.
+        coverage_header = QHBoxLayout()
+        coverage_header.addWidget(QLabel(
+            "Quellenabdeckung der analysierten FINs", objectName="CardTitle",
+        ))
+        coverage_header.addStretch(1)
+        coverage_header.addWidget(QLabel("Sachnummer"))
+        self.part_number_combo = QComboBox()
+        for number in part_numbers(self._all_qec_cases):
+            self.part_number_combo.addItem(number, number)
+        if not self.part_number_combo.count():
+            self.part_number_combo.addItem("Keine QEC-Sachnummer", "")
+        self.part_number_combo.setMinimumWidth(185)
+        self.part_number_combo.setToolTip(
+            "Zeigt, wie viele FINs im aktuellen Analysebestand QEC-Fälle "
+            "mit dieser Sachnummer besitzen. Die Wahl ändert KEINE Cluster."
+        )
+        self.part_number_combo.currentIndexChanged.connect(self._part_changed)
+        coverage_header.addWidget(self.part_number_combo)
+        body.addLayout(coverage_header)
+        source_row = QHBoxLayout()
+        source_row.setSpacing(8)
+        self.coverage_donuts: dict[str, FinCoverageDonut] = {}
+        for key, label, color in (
+            ("part", "FINs mit Sachnummer", "#4C6580"),
+            ("qec", "FINs mit QEC-Fall", "#1D70A5"),
+            ("tips", "FINs mit TIPS-Fall", "#9B865A"),
+            ("quicktest", "FINs mit QuickTest", "#398279"),
+        ):
+            card = QFrame()
+            card.setObjectName("Card")
+            stack = QVBoxLayout(card)
+            stack.setContentsMargins(10, 8, 10, 9)
+            heading = QLabel(label, objectName="CardTitle")
+            heading.setWordWrap(True)
+            stack.addWidget(heading)
+            donut = FinCoverageDonut(label, color)
+            self.coverage_donuts[key] = donut
+            stack.addWidget(donut, 0)
+            stack.setAlignment(donut, Qt.AlignmentFlag.AlignHCenter)
+            source_row.addWidget(card, 1)
+        body.addLayout(source_row)
+        self.coverage_note = QLabel(
+            "Die vier Angaben können sich überschneiden: Ein Fahrzeug "
+            "kann QEC-, TIPS- und QuickTest-Daten zugleich besitzen.",
+            objectName="PageSubtitle",
+        )
+        self.coverage_note.setWordWrap(True)
+        body.addWidget(self.coverage_note)
+
         # Compatibility: number of FINs with suitable DTCs; also in caption.
         self.number_labels["dtc"] = QLabel("–")
 
@@ -560,6 +612,67 @@ class AutoExportFinWorkspace(QWidget):
         # Keep one static plot and cached results for fast method switching.
         self._show_empty()
 
+    def _matched_qec_cases(self) -> tuple[NTFCase, ...]:
+        return selected_qec_cases(
+            self._all_qec_cases,
+            exact_findings=self._selected_findings,
+            search=self.finding_search.text(),
+        )
+
+    def _update_finding_summary(self) -> None:
+        cases = self._matched_qec_cases()
+        fins = {case.vin.strip().upper() for case in cases}
+        self.finding_button.setText(
+            f"{len(self._selected_findings)} Endbefunde ausgewählt"
+            if self._selected_findings else "Alle Endbefunde"
+        )
+        self.finding_summary.setText(
+            f"Endbefundfilter: {len(cases)} QEC-Fälle · "
+            f"{len(fins)} unterschiedliche FINs. "
+            "Ohne Endbefund-Auswahl/Suchtext sind alle zugelassen. "
+            "Der Endbefund dient nur der Fallauswahl, nicht als Clustering-DTC."
+        )
+
+    def _finding_toggled(self, finding: str, checked: bool) -> None:
+        if checked:
+            self._selected_findings.add(finding)
+        else:
+            self._selected_findings.discard(finding)
+        self._qec_filter_changed()
+
+    def _qec_filter_changed(self, *_args) -> None:
+        self._update_finding_summary()
+        self._invalidate()
+
+    def _part_changed(self, *_args) -> None:
+        # Sachnummer selection only changes the coverage metric,
+        # never the cluster-membership calculation.
+        if self.result is not None:
+            self._show_coverage(self.result)
+
+    def _show_coverage(self, result: FinPatternResult) -> None:
+        coverage = result.source_coverage_counts or {}
+        total = result.total_fins
+        current_part = self.part_number_combo.currentData() or ""
+        part_counts = result.qec_part_number_counts or {}
+        counts = {
+            "part": part_counts.get(current_part, 0),
+            "qec": coverage.get("qec", len(result.qec_links)),
+            "tips": coverage.get("tips", 0),
+            "quicktest": coverage.get("quicktest", 0),
+        }
+        for key, donut in self.coverage_donuts.items():
+            donut.set_counts(min(counts[key], total), total)
+        self.coverage_note.setText(
+            f"Jeweils von {total:,} eindeutigen FINs der aktuell "
+            "gewählten Datenbasis. Die Quellen können sich überschneiden. "
+            "Sachnummer zählt ausschließlich QEC-belegte FINs, "
+            "TIPS-Fälle stammen aus importiertem AutoExport, "
+            "QuickTests aus lokal gespeicherten QuickTest-Berichten. "
+            "Ein QEC-Fall kann mehrfach pro FIN vorliegen."
+            .replace(",", ".")
+        )
+
     def _show_empty(self) -> None:
         self.plot.set_result(None)
         self.group_model.set_rows([])
@@ -573,6 +686,8 @@ class AutoExportFinWorkspace(QWidget):
         for label in self.percent_labels.values():
             label.setText("–")
         self._review_levels = {}
+        for donut in self.coverage_donuts.values():
+            donut.set_counts(0, 0)
         self.priority_note.setText(
             "DTC-Markierungen aus dem Explorer bestimmen nur die "
             "Prüfpriorität, nicht die Clusterbildung."
@@ -718,6 +833,7 @@ class AutoExportFinWorkspace(QWidget):
         self.donut.set_values((
             summary["assigned"], summary["unassigned"], summary["missing"],
         ))
+        self._show_coverage(result)
         for key in ("assigned", "unassigned", "missing"):
             self.percent_labels[key].setText(
                 (f"{summary[key] / summary['total'] * 100:.1f} %"
@@ -736,10 +852,14 @@ class AutoExportFinWorkspace(QWidget):
         self.summary_note.setText(
             (
                 f"{result.dtc_fins:,} FINs mit DTC-Daten. "
-                f"{len(result.no_dtc_fins):,} FINs ohne geeignete "
-                "DTC-Daten sind nicht geclustert. "
-                "Bei FINs mit dokumentiertem Pumpentausch werden nur "
-                "Diagnosemerkmale vor diesem Tausch verwendet."
+                f"{len(result.no_dtc_fins):,} FINs ohne geeignete DTCs: "
+                f"{result.no_dtc_without_records:,} ohne importierten "
+                "DTC-Eintrag; "
+                f"{result.no_dtc_with_records_excluded:,} mit vorhandenen, "
+                "aber nicht nutzbaren DTCs (z. B. unzulässiger "
+                "Zeitpunkt oder fehlender ECU:DTC-Code). "
+                "Bei dokumentiertem Pumpentausch zählen für die "
+                "Clusterbildung nur sicher frühere Diagnosen."
             ).replace(",", ".")
         )
         time_label = (
