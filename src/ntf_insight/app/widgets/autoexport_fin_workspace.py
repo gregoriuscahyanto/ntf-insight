@@ -562,7 +562,16 @@ class AutoExportFinWorkspace(QWidget):
             method = self.method_combo.currentData()
             if method in self._run_results:
                 self._show_result(self._run_results[method])
-            elif not self._run_results:
+            elif self._run_results:
+                # Never display an old HDBSCAN result under the label of
+                # another, not-yet-calculated cluster procedure.
+                self.result = None
+                self._show_empty()
+                self.status.setText(
+                    "QEC-Ankergruppen noch nicht berechnet. "
+                    "Bitte Clusteranalyse erneut starten."
+                )
+            else:
                 self.status.setText(
                     "QEC-Ankerverfahren: mindestens 45 % Cosinusähnlichkeit "
                     "zur QEC-FIN. Bitte Clusteranalyse starten."
