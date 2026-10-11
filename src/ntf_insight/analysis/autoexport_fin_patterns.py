@@ -35,6 +35,10 @@ METHOD_TITLES = {
 MAX_SVD_DIM = 16
 MAX_COMPLETE_BLOCK = 450
 MIN_COMPLETE_SIMILARITY = 0.45
+# A QEC-backed FIN is preferred when its mean ORIGINAL TF-IDF cosine
+# similarity to the whole group is at least 90% of the best candidate.
+# This affects only the displayed representative, never cluster membership.
+QEC_REPRESENTATIVE_MIN_CENTRALITY_RATIO = 0.90
 
 
 @dataclass(frozen=True, slots=True)
@@ -48,6 +52,8 @@ class FinPatternGroup:
     shared_fault_count: int = 0
     pair_weak_count: int = 0
     checked_pair_count: int = 0
+    representative_has_qec: bool = False
+    representative_centrality_ratio: float = 1.0
 
     @property
     def fin_count(self) -> int:
@@ -238,6 +244,40 @@ def _complete_link_labels(
     return labels, strengths
 
 
+def _representative_position(
+    fins: tuple[str, ...],
+    centrality: np.ndarray,
+    qec_links: Mapping[str, tuple[str, ...]],
+) -> tuple[int, float]:
+    """Prefer a QEC case only if it remains diagnostically representative.
+
+    Centrality = average ORIGINAL TF-IDF cosine to all FINs in this
+    cluster (including self); no HDBSCAN labels or distances are changed.
+    A QEC FIN must reach >=90% of the optimal centrality. Exact ties
+    break by FIN, independently of the input order.
+    """
+    if not fins:
+        raise ValueError("Eine leere Gruppe hat keinen Repräsentanten.")
+    order = sorted(
+        range(len(fins)),
+        key=lambda index: (-float(centrality[index]), fins[index]),
+    )
+    strongest = order[0]
+    selected = strongest
+    qec_candidates = [index for index in order if qec_links.get(fins[index])]
+    if qec_candidates:
+        candidate = qec_candidates[0]
+        if (
+            float(centrality[candidate])
+            >= QEC_REPRESENTATIVE_MIN_CENTRALITY_RATIO
+            * float(centrality[strongest]) - 1e-12
+        ):
+            selected = candidate
+    best_value = float(centrality[strongest])
+    ratio = float(centrality[selected]) / best_value if best_value > 0 else 1.0
+    return selected, round(ratio, 4)
+
+
 def _make_result(
     prepared: _PreparedFins,
     method: str,
@@ -254,14 +294,15 @@ def _make_result(
         if len(positions) < min_cluster_size:
             continue
         fins = tuple(prepared.eligible[i] for i in positions)
-        # Representative = actual FIN closest to the ORIGINAL TF-IDF
-        # group centroid, not an invented average or QEC outcome.
+        # Representative: favour a QEC-backed FIN when it has at least
+        # 90% of the best group centrality on ORIGINAL sparse TF-IDF.
+        # Never replace the group medoid with a diagnostically atypical QEC.
         submatrix = prepared.x[positions]
         centroid = np.asarray(submatrix.mean(axis=0)).ravel()
         centrality = np.asarray(submatrix @ centroid).ravel()
-        best = sorted(
-            range(len(fins)), key=lambda j: (-centrality[j], fins[j])
-        )[0]
+        best, representative_ratio = _representative_position(
+            fins, centrality, prepared.links,
+        )
         rep_fin = fins[best]
         cos_to_rep = np.clip(
             (submatrix @ submatrix[best].T).toarray().ravel(), 0.0, 1.0,
@@ -314,8 +355,14 @@ def _make_result(
             shared_fault_count=sum(count == len(fins) for count in frequency.values()),
             pair_weak_count=weak,
             checked_pair_count=len(pair_cos),
+            representative_has_qec=rep_fin in prepared.links,
+            representative_centrality_ratio=representative_ratio,
         ))
-    groups.sort(key=lambda g: (-g.fin_count, g.representative_fin))
+    # Changing the representative (or adding QEC links) must NOT rename
+    # otherwise identical member sets when groups have the same size.
+    groups.sort(key=lambda g: (
+        -g.fin_count, min(fin for fin, _ in g.members),
+    ))
     groups = [
         replace(group, group_id=index)
         for index, group in enumerate(groups, 1)
