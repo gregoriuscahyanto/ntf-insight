@@ -82,6 +82,7 @@ class _FinClusterTask(QThread):
                 min_cluster_size=self.min_cluster_size,
                 min_samples=self.min_samples,
                 minimum_similarity=self.minimum_similarity,
+                include_qec_anchors=True,
                 progress=self.phase.emit,
             )
             enriched = {
@@ -184,6 +185,7 @@ class AutoExportFinWorkspace(QWidget):
         self._shown_members: list[str] = []
         self._group_rows: tuple[int, ...] = ()
         self._analysis_scoped_to_pump = False
+        self._normal_method = "leaf"
 
         shell = QVBoxLayout(self)
         shell.setContentsMargins(0, 0, 0, 0)
@@ -247,6 +249,19 @@ class AutoExportFinWorkspace(QWidget):
             "mit dem Tauschdatum aus QEC Rep.-Datum."
         )
         body.addWidget(self.only_pump_swap)
+
+        self.qec_anchor_mode = QCheckBox(
+            "QEC-Fälle als Anker für die Clusterbildung verwenden"
+        )
+        self.qec_anchor_mode.setToolTip(
+            "Optionales eigenes Zuordnungsverfahren (KEIN HDBSCAN): "
+            "Jede geeignete QEC-FIN ist ein Diagnose-Anker; "
+            "AutoExport-FINs kommen nur bei mindestens 45 % "
+            "ECU:DTC-Cosinusähnlichkeit zu ihrem nächsten Anker dazu. "
+            "Gruppen benötigen die eingestellte Mindestgröße. "
+            "Ohne Haken: bisherige HDBSCAN-/Complete-Link-Methoden."
+        )
+        body.addWidget(self.qec_anchor_mode)
 
         actions = QHBoxLayout()
         self.start_button = QPushButton("Clusteranalyse starten")
@@ -356,6 +371,7 @@ class AutoExportFinWorkspace(QWidget):
             self.method_combo.addItem(METHOD_TITLES[key], key)
         self.method_combo.setMinimumWidth(208)
         self.method_combo.currentIndexChanged.connect(self._method_changed)
+        self.qec_anchor_mode.toggled.connect(self._anchor_mode_changed)
         plot_header.addWidget(self.method_combo)
         self.dimension = QComboBox()
         self.dimension.addItem("2D", "2d")
@@ -479,6 +495,7 @@ class AutoExportFinWorkspace(QWidget):
         self._analysis_scoped_to_pump = self.only_pump_swap.isChecked()
         self.start_button.setEnabled(False)
         self.only_pump_swap.setEnabled(False)
+        self.qec_anchor_mode.setEnabled(False)
         self.min_cluster_size.setEnabled(False)
         self.min_samples.setEnabled(False)
         task = _FinClusterTask(
@@ -501,8 +518,9 @@ class AutoExportFinWorkspace(QWidget):
         self._task = None
         self.start_button.setEnabled(True)
         self.only_pump_swap.setEnabled(True)
+        self.qec_anchor_mode.setEnabled(True)
         self.min_cluster_size.setEnabled(True)
-        self.min_samples.setEnabled(True)
+        self.min_samples.setEnabled(not self.qec_anchor_mode.isChecked())
 
     def _receive(self, results: dict[str, FinPatternResult]) -> None:
         self._enable_controls()
@@ -514,8 +532,51 @@ class AutoExportFinWorkspace(QWidget):
         self._enable_controls()
         self.status.setText("Clusteranalyse nicht möglich: " + message)
 
+    def _anchor_mode_changed(self, checked: bool) -> None:
+        """Instantly compare QEC-seeded and HDBSCAN on the cached FIN set."""
+        self.method_combo.blockSignals(True)
+        try:
+            if checked:
+                selected = self.method_combo.currentData()
+                if selected in ("leaf", "eom", "complete_cosine"):
+                    self._normal_method = selected
+                if self.method_combo.findData("qec_anchor") < 0:
+                    self.method_combo.addItem(
+                        METHOD_TITLES["qec_anchor"], "qec_anchor",
+                    )
+                self.method_combo.setCurrentIndex(
+                    self.method_combo.findData("qec_anchor")
+                )
+            else:
+                index = self.method_combo.findData("qec_anchor")
+                if index >= 0:
+                    self.method_combo.removeItem(index)
+                self.method_combo.setCurrentIndex(
+                    self.method_combo.findData(self._normal_method)
+                )
+        finally:
+            self.method_combo.blockSignals(False)
+        self.method_combo.setEnabled(not checked)
+        if self._task is None:
+            self.min_samples.setEnabled(not checked)
+            method = self.method_combo.currentData()
+            if method in self._run_results:
+                self._show_result(self._run_results[method])
+            elif not self._run_results:
+                self.status.setText(
+                    "QEC-Ankerverfahren: mindestens 45 % Cosinusähnlichkeit "
+                    "zur QEC-FIN. Bitte Clusteranalyse starten."
+                    if checked else
+                    "HDBSCAN / Complete-Link ausgewählt. "
+                    "Bitte Clusteranalyse starten."
+                )
+
     def _method_changed(self, *_args) -> None:
+        if self.qec_anchor_mode.isChecked():
+            return
         key = self.method_combo.currentData()
+        if key in ("leaf", "eom", "complete_cosine"):
+            self._normal_method = key
         if key in self._run_results:
             self._show_result(self._run_results[key])
 
@@ -602,9 +663,15 @@ class AutoExportFinWorkspace(QWidget):
             self._group_changed(self.group_model.index(0, 0), QModelIndex())
         else:
             self.explanation.setText(
-                "Das Verfahren hat bei diesen Einstellungen keine "
-                "geeigneten Cluster gebildet. Das beweist nicht, "
-                "dass keine Kühlmittelpumpenstörung vorliegt."
+                (
+                    "Keine QEC-Ankergruppe hat die Mindestgröße und "
+                    "die erforderliche Diagnoseähnlichkeit erreicht. "
+                    "FINs ohne passenden QEC-Anker bleiben unzugeordnet."
+                    if result.method == "qec_anchor" else
+                    "Das Verfahren hat bei diesen Einstellungen keine "
+                    "geeigneten Cluster gebildet. Das beweist nicht, "
+                    "dass keine Kühlmittelpumpenstörung vorliegt."
+                )
             )
 
     def refresh_review_priorities(self) -> None:
@@ -725,7 +792,14 @@ class AutoExportFinWorkspace(QWidget):
                 group, self.result.dtc_keys_by_fin or {},
                 set(self._review_marks),
             )
-        if group.representative_has_qec:
+        if group.representative_is_fixed_anchor:
+            representative_note = (
+                "Diese QEC-FIN ist der feste Diagnose-Anker dieser Gruppe. "
+                "Andere FINs wurden wegen ihrer Ähnlichkeit zu genau "
+                "diesem Originalfall aufgenommen. Der Anker muss nicht "
+                "der statistisch zentralste Fall seiner Gruppe sein."
+            )
+        elif group.representative_has_qec:
             representative_note = (
                 "Eine FIN mit QEC-Fall wurde als Repräsentant bevorzugt. "
                 "Ihr mittlerer Diagnose-Cosinuswert zum Cluster erreicht "
@@ -797,6 +871,11 @@ class AutoExportFinWorkspace(QWidget):
                 "effizienten 16-dimensionalen Modellprojektion der "
                 "ECU:DTC-TF-IDF-Merkmale."
                 if self.result.method in ("leaf", "eom") else
+                "QEC-Ankerverfahren: Alle hier gruppierten FINs besitzen "
+                "mindestens 45 % ursprüngliche Cosinusähnlichkeit zur "
+                "repräsentativen QEC-FIN. Nicht alle Fallpaare müssen "
+                "untereinander ähnlich sein."
+                if self.result.method == "qec_anchor" else
                 "Complete-Link prüft innerhalb begrenzter Leaf-Teilgruppen, "
                 "ob jede Paarähnlichkeit mindestens 45 % beträgt."
             ),
