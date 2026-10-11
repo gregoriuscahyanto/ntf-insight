@@ -87,6 +87,10 @@ class FinPatternResult:
     pre_swap_fins: int = 0
     runtime_seconds: float | None = None
     dtc_keys_by_fin: dict[str, tuple[FaultKey, ...]] | None = None
+    source_coverage_counts: dict[str, int] | None = None
+    qec_part_number_counts: dict[str, int] | None = None
+    no_dtc_without_records: int = 0
+    no_dtc_with_records_excluded: int = 0
 
     @property
     def assigned_fins(self) -> int:
