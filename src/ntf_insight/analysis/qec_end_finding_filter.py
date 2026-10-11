@@ -41,14 +41,17 @@ def selected_qec_cases(
     cases: Sequence[NTFCase],
     *,
     exact_findings: Iterable[str] = (),
+    excluded_findings: Iterable[str] = (),
     search: str = "",
 ) -> tuple[NTFCase, ...]:
     """Empty exact choices and empty search each mean no restriction.
 
-    When both are present, they are combined with logical AND, never OR.
+    Includes allow selected SSL labels; excludes take precedence.
+    Optional text search is combined by AND, never OR.
     No code guesses an NTF/supplier judgment based on a keyword.
     """
-    normalized_exact = {value.casefold() for value in exact_findings}
+    normalized_exact = {_text(value).casefold() for value in exact_findings}
+    normalized_excluded = {_text(value).casefold() for value in excluded_findings}
     needle = _text(search).casefold()
     return tuple(
         case for case in qec_pump_cases(cases)
@@ -56,6 +59,7 @@ def selected_qec_cases(
             not normalized_exact
             or finding_for(case).casefold() in normalized_exact
         )
+        and finding_for(case).casefold() not in normalized_excluded
         and (
             not needle
             or needle in finding_for(case).casefold()
