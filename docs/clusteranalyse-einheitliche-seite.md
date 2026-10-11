@@ -70,7 +70,8 @@ Direkt bei den Clustereinstellungen lassen sich die in lokalen
 QEC-Pumpenfällen vorhandenen **SSL-Endbefund Benennungen**
 über ein anklickbares Menü **mehrfach auswählen**. Alternativ
 kann ein **Suchbegriff** (Groß-/Kleinschreibung egal) in
-den Endbefundtext eingegeben werden. Ohne Einschränkung
+Endbefundtext oder dokumentiertem Endbefundcode
+(`SSL Endbefund`) eingegeben werden. Ohne Einschränkung
 gelten alle QEC-Pumpenfälle, einschließlich Fälle ohne
 dokumentierten Endbefund. Bei gleichzeitiger Mehrfachauswahl
 und Suchtext müssen beide Bedingungen erfüllt sein (**UND**).
