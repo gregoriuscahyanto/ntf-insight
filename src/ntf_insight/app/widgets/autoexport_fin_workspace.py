@@ -343,7 +343,7 @@ class AutoExportFinWorkspace(QWidget):
             "alle ausgewählten Werte. Ohne Auswahl gelten alle Endbefunde."
         )
         finding_row.addWidget(self.finding_button)
-        finding_row.addWidget(QLabel("oder Text enthält"))
+        finding_row.addWidget(QLabel("Suchtext (optional, UND)"))
         self.finding_search = QLineEdit()
         self.finding_search.setPlaceholderText("Endbefundtext oder -code")
         self.finding_search.setClearButtonEnabled(True)
