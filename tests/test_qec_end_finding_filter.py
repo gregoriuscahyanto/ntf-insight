@@ -60,6 +60,8 @@ def test_end_finding_exact_multiple_and_substring_compose_without_metadata_leak(
         "QEC-TEST-2", "QEC-TEST-4",
     }
     assert selected_qec_cases(cases, search="not-existing") == ()
+    cases[0].qec_ssl_end_code = "SYNTH-CODE-555"
+    assert selected_qec_cases(cases, search="code-555") == (cases[0],)
     assert len(selected_qec_cases(
         cases, exact_findings=(MISSING_END_FINDING,),
     )) == 1
