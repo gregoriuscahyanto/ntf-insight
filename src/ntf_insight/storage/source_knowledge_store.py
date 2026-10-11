@@ -334,10 +334,36 @@ class SourceKnowledgeStore:
             for ecu, dtc, vehicles, events, description in rows
         }
 
+    def autoexport_source_fins(self, category: str) -> frozenset[str]:
+        """FIN membership for coverage metrics; only supported source types.
+
+        No original DTCs, workshop free text or vehicle IDs are uploaded.
+        SQL performs MBC-prefix normalization before distinct counting.
+        """
+        if category not in {"autoexport_dtc", "autoexport_tips"}:
+            raise ValueError("Unbekannte AutoExport-Datenquelle.")
+        with self.store.connect() as con:
+            rows = con.execute(
+                """
+                SELECT DISTINCT CASE
+                    WHEN length(trim(fin)) = 20
+                     AND left(upper(trim(fin)), 3) = 'MBC'
+                    THEN substr(upper(trim(fin)), 4)
+                    ELSE upper(trim(fin))
+                END AS normalized_fin
+                FROM source_knowledge_rows
+                WHERE category = ?
+                  AND NULLIF(trim(fin), '') IS NOT NULL
+                """,
+                [category],
+            ).fetchall()
+        return frozenset(row[0] for row in rows)
+
     def autoexport_fin_dtc_signatures(
         self, *,
         pump_swap_dates: dict[str, str] | None = None,
         include_all_fins: bool = False,
+        fin_filter: Sequence[str] | None = None,
     ) -> tuple[
         tuple[str, ...],
         dict[str, tuple[tuple[str, str], ...]],
@@ -387,9 +413,10 @@ class SourceKnowledgeStore:
                 ).fetchall()
             )
             if anchors is not None and not include_all_fins:
-                all_fins = tuple(
-                    fin for fin in all_fins if fin in anchors
-                )
+                all_fins = tuple(fin for fin in all_fins if fin in anchors)
+            if fin_filter is not None:
+                target = {fin.strip().upper() for fin in fin_filter}
+                all_fins = tuple(fin for fin in all_fins if fin in target)
             if not all_fins:
                 return (), {}, {}
 
@@ -397,13 +424,15 @@ class SourceKnowledgeStore:
             where = ""
             date_field = "NULL::VARCHAR AS event_date"
             group_date = ""
+            if fin_filter is not None or (
+                anchors is not None and not include_all_fins
+            ):
+                where = (
+                    f"AND ({fin_expression}) IN ("
+                    + ", ".join("?" for _ in all_fins) + ")"
+                )
+                parameters.extend(all_fins)
             if anchors is not None:
-                if not include_all_fins:
-                    where = (
-                        f"AND ({fin_expression}) IN ("
-                        + ", ".join("?" for _ in all_fins) + ")"
-                    )
-                    parameters.extend(all_fins)
                 # The original ISO AutoExport fields may represent a date
                 # or precise timestamp. Only its calendar day is safe
                 # against day-only QEC replacement precision.
