@@ -53,53 +53,35 @@ Der detaillierte Entwicklungsstand steht in der [Roadmap](ROADMAP.md).
 
 **Stand:** Die App ist noch eine Testversion. Einige Funktionen und Datenformate werden weiterentwickelt.
 
-## Download und Installation ohne Internet
+## Download und Installation (Windows)
 
-**[NTF Insight auf GitHub herunterladen (Releases)](https://github.com/gregoriuscahyanto/ntf-insight/releases)**
+**[NTF Insight herunterladen – GitHub Releases](https://github.com/gregoriuscahyanto/ntf-insight/releases)**
 
-Auf dem Ziel-PC wird **Windows (64 Bit) mit Python 3.11 (64 Bit)** benötigt.
+Für die Nutzung auf einem **Windows-PC mit 64 Bit**:
 
-1. Auf einem PC mit Internet die Datei `NTF-Insight-Offline.zip` aus dem neuesten GitHub Release herunterladen.
-2. Das ZIP über einen freigegebenen Weg auf den Ziel-PC übertragen.
-3. Das ZIP entpacken. Darin muss sich der Ordner `wheels` befinden.
-4. Im entpackten Ordner **PowerShell** öffnen und diese Befehle nacheinander ausführen:
+1. Auf einem PC mit Internet unter **Releases** die Datei `NTF-Insight-Setup-0.1.0.exe` (oder eine neuere Version) herunterladen.
+2. Die Datei über einen freigegebenen Weg auf den Ziel-PC übertragen.
+3. Das **Setup per Doppelklick** starten und den Installationsschritten folgen.
+4. NTF Insight danach über die **Desktop-Verknüpfung** oder das **Startmenü** öffnen.
 
-```powershell
-py -3.11 -m venv .venv
-.\.venv\Scripts\python.exe -m pip install --no-index --find-links .\wheels ntf-insight
-.\.venv\Scripts\ntf-insight.exe
-```
+**Fertig!** Die App bringt Python und ihre Bibliotheken mit. Anwender brauchen weder Python noch `pip`, eine virtuelle Umgebung oder PowerShell. Für die eigentliche Installation ist kein Internet nötig.
 
-Beim nächsten Start genügt:
+**Noch kein Setup auf der Releases-Seite?** Dann wurde noch keine installierbare Version veröffentlicht. Das Setup kann über den unten beschriebenen GitHub-Workflow erstellt werden.
 
-```powershell
-.\.venv\Scripts\ntf-insight.exe
-```
+**Hinweis für Firmen-PCs:** Der Installer ist derzeit nicht mit einem Mercedes-Benz-Unternehmenszertifikat signiert. Falls Windows oder die Unternehmensrichtlinien die Installation blockieren, ist die Freigabe durch die zuständige IT notwendig. Sicherheitsrichtlinien nicht umgehen.
 
-Für die Installation der App ist keine Internetverbindung nötig. Der Zugriff auf interne Systeme zum Herunterladen von Berichten kann weiterhin eine Netzwerkverbindung erfordern.
+## Neue Version über GitHub veröffentlichen (Entwicklung)
 
-**Falls unter „Releases“ noch keine Datei angezeigt wird, wurde noch kein Installationspaket veröffentlicht.** Python muss auf dem Ziel-PC bereits installiert oder separat über einen freigegebenen Weg bereitgestellt werden.
+1. Bei einer neuen Version zuerst die Versionsnummer in [`pyproject.toml`](pyproject.toml) anpassen.
+2. In GitHub **[Actions → Windows Setup und Release](https://github.com/gregoriuscahyanto/ntf-insight/actions/workflows/release-windows.yml)** öffnen.
+3. **Run workflow** auswählen und den Branch `main` verwenden.
+4. GitHub prüft die App, erstellt das Windows-Setup und veröffentlicht es automatisch unter **[Releases](https://github.com/gregoriuscahyanto/ntf-insight/releases)**.
 
-## Neues Installationspaket auf GitHub veröffentlichen
+Das Paket wird direkt auf GitHub gebaut. Die fehlerhafte Python-Installation auf dem Entwickler-PC ist dafür nicht nötig. Der Workflow startet nur manuell und verwendet einen GitHub-gehosteten Windows-Rechner.
 
-Dieser Abschnitt ist für die Entwicklung gedacht. Das Paket muss auf einem **Windows-64-Bit-PC mit Python 3.11 und Internetzugang** erstellt werden.
+**Optional nur für Entwickler:** [Python 3.11.9 für Windows 64 Bit direkt herunterladen](https://www.python.org/ftp/python/3.11.9/python-3.11.9-amd64.exe). Auf dem Anwender-PC wird Python **nicht** benötigt.
 
-Im Hauptordner des Projekts PowerShell öffnen:
-
-```powershell
-Remove-Item -Recurse -Force .\dist\wheels -ErrorAction SilentlyContinue
-py -3.11 -m pip wheel . --wheel-dir .\dist\wheels
-Compress-Archive -Path .\dist\wheels -DestinationPath .\dist\NTF-Insight-Offline.zip -Force
-```
-
-Danach auf GitHub:
-
-1. **Releases → Draft a new release** öffnen.
-2. Ein neues Versions-Tag anlegen, zum Beispiel `v0.1.0`.
-3. Die Datei `dist\NTF-Insight-Offline.zip` als Release-Datei hochladen.
-4. Den Release veröffentlichen.
-
-Das ZIP enthält die App als Wheel **und alle benötigten Python-Pakete**. Es gehört in einen GitHub Release, **nicht als große Datei in das Git-Repository**.
+[Technische Anleitung für Windows-Setup und Fehlersuche](docs/windows-setup.md)
 
 ## Daten und Datenschutz
 

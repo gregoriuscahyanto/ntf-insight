@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 import logging
+import os
 import sys
 
-from PySide6.QtCore import QSettings
+from PySide6.QtCore import QSettings, QTimer
 from PySide6.QtGui import QFont
 from PySide6.QtWidgets import QApplication
 
@@ -69,6 +70,11 @@ def main() -> int:
 
     window.navigation.theme_selected.connect(apply_theme)
     window.show()
+
+    # Ausschliesslich fuer den automatisch erstellten Windows-Release:
+    # Fenster aufbauen und dann kontrolliert beenden. Im normalen Betrieb inaktiv.
+    if os.environ.get("NTF_INSIGHT_SMOKE_TEST") == "1":
+        QTimer.singleShot(1000, app.quit)
 
     return app.exec()
 
