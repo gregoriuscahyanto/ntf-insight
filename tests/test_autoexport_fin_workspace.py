@@ -96,8 +96,8 @@ def test_fin_workspace_groups_all_original_fins_and_opens_history(tmp_path):
         assert "Complete-Link prüft" in panel.explanation.text()
         assert panel.result.notes in panel.explanation.text()
     panel.method_combo.setCurrentIndex(panel.method_combo.findData("leaf"))
-    panel.dimension.setCurrentIndex(panel.dimension.findData("3d"))
     assert panel.plot.mode == "3d"
+    assert not hasattr(panel, "dimension")  # 3D is the only GUI view.
     panel.plot.set_rotation(110, 35)
     assert (panel.plot.yaw, panel.plot.elevation) == (110, 35)
     assert panel.result is panel._run_results["leaf"]
@@ -185,6 +185,8 @@ def test_default_qec_fin_scope_keeps_dated_qec_fins_and_excludes_other_autoexpor
     app.processEvents()
     assert len(panel._pump_swap_dates) == 4
     assert panel.only_qec.isChecked()
+    assert panel.qec_anchor_mode.isVisible()
+    assert panel.qec_anchor_mode.isEnabled()
     # The QEC-only scope must allow the separate QEC-anchor algorithm.
     panel.qec_anchor_mode.setChecked(True)
     assert panel.only_qec.isChecked()
