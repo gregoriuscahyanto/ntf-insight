@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import json
 from datetime import datetime
-from typing import Any, Iterable
+from typing import Any, Iterable, Sequence
 
 from ntf_insight.storage.duckdb_store import DuckDBStore
 
@@ -201,6 +201,62 @@ class SourceKnowledgeStore:
             for row in rows
         ]
 
+    def qec_ssl_findings_by_reference(
+        self,
+    ) -> tuple[dict[str, dict[str, str]], frozenset[str]]:
+        """Unique SSL findings keyed by real QEC reference, never by guessed FIN.
+
+        Read previously archived QEC details as well as newly imported ones.
+        A conflicting label/code/part for one reference is *ambiguous*: such a
+        reference must not silently change any vehicle case.
+        """
+        with self.store.connect() as con:
+            rows = con.execute(
+                """
+                SELECT reference, payload_json, source_sha256, source_location
+                FROM source_knowledge_rows
+                WHERE category = 'qec_row'
+                  AND NULLIF(trim(reference), '') IS NOT NULL
+                  AND (
+                      source_location LIKE 'Schadteile!%'
+                      OR source_location LIKE 'Schadteile QEC!%'
+                  )
+                ORDER BY reference, source_sha256, source_location
+                """
+            ).fetchall()
+        candidates: dict[str, list[dict[str, str]]] = {}
+        for reference, payload, sha, location in rows:
+            data = json.loads(payload)
+            finding = str(data.get("SSL-Endbefund Benennung") or "").strip()
+            code = str(data.get("SSL Endbefund") or "").strip()
+            if not finding and not code:
+                continue
+            candidate = {
+                "finding": finding,
+                "code": code,
+                "part_number": str(data.get("Sachnr. Teil") or "").strip(),
+                "end_date": str(data.get("Bef.abschl.datum") or "").strip(),
+                "source_ref": f"{sha}:{location}",
+            }
+            candidates.setdefault(str(reference).strip(), []).append(candidate)
+        unique: dict[str, dict[str, str]] = {}
+        ambiguous: set[str] = set()
+        for reference, entries in candidates.items():
+            variants = {
+                (item["finding"], item["code"], item["part_number"])
+                for item in entries
+            }
+            if len(variants) != 1:
+                ambiguous.add(reference)
+                continue
+            # Prefer the version with an explicit completion date, then
+            # deterministic source provenance. Never fabricate a date.
+            unique[reference] = sorted(
+                entries,
+                key=lambda item: (not bool(item["end_date"]), item["source_ref"]),
+            )[0]
+        return unique, frozenset(ambiguous)
+
     def diagnostic_times_for_fins(
         self, fins: set[str]
     ) -> dict[str, list[tuple[str | None, str | None, int]]]:
@@ -334,10 +390,42 @@ class SourceKnowledgeStore:
             for ecu, dtc, vehicles, events, description in rows
         }
 
+    def autoexport_source_fins(self, category: str) -> frozenset[str]:
+        """FIN membership for coverage metrics; only supported source types.
+
+        No original DTCs, workshop free text or vehicle IDs are uploaded.
+        SQL performs MBC-prefix normalization before distinct counting.
+        """
+        if category not in {"autoexport_dtc", "autoexport_tips"}:
+            raise ValueError("Unbekannte AutoExport-Datenquelle.")
+        tips_case_constraint = (
+            "AND NULLIF(trim(json_extract_string("
+            "payload_json, '$.CaseId')), '') IS NOT NULL"
+            if category == "autoexport_tips" else ""
+        )
+        with self.store.connect() as con:
+            rows = con.execute(
+                f"""
+                SELECT DISTINCT CASE
+                    WHEN length(trim(fin)) = 20
+                     AND left(upper(trim(fin)), 3) = 'MBC'
+                    THEN substr(upper(trim(fin)), 4)
+                    ELSE upper(trim(fin))
+                END AS normalized_fin
+                FROM source_knowledge_rows
+                WHERE category = ?
+                  AND NULLIF(trim(fin), '') IS NOT NULL
+                  {tips_case_constraint}
+                """,
+                [category],
+            ).fetchall()
+        return frozenset(row[0] for row in rows)
+
     def autoexport_fin_dtc_signatures(
         self, *,
         pump_swap_dates: dict[str, str] | None = None,
         include_all_fins: bool = False,
+        fin_filter: Sequence[str] | None = None,
     ) -> tuple[
         tuple[str, ...],
         dict[str, tuple[tuple[str, str], ...]],
@@ -387,9 +475,10 @@ class SourceKnowledgeStore:
                 ).fetchall()
             )
             if anchors is not None and not include_all_fins:
-                all_fins = tuple(
-                    fin for fin in all_fins if fin in anchors
-                )
+                all_fins = tuple(fin for fin in all_fins if fin in anchors)
+            if fin_filter is not None:
+                target = {fin.strip().upper() for fin in fin_filter}
+                all_fins = tuple(fin for fin in all_fins if fin in target)
             if not all_fins:
                 return (), {}, {}
 
@@ -397,13 +486,15 @@ class SourceKnowledgeStore:
             where = ""
             date_field = "NULL::VARCHAR AS event_date"
             group_date = ""
+            if fin_filter is not None or (
+                anchors is not None and not include_all_fins
+            ):
+                where = (
+                    f"AND ({fin_expression}) IN ("
+                    + ", ".join("?" for _ in all_fins) + ")"
+                )
+                parameters.extend(all_fins)
             if anchors is not None:
-                if not include_all_fins:
-                    where = (
-                        f"AND ({fin_expression}) IN ("
-                        + ", ".join("?" for _ in all_fins) + ")"
-                    )
-                    parameters.extend(all_fins)
                 # The original ISO AutoExport fields may represent a date
                 # or precise timestamp. Only its calendar day is safe
                 # against day-only QEC replacement precision.

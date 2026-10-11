@@ -31,7 +31,7 @@ def test_scatter_plots_all_dtc_fins_with_real_groups_and_pickable_points():
 
     assert len(plot._fins) == result.dtc_fins == 21
     assert plot._result is result
-    assert plot.mode == "2d"
+    assert plot.mode == "3d"  # The FIN projection defaults to rotatable 3D.
     assert not plot.grab().isNull()
     x, y = plot._screen[0]
     point = QPoint(round(x), round(y))

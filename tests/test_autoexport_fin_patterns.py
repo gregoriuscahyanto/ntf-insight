@@ -284,3 +284,41 @@ def test_changing_method_does_not_change_which_fins_have_dtc_evidence():
         assert tuple(item[0] for item in run.positions) == tuple(
             item[0] for item in all_runs["leaf"].positions
         )
+
+
+def test_filtered_qec_fin_query_keeps_unanchored_fin_and_reports_source_membership(tmp_path):
+    """QEC is case linkage, not equivalent to existence of a swap date."""
+    source = SourceKnowledgeStore(DuckDBStore(tmp_path / "selected-qec.db"))
+    a, b, c = [f"W1TTEST000000{i:04d}" for i in range(1, 4)]
+    rows = []
+    for fin, fault, date_value in (
+        (a, "BEFORE-SWAP", "2026-04-10"),
+        (a, "POST-SWAP", "2026-06-10"),
+        (b, "WITHOUT-SWAP-DATE", None),
+        (c, "OUTSIDE-QEC-COHORT", "2026-04-10"),
+    ):
+        rows.append({
+            "category": "autoexport_dtc", "fin": fin,
+            "data": {
+                "EcuNm": "CPC3", "EcuFaultNm": fault,
+                "DiagStartDt": date_value,
+            },
+        })
+    rows.extend([
+        {"category": "autoexport_tips", "fin": "MBC" + b,
+         "data": {"CaseId": "SYNTH-TIPS"}},
+        {"category": "autoexport_repair", "fin": c,
+         "data": {"RepairTypeNmGerman": "Test"}},
+    ])
+    source.save_records("c" * 64, "autoexport_rows", rows)
+    fins, faults, _ = source.autoexport_fin_dtc_signatures(
+        pump_swap_dates={a: "2026-05-10"},
+        include_all_fins=True,
+        fin_filter=(a, b),
+    )
+    assert fins == (a, b)
+    assert faults[a] == (("CPC3", "BEFORE-SWAP"),)
+    assert faults[b] == (("CPC3", "WITHOUT-SWAP-DATE"),)
+    assert c not in faults
+    assert source.autoexport_source_fins("autoexport_tips") == frozenset((b,))
+    assert source.autoexport_source_fins("autoexport_dtc") == frozenset((a, b, c))

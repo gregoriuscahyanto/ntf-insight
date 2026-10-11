@@ -53,6 +53,7 @@ Rollenprüfung** bieten.
 | Quelle | Verarbeitung | Status |
 |---|---|---|
 | QEC-Schadteilliste (.xlsx) | QEC-Fälle und Tauschanker; zusätzlich **alle Quellspalten und -blätter** mit Referenznr. | Struktur- und Fallparser |
+| QEC-SSL-Endbefunde ohne FIN (.xlsx) | Blatt `Schadteile` mit `Referenznr.`, `SSL Endbefund` und `SSL-Endbefund Benennung`; ausschließlich Ergänzung vorhandener QEC-Fälle durch identische Referenznummer, **keine neuen FINs** | Referenzbasierte Ergänzung |
 | AutoExport Diagnose (.csv) | Vollständige CSV-Rohfelder für alle FINs sowie fallbezogene DTCs/ECU-Stände bei eindeutiger Zuordnung | Parser bereit |
 | AutoExport Werkstatt/Claim (.csv) | Alle Werkstatt-/Claim-Zeilen (einschließlich doppelt benannter Spalten), fallbezogene Aktionen bei eindeutiger Zuordnung; widersprüchliche Kilometerangaben werden gekennzeichnet | Parser bereit |
 | AutoExport TIPS (.csv) | TIPS-Referenz, Erstellungsdatum, Erst-Beanstandung, Werkstattbefund und Maßnahmen; Rohzeilen für alle FINs, konservative QEC-Zuordnung | Parser bereit |
@@ -104,6 +105,24 @@ reicht für die Verbindung bei mehreren QEC-Fällen nicht aus: Ohne eindeutig
 nächsten Tauschanker im zulässigen Zeitraum bleibt die TIPS-Zeile als
 FIN-weite Quelle unzugeordnet. Die `CreationDate` datiert den
 TIPS-Vorgang und ist kein belegtes Reparaturdatum.
+
+**SSL-Endbefundexport ohne FIN:** Ein QEC-Excel mit dem Blatt
+`Schadteile` und den Spalten `Referenznr.`, `SSL Endbefund` und
+`SSL-Endbefund Benennung` wird automatisch erkannt. Solche Listen
+enthalten **keine gesicherte FIN** und erzeugen deshalb keine
+neuen Fahrzeugfälle. Stattdessen bleibt jede Zeile lokal im
+Quellenwissen und ergänzt nur einen bereits vorhandenen Fall mit
+**exakt identischer QEC-Referenznummer**. Bei abweichender
+Sachnummer, widersprüchlichen Endbefunden oder fehlendem
+Referenztreffer wird **nichts zugeordnet**. Der QEC-Fall mit FIN und
+die ergänzende SSL-Liste können in beliebiger Reihenfolge importiert
+werden. Ein erneuter Import ersetzt keine Originaldatei und
+erstellt keine Duplikat-FIN. Unter **Datenquellen** zeigt der
+Importstatus die Zahl ergänzter QEC-Fälle und Referenzkonflikte.
+Erst nach einem erfolgreichen Abgleich erscheinen die verschiedenen
+SSL-Endbefunde im Dropdown der Clusteranalyse. Die Endbefunde
+dienen ausschließlich zur Fallselektion, niemals als
+Clustermerkmale oder Lieferanten-Verursachernachweis.
 
 **QEC-Quellblatt-Logik:** Die NTF-Clusterblätter im QEC-Export können
 Teilansichten derselben Schadteilreferenzen enthalten. Sie werden in der

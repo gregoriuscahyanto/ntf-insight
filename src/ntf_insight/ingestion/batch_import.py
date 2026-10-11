@@ -14,6 +14,7 @@ import stat
 import tempfile
 from collections import defaultdict
 from dataclasses import dataclass, field
+from datetime import date
 from pathlib import Path, PurePosixPath
 from typing import Callable, Iterable
 from zipfile import ZipFile, is_zipfile
@@ -54,6 +55,8 @@ class ImportSummary:
     files_parsed: int = 0
     files_pending: int = 0
     cases_created: int = 0
+    qec_findings_linked: int = 0
+    qec_findings_conflicted: int = 0
     events_linked: int = 0
     events_unassigned: int = 0
     rows_scanned: int = 0
@@ -227,16 +230,11 @@ class LocalBatchImporter:
             existing = {case.case_id: case for case in self.sources.store.load_cases()}
             pending: list[tuple[SourceArtifact, ParsedSource]] = []
             for artifact in case_artifacts:
-                progress("QEC-Fälle einlesen …")
-                parser = QECWorkbookParser(artifact.sha256)
-                try:
-                    result, _ = self.execution.execute(artifact, parser)
-                except Exception as exc:
-                    summary.issues.append(f"{artifact.original_name}: {type(exc).__name__}")
-                    continue
-                summary.files_parsed += 1
-                summary.issues.extend(result.issues)
-                # Preserve all QEC sheets/columns, not just normalized cases.
+                progress("QEC-Fälle und SSL-Endbefunde einlesen …")
+                # First archive all original Excel fields. A 'Schadteile'
+                # export without FIN is a valid reference-only source, but
+                # MUST NOT be parsed into invented vehicle cases.
+                detail = None
                 try:
                     detail, _ = self.execution.execute(
                         artifact, QECDetailsParser()
@@ -249,9 +247,31 @@ class LocalBatchImporter:
                     summary.issues.extend(detail.issues)
                 except Exception as exc:
                     summary.issues.append(
-                        f"QEC-Zusatzfelder konnten nicht gespeichert werden: "
+                        "QEC-Zusatzfelder konnten nicht gespeichert werden: "
                         f"{type(exc).__name__}"
                     )
+                sheets = (detail.metadata.get("sheets", {}) if detail else {})
+                supplement = sheets.get("Schadteile", {})
+                supplement_headers = set(supplement.get("columns", ()))
+                if (
+                    "Schadteile QEC" not in sheets
+                    and {
+                        "Referenznr.", "SSL Endbefund",
+                        "SSL-Endbefund Benennung",
+                    } <= supplement_headers
+                ):
+                    summary.files_parsed += 1
+                    # Records will enrich known cases by matching only QEC
+                    # reference; import order is irrelevant (see below).
+                    continue
+                parser = QECWorkbookParser(artifact.sha256)
+                try:
+                    result, _ = self.execution.execute(artifact, parser)
+                except Exception as exc:
+                    summary.issues.append(f"{artifact.original_name}: {type(exc).__name__}")
+                    continue
+                summary.files_parsed += 1
+                summary.issues.extend(result.issues)
                 for case in result.cases:
                     prior = existing.get(case.case_id)
                     if prior is None:
@@ -284,6 +304,71 @@ class LocalBatchImporter:
                     ):
                         prior.qec_ssl_end_finding = case.qec_ssl_end_finding
                         prior.qec_ssl_end_date = getattr(case, "qec_ssl_end_date", None)
+
+            # SSL-only QEC exports lack FINs but carry real 'Referenznr.'.
+            # Join against already imported, FIN-identified QEC cases.
+            # Also revisit previously archived QEC details on EVERY import so
+            # uploading the two exports in either order works identically.
+            ssl_by_reference, ambiguous_ssl_refs = (
+                self.knowledge.qec_ssl_findings_by_reference()
+            )
+            for case in existing.values():
+                reference = str(getattr(case, "qec_reference", "") or "").strip()
+                if not reference:
+                    continue
+                if reference in ambiguous_ssl_refs:
+                    summary.qec_findings_conflicted += 1
+                    continue
+                entry = ssl_by_reference.get(reference)
+                if entry is None:
+                    continue
+                case_part = str(getattr(case, "qec_part_number", "") or "").strip()
+                other_part = entry["part_number"]
+                if case_part and other_part and case_part != other_part:
+                    summary.qec_findings_conflicted += 1
+                    continue
+                previous_text = str(
+                    getattr(case, "qec_ssl_end_finding", "") or ""
+                ).strip()
+                previous_code = str(
+                    getattr(case, "qec_ssl_end_code", "") or ""
+                ).strip()
+                if (
+                    previous_text and entry["finding"]
+                    and previous_text != entry["finding"]
+                ) or (
+                    previous_code and entry["code"]
+                    and previous_code != entry["code"]
+                ):
+                    summary.qec_findings_conflicted += 1
+                    continue
+                changed = False
+                if not previous_text and entry["finding"]:
+                    case.qec_ssl_end_finding = entry["finding"]
+                    changed = True
+                if not previous_code and entry["code"]:
+                    case.qec_ssl_end_code = entry["code"]
+                    changed = True
+                # Only retain an actually supplied and parseable completion
+                # date; do not turn the pump swap into a finding timestamp.
+                if not getattr(case, "qec_ssl_end_date", None):
+                    raw_date = entry["end_date"][:10]
+                    try:
+                        found_date = date.fromisoformat(raw_date).isoformat()
+                    except ValueError:
+                        found_date = ""
+                    if found_date:
+                        case.qec_ssl_end_date = found_date
+                        changed = True
+                if changed:
+                    case.qec_ssl_end_source_ref = entry["source_ref"]
+                    summary.qec_findings_linked += 1
+            if summary.qec_findings_conflicted:
+                summary.issues.append(
+                    f"{summary.qec_findings_conflicted} QEC-Referenzen haben "
+                    "widersprüchliche oder nicht passende Endbefunddaten. "
+                    "Die bestehenden Fälle wurden dafür nicht verändert."
+                )
 
             # Import order must not decide whether historical AutoExport data
             # reaches new QEC cases: revisit already archived CSVs when a new

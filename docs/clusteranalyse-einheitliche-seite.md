@@ -18,10 +18,13 @@ lokalen Quellenabgleich ermittelt.
 ## Bedienung von oben nach unten
 
 1. **Kleine Parameter**: Mindestclustergröße (Standard 5) und
-   `MinSamples` (Standard 2). Die optionale Auswahl
-   **Nur FINs mit QEC-Pumpentauschdatum** grenzt den Analysebestand
-   für eine tauschbezogene Prüfung ein. Normalerweise ist sie **aus**,
-   damit die vollständige AutoExport-FIN-Population einbezogen wird.
+   `MinSamples` (Standard 2). Die Checkbox **Nur FINs mit QEC-Fällen**
+   ist **standardmäßig AN**. Sie begrenzt die Grundgesamtheit auf
+   eindeutige FINs mit lokal verknüpftem QEC-Pumpenfall; ein
+   **Pumpentauschdatum ist dazu nicht erforderlich**. Ohne Haken
+   werden auch FINs nur aus AutoExport in denselben Clustermethoden
+   untersucht. **QEC-Fälle als Anker für die Clusterbildung verwenden**
+   ist bei beiden Grundgesamtheiten unabhängig verfügbar.
 2. **Clusteranalyse starten** ist die einzige Berechnungsaktion.
    Ein Hintergrundthread liest die lokalen AutoExport- und QEC-Merkmale
    und berechnet auf derselben FIN-Grundlage HDBSCAN Leaf,
@@ -32,13 +35,13 @@ lokalen Quellenabgleich ermittelt.
    Teil der Gesamtzahl, aber erhalten **keine erfundene Gruppe**.
    Die Summe der drei FIN-Statuszahlen entspricht immer dem
    gesamten betrachteten FIN-Bestand.
-4. **FIN-Punktwolke in 2D oder 3D** zeigt die echten FIN-Diagnosemuster.
+4. **FIN-Punktwolke ausschließlich in 3D** zeigt die Diagnosemuster.
    Farben markieren Cluster, grau steht für DTC-FINs ohne Cluster.
    Repräsentative FINs erhalten eine Umrandung. Klick auf einen
-   Punkt wählt FIN bzw. Cluster; in 3D dreht/gekippt die linke
-   gedrückte Maustaste beim Ziehen die Darstellung. Das Mausrad zoomt.
-   **Die Plotkoordinaten sind niemals Clustering-Merkmale.**
-5. **Verfahren wählen** neben 2D/3D wechselt wirklich die
+   Punkt wählt FIN bzw. Cluster; mit gehaltener linker Maustaste
+   wird gedreht und geneigt. Das Mausrad zoomt. Es gibt keinen
+   2D-Umschalter. **Die Plotkoordinaten sind niemals Clustering-Merkmale.**
+5. **Verfahren wählen** neben der 3D-Ansicht wechselt wirklich die
    Clusterzuordnung, die Kennzahlen, Tabelle und Erklärung:
    HDBSCAN Leaf, HDBSCAN EOM oder Complete-Link Cosinus.
    Alle werden beim Start berechnet und bleiben für sofortige
@@ -61,11 +64,172 @@ lokalen Quellenabgleich ermittelt.
    Link öffnen die lokale FIN-/Fallhistorie. Echte FINs und
    QEC-Kennungen erscheinen nur in der lokalen Anwendung.
 
+## QEC-Endbefunde auswählen und Quellenabdeckung verstehen
+
+Die Schaltfläche **„Filter“** öffnet **drei Hauptbereiche**:
+**Steuergeräte**, **ECU:DTC** und **SSL-Endbefund**. Jeder
+Bereich besitzt die Unterreiter **Einschließen** und **Ausschließen**.
+Eine durchsuchbare Tabelle bietet Mehrfachauswahl auch bei tausenden
+ECU:DTC-Kombinationen. Der SSL-Bereich zeigt vorhandene
+**SSL-Endbefund Benennungen**, Fallzahlen und importierte Codes;
+auch „(Ohne SSL-Endbefund)“ kann explizit gewählt werden.
+
+Ohne ausgewählten Einschluss sind alle Werte zulässig.
+Eine Einschlussauswahl lässt nur die gewählten Werte passieren.
+Ausschlüsse haben **Vorrang** und entfernen Treffer auch dann,
+wenn diese gleichzeitig eingeschlossen wurden. Im ECU-/DTC-Bereich
+werden eingeschlossene Steuergeräte und ECU:DTC-Paare **ODER**
+verknüpft; entsprechende Ausschlüsse gelten danach.
+Im SSL-Bereich gilt der Ein-/Ausschluss für ganze QEC-Fälle,
+nicht als Diagnosemerkmal. Ein Suchtext in den Tabellen dient
+zum Finden/Auswählen von Werten und ist kein versteckter
+zusätzlicher Filter. Die Hauptansicht zeigt die aktiven Regeln
+dauerhaft als dreizeilige Zusammenfassung.
+
+Der Filter verändert, **welche QEC-Fälle als Quelle und
+gegebenenfalls als Anker** in den nächsten Clusterlauf
+eingehen, NICHT den ECU:DTC-Code einer FIN und niemals
+einen Reparatur- oder SSL-Endbefund als Merkmalsdimension.
+Bei aktivem QEC-FIN-Filter werden nur die FINs dieser
+ausgewählten QEC-Fälle untersucht. Bei deaktiviertem
+QEC-FIN-Filter bleibt der gesamte AutoExport-FIN-Bestand
+enthalten; die gefilterten QECs bestimmen lediglich die
+zusätzlichen QEC-Daten und möglichen QEC-Anker.
+Ein leerer SSL-Filtertreffer führt **nicht** zu einer erfundenen
+QEC-Ankergruppe. Ein vorhandener frühester QEC-Pumpentausch
+bleibt auch bei weggefilterten anderen QEC-Fällen als
+**zeitliche Sicherheitsgrenze** erhalten.
+
+Die **kompakte Übersicht in einer einzigen Karte** kombiniert
+Clusteranzahl, die gegenseitig ausschließende FIN-Verteilung
+und vier unabhängige Quellen-Donuts (keine sechs gerahmten
+Einzelkarten). Die Quellen-Donuts verwenden jeweils die aktuelle
+analysierte FIN-Grundgesamtheit als Nenner:
+
+- **FINs mit gewählter Sachnummer:** Aus lokalen, über eine
+  FIN verknüpften QEC-Pumpenfällen. Sachnummer im Dropdown
+  änderbar – das ändert keine Cluster.
+- **FINs mit QEC-Fall:** Mindestens ein im QEC-Endbefundfilter
+  zugelassener Pumpenfall je FIN.
+- **FINs mit TIPS-Fall:** Vorhandener importierter
+  AutoExport-TIPS-Eintrag je FIN.
+- **FINs mit QuickTest:** Vorhandener lokal gespeicherter
+  QuickTest-Bericht je FIN.
+
+Das sind **vier sich möglicherweise überlappende Mengen**:
+die Donuts dürfen **nicht** zu einem einzigen Pie addiert
+werden. Ein Fahrzeug kann dieselbe Sachnummer, QEC,
+TIPS und QuickTest zugleich haben. QEC-Fallzeilen
+werden pro FIN dedupliziert.
+
+**„Ohne geeignete DTCs“ bedeutet NICHT automatisch „kein
+DTC jemals vorhanden“.** Der erste Anteil sind FINs,
+für die kein importierter DTC-Datensatz in den
+relevanten Quellen vorliegt. Der zweite Anteil sind
+FINs mit importierten DTC-Einträgen, bei denen nach
+den fachlichen Regeln keine ECU:DTC-Signatur
+verwendet werden darf (z. B. ausschließlich DTCs
+am oder nach dem dokumentierten Pumpentausch,
+ohne belegbaren Vor-Tausch-Zeitpunkt oder ohne
+vollständigen ECU-/DTC-Schlüssel). Beide Teilmengen
+werden separat in der Erklärung unterhalb der
+Clusterverteilung angegeben. Eine solche FIN ist
+**nicht nachweislich fehlerfrei**, sondern im
+aktuellen Clustering nicht diagnostisch vergleichbar.
+
+## Alternative mit Checkbox: Cluster um QEC-Fälle bilden
+
+Das Kästchen **„QEC-Fälle als Anker für die Clusterbildung verwenden“**
+ist **standardmäßig AUS**. Dann bleiben die bisherige
+HDBSCAN-Leaf-/EOM- und konservative Complete-Link-Cosinus-Analyse
+sowie die in diesem PR ergänzte QEC-Präferenz bei der
+*Repräsentantenauswahl* unverändert.
+
+Mit **aktiviertem** Kästchen wird dagegen eine **andere,
+QEC-gestützte Diagnosezuordnung** verwendet. Es handelt sich
+**nicht** um ein weiteres HDBSCAN-Verfahren:
+
+1. Jede QEC-Pumpenfall-FIN mit geeigneten Diagnosemerkmalen wird
+   zum möglichen **echten QEC-Anker**. Diagnostisch **ähnliche
+   QEC-FINs** teilen denselben realen QEC-Anker, wenn ihre
+   originalen ECU:DTC-TF-IDF-Cosinusmerkmale die Schwelle von
+   mindestens 45 % erreichen. Das verhindert viele
+   künstliche Einzelfall-Ankergruppen, gerade bei der
+   standardmäßig QEC-beschränkten Grundgesamtheit.
+2. Eine andere FIN – auch eine FIN nur aus AutoExport – wird ihrem
+   diagnostisch ähnlichsten QEC-Anker zugeordnet, **aber nur bei
+   mindestens 45 % originaler Sparse-TF-IDF-Cosinusähnlichkeit
+   zur repräsentativen QEC-FIN**. In gleicher Ähnlichkeit
+   entscheidet der alphabetisch erste Anker deterministisch.
+   FINs ohne passende Anker bleiben **unzugeordnet**.
+3. Nur Ankergruppen mit der eingestellten
+   **Mindestclustergröße** werden als Cluster ausgewiesen.
+   Kleinere Gruppen werden **nicht künstlich aufgefüllt**:
+   deren FINs bleiben als „mit DTC, ohne Cluster“ sichtbar.
+   Auch QEC-FINs ohne geeignete ECU:DTC-Daten werden nicht
+   als Anker eingesetzt.
+4. Jede ausgegebene Gruppe besitzt somit einen echten
+   **QEC-Repräsentanten**. Die erklärte Ähnlichkeit misst die
+   jeweilige FIN **zu diesem Anker** und bedeutet nicht,
+   dass alle FIN-Paare der Gruppe die 45-%-Schwelle einhalten.
+   Anders als Complete-Link ist dieses Verfahren kein
+   Paarweise-Ähnlichkeitsnachweis, und im Gegensatz zu HDBSCAN
+   keine unüberwachte Dichtegruppenbildung.
+
+Der **gleiche AutoExport+QEC-FIN-Bestand**, die zugelassenen
+vor dem dokumentierten Pumpentausch liegenden DTCs und dieselben
+Originalmerkmale werden verwendet. Der Ankerlauf und
+HDBSCAN/EOM/Complete-Link werden beim einmaligen Klick auf
+**„Clusteranalyse starten“** zusammen berechnet und
+im Arbeitsspeicher vorgehalten. Danach kann die Checkbox
+**ohne Neuberechnung** ein- und ausgeschaltet werden.
+Die Verfahrenauswahl zeigt bei aktiviertem Ankerverfahren
+dessen eigene Bezeichnung und ist gesperrt. Beim Ausschalten
+kehrt sie zum **zuvor ausgewählten HDBSCAN- bzw.
+Complete-Link-Verfahren** zurück.
+
+**Achtung:** Clusteranzahl, Zuordnung und C-Nummern können sich
+durch das alternative Verfahren ändern. Nur innerhalb eines
+Verfahrens bleiben Clusterkennungen stabil. Die Donutgrafik,
+Punktwolke, DTC-Erklärung, FIN-Tabelle und die manuelle
+DTC-Prüfpriorität beziehen sich jeweils klar auf das
+ausgewählte Verfahren. DTC-Markierungen sind keine Seed-
+Auswahlbedingung und beeinflussen keine Ähnlichkeitswerte.
+QEC-Ankerzuordnung ist **kein Nachweis**, dass ein Fahrzeug
+einen Pumpendefekt hat, dass ein Pumpentausch geholfen hätte
+oder dass ein Lieferant verantwortlich ist.
+
+## Repräsentant: vorzugsweise eine FIN mit QEC-Fall
+
+Ein Cluster repräsentiert weiterhin **eine echte FIN aus dem Cluster**,
+niemals einen künstlich berechneten Durchschnittsfall. Für jede Gruppe
+wird zuerst der diagnostisch zentralste Kandidat auf den originalen
+Sparse-TF-IDF-Cosinusmerkmalen ermittelt. Existiert eine FIN mit
+zugeordnetem QEC-Pumpenfall, wird die **diagnostisch zentralste
+QEC-FIN** bevorzugt, sofern ihr mittlerer Cosinuswert zu den übrigen
+Cluster-FINs **mindestens 90 % des optimalen Werts** erreicht.
+
+Falls QEC-FINs dafür zu untypisch sind, bleibt die diagnostisch
+zentralste FIN **ohne** QEC-Bezug Repräsentant. Existiert überhaupt
+kein QEC-Fall im Cluster, wird ebenfalls der gewöhnliche
+Diagnoserepräsentant gewählt. Im Clustertableau steht die Spalte
+**Rep. QEC? (Ja/Nein)**. Die Clustererklärung begründet die Auswahl
+oder den Rückgriff auf die diagnostisch bessere FIN.
+
+**Die QEC-Präferenz verändert weder HDBSCAN/Complete-Link, deren
+Merkmalsgewichtung, Distanzen, Clusterzuordnung noch Clusternummern.**
+Lediglich die Repräsentanten-FIN und die auf diese FIN bezogenen
+Cosinusähnlichkeiten/Mediane ändern sich gegebenenfalls. So ist der
+Repräsentant leichter fachlich über QEC überprüfbar, ohne einen
+untypischen Schadteilfall zum vermeintlichen Gruppenbeweis zu machen.
+
 ## Kompakte Donut-Übersicht und DTC-Fachmarkierungen
 
-Statt fünf nebeneinanderliegenden Kennzahlkarten zeigt die
-Clusteranalyse **Gefundene Cluster** als große Kennzahl und
+Eine gemeinsame, kompakte Dashboardkarte zeigt
+**Gefundene Cluster** als große Kennzahl und die
 **Verteilung der FINs** als gut lesbares Donutdiagramm.
+Darunter stehen die vier weiterhin getrennten
+Quellenabdeckungen ohne zusätzliche Kartenrahmen.
 Im Donut steht die Zahl **aller eindeutigen FINs**, die Legende
 zeigt absolute Zahlen und den prozentualen Anteil von:
 
@@ -138,9 +302,12 @@ hinzugefügt, nicht als zusätzlicher QEC-Fall-Cluster gezählt.
   Diagnosemustersuche dürfen AutoExport-DTCs aus der vorhandenen
   Diagnosehistorie verwendet werden. Es wird **kein** Tauschzeitpunkt
   behauptet.
-- **Nur Tausch-FINs:** Der optionale Filter schließt FINs
-  ohne QEC-Tauschanker vollständig aus. Das reduziert
-  verständlicherweise die Fahrzeuganzahl stark.
+- **Nur FINs mit QEC-Fällen (Standard):** Ein lokaler QEC-Pumpenfall
+  genügt, auch ohne Tauschdatum. Bei belegtem Tausch bleibt die
+  konservative Vor-Tausch-DTC-Regel aktiv. Unbelegte Zeiträume
+  werden nicht als sichere Vor-Tausch-Diagnosen ausgegeben.
+- **Gesamter FIN-Bestand (Checkbox aus):** alle importierten
+  AutoExport- und QEC-FINs, eindeutige FINs nur einmal.
 
 Das generische AutoExport-`RepairDt` ist ein **Werkstattdatum,
 kein bestätigtes Pumpentauschdatum**. Diagnosen nach dem Tausch
@@ -184,3 +351,46 @@ HDBSCAN-Dichtegruppen sind keine bestätigten Pumpenfehler,
 keine NTF-Feststellungen und kein Nachweis für eine
 Lieferantenverantwortung. Die bekannten QEC-Fälle
 markieren nur den tatsächlich vorliegenden Quellenbezug.
+
+
+## Filter für Steuergeräte, ECU:DTCs und SSL-Endbefunde und Excel-Liste
+
+Der Button **„Filter“** öffnet drei Hauptreiter mit jeweils
+**Einschließen** und **Ausschließen** als Unterreiter. Für jedes
+Steuergerät, jedes konkrete ECU:DTC-Merkmal und jeden importierten
+SSL-Endbefund können Regeln unabhängig gesetzt werden.
+Alle Unterreiter enthalten durchsuchbare, sortierbare Tabellen,
+Mehrfachauswahl, Hinzufügen, Entfernen und Zurücksetzen.
+Die Tabelle zeigt auch, welche Einträge schon gewählt sind.
+Die Suche findet importierte DTC-Klartexte oder SSL-Codes
+unabhängig von Groß-/Kleinschreibung. Die Hauptseite zeigt
+die tatsächlichen Ein- und Ausschlüsse nach dem Übernehmen an.
+
+**Steuergeräte und ECU:DTC** filtern nur die erlaubten
+Vor-Tausch-Diagnosemerkmale; einschließende Auswahlen bilden
+die ODER-Menge, danach haben Ausschlüsse Vorrang.
+**SSL-Endbefunde** filtern stattdessen die QEC-Fallkohorte,
+damit gegebenenfalls auch FIN-Grundgesamtheit und QEC-Anker.
+Endbefunde sind niemals Ähnlichkeitsmerkmale.
+
+Die Regeln werden **erst nach der Vor-Tausch-Zeitprüfung** auf die
+zusammengeführten QEC-/AutoExport-Diagnosemerkmale angewendet.
+Sie werden nicht in die importierten Quelldaten geschrieben und
+verändern weder das QEC-Original noch den Vorher-/Nachher-Vergleich.
+Nach einer Regeländerung muss die Clusteranalyse erneut gestartet
+werden. FINs, denen nur durch die Benutzerfilter die letzten
+zulässigen DTC-Merkmale entfallen, werden zusätzlich gezählt und
+wie andere FINs ohne geeignete Clustermerkmale ohne Cluster geführt.
+
+Die Aktion **„Alle Cluster-Repräsentanten als Excel“** wird nach einem
+erfolgreichen Lauf mit mindestens einem Cluster freigeschaltet.
+Sie erstellt **eine echte FIN je Cluster** im Blatt
+„FIN-Repräsentanten“, ergänzt um Clustergröße, QEC-Fallkennungen
+des Repräsentanten, Diagnosemerkmale, Ähnlichkeit und Datenherkunft.
+Die Spalten „Befundungsbericht herunterladen“, „Bericht geprüft“
+und „Notizen“ sind als Arbeitsliste für das spätere Nachladen gedacht.
+Im Blatt „Analyseinformationen“ stehen Methode, FIN-Umfang und
+gewählte Steuergeräte-, ECU:DTC- und SSL-Filter. Speichern erfolgt ausschließlich in einem
+durch die Benutzerin gewählten lokalen Pfad. Achtung: Die Datei
+enthält echte FINs und darf nicht in öffentliche Repositories,
+GitHub Actions oder unfreigegebene Speicherorte gelangen.

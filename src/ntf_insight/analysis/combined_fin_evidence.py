@@ -41,7 +41,11 @@ class CombinedFinEvidence:
     qec_only_fin_count: int
 
 
-def qec_fin_evidence(cases: Sequence[NTFCase]) -> QECFinEvidence:
+def qec_fin_evidence(
+    cases: Sequence[NTFCase],
+    *,
+    global_pump_swap_dates: Mapping[str, str] | None = None,
+) -> QECFinEvidence:
     """Get actual pre-pump-swap observations; keep same-day ambiguity out."""
     faults: dict[str, set[FaultKey]] = defaultdict(set)
     links: dict[str, set[str]] = defaultdict(set)
@@ -62,6 +66,14 @@ def qec_fin_evidence(cases: Sequence[NTFCase]) -> QECFinEvidence:
         date = swap.occurred_at.date().isoformat()
         if fin not in anchors or date < anchors[fin]:
             anchors[fin] = date
+    # When QEC end findings have been filtered, retain the EARLIEST known
+    # swap from ALL QEC pump cases, not just selected cases. Otherwise the
+    # filter could accidentally admit diagnostics AFTER an excluded repair.
+    if global_pump_swap_dates:
+        for fin in links:
+            prior = global_pump_swap_dates.get(fin)
+            if prior and (fin not in anchors or prior < anchors[fin]):
+                anchors[fin] = prior
     # A FIN can have multiple QEC pump cases. Compare diagnostics with the
     # EARLIEST recorded investigated replacement: later case histories must
     # never reintroduce what could be post-swap evidence.
@@ -98,17 +110,19 @@ def merge_fin_evidence(
     qec: QECFinEvidence,
     *,
     only_pump_swap: bool = False,
+    only_qec: bool = False,
 ) -> CombinedFinEvidence:
     """Union by FIN; QEC DTCs influence the SAME vector as AutoExport DTCs."""
     auto_set = {fin.strip().upper() for fin in auto_fins}
     qec_set = set(qec.case_links)
-    permitted = (
-        set(qec.pump_swap_dates)
-        if only_pump_swap else auto_set | qec_set
-    )
-    # Include explicitly dated QEC VINs even if their AutoExport is missing.
-    if only_pump_swap:
-        permitted &= auto_set | qec_set
+    if only_qec:
+        # "Nur FINs mit QEC-Fällen": the presence of a real, linked QEC
+        # case is sufficient. A missing pump-swap date is NOT an exclusion.
+        permitted = set(qec_set)
+    elif only_pump_swap:
+        permitted = set(qec.pump_swap_dates) & (auto_set | qec_set)
+    else:
+        permitted = auto_set | qec_set
     actual_qec = permitted & qec_set
     overlap = auto_set & actual_qec
     merged: dict[str, tuple[FaultKey, ...]] = {}

@@ -202,6 +202,7 @@ class QECWorkbookParser:
                     qec_status=_str(record.get("Status")),
                     qec_part_number=_str(record.get("Sachnr. Teil")),
                     qec_ssl_end_finding=finding,
+                    qec_ssl_end_code=_str(record.get("SSL Endbefund")),
                     qec_ssl_end_date=(
                         end_dt["occurred_at"].date().isoformat() if end_dt else None
                     ),

@@ -31,10 +31,17 @@ METHOD_TITLES = {
     "leaf": "HDBSCAN · Leaf",
     "eom": "HDBSCAN · EOM",
     "complete_cosine": "Complete-Link · Cosinus (konservative Prüfgruppen)",
+    "qec_anchor": "QEC-Ankergruppen · Cosinus (keine HDBSCAN-Gruppen)",
 }
 MAX_SVD_DIM = 16
 MAX_COMPLETE_BLOCK = 450
 MIN_COMPLETE_SIMILARITY = 0.45
+QEC_ANCHOR_MIN_SIMILARITY = 0.45
+QEC_ANCHOR_BATCH_SIZE = 512
+# A QEC-backed FIN is preferred when its mean ORIGINAL TF-IDF cosine
+# similarity to the whole group is at least 90% of the best candidate.
+# This affects only the displayed representative, never cluster membership.
+QEC_REPRESENTATIVE_MIN_CENTRALITY_RATIO = 0.90
 
 
 @dataclass(frozen=True, slots=True)
@@ -48,6 +55,10 @@ class FinPatternGroup:
     shared_fault_count: int = 0
     pair_weak_count: int = 0
     checked_pair_count: int = 0
+    representative_has_qec: bool = False
+    representative_centrality_ratio: float = 1.0
+    unconstrained_representative_fin: str = ""
+    representative_is_fixed_anchor: bool = False
 
     @property
     def fin_count(self) -> int:
@@ -76,6 +87,11 @@ class FinPatternResult:
     pre_swap_fins: int = 0
     runtime_seconds: float | None = None
     dtc_keys_by_fin: dict[str, tuple[FaultKey, ...]] | None = None
+    source_coverage_counts: dict[str, int] | None = None
+    qec_part_number_counts: dict[str, int] | None = None
+    no_dtc_without_records: int = 0
+    no_dtc_with_records_excluded: int = 0
+    filter_excluded_fins: int = 0
 
     @property
     def assigned_fins(self) -> int:
@@ -238,6 +254,123 @@ def _complete_link_labels(
     return labels, strengths
 
 
+def _qec_anchor_labels(
+    prepared: _PreparedFins,
+    min_cluster_size: int,
+    minimum_similarity: float,
+) -> tuple[np.ndarray, np.ndarray, dict[int, str]]:
+    """Groups around ACTUAL QEC vehicles using ORIGINAL sparse TF-IDF cosine.
+
+    This is not HDBSCAN or globally linked Complete-Link. Eligible QEC FINs
+    are anchor candidates; similar QEC signatures share the first eligible
+    real QEC anchor. Other FINs join the nearest one only above the explicit
+    cosine limit.
+    No unlabeled/absent vehicle is forced into any group. Sparse blocks avoid
+    an all-vehicle NxN distance matrix even for 11k+ FINs.
+    """
+    n = len(prepared.eligible)
+    labels = np.full(n, -1, dtype=int)
+    strengths = np.zeros(n, dtype=float)
+    if not n or prepared.x is None:
+        return labels, strengths, {}
+    qec_members: dict[int, int] = {}
+    candidate_anchors: list[int] = []
+    # Every eligible QEC VIN is a candidate. On a QEC-only universe, making
+    # EVERY VIN an isolated anchor would make minimum-size clusters almost
+    # impossible. Reuse an existing REAL QEC anchor whenever original
+    # sparse TF-IDF cosine similarity meets the same minimum threshold.
+    # Deterministic lexical order ensures reproducible grouping.
+    for index, fin in enumerate(prepared.eligible):
+        if not prepared.links.get(fin):
+            continue
+        if candidate_anchors:
+            similarities = (
+                prepared.x[index] @ prepared.x[candidate_anchors].T
+            ).toarray().ravel()
+            closest = int(np.argmax(similarities))
+            if float(similarities[closest]) + 1e-7 >= minimum_similarity:
+                qec_members[index] = candidate_anchors[closest]
+                continue
+        candidate_anchors.append(index)
+        qec_members[index] = index
+    if not candidate_anchors:
+        return labels, strengths, {}
+
+    anchor_indices = tuple(candidate_anchors)
+    anchor_ids = {
+        index: group_id for group_id, index in enumerate(anchor_indices)
+    }
+    anchor_names = {
+        group_id: prepared.eligible[index]
+        for index, group_id in anchor_ids.items()
+    }
+    for index, anchor in qec_members.items():
+        labels[index] = anchor_ids[anchor]
+        strengths[index] = 1.0
+
+    anchor_x = prepared.x[list(anchor_indices)]
+    # Sparse (vehicles x ECU:DTC) @ sparse (DTC x QEC anchors):
+    # bounded dense blocks are at most 512 x number_of_QEC_anchors.
+    for start in range(0, n, QEC_ANCHOR_BATCH_SIZE):
+        end = min(n, start + QEC_ANCHOR_BATCH_SIZE)
+        similarities = (prepared.x[start:end] @ anchor_x.T).toarray()
+        winners = np.argmax(similarities, axis=1)
+        highest = similarities[
+            np.arange(end - start), winners
+        ]
+        for offset in range(end - start):
+            index = start + offset
+            if index in qec_members:
+                continue
+            if float(highest[offset]) + 1e-7 < minimum_similarity:
+                continue
+            winner_anchor = anchor_indices[int(winners[offset])]
+            labels[index] = anchor_ids[winner_anchor]
+            strengths[index] = float(highest[offset])
+    # An anchor with fewer than the minimum FINs is not a claimed
+    # cluster; all its FINs remain unassigned/visible as noise.
+    counts = np.bincount(labels[labels >= 0], minlength=len(anchor_ids))
+    for group_id, size in enumerate(counts):
+        if size < min_cluster_size:
+            labels[labels == group_id] = -1
+    strengths[labels == -1] = 0.0
+    return labels, strengths, anchor_names
+
+
+def _representative_position(
+    fins: tuple[str, ...],
+    centrality: np.ndarray,
+    qec_links: Mapping[str, tuple[str, ...]],
+) -> tuple[int, float]:
+    """Prefer a QEC case only if it remains diagnostically representative.
+
+    Centrality = average ORIGINAL TF-IDF cosine to all FINs in this
+    cluster (including self); no HDBSCAN labels or distances are changed.
+    A QEC FIN must reach >=90% of the optimal centrality. Exact ties
+    break by FIN, independently of the input order.
+    """
+    if not fins:
+        raise ValueError("Eine leere Gruppe hat keinen Repräsentanten.")
+    order = sorted(
+        range(len(fins)),
+        key=lambda index: (-float(centrality[index]), fins[index]),
+    )
+    strongest = order[0]
+    selected = strongest
+    qec_candidates = [index for index in order if qec_links.get(fins[index])]
+    if qec_candidates:
+        candidate = qec_candidates[0]
+        if (
+            float(centrality[candidate])
+            >= QEC_REPRESENTATIVE_MIN_CENTRALITY_RATIO
+            * float(centrality[strongest]) - 1e-12
+        ):
+            selected = candidate
+    best_value = float(centrality[strongest])
+    ratio = float(centrality[selected]) / best_value if best_value > 0 else 1.0
+    return selected, round(ratio, 4)
+
+
 def _make_result(
     prepared: _PreparedFins,
     method: str,
@@ -246,6 +379,7 @@ def _make_result(
     *,
     min_cluster_size: int,
     notes: str,
+    fixed_representatives: Mapping[int, str] | None = None,
 ) -> FinPatternResult:
     groups = []
     assigned: set[str] = set()
@@ -254,14 +388,37 @@ def _make_result(
         if len(positions) < min_cluster_size:
             continue
         fins = tuple(prepared.eligible[i] for i in positions)
-        # Representative = actual FIN closest to the ORIGINAL TF-IDF
-        # group centroid, not an invented average or QEC outcome.
+        # Representative: favour a QEC-backed FIN when it has at least
+        # 90% of the best group centrality on ORIGINAL sparse TF-IDF.
+        # Never replace the group medoid with a diagnostically atypical QEC.
         submatrix = prepared.x[positions]
         centroid = np.asarray(submatrix.mean(axis=0)).ravel()
         centrality = np.asarray(submatrix @ centroid).ravel()
-        best = sorted(
-            range(len(fins)), key=lambda j: (-centrality[j], fins[j])
-        )[0]
+        # Keep the original diagnostic ranking independent of QEC labels:
+        # cluster IDs must remain stable when only QEC links are added.
+        diagnostic_best = min(
+            range(len(fins)),
+            key=lambda index: (-float(centrality[index]), fins[index]),
+        )
+        fixed_fin = (
+            fixed_representatives.get(int(raw))
+            if fixed_representatives is not None else None
+        )
+        if fixed_fin is not None:
+            if fixed_fin not in fins or not prepared.links.get(fixed_fin):
+                raise ValueError(
+                    "QEC-Anker muss FIN dieser Gruppe mit QEC-Bezug sein."
+                )
+            best = fins.index(fixed_fin)
+            strongest = float(centrality[diagnostic_best])
+            representative_ratio = round(
+                float(centrality[best]) / strongest
+                if strongest > 0 else 1.0, 4,
+            )
+        else:
+            best, representative_ratio = _representative_position(
+                fins, centrality, prepared.links,
+            )
         rep_fin = fins[best]
         cos_to_rep = np.clip(
             (submatrix @ submatrix[best].T).toarray().ravel(), 0.0, 1.0,
@@ -314,8 +471,16 @@ def _make_result(
             shared_fault_count=sum(count == len(fins) for count in frequency.values()),
             pair_weak_count=weak,
             checked_pair_count=len(pair_cos),
+            representative_has_qec=rep_fin in prepared.links,
+            representative_centrality_ratio=representative_ratio,
+            unconstrained_representative_fin=fins[diagnostic_best],
+            representative_is_fixed_anchor=fixed_fin is not None,
         ))
-    groups.sort(key=lambda g: (-g.fin_count, g.representative_fin))
+    # Retain the historic grouping order based on the unconstrained
+    # diagnostic representative. Adding QEC labels must not rename C IDs.
+    groups.sort(key=lambda g: (
+        -g.fin_count, g.unconstrained_representative_fin,
+    ))
     groups = [
         replace(group, group_id=index)
         for index, group in enumerate(groups, 1)
@@ -348,9 +513,10 @@ def cluster_fin_methods(
     min_cluster_size: int = 5,
     min_samples: int = 2,
     minimum_similarity: float = MIN_COMPLETE_SIMILARITY,
+    include_qec_anchors: bool = False,
     progress: Callable[[str], None] | None = None,
 ) -> dict[str, FinPatternResult]:
-    """One computation, three genuine methods, same FIN feature space."""
+    """One shared FIN feature space; optional separate QEC-seeded analysis."""
     if not 2 <= min_cluster_size <= 100:
         raise ValueError("Mindestclustergröße muss zwischen 2 und 100 liegen.")
     if not 1 <= min_samples <= 100:
@@ -393,6 +559,30 @@ def cluster_fin_methods(
             "Das ist ausdrücklich KEINE globale Complete-Link-Partition."
         ),
     )
+    if include_qec_anchors:
+        if progress:
+            progress("Ordne AutoExport-FINs den nächsten QEC-Ankern zu …")
+        labels, strengths, fixed = _qec_anchor_labels(
+            prepared, min_cluster_size, minimum_similarity,
+        )
+        out["qec_anchor"] = _make_result(
+            prepared, "qec_anchor", labels, strengths,
+            min_cluster_size=min_cluster_size,
+            fixed_representatives=fixed,
+            notes=(
+                "Separates QEC-Ankerverfahren, KEIN HDBSCAN: "
+                "Jede ausgegebene Gruppe hat eine echte QEC-FIN als Anker. "
+                "Andere Fahrzeuge werden nur bei mindestens "
+                f"{minimum_similarity:.0%} originaler ECU:DTC-TF-IDF-"
+                "Cosinusähnlichkeit zu ihrem nächsten QEC-Anker zugeordnet. "
+                "Ähnliche QEC-FINs teilen einen realen QEC-Anker. "
+                "Nicht passende FINs sowie Gruppen unter Mindestgröße "
+                "bleiben unzugeordnet. Die Mindestähnlichkeit gilt "
+                "jeweils zum Anker, NICHT zwischen jedem Fahrzeugpaar. "
+                "Die Gruppen sind eine explorative Diagnosezuordnung, "
+                "kein Pumpenursachen- oder NTF-Nachweis."
+            ),
+        )
     return out
 
 
@@ -406,10 +596,11 @@ def cluster_autoexport_fins(
     min_cluster_size: int = 5,
     min_samples: int = 2,
 ) -> FinPatternResult:
-    """Legacy local API, but no KMeans: returns actual requested method."""
-    if method not in METHODS:
+    """Local API for an explicit method; anchored mode is opt-in."""
+    if method not in (*METHODS, "qec_anchor"):
         raise ValueError("Unbekannte Clustermethode.")
     return cluster_fin_methods(
         all_fins, fin_faults, dtc_labels, qec_links,
         min_cluster_size=min_cluster_size, min_samples=min_samples,
+        include_qec_anchors=method == "qec_anchor",
     )[method]

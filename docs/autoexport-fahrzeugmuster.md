@@ -30,13 +30,39 @@ FINs mit DTCs können außerdem als HDBSCAN-Ausreißer
 nicht zugeordnet werden. Das ist keine
 Feststellung der Fehlerfreiheit.
 
-Das zusätzliche Kästchen **Nur FINs mit QEC-Pumpentauschdatum**
-ist ein bewusster enger fachlicher Filter. Ohne Haken
-werden FINs ohne Pumpentausch trotzdem anhand ihrer
-allgemeinen Diagnosehistorie verglichen. Bei FINs mit
-dokumentiertem Tausch werden nur DTCs vor dem Tausch
-verwendet. AutoExport-`RepairDt` belegt keinen Pumpentausch;
+Die Auswahl **Nur FINs mit QEC-Fällen** ist **standardmäßig an**.
+Damit werden ausschließlich FINs mit verknüpften QEC-
+Kühlmittelpumpenfällen untersucht, auch wenn für sie
+**kein dokumentiertes Pumpentauschdatum** vorliegt.
+Bei dokumentiertem Pumpentausch werden aber weiterhin nur
+sicher frühere DTCs verwendet. Ohne Haken gelangen alle
+lokalen AutoExport-FINs in dieselbe Clusteranalyse.
+AutoExport-`RepairDt` belegt keinen Pumpentausch;
 das untersuchte QEC-`Rep.-Datum` dient als zeitlicher Anker.
+
+Der gemeinsame **Filter** enthält drei Hauptbereiche
+(Steuergeräte, ECU:DTC, SSL-Endbefund) mit jeweils
+**Einschließen** und **Ausschließen**. Die Suche dient der
+Auswahl konkreter Regeln; Ausschlüsse haben Vorrang.
+Der SSL-Bereich begrenzt die QEC-Fälle, die in den
+Diagnoseabgleich und in die QEC-Ankerbildung gelangen.
+Ein SSL-Befund ist niemals ein Diagnose-/DTC-Merkmal.
+Die Hauptansicht zeigt alle gesetzten Filterregeln. Die Checkbox
+**QEC-Fälle als Anker für die Clusterbildung verwenden**
+bleibt mit und ohne eingeschränkte FIN-Grundgesamtheit
+verfügbar. Die beiden Verfahren lassen sich nach dem
+Clusterlauf per Checkbox aus dem Cache vergleichen.
+
+Die FIN-Clusterverteilung und vier separate
+Quellen-Donuts befinden sich in einer kompakten Übersichtskarte;
+die Quellenringe zeigen jeweils den Anteil der FIN-Grundgesamtheit mit
+**gewählter QEC-Sachnummer, QEC-Fall, TIPS-Fall bzw.
+QuickTest-Bericht**. Die Mengen überlappen sich und
+werden nicht addiert. „Ohne geeignete DTCs“ wird
+zusätzlich in **kein importierter DTC-Eintrag** und
+**DTCs vorhanden, aber für die Analyse ausgeschlossen**
+(z. B. nach dem Tausch oder ohne nutzbare ECU:DTC-Kennung)
+aufgeschlüsselt.
 
 ## Wie entsteht die Erklärung?
 

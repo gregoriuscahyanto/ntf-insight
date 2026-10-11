@@ -44,6 +44,8 @@ def test_fin_workspace_groups_all_original_fins_and_opens_history(tmp_path):
     assert panel.result is None
     assert panel.start_button.isEnabled()
     assert "AutoExport: 23 FINs" in panel.population_note.text()
+    assert panel.only_qec.isChecked()  # Default is now QEC-only.
+    panel.only_qec.setChecked(False)  # This test compares all 23 AutoExport FINs.
     panel.start_button.click()
     assert panel._task is not None
     task = panel._task
@@ -94,8 +96,8 @@ def test_fin_workspace_groups_all_original_fins_and_opens_history(tmp_path):
         assert "Complete-Link prüft" in panel.explanation.text()
         assert panel.result.notes in panel.explanation.text()
     panel.method_combo.setCurrentIndex(panel.method_combo.findData("leaf"))
-    panel.dimension.setCurrentIndex(panel.dimension.findData("3d"))
     assert panel.plot.mode == "3d"
+    assert not hasattr(panel, "dimension")  # 3D is the only GUI view.
     panel.plot.set_rotation(110, 35)
     assert (panel.plot.yaw, panel.plot.elevation) == (110, 35)
     assert panel.result is panel._run_results["leaf"]
@@ -147,8 +149,8 @@ def test_one_clusteranalyse_tab_includes_autoexport_and_qec(tmp_path, monkeypatc
     app.processEvents()
 
 
-def test_opt_in_qec_pump_date_excludes_unanchored_fins_and_post_swap_dtc(tmp_path):
-    """One user-click switches all AutoExport FINs to proven pre-swap subset."""
+def test_default_qec_fin_scope_keeps_dated_qec_fins_and_excludes_other_autoexport(tmp_path):
+    """QEC-only is on by default; only known swap dates restrict DTC timing."""
     from test_hdbscan_clustering import synthetic
 
     fins = [f"W1TTEST000000{i:04d}" for i in range(6)]
@@ -182,9 +184,14 @@ def test_opt_in_qec_pump_date_excludes_unanchored_fins_and_post_swap_dtc(tmp_pat
     panel.show()
     app.processEvents()
     assert len(panel._pump_swap_dates) == 4
-    assert not panel.only_pump_swap.isChecked()
-    panel.only_pump_swap.setChecked(True)
-    assert panel.only_pump_swap.isChecked()
+    assert panel.only_qec.isChecked()
+    assert panel.qec_anchor_mode.isVisible()
+    assert panel.qec_anchor_mode.isEnabled()
+    # The QEC-only scope must allow the separate QEC-anchor algorithm.
+    panel.qec_anchor_mode.setChecked(True)
+    assert panel.only_qec.isChecked()
+    assert panel.qec_anchor_mode.isChecked()
+    panel.qec_anchor_mode.setChecked(False)
     panel.start_button.click()
     task = panel._task
     for _ in range(1000):
@@ -203,12 +210,12 @@ def test_opt_in_qec_pump_date_excludes_unanchored_fins_and_post_swap_dtc(tmp_pat
     assert len(panel.result.groups) == 0
     assert len(panel.result.unassigned_fins) == 4
     assert panel.number_labels["total"].text() == "4"
-    assert panel.only_pump_swap.isChecked()
+    assert panel.only_qec.isChecked()
     assert "4 eindeutige FINs" in panel.population_note.text()
     # Which DTCs were eligible is tested against the DuckDB query
     # in test_autoexport_fin_patterns.py, not inferred from plot labels.
 
-    panel.only_pump_swap.setChecked(False)
+    panel.only_qec.setChecked(False)
     assert panel.result is None
     assert "erneut starten" in panel.status.text()
     panel.close()
