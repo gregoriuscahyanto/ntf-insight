@@ -375,9 +375,9 @@ class AutoExportFinWorkspace(QWidget):
             (
                 "Cluster", "Prüfpriorität", "Markierte FINs",
                 "FINs", "Mit QEC", "Repräsentative FIN",
-                "DTC-Kern", "Diagnoseähnlichkeit",
+                "Rep. QEC?", "DTC-Kern", "Diagnoseähnlichkeit",
             ),
-            (76, 145, 115, 75, 85, 185, 92, 166),
+            (76, 145, 115, 75, 85, 185, 94, 92, 166),
             235,
         )
         self.group_table.selectionModel().currentRowChanged.connect(
@@ -661,6 +661,7 @@ class AutoExportFinWorkspace(QWidget):
                 group.fin_count,
                 group.qec_fin_count,
                 group.representative_fin,
+                "Ja" if group.representative_has_qec else "Nein",
                 group.shared_fault_count,
                 f"{group.median_similarity:.1%}",
             )
@@ -724,7 +725,32 @@ class AutoExportFinWorkspace(QWidget):
                 group, self.result.dtc_keys_by_fin or {},
                 set(self._review_marks),
             )
+        if group.representative_has_qec:
+            representative_note = (
+                "Eine FIN mit QEC-Fall wurde als Repräsentant bevorzugt. "
+                "Ihr mittlerer Diagnose-Cosinuswert zum Cluster erreicht "
+                f"{group.representative_centrality_ratio:.0%} des besten "
+                "möglichen Werts und ist damit ausreichend typisch."
+            )
+        elif group.qec_fin_count:
+            representative_note = (
+                "Dieses Cluster enthält FINs mit QEC-Fällen. Diese sind "
+                "jedoch diagnostisch weniger typisch (unter 90 % des "
+                "höchsten mittleren Cosinuswerts). Deshalb wurde die "
+                "zentralere FIN ohne QEC-Fall als Repräsentant gewählt."
+            )
+        else:
+            representative_note = (
+                "Im Cluster gibt es keine FIN mit QEC-Fall. "
+                "Repräsentant ist die FIN mit der höchsten mittleren "
+                "Diagnoseähnlichkeit zur Gruppe."
+            )
         lines = [
+            (
+                f"Repräsentant: {group.representative_fin}. "
+                + representative_note
+            ),
+            "",
             (
                 f"Prüfpriorität: {priority.label}. "
                 f"{priority.affected_fins} von {priority.total_fins} FINs "
