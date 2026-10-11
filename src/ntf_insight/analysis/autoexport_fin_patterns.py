@@ -261,8 +261,9 @@ def _qec_anchor_labels(
     """Groups around ACTUAL QEC vehicles using ORIGINAL sparse TF-IDF cosine.
 
     This is not HDBSCAN or globally linked Complete-Link. Eligible QEC FINs
-    are anchors. Identical QEC signatures share a canonical lexical anchor.
-    Other FINs join the nearest one only above the explicit cosine limit.
+    are anchor candidates; similar QEC signatures share the first eligible
+    real QEC anchor. Other FINs join the nearest one only above the explicit
+    cosine limit.
     No unlabeled/absent vehicle is forced into any group. Sparse blocks avoid
     an all-vehicle NxN distance matrix even for 11k+ FINs.
     """
@@ -271,21 +272,30 @@ def _qec_anchor_labels(
     strengths = np.zeros(n, dtype=float)
     if not n or prepared.x is None:
         return labels, strengths, {}
-    signatures: dict[frozenset[FaultKey], int] = {}
     qec_members: dict[int, int] = {}
-    # Eligible FINs are lexical and unique. Equal QEC signatures define
-    # one anchor, not two competing identical groups.
+    candidate_anchors: list[int] = []
+    # Every eligible QEC VIN is a candidate. On a QEC-only universe, making
+    # EVERY VIN an isolated anchor would make minimum-size clusters almost
+    # impossible. Reuse an existing REAL QEC anchor whenever original
+    # sparse TF-IDF cosine similarity meets the same minimum threshold.
+    # Deterministic lexical order ensures reproducible grouping.
     for index, fin in enumerate(prepared.eligible):
         if not prepared.links.get(fin):
             continue
-        signature = prepared.faults[fin]
-        if signature not in signatures:
-            signatures[signature] = index
-        qec_members[index] = signatures[signature]
-    if not signatures:
+        if candidate_anchors:
+            similarities = (
+                prepared.x[index] @ prepared.x[candidate_anchors].T
+            ).toarray().ravel()
+            closest = int(np.argmax(similarities))
+            if float(similarities[closest]) + 1e-7 >= minimum_similarity:
+                qec_members[index] = candidate_anchors[closest]
+                continue
+        candidate_anchors.append(index)
+        qec_members[index] = index
+    if not candidate_anchors:
         return labels, strengths, {}
 
-    anchor_indices = tuple(sorted(set(qec_members.values())))
+    anchor_indices = tuple(candidate_anchors)
     anchor_ids = {
         index: group_id for group_id, index in enumerate(anchor_indices)
     }
@@ -564,7 +574,7 @@ def cluster_fin_methods(
                 "Andere Fahrzeuge werden nur bei mindestens "
                 f"{minimum_similarity:.0%} originaler ECU:DTC-TF-IDF-"
                 "Cosinusähnlichkeit zu ihrem nächsten QEC-Anker zugeordnet. "
-                "Identische QEC-Signaturen teilen einen Anker. "
+                "Ähnliche QEC-FINs teilen einen realen QEC-Anker. "
                 "Nicht passende FINs sowie Gruppen unter Mindestgröße "
                 "bleiben unzugeordnet. Die Mindestähnlichkeit gilt "
                 "jeweils zum Anker, NICHT zwischen jedem Fahrzeugpaar. "
