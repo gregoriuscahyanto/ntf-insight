@@ -9,6 +9,7 @@ from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication
 from shiboken6 import isValid
 
+from ntf_insight.analysis.cluster_dtc_filters import ClusterDtcFilter
 from ntf_insight.app.widgets.autoexport_fin_workspace import AutoExportFinWorkspace
 from ntf_insight.storage.duckdb_store import DuckDBStore
 from ntf_insight.storage.source_knowledge_store import SourceKnowledgeStore
@@ -68,9 +69,9 @@ def test_default_qec_filter_exact_selection_search_and_source_donuts(tmp_path):
     app.processEvents()
     assert panel.only_qec.isChecked()
     assert not panel.qec_anchor_mode.isChecked()
-    assert len(panel.finding_actions) == 2
-    assert panel.finding_menu is not None
-    assert "2 QEC-Fälle" in panel.finding_summary.text()
+    assert panel.filter_button.text() == "Filter"
+    assert panel.qec_anchor_mode.isVisible()
+    assert "2 von 2 QEC-Fällen" in panel.finding_summary.text()
 
     # Ankerbildung must remain selectable even with QEC-only default.
     panel.qec_anchor_mode.setChecked(True)
@@ -79,10 +80,14 @@ def test_default_qec_filter_exact_selection_search_and_source_donuts(tmp_path):
     panel.qec_anchor_mode.setChecked(False)
 
     first = qec[0].qec_ssl_end_finding
-    panel.finding_actions[first].setChecked(True)
-    panel.finding_search.setText("PRÜF-ENDBEFUND")
-    assert "1 QEC-Fälle" in panel.finding_summary.text()
+    panel._dtc_filter = ClusterDtcFilter(
+        include_findings=frozenset((first,))
+    )
+    panel._update_filter_summary()
+    panel._update_finding_summary()
+    assert "1 von 2 QEC-Fällen" in panel.finding_summary.text()
     assert "1 unterschiedliche FINs" in panel.finding_summary.text()
+    assert "SSL-Endbefund" in panel.filter_summary.text()
 
     panel.start_button.click()
     _wait(panel, app)
@@ -103,14 +108,17 @@ def test_default_qec_filter_exact_selection_search_and_source_donuts(tmp_path):
     assert panel.coverage_donuts["part"].count == 0
     assert panel.result is previous and panel._task is None
 
-    panel.finding_search.clear()
+    panel._dtc_filter = ClusterDtcFilter()
+    panel._update_filter_summary()
+    panel._update_finding_summary()
+    panel._invalidate()
     assert panel.result is None  # no stale result for a new QEC cohort
-    panel.finding_actions[first].setChecked(False)
-    assert "2 QEC-Fälle" in panel.finding_summary.text()
+    assert "2 von 2 QEC-Fällen" in panel.finding_summary.text()
     panel.only_qec.setChecked(False)
     assert not panel.only_qec.isChecked()
     panel.qec_anchor_mode.setChecked(True)
     assert panel.qec_anchor_mode.isChecked()
+    assert panel.qec_anchor_mode.isVisible()  # Also for all FINs.
     panel.start_button.click()
     _wait(panel, app)
     assert panel.result.total_fins == 3
