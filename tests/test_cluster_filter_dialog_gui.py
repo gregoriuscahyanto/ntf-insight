@@ -96,6 +96,13 @@ def test_ssl_search_selection_removal_and_exclusion_precedence():
     assert not dialog.selected_rules().exclude_findings
     dialog._reset()
     assert not dialog.selected_rules().active
+    # A text search can explicitly add all matching SSL findings.
+    search.setText("SYNTH-SSL-B")
+    assert proxy.rowCount() == 1
+    dialog._add_matches("include_findings")
+    assert dialog.selected_rules().include_findings == frozenset(
+        ("nicht reproduzierbar",)
+    )
     dialog.close()
 
 
