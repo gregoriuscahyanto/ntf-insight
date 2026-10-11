@@ -1,4 +1,4 @@
-"""Schnelle 2D/3D-Punktwolke aller FINs, ohne 11.000 QGraphicsItems.
+"""Drehbare FIN-3D-Punktwolke, ohne 11.000 QGraphicsItems.
 
 QPainter rendert gruppenweise die Projektionspunkte in einem einzigen
 Widget. 3D wird per gedrueckter linker Maustaste gedreht und geneigt.
@@ -27,7 +27,7 @@ class FinClusterProjectionPlot(QFrame):
         self.setMouseTracking(True)
         self.setObjectName("Card")
         self._result: FinPatternResult | None = None
-        self.mode = "2d"
+        self.mode = "3d"
         self.yaw = 32
         self.elevation = 24
         self.zoom = 1.0
