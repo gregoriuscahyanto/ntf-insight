@@ -55,6 +55,21 @@ def detect_source_type(path: Path) -> SourceType:
                 )
                 if {"Referenznr.", "FIN", "Rep.-Datum"} <= set(header):
                     return SourceType.VEHICLE_CASE_LIST
+            # QEC export variant without VIN: SSL result can be joined only
+            # to an ALREADY known QEC case with the exact reference number.
+            # Recognizing the file never creates a case or guesses a FIN.
+            if "Schadteile" in workbook.sheetnames:
+                header = next(
+                    workbook["Schadteile"].iter_rows(
+                        min_row=1, max_row=1, values_only=True
+                    ),
+                    (),
+                )
+                if {
+                    "Referenznr.", "SSL Endbefund",
+                    "SSL-Endbefund Benennung",
+                } <= set(header):
+                    return SourceType.VEHICLE_CASE_LIST
         finally:
             workbook.close()
         return SourceType.OTHER
