@@ -50,6 +50,7 @@ class ClusterDtcFilterDialog(QDialog):
         self._views: dict[str, tuple[QTableView, QSortFilterProxyModel, SimpleTableModel, QLabel]] = {}
         self._source_rows: dict[str, list[tuple[object, ...]]] = {}
         self._source_keys: dict[str, list[str | tuple[str, str]]] = {}
+        self._searches: dict[str, QLineEdit] = {}
         self._subtabs: dict[str, QTabWidget] = {}
 
         outer = QVBoxLayout(self)
@@ -135,6 +136,7 @@ class ClusterDtcFilterDialog(QDialog):
         )
         search.setClearButtonEnabled(True)
         layout.addWidget(search)
+        self._searches[name] = search
         self._source_rows[name] = list(data)
         self._source_keys[name] = [
             (str(row[0]).strip().upper(), str(row[1]).strip().upper())
@@ -165,9 +167,20 @@ class ClusterDtcFilterDialog(QDialog):
         layout.addWidget(view, 1)
         commands = QHBoxLayout()
         add = QPushButton("Markierte hinzufügen")
+        all_matches = QPushButton("Alle Suchtreffer hinzufügen")
+        all_matches.setEnabled(False)
+        all_matches.setToolTip(
+            "Alle Einträge des aktuellen Suchtreffers als Filterregel "
+            "speichern, nicht nur die markierten Zeilen. "
+            "Ohne Suchtext ist diese Aktion gesperrt."
+        )
+        search.textChanged.connect(
+            lambda value, button=all_matches: button.setEnabled(bool(value.strip()))
+        )
         remove = QPushButton("Markierte entfernen")
         clear = QPushButton("Auswahl dieser Liste leeren")
         commands.addWidget(add)
+        commands.addWidget(all_matches)
         commands.addWidget(remove)
         commands.addWidget(clear)
         commands.addStretch(1)
@@ -177,6 +190,7 @@ class ClusterDtcFilterDialog(QDialog):
         layout.addWidget(status)
         self._views[name] = (view, proxy, model, status)
         add.clicked.connect(lambda _checked=False, k=name: self._change(k, True))
+        all_matches.clicked.connect(lambda _checked=False, k=name: self._add_matches(k))
         remove.clicked.connect(lambda _checked=False, k=name: self._change(k, False))
         clear.clicked.connect(lambda _checked=False, k=name: self._clear(k))
         nested.addTab(page, title)
@@ -193,6 +207,16 @@ class ClusterDtcFilterDialog(QDialog):
                 self._sets[name].add(key)
             else:
                 self._sets[name].discard(key)
+        self._update_count(name)
+
+    def _add_matches(self, name: str) -> None:
+        if not self._searches[name].text().strip():
+            return
+        _view, proxy, _model, _status = self._views[name]
+        self._sets[name].update(
+            self._source_keys[name][proxy.mapToSource(proxy.index(row, 0)).row()]
+            for row in range(proxy.rowCount())
+        )
         self._update_count(name)
 
     def _clear(self, name: str) -> None:
