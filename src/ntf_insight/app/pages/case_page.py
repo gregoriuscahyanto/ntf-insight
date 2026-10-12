@@ -125,6 +125,22 @@ class CasePage(QWidget):
         )
         self.cluster_workspace.case_requested.connect(self.select_case)
 
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
+        content = QWidget()
+        scroll.setWidget(content)
+        self.analysis_tab = scroll
+        self.detail_tabs.addTab(scroll, "FIN / Fallanalyse")
+
+        if manual_service is not None:
+            self.quicktest_browser = QuickTestBrowser(
+                QuickTestStore(manual_service.store)
+            )
+            self.detail_tabs.addTab(self.quicktest_browser, "QuickTests nach FIN")
+        else:
+            self.quicktest_browser = None
+
         # One case per row (not one row per FIN): SW intervention, observed
         # versions and actual CPC3 quick-test outcomes for all pump cases.
         # Heavy local AutoExport reads start only when this tab is opened.
@@ -142,22 +158,6 @@ class CasePage(QWidget):
                 else None
             )
         )
-
-        scroll = QScrollArea()
-        scroll.setWidgetResizable(True)
-        scroll.setFrameShape(QFrame.Shape.NoFrame)
-        content = QWidget()
-        scroll.setWidget(content)
-        self.analysis_tab = scroll
-        self.detail_tabs.addTab(scroll, "FIN / Fallanalyse")
-
-        if manual_service is not None:
-            self.quicktest_browser = QuickTestBrowser(
-                QuickTestStore(manual_service.store)
-            )
-            self.detail_tabs.addTab(self.quicktest_browser, "QuickTests nach FIN")
-        else:
-            self.quicktest_browser = None
 
         layout = QVBoxLayout(content)
         layout.setContentsMargins(32, 28, 32, 28)
