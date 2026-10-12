@@ -148,7 +148,7 @@ class CasePage(QWidget):
             self.real_cases, self.source_knowledge,
         )
         self.detail_tabs.addTab(
-            self.cpc3_overview, "CPC3 · SW-Übersicht",
+            self.cpc3_overview, "ECU · SW-Übersicht",
         )
         self.cpc3_overview.case_requested.connect(self.select_case)
         self.detail_tabs.currentChanged.connect(
