@@ -10,7 +10,8 @@ from openpyxl import load_workbook
 from PySide6.QtWidgets import QApplication
 
 from ntf_insight.analysis.cpc3_pump_overview import (
-    build_cpc3_pump_overview, evaluate_cpc3_pump_case, is_pump_case,
+    build_cpc3_pump_overview, ecu_software_frequencies,
+    evaluate_cpc3_pump_case, is_pump_case,
 )
 from ntf_insight.app.widgets.cpc3_pump_overview_panel import (
     CPC3PumpOverviewPanel,
@@ -22,6 +23,9 @@ from ntf_insight.domain.events import (
 )
 from ntf_insight.domain.vehicle import Vehicle
 from ntf_insight.reporting.cpc3_pump_excel import export_cpc3_pump_overview
+from ntf_insight.ingestion.reference_source_parsers import iter_autoexport_rows
+from ntf_insight.storage.duckdb_store import DuckDBStore
+from ntf_insight.storage.source_knowledge_store import SourceKnowledgeStore
 
 
 BASE = datetime(2026, 3, 1, 12)
@@ -332,3 +336,135 @@ def test_excel_escapes_untrusted_formula_like_software_event(tmp_path):
         assert ws["F2"].value.startswith("'+")
     finally:
         wb.close()
+
+
+def test_full_ecu_history_from_archived_csv_and_fast_ecu_switch(tmp_path):
+    """Synthetic copy of AutoExport header, no customer VINs or OEM SW."""
+    path = tmp_path / "synthetic-autoexport.csv"
+    header = (
+        "DiagStartDt;SourceSystemNm;EcuNm;EcuHwPartnumberCd;"
+        "EcuSuppHwVersionTxt;EcuSwVersionTxt;KmReadingNum;"
+        "EcuFaultNm;DiagStartTs;Fin;CntXDDiagnosisHeaderSid"
+    )
+    data = [
+        ("2026-03-01", "CPC3", "22/36 000", "PUMP-1", "OLD"),
+        ("2026-03-01", "CPC3", "22/36 000", "PUMP-2", "OLD"),
+        ("2026-03-04", "CPC3", "23/38 000", "PUMP-3", "MID"),
+        ("2026-03-15", "CPC3", "24/28 000", "PUMP-4", "NEW"),
+        ("2026-03-25", "CPC3", "", "POST-NO-SW", "LATE"),
+        ("2026-03-01", "MCM", "MCM-8", "MCM-FAULT", "MC1"),
+    ]
+    csv_rows = [
+        ";".join((
+            day, "XD", ecu, "000 901 23 45", "20/01 000",
+            sw, "42000", dtc, "", FIN, reference,
+        ))
+        for day, ecu, sw, dtc, reference in data
+    ]
+    path.write_text(
+        "\n".join([
+            "Original query: synthetic",
+            "Query Id: synthetic",
+            "",
+            header,
+            *csv_rows,
+            "",
+        ]), encoding="utf-8",
+    )
+    store = SourceKnowledgeStore(DuckDBStore(tmp_path / "data.duckdb"))
+    store.save_records(
+        "a" * 64, "autoexport_rows", iter_autoexport_rows(path),
+    )
+    assert "CPC3" in store.autoexport_ecu_names()
+    assert "MCM" in store.autoexport_ecu_names()
+    rows, capped = store.ecu_software_rows_for_fins([FIN], "CPC3")[FIN]
+    assert not capped
+    assert len(rows) == 4  # two DTC lines are one ECU snapshot
+    assert rows[0]["dtc_codes"] == ("PUMP-1", "PUMP-2")
+    assert rows[-1]["software_version"] is None
+    case = _pump(31, with_quicktests=False)
+    case.ecu_states = []
+    report = build_cpc3_pump_overview(
+        [case], ecu="CPC3",
+        load_ecu_history=store.ecu_software_rows_for_fins,
+    )
+    row = report.cases[0]
+    assert row.ecu == "CPC3"
+    assert row.sw_versions == ("22/36 000", "23/38 000", "24/28 000")
+    assert len(row.sw_history) == 3
+    assert row.before_sw == "23/38 000"
+    assert row.after_sw == "24/28 000"
+    assert row.pre_dtc_evidence == "present"
+    assert row.post_dtc_evidence == "present"
+    assert "POST-NO-SW" in row.post_dtc_observed
+    assert row.post_complete_tests == 0
+    mcm = build_cpc3_pump_overview(
+        [case], ecu="MCM",
+        load_ecu_history=store.ecu_software_rows_for_fins,
+    ).cases[0]
+    assert mcm.ecu == "MCM"
+    assert mcm.sw_versions == ("MCM-8",)
+    assert mcm.pre_dtc_observed == ("MCM-FAULT",)
+    assert mcm.post_dtc_evidence == "unknown"
+
+
+def test_autoexport_without_full_post_qt_never_counts_as_dtc_free():
+    case = _pump(9, with_quicktests=False)
+    case.ecu_states = []
+    rows = [
+        {
+            "diag_date": "2026-03-01", "software_version": "SW-1",
+            "dtc_codes": ("PUMP-1",), "source_ref": "raw:synthetic#row:1",
+        },
+        {
+            "diag_date": "2026-03-15", "software_version": "SW-2",
+            "dtc_codes": (), "source_ref": "raw:synthetic#row:2",
+        },
+    ]
+    item = evaluate_cpc3_pump_case(case, autoexport_rows=rows)
+    assert item.pre_dtc_evidence == "present"
+    assert item.post_dtc_evidence == "unknown"
+    assert item.returned_dtcs == ()
+    assert "nicht beurteilbar" in item.sw_effect
+
+
+def test_sw_frequency_counts_cases_not_csv_dtc_rows():
+    cases = [
+        _pump(i, with_quicktests=True, before_sw="SW-CASE-A")
+        for i in range(50, 56)
+    ]
+    report = build_cpc3_pump_overview(cases)
+    stats = ecu_software_frequencies(report.cases)
+    assert len(stats) == 1
+    assert stats[0].cases == 6
+    assert stats[0].fins == 1  # 6 real cases can share one VIN
+    assert stats[0].with_pre_dtc == 6
+    assert stats[0].with_pre_complete_comparison == 6
+    assert stats[0].recurrence_percent == 0.0
+    assert ecu_software_frequencies(report.cases[:1])[0].recurrence_percent is None
+
+
+def test_gui_renders_selected_other_ecu_sw_and_all_observations():
+    app = QApplication.instance() or QApplication([])
+    case = _pump(99, with_quicktests=False)
+    case.ecu_states = [
+        ECUStateObservation(
+            vin=FIN, ecu="MCM", occurred_at=BASE,
+            software_version="MCM-SW-1",
+        ),
+        ECUStateObservation(
+            vin=FIN, ecu="MCM",
+            occurred_at=BASE + timedelta(days=12),
+            software_version="MCM-SW-2",
+        ),
+    ]
+    report = build_cpc3_pump_overview([case], ecu="MCM")
+    panel = CPC3PumpOverviewPanel([case], None)
+    app.processEvents()
+    panel.set_report(report)
+    assert "MCM" in panel.heading.text()
+    assert panel.model.rows[0][4] == "MCM"
+    assert panel.model.rows[0][7] == "MCM-SW-1; MCM-SW-2"
+    assert panel.sw_detail_model.rowCount() == 2
+    assert sum(n for _, n in panel.donut_sw.donut.entries) == 1
+    panel.close()
