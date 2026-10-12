@@ -56,8 +56,8 @@ class CPC3SoftwarePanel(QWidget):
         layout.addWidget(self.evidence_note)
 
         self.version_model = SimpleTableModel((
-            "CPC3-SW", "Erste Beobachtung", "Letzte Beobachtung",
-            "Anzahl", "Quellen", "Beobachtete CPC3-DTCs",
+            "ECU-SW", "Erste Beobachtung", "Letzte Beobachtung",
+            "Anzahl", "Quellen", "Beobachtete ECU-DTCs",
         ))
         layout.addWidget(_table(self.version_model, max_height=175))
         self.change_heading = QLabel(
@@ -91,7 +91,7 @@ class CPC3SoftwarePanel(QWidget):
     def clear(self) -> None:
         self._current_case = None
         self.swap_summary.setText("Keine FIN / kein Fall ausgewählt.")
-        self.evidence_note.setText("Keine CPC3-Softwaredaten ausgewertet.")
+        self.evidence_note.setText("Keine ECU-Softwaredaten ausgewertet.")
         self.version_model.set_rows([])
         self.change_model.set_rows([])
 
@@ -142,9 +142,23 @@ class CPC3SoftwarePanel(QWidget):
             if review.after_ambiguous
             else self._state_description(review.first_after_swap)
         )
+        day_versions = tuple(dict.fromkeys(
+            str(state.software_version).strip()
+            for state in review.states
+            if review.replacement_day is not None
+            and state.occurred_at.date() == review.replacement_day
+            and str(state.software_version or "").strip()
+        ))
+        on_swap_day = (
+            f" {self.ecu}-SW am Tauschtag beobachtet: "
+            f"{', '.join(day_versions)}. "
+            "Ohne Reparaturuhrzeit ist weder Vorher noch Nachher belegt."
+            if day_versions else ""
+        )
         self.swap_summary.setText(
             f"{anchor}. {self.ecu}-SW zuletzt VOR dem Tauschtag: {before}. "
-            f"{self.ecu}-SW erstmals NACH dem Tauschtag: {after}. "
+            f"{self.ecu}-SW erstmals NACH dem Tauschtag: {after}."
+            f"{on_swap_day} "
             "Der exakte SW-Stand beim eigentlichen Pumpenausfall ist "
             "damit nicht automatisch belegt."
         )
@@ -222,7 +236,7 @@ class CPC3SoftwarePanel(QWidget):
                     if evidence.comparable_tests else "Nicht vergleichbar"
                 ),
                 (
-                    "Zwei vollständige CPC3-QuickTests"
+                    f"Zwei vollständige {self.ecu}-QuickTests"
                     if evidence.comparable_tests
                     else "Kein vollständiges QuickTest-Paar"
                 ),
