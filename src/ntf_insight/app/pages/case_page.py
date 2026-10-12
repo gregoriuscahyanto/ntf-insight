@@ -44,6 +44,7 @@ from ntf_insight.app.models.case_table_model import CaseRow, CaseTableModel
 from ntf_insight.app.models.simple_table_model import SimpleTableModel
 from ntf_insight.app.models.timeline_table_model import TimelineTableModel
 from ntf_insight.app.widgets.event_time_plot import EventTimePlot
+from ntf_insight.app.widgets.cpc3_software_panel import CPC3SoftwarePanel
 from ntf_insight.app.widgets.quicktest_browser import QuickTestBrowser
 from ntf_insight.app.widgets.autoexport_fin_workspace import AutoExportFinWorkspace
 from ntf_insight.ingestion.manual_entry import ManualCaseService, ManualEntryError
@@ -373,6 +374,11 @@ class CasePage(QWidget):
         )
         layout.addWidget(self.time_plot)
 
+        # FIN-wide CPC3-SW evidence also includes AutoExport rows not attached
+        # to the current QEC case. Read-only, no inferred update dates.
+        self.cpc3_panel = CPC3SoftwarePanel(self.source_knowledge)
+        layout.addWidget(self.cpc3_panel)
+
         layout.addWidget(QLabel(
             "Erkannte HW-/SW-Standabweichungen", objectName="CardTitle"
         ))
@@ -601,6 +607,7 @@ class CasePage(QWidget):
         self.time_plot.set_entries([])
         self.version_change_model.set_rows([])
         self.version_change_summary.setText("Keine FIN / kein Fall ausgewählt.")
+        self.cpc3_panel.clear()
         self.autoexport_history_model.set_rows([])
         self.autoexport_history_note.setText("Keine FIN ausgewählt.")
         self.autoexport_history_count.setText("—")
@@ -803,6 +810,7 @@ class CasePage(QWidget):
                 self._syncing_quicktest_fin = False
 
         self._display_version_changes(case)
+        self.cpc3_panel.show_case(case)
         # Case change refreshes the corresponding VIN-wide history; an
         # independent direct FIN lookup remains possible without a case.
         self.autoexport_fin_lookup.setText(case.vin)
