@@ -286,6 +286,19 @@ def _effect_after_software_action(
         and abs((event.occurred_at.date() - swap_day).days) <= days
     ]
     if not actions:
+        sessions = _complete_cpc3_tests(case, ecu)
+        have_before = any(
+            item.occurred_at.date() < swap_day for item in sessions
+        )
+        have_after = any(
+            item.occurred_at.date() > swap_day for item in sessions
+        )
+        if not (have_before and have_after):
+            return (
+                "SW-Wirkung nicht beurteilbar: SW-Updatedatum nicht "
+                "dokumentiert und vollständige ECU-Vor-/Nachtests fehlen",
+                0, 0, (),
+            )
         return (
             "SW-Updatedatum nicht dokumentiert: SW-Lösung nicht zuordenbar",
             0, 0, (),
