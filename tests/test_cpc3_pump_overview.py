@@ -181,7 +181,10 @@ def test_dtc_recurs_in_later_complete_qt_even_if_first_post_is_clear():
     assert row.post_complete_tests == 2
     assert row.returned_dtcs == ("PUMP-1",)
     assert "erneut" in row.dtc_status
-    assert "nicht belegt" in row.sw_effect
+    assert "keine SW-Lösung belegt" in row.sw_effect
+    assert row.sw_pre_complete_tests == 1
+    assert row.sw_post_complete_tests == 2
+    assert row.sw_post_returned_dtcs == ("PUMP-1",)
     assert "PUMP-ON-SAME-DAY" not in row.post_cpc3_dtcs
 
 
@@ -193,6 +196,48 @@ def test_complete_cpc3_qt_without_post_dtc_is_observation_not_sw_cure():
     assert row.post_complete_tests == 2
     assert "nicht erneut" in row.dtc_status
     assert "nicht isolierbar" in row.sw_effect
+
+
+
+def test_no_documented_update_is_not_counted_as_sw_cure():
+    row = evaluate_cpc3_pump_case(_pump(
+        1, update=None, after_codes=(), extra_post_codes=(),
+    ))
+    assert row.update_group == "observed_change"
+    assert row.sw_pre_complete_tests == 0
+    assert row.sw_post_complete_tests == 0
+    assert "Updatedatum nicht dokumentiert" in row.sw_effect
+
+
+def test_separate_software_intervention_has_observational_followup_only():
+    row = evaluate_cpc3_pump_case(_pump(
+        1, update=12, after_codes=("PUMP-1",),
+        extra_post_codes=(),
+    ))
+    assert row.update_group == "documented_nearby"
+    assert row.sw_pre_complete_tests == 2
+    assert row.sw_post_complete_tests == 1
+    assert row.sw_post_returned_dtcs == ()
+    assert "zeitlicher Hinweis" in row.sw_effect
+    assert "keine kausal bestätigte SW-Heilung" in row.sw_effect
+
+
+def test_sw_intervention_and_pump_swap_in_same_diagnosis_window_confounded():
+    row = evaluate_cpc3_pump_case(_pump(
+        1, update=7, after_codes=(), extra_post_codes=(),
+    ))
+    assert "Pumpentausch im Messfenster" in row.sw_effect
+    assert "nicht isolierbar" in row.sw_effect
+
+
+def test_multiple_sw_updates_cannot_be_summarized_as_one_cure():
+    case = _pump(1, update=7)
+    case.software_events.append(SoftwareEvent(
+        vin=FIN, ecu="CPC3", occurred_at=BASE + timedelta(days=8),
+        software_version="SW-NEWER", action="SW geflasht",
+    ))
+    row = evaluate_cpc3_pump_case(case)
+    assert "Mehrere SW-Maßnahmen" in row.sw_effect
 
 
 def test_without_complete_quicktests_sw_effect_stays_unknown():
