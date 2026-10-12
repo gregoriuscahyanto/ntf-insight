@@ -59,6 +59,7 @@ class CPC3SoftwareReview:
     documented_actions: tuple[SoftwareEvent, ...]
     observation_count: int
     truncated: bool
+    states: tuple[ECUStateObservation, ...]
 
     @property
     def has_sw_evidence(self) -> bool:
@@ -91,7 +92,8 @@ def _read_autoexport_time(row: dict[str, Any]) -> tuple[datetime, str] | None:
 
 
 def _autoexport_observations(
-    fin: str, raw_rows: Iterable[dict[str, Any]],
+    fin: str, raw_rows: Iterable[dict[str, Any]], *,
+    ecu: str = "CPC3",
 ) -> tuple[list[ECUStateObservation], dict[str, frozenset[str]]]:
     """Coalesce repeated DTC CSV lines into one partial observation per export/run.
 
@@ -112,9 +114,14 @@ def _autoexport_observations(
             "source_ref": source_ref, "dtcs": set(),
             "km": None, "hw": None,
         })
-        dtc = str(row.get("dtc_code") or "").strip().upper()
-        if dtc:
-            bucket["dtcs"].add(dtc)
+        dtcs = [
+            str(dtc).strip().upper() for dtc in row.get("dtc_codes", ())
+            if str(dtc).strip()
+        ]
+        single = str(row.get("dtc_code") or "").strip().upper()
+        if single:
+            dtcs.append(single)
+        bucket["dtcs"].update(dtcs)
         if bucket["km"] is None:
             try:
                 value = int(str(row.get("mileage_km") or ""))
@@ -127,8 +134,8 @@ def _autoexport_observations(
     dtcs_by_event = {}
     for index, (key, bucket) in enumerate(sorted(buckets.items()), start=1):
         state = ECUStateObservation(
-            event_id=f"cpc3-raw:{index}:{key[0]}:{key[1].isoformat()}",
-            vin=fin, ecu="CPC3", occurred_at=bucket["when"],
+            event_id=f"ecu-raw:{index}:{key[0]}:{key[1].isoformat()}",
+            vin=fin, ecu=ecu, occurred_at=bucket["when"],
             software_version=bucket["sw"], hardware_version=bucket["hw"],
             mileage_km=bucket["km"], source_ref=bucket["source_ref"],
             time_precision=bucket["precision"],
@@ -156,7 +163,7 @@ def _date_ambiguous_days(
                 for event in events
             )
             or len({
-                "AutoExport" if event.event_id.startswith("cpc3-raw:")
+                "AutoExport" if event.event_id.startswith(("cpc3-raw:", "ecu-raw:"))
                 else "Falldiagnose/QuickTest"
                 for event in events
             }) > 1
@@ -208,24 +215,26 @@ def _boundary(
     return min(at_moment, key=lambda state: state.event_id), False
 
 
-def assess_cpc3_software(
+def assess_ecu_software(
     case: NTFCase,
     *,
+    ecu: str = "CPC3",
     autoexport_rows: Iterable[dict[str, Any]] = (),
     truncated: bool = False,
 ) -> CPC3SoftwareReview:
-    """Correlate genuine CPC3 versions with pump replacement and DTC evidence.
+    """Correlate genuine selected-ECU versions with pump replacement and DTC evidence.
 
     Only complete, identified QuickTest sessions may support a comparison
     showing a code present in one test and absent from the next. Partial
     AutoExport code lists are *positive* observations, not absence evidence.
     """
+    chosen_ecu = ecu.strip().upper()
     raw_states, raw_codes = _autoexport_observations(
-        case.vin, autoexport_rows
+        case.vin, autoexport_rows, ecu=chosen_ecu,
     )
     original = [
         state for state in case.ecu_states
-        if _is_cpc3(state.ecu) and state.vin.strip().upper() == case.vin.upper()
+        if state.ecu.strip().upper() == chosen_ecu and state.vin.strip().upper() == case.vin.upper()
         and _version(state.software_version)
     ]
     # A normal imported case may also contain projections of the same raw
@@ -248,7 +257,7 @@ def assess_cpc3_software(
     ]
     changes = [
         change for change in detect_ecu_version_changes(comparable)
-        if change.kind == "sw" and _is_cpc3(change.ecu)
+        if change.kind == "sw" and change.ecu.strip().upper() == chosen_ecu
     ]
     sessions = {
         item.session_id for item in case.diagnostic_sessions
@@ -261,7 +270,7 @@ def assess_cpc3_software(
                 event.dtc_code.strip().upper()
                 for event in case.diagnostics
                 if event.session_id == state.session_id
-                and _is_cpc3(event.ecu) and event.dtc_code.strip()
+                and event.ecu.strip().upper() == chosen_ecu and event.dtc_code.strip()
             )
     # Never promote an AutoExport partial code set into a complete test.
     change_evidence = []
@@ -329,7 +338,7 @@ def assess_cpc3_software(
     documented = tuple(sorted(
         (
             event for event in case.software_events
-            if _is_cpc3(event.ecu) and event.vin.strip().upper() == case.vin.upper()
+            if event.ecu.strip().upper() == chosen_ecu and event.vin.strip().upper() == case.vin.upper()
         ),
         key=lambda event: (event.occurred_at, event.event_id),
     ))
@@ -347,5 +356,23 @@ def assess_cpc3_software(
         changes=tuple(change_evidence),
         documented_actions=documented,
         observation_count=len(observed),
+        truncated=truncated,
+        states=tuple(sorted(
+            observed, key=lambda state: (
+                state.occurred_at, state.software_version or "", state.event_id,
+            )
+        )),
+    )
+
+
+def assess_cpc3_software(
+    case: NTFCase,
+    *,
+    autoexport_rows: Iterable[dict[str, Any]] = (),
+    truncated: bool = False,
+) -> CPC3SoftwareReview:
+    """Legacy CPC3 API; use assess_ecu_software for other control units."""
+    return assess_ecu_software(
+        case, ecu="CPC3", autoexport_rows=autoexport_rows,
         truncated=truncated,
     )
