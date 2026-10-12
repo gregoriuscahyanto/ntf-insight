@@ -1,4 +1,4 @@
-"""Local Excel review list: CPC3 SW observations versus pump replacements.
+"""Local Excel review list: selected-ECU SW observations versus pump replacements.
 
 This workbook includes FINs and must never be sent to GitHub or CI artifacts.
 """
@@ -24,16 +24,16 @@ def _safe(value: object) -> str:
 
 _HEADERS = (
     "Fall-ID", "FIN", "Bauteil", "Pumpentauschdatum",
-    "CPC3-SW vor Tausch", "CPC3-SW nach Tausch",
+    "ECU-SW vor Tausch", "ECU-SW nach Tausch",
     "SW-Maßnahme / Versionswechsel", "Änderungskategorie",
     "Zeitintervall der SW-Beobachtungen",
-    "CPC3-DTCs im letzten vollständigen Vortest",
-    "CPC3-DTCs in vollständigen Nachtests",
+    "ECU-DTCs im letzten vollständigen Vortest",
+    "ECU-DTCs in vollständigen Nachtests",
     "DTCs erneut beobachtet", "DTC-Verlauf", "SW-Wirkung",
-    "Vollständige CPC3-QuickTests davor",
-    "Vollständige CPC3-QuickTests danach",
-    "Vollständige CPC3-QuickTests vor SW-Maßnahme",
-    "Vollständige CPC3-QuickTests nach SW-Maßnahme",
+    "Vollständige ECU-QuickTests davor",
+    "Vollständige ECU-QuickTests danach",
+    "Vollständige ECU-QuickTests vor SW-Maßnahme",
+    "Vollständige ECU-QuickTests nach SW-Maßnahme",
     "DTCs erneut nach SW-Maßnahme",
     "Dokumentierte SW-Maßnahmen", "Quellbeleg SW vor",
     "Quellbeleg SW nach", "Datenlücken", "AutoExport-Begrenzung",
