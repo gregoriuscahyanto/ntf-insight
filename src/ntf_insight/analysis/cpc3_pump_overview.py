@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from collections import Counter, defaultdict
 from dataclasses import dataclass
-from datetime import date, datetime
+from datetime import date
 from typing import Callable, Iterable
 
 from ntf_insight.analysis.cpc3_software import (
@@ -51,7 +51,7 @@ class CPC3PumpOverviewCase:
     ecu: str
     sw_versions: tuple[str, ...]
     sw_history: tuple[str, ...]
-    sw_observations: tuple[tuple[datetime, str, str, str], ...]
+    sw_observations: tuple[tuple[str, str, str, str], ...]
     pre_dtc_evidence: str
     post_dtc_evidence: str
     pre_dtc_observed: tuple[str, ...]
@@ -389,11 +389,11 @@ def _all_versions_and_observations(
     review: CPC3SoftwareReview,
 ) -> tuple[
     tuple[str, ...], tuple[str, ...],
-    tuple[tuple[datetime, str, str, str], ...],
+    tuple[tuple[str, str, str, str], ...],
 ]:
     sw_versions: list[str] = []
     history: list[str] = []
-    detail: list[tuple[datetime, str, str, str]] = []
+    detail: list[tuple[str, str, str, str]] = []
     previous_sw = None
     for state in review.states:
         sw = str(state.software_version or "").strip()
@@ -410,13 +410,13 @@ def _all_versions_and_observations(
             relative = "nach Tausch"
         else:
             relative = "Tauschtag (Reihenfolge unbekannt)"
-        detail.append((state.occurred_at, sw, relative, state.source_ref or ""))
+        moment = (
+            state.occurred_at.strftime("%d.%m.%Y (nur Datum)")
+            if getattr(state, "time_precision", "datetime") == "date"
+            else state.occurred_at.strftime("%d.%m.%Y %H:%M")
+        )
+        detail.append((moment, sw, relative, state.source_ref or ""))
         if sw.casefold() != previous_sw:
-            moment = (
-                state.occurred_at.strftime("%d.%m.%Y")
-                if getattr(state, "time_precision", "datetime") == "date"
-                else state.occurred_at.strftime("%d.%m.%Y %H:%M")
-            )
             history.append(f"{sw} ({moment})")
             previous_sw = sw.casefold()
     return tuple(sw_versions), tuple(history), tuple(detail)
