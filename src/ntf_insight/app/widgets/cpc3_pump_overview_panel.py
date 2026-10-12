@@ -167,7 +167,8 @@ class CPC3PumpOverviewPanel(QWidget):
             "CPC3-SW vor Tausch", "CPC3-SW nach Tausch",
             "SW-Maßnahme / Standabweichung", "Beobachtungsintervall",
             "CPC3-DTCs vor", "CPC3-DTCs nach", "DTC-Verlauf",
-            "SW-Wirkung / Zuordnung", "Vollständige QT vor/nach",
+            "SW-Wirkung / Zuordnung", "Vollständige QT vor/nach Tausch",
+            "Vollständige QT vor/nach SW", "DTC erneut nach SW",
             "Quellen / dokumentierte SW-Maßnahme", "Datenlücken",
         ))
         self.proxy = _CPC3OverviewFilter(self)
@@ -197,7 +198,7 @@ class CPC3PumpOverviewPanel(QWidget):
         self.table.horizontalHeader().setStretchLastSection(True)
         for column, width in enumerate((
             160, 175, 135, 115, 135, 135, 285, 195, 170,
-            170, 270, 320, 125, 350, 300,
+            170, 270, 320, 125, 125, 175, 350, 300,
         )):
             self.table.setColumnWidth(column, width)
         self.table.doubleClicked.connect(self._open_case)
@@ -272,6 +273,8 @@ class CPC3PumpOverviewPanel(QWidget):
                 ", ".join(item.post_cpc3_dtcs) or "Keine belegt",
                 item.dtc_status, item.sw_effect,
                 f"{item.pre_complete_tests} / {item.post_complete_tests}",
+                f"{item.sw_pre_complete_tests} / {item.sw_post_complete_tests}",
+                ", ".join(item.sw_post_returned_dtcs) or "Keine belegt",
                 " | ".join(item.update_events) or (
                     f"Vor: {item.before_source or '—'}; "
                     f"Nach: {item.after_source or '—'}"
