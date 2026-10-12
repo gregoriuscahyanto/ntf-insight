@@ -32,6 +32,9 @@ _HEADERS = (
     "DTCs erneut beobachtet", "DTC-Verlauf", "SW-Wirkung",
     "Vollständige CPC3-QuickTests davor",
     "Vollständige CPC3-QuickTests danach",
+    "Vollständige CPC3-QuickTests vor SW-Maßnahme",
+    "Vollständige CPC3-QuickTests nach SW-Maßnahme",
+    "DTCs erneut nach SW-Maßnahme",
     "Dokumentierte SW-Maßnahmen", "Quellbeleg SW vor",
     "Quellbeleg SW nach", "Datenlücken", "AutoExport-Begrenzung",
     "Befundungsbericht prüfen", "SW-Releasenotes prüfen", "Fachliche Notiz",
@@ -61,16 +64,18 @@ def export_cpc3_pump_overview(
             _safe("; ".join(case.returned_dtcs)),
             _safe(case.dtc_status), _safe(case.sw_effect),
             case.pre_complete_tests, case.post_complete_tests,
+            case.sw_pre_complete_tests, case.sw_post_complete_tests,
+            _safe("; ".join(case.sw_post_returned_dtcs)),
             _safe(" | ".join(case.update_events)),
             _safe(case.before_source), _safe(case.after_source),
             _safe(case.note), "Ja" if case.truncated else "Nein",
             "Offen", "Offen", "",
         ))
     ws.freeze_panes = "D2"
-    ws.auto_filter.ref = f"A1:X{max(1, ws.max_row)}"
+    ws.auto_filter.ref = f"A1:AA{max(1, ws.max_row)}"
     ws.sheet_view.showGridLines = False
     widths = (22, 25, 22, 19, 24, 24, 49, 22, 27, 48, 48, 33,
-              44, 57, 26, 26, 56, 60, 60, 60, 21, 26, 27, 38)
+              44, 57, 26, 26, 27, 28, 30, 56, 60, 60, 60, 21, 26, 27, 38)
     for index, width in enumerate(widths, 1):
         ws.column_dimensions[get_column_letter(index)].width = width
     ws.row_dimensions[1].height = 44
@@ -82,7 +87,7 @@ def export_cpc3_pump_overview(
         for cell in row:
             cell.font = Font(name="Arial", size=10, color="333333")
             cell.alignment = Alignment(vertical="top", wrap_text=True)
-        for col in (22, 23, 24):
+        for col in (25, 26, 27):
             row[col - 1].font = Font(name="Arial", size=10, color="2456A6")
 
     info = workbook.create_sheet("Bewertungsregeln")
