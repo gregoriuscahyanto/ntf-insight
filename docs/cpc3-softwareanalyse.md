@@ -5,9 +5,79 @@ FIN-bezogen aus. Ein Softwarestand in einem Kurztest ist **keine**
 Software-Releasenote, ein Pumpentauschdatum **kein bewiesenes Ausfalldatum**.
 Die Analyse arbeitet ausschließlich mit lokal importierten Daten.
 
+## Modulare ECU-Auswahl und vollständig archivierte SW-Historie
+
+In **Fälle / FIN → ECU · SW-Übersicht** steht oben die
+**Steuergeräte-Auswahl** (Standard `CPC3`). Sie wird aus den tatsächlich
+archivierten `EcuNm`-Werten der lokalen DuckDB und den Fallinformationen
+befüllt. Für andere Steuergeräte (z. B. MCM) wird exakt dieselbe
+Software-, Tauschanalyse und Diagnoseevidenz neu berechnet; beim Öffnen
+eines Falls folgt auch das ECU-SW-Detailpanel der Auswahl.
+
+Die Analyse liest `EcuSwVersionTxt` **unverändert** aus
+`source_knowledge_rows.payload_json` der importierten
+**AutoExport-Diagnosequelle**, auch wenn deren Beobachtungen keinem
+QEC-Fallereignis zugeordnet wurden. Dazu werden Quell-FIN und die
+QEC-FIN nach der bekannten MBC-Präfixregel abgeglichen.
+Mehrere DTC-Rohzeilen derselben ECU-/Diagnose-/SW-Messung werden
+**nur als ein Snapshot** gezählt; ihre positiven DTC-Codes bleiben
+erhalten. Alle *verschiedenen* SW-Stände und ihr Beobachtungsverlauf
+bleiben dagegen verfügbar.
+
+Neben `SW vor Tausch` und `SW nach Tausch` gibt es deshalb
+`Alle SW-Stände dieser FIN`, `Chronologischer SW-Verlauf`,
+`Anzahl SW-Stände` sowie eine **SW-Messhistorientabelle** zum
+ausgewählten Fall. Der lokale Excel-Export enthält eine eigene
+Tabelle **SW-Messhistorie** mit Zeit und Quellbeleg. Tagesgenaue
+Beobachtungen erhalten niemals eine künstliche Uhrzeit.
+
+Das Rohwissen wird in FIN-Gruppen aus DuckDB gelesen; pro FIN werden
+höchstens **20.000 zusammengefasste Beobachtungen** geladen.
+Bei einer Begrenzung wird der Fall als unvollständig markiert.
+Die Quelldateien werden weder erneut geschrieben noch auf GitHub geladen.
+
+### Die drei Ringdiagramme
+
+Die Donuts verwenden ausschließlich **gegenseitig ausschließende
+Pumpenfälle im aktuell sichtbaren Filter** als Nenner, keine
+CSV-Zeilen:
+
+1. **ECU-DTC vor Pumpentausch:** positiv beobachteter ECU-DTC;
+   vollständiger ECU-QuickTest ohne ECU-DTC; oder
+   **keine ausreichende Diagnose**.
+2. **Häufigste SW vor Pumpentausch:** fünf häufigste belegte
+   Vor-Tausch-SW-Stände, weitere und fehlende SW-Beobachtungen.
+   **Jeder Fall zählt genau einmal**, unabhängig von der Anzahl
+   der Diagnosezeilen.
+3. **ECU-DTC nach Pumpentausch:** DTC positiv beobachtet;
+   vollständiger ECU-Nachtest ohne DTC; oder
+   **kein belastbarer Nachtest**.
+
+**Ganz wichtig:** Wenn es nach dem Pumpentausch keine AutoExport-DTC-Zeile
+gibt, liegt deshalb **nicht automatisch ein DTC-freier ECU-Test** vor.
+Außerdem kann der ECU-SW-Stand in einem DTC-only-Export unbekannt bleiben,
+obwohl am Fahrzeug weiterhin Software installiert ist.
+
+### Welche Softwarestände sind auffällig?
+
+Die Tabelle **„Auffällige SW-Stände unter Pumpenfällen“** sortiert
+nach der Zahl der Pumpenfälle **mit positiv nachgewiesenem ECU-DTC**
+bei bekanntem Vor-Tausch-SW-Stand. Sie zeigt Fallanzahl,
+unterschiedliche FINs, Fälle mit ECU-DTC, beidseitig verfügbare
+vollständige ECU-QuickTests sowie im Nachtest erneut beobachtete
+DTCs. Eine Wiederkehrrate wird **erst ab fünf auswertbaren
+Vor-/Nachtest-Paaren** angegeben.
+
+Dies ist eine **Beschreibung der untersuchten Rückläuferfälle**,
+keine statistische „Problemwahrscheinlichkeit“ eines SW-Standes.
+Dazu bräuchte man die eingesetzte Fahrzeug-/SW-Flottenpopulation,
+vergleichbare Laufleistung und Einsatzbedingungen und ausreichenden
+Nachbeobachtungszeitraum.
+
+
 ## Alle Pumpenfälle gemeinsam untersuchen
 
-Unter **Fälle / FIN → CPC3 · SW-Übersicht** stehen **sämtliche
+Unter **Fälle / FIN → ECU · SW-Übersicht** stehen **sämtliche
 lokal vorhandenen Kühlmittelpumpenfälle** in einer Tabelle, auch wenn
 ein Fall kein Tauschdatum oder keine CPC3-SW-Information hat.
 **Eine Zeile ist ein Fall**, nicht eine FIN: Eine FIN mit mehreren
