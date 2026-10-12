@@ -108,6 +108,7 @@ def test_ssl_search_selection_removal_and_exclusion_precedence():
 
 def test_ecu_and_fault_lists_stay_separate():
     app = QApplication.instance() or QApplication([])
+    assert app is QApplication.instance()
     dialog = ClusterDtcFilterDialog(
         {("CPC3", "P100"): (2, 5, "Pumpe")},
         ClusterDtcFilter(),
