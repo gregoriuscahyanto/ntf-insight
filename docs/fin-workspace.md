@@ -9,7 +9,7 @@ seine FIN und die QuickTests. Unter **Fälle / FIN** liegen vier Register:
    Tauschanker, QEC-SSL-Endbefund und technische Evidenz.
 3. **QuickTests nach FIN** – unabhängig von einem QEC-Fall archivierte
    PDF-Reports einschließlich aller ECUs, Snapshot-Werte und Quellseiten.
-4. **CPC3 · SW-Übersicht** – alle lokalen Kühlmittelpumpenfälle
+4. **ECU · SW-Übersicht** – alle lokalen Kühlmittelpumpenfälle
    mit Softwareständen vor/nach dem Tausch, dokumentierten
    Programmierungsaktionen, DTC-Verläufen und lokalem Excel-Export.
    [Bewertungsregeln](cpc3-softwareanalyse.md).
