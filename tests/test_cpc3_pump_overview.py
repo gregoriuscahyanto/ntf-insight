@@ -464,7 +464,7 @@ def test_gui_renders_selected_other_ecu_sw_and_all_observations():
     panel.set_report(report)
     assert "MCM" in panel.heading.text()
     assert panel.model.rows[0][4] == "MCM"
-    assert panel.model.rows[0][7] == "MCM-SW-1; MCM-SW-2"
+    assert panel.model.rows[0][9] == "MCM-SW-1; MCM-SW-2"
     assert panel.sw_detail_model.rowCount() == 2
     assert sum(n for _, n in panel.donut_sw.donut.entries) == 1
     panel.close()
