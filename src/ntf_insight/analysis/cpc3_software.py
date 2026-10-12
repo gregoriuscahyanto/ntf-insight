@@ -167,7 +167,7 @@ def _date_ambiguous_days(
 def _boundary(
     states: list[ECUStateObservation],
     swap_day: date,
-    *, before: bool,
+    *, before: bool, ambiguous_days: set[date],
 ) -> tuple[ECUStateObservation | None, bool]:
     eligible = [
         state for state in states
@@ -180,6 +180,8 @@ def _boundary(
         max(state.occurred_at.date() for state in eligible)
         if before else min(state.occurred_at.date() for state in eligible)
     )
+    if day in ambiguous_days:
+        return None, True
     same_day = [state for state in eligible if state.occurred_at.date() == day]
     # If any read is date-only, its order relative to other observations
     # that same day is unknowable. Accept only a single unambiguous version.
@@ -311,11 +313,17 @@ def assess_cpc3_software(
     swap = case.investigated_replacement()
     swap_day = swap.occurred_at.date() if swap is not None else None
     before, before_ambiguous = (
-        _boundary(observed, swap_day, before=True)
+        _boundary(
+            observed, swap_day, before=True,
+            ambiguous_days=ambiguous_days,
+        )
         if swap_day is not None else (None, False)
     )
     after, after_ambiguous = (
-        _boundary(observed, swap_day, before=False)
+        _boundary(
+            observed, swap_day, before=False,
+            ambiguous_days=ambiguous_days,
+        )
         if swap_day is not None else (None, False)
     )
     documented = tuple(sorted(
