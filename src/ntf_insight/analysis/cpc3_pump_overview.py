@@ -52,6 +52,10 @@ class CPC3PumpOverviewCase:
     sw_versions: tuple[str, ...]
     sw_history: tuple[str, ...]
     sw_observations: tuple[tuple[str, str, str, str], ...]
+    swap_day_sw: tuple[str, ...]
+    swap_day_sources: tuple[str, ...]
+    swap_context_sw: str | None
+    swap_context_kind: str
     pre_dtc_evidence: str
     post_dtc_evidence: str
     pre_dtc_observed: tuple[str, ...]
@@ -435,6 +439,44 @@ def _all_versions_and_observations(
     return tuple(sw_versions), tuple(history), tuple(detail)
 
 
+def _swap_day_software_context(
+    review: CPC3SoftwareReview,
+) -> tuple[tuple[str, ...], tuple[str, ...], str | None, str]:
+    """Preserve same-day versions without pretending they predate the swap.
+
+    The QEC repair anchor is normally date-only, while the AutoExport
+    timestamp describes *the scan*, not the physical replacement time.
+    A same-day reading is evidence, but not an ordered baseline.
+    """
+    swap_day = review.replacement_day
+    same_day = [
+        state for state in review.states
+        if swap_day is not None
+        and state.occurred_at.date() == swap_day
+        and str(state.software_version or "").strip()
+    ]
+    versions = tuple(dict.fromkeys(
+        str(state.software_version).strip() for state in same_day
+    ))
+    sources = tuple(sorted({
+        state.source_ref for state in same_day if state.source_ref
+    }))
+    if review.last_before_swap is not None:
+        return (
+            versions, sources,
+            review.last_before_swap.software_version, "before",
+        )
+    if len(versions) == 1:
+        return versions, sources, versions[0], "on_day_only"
+    if len(versions) > 1:
+        return versions, sources, None, "on_day_conflict"
+    if review.first_after_swap is not None:
+        return versions, sources, None, "after_only"
+    if review.versions:
+        return versions, sources, None, "not_assignable"
+    return versions, sources, None, "no_sw"
+
+
 def evaluate_cpc3_pump_case(
     case: NTFCase,
     *,
@@ -463,6 +505,9 @@ def evaluate_cpc3_pump_case(
         case, source_rows, swap_day, chosen_ecu,
     )
     versions, history, observations = _all_versions_and_observations(review)
+    day_versions, day_sources, context_sw, context_kind = (
+        _swap_day_software_context(review)
+    )
     effect, sw_pre_tests, sw_post_tests, sw_returned = (
         _effect_after_software_action(
             case, review, swap_day, days=nearby_days, ecu=chosen_ecu,
@@ -475,8 +520,11 @@ def evaluate_cpc3_pump_case(
         missing.append("SW-Vergleich unvollständig")
     if review.truncated:
         missing.append("AutoExport-Zeilenlimit erreicht")
-    if review.on_swap_day:
-        missing.append("Messungen am Tauschtag nicht zeitlich zugeordnet")
+    if day_versions:
+        missing.append(
+            "SW am Tauschtag gemessen, aber Reihenfolge zum "
+            "Pumpentausch nicht belegt"
+        )
     if review.ambiguous_days:
         missing.append("SW-Konflikte an Diagnosekalendertagen")
     if not n_pre or not n_post:
@@ -491,6 +539,8 @@ def evaluate_cpc3_pump_case(
         ecu=chosen_ecu,
         sw_versions=versions, sw_history=history,
         sw_observations=observations,
+        swap_day_sw=day_versions, swap_day_sources=day_sources,
+        swap_context_sw=context_sw, swap_context_kind=context_kind,
         pre_dtc_evidence=pre_group, post_dtc_evidence=post_group,
         pre_dtc_observed=pre_observed, post_dtc_observed=post_observed,
         before_sw=(
