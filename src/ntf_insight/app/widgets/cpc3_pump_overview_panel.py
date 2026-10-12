@@ -76,6 +76,7 @@ class _CPC3OverviewFilter(QSortFilterProxyModel):
         self.source_cases = ()
         self.status_group = "all"
         self.dtc_group = "all"
+        self.sw_time_group = "all"
 
     def filterAcceptsRow(self, source_row, source_parent):  # noqa: N802
         if not super().filterAcceptsRow(source_row, source_parent):
@@ -84,6 +85,11 @@ class _CPC3OverviewFilter(QSortFilterProxyModel):
             return False
         row = self.source_cases[source_row]
         if self.status_group != "all" and row.update_group != self.status_group:
+            return False
+        if (
+            self.sw_time_group != "all"
+            and row.swap_context_kind != self.sw_time_group
+        ):
             return False
         if self.dtc_group == "returned" and not row.returned_dtcs:
             return False
@@ -149,6 +155,12 @@ class CPC3PumpOverviewPanel(QWidget):
         self.ecu_selector.activated.connect(self._ecu_changed)
         self.ecu_selector.lineEdit().returnPressed.connect(self._ecu_changed)
         top.addWidget(self.ecu_selector)
+        self.cpc3_button = QPushButton("CPC3 anzeigen")
+        self.cpc3_button.setToolTip(
+            "Schnell zurück zur CPC3-Softwareübersicht wechseln"
+        )
+        self.cpc3_button.clicked.connect(self._select_cpc3)
+        top.addWidget(self.cpc3_button)
         self.reload_button = QPushButton("Alle Pumpenfälle auswerten")
         self.reload_button.clicked.connect(self.run_analysis)
         top.addWidget(self.reload_button)
@@ -175,13 +187,17 @@ class CPC3PumpOverviewPanel(QWidget):
         # full ECU scan is explicitly unknown, NEVER classified as healed.
         self.chart_row = QHBoxLayout()
         self.donut_pre = ECUOverviewDonutCard("ECU-DTC vor Tausch")
-        self.donut_sw = ECUOverviewDonutCard("Häufigste SW vor Tausch")
+        self.donut_sw = ECUOverviewDonutCard("SW vor / am Tauschtag")
+        self.donut_time = ECUOverviewDonutCard("Zeitliche SW-Datenlage")
         self.donut_post = ECUOverviewDonutCard("ECU-DTC nach Tausch")
-        for chart in (self.donut_pre, self.donut_sw, self.donut_post):
+        for chart in (
+            self.donut_pre, self.donut_sw, self.donut_time, self.donut_post,
+        ):
             self.chart_row.addWidget(chart, 1)
         layout.addLayout(self.chart_row)
         self.donut_pre.set_counts(())
         self.donut_sw.set_counts(())
+        self.donut_time.set_counts(())
         self.donut_post.set_counts(())
 
         # These are RETURNED-PUMP case concentrations, not installed-fleet
@@ -226,6 +242,19 @@ class CPC3PumpOverviewPanel(QWidget):
         ):
             self.update_filter.addItem(title, value)
         controls.addWidget(self.update_filter)
+        self.sw_time_filter = QComboBox()
+        for label, kind in (
+            ("Alle SW-Zeitlagen", "all"),
+            ("SW vor Tausch", "before"),
+            ("Nur am Tauschtag gemessen", "on_day_only"),
+            ("Mehrere SW am Tauschtag", "on_day_conflict"),
+            ("SW erst nach Tausch", "after_only"),
+            ("SW-Zeitlage nicht bestimmbar", "not_assignable"),
+            ("Keine SW-Beobachtung", "no_sw"),
+        ):
+            self.sw_time_filter.addItem(label, kind)
+        self.sw_time_filter.currentIndexChanged.connect(self._set_filters)
+        controls.addWidget(self.sw_time_filter)
         self.dtc_filter = QComboBox()
         for title, value in (
             ("Alle DTC-Verläufe", "all"),
@@ -240,6 +269,7 @@ class CPC3PumpOverviewPanel(QWidget):
         self.model = SimpleTableModel((
             "QEC-/Fall-ID", "FIN", "Komponente", "Pumpentauschdatum",
             "ECU", "SW vor Tausch", "SW nach Tausch",
+            "SW am Tauschtag (Reihenfolge offen)", "SW-Zeitlage",
             "Alle SW-Stände dieser FIN", "Chronologischer SW-Verlauf",
             "Anzahl SW-Stände", "SW-Maßnahme / Standabweichung",
             "Beobachtungsintervall", "ECU-DTC vor: Evidenz",
@@ -276,8 +306,8 @@ class CPC3PumpOverviewPanel(QWidget):
         self.table.verticalHeader().setVisible(False)
         self.table.horizontalHeader().setStretchLastSection(True)
         for column, width in enumerate((
-            160, 175, 135, 115, 85, 135, 135, 300, 390, 95,
-            280, 195, 175, 175, 170, 170, 270, 320,
+            160, 175, 135, 115, 85, 135, 135, 250, 270,
+            300, 390, 95, 280, 195, 175, 175, 170, 170, 270, 320,
             125, 125, 175, 350, 300,
         )):
             self.table.setColumnWidth(column, width)
@@ -318,9 +348,15 @@ class CPC3PumpOverviewPanel(QWidget):
             self.report = None
             self.run_analysis()
 
+    def _select_cpc3(self) -> None:
+        if self._task is not None:
+            return
+        self.ecu_selector.setCurrentText("CPC3")
+        self._ecu_changed()
+
     def _toggle_charts(self, visible: bool) -> None:
         for widget in (
-            self.donut_pre, self.donut_sw, self.donut_post,
+            self.donut_pre, self.donut_sw, self.donut_time, self.donut_post,
             self.sw_frequency_heading, self.sw_frequency_table,
         ):
             widget.setVisible(visible)
@@ -330,6 +366,9 @@ class CPC3PumpOverviewPanel(QWidget):
 
     def _set_filters(self, *_args) -> None:
         self.proxy.status_group = self.update_filter.currentData() or "all"
+        self.proxy.sw_time_group = (
+            self.sw_time_filter.currentData() or "all"
+        )
         self.proxy.dtc_group = self.dtc_filter.currentData() or "all"
         self.proxy.invalidateFilter()
         self._update_visible_count()
@@ -365,19 +404,37 @@ class CPC3PumpOverviewPanel(QWidget):
             ("QT ohne ECU-DTC", after["tested_none"]),
             ("Keine genügenden Belege", after["unknown"]),
         ))
+        # Conservative distinction: before is a dated prior scan; on-day
+        # is a documented SW reading with UNKNOWN relation to the actual
+        # mechanical exchange. Never count it as a "pre-swap version".
         common = Counter(
-            row.before_sw for row in visible
-            if row.before_sw and not row.truncated
+            (row.swap_context_sw, row.swap_context_kind)
+            for row in visible
+            if row.swap_context_sw and not row.truncated
         )
         top = common.most_common(5)
-        used = sum(n for _, n in top)
-        remainder = sum(common.values()) - used
-        no_sw = len(visible) - sum(common.values())
+        remainder = sum(common.values()) - sum(n for _, n in top)
+        missing_at_swap = len(visible) - sum(common.values())
         self.donut_sw.set_counts(tuple([
-            *((str(sw), int(n)) for sw, n in top),
+            *(
+                (
+                    f"{sw} ({'vor' if kind == 'before' else 'Tauschtag'})",
+                    n,
+                )
+                for (sw, kind), n in top
+            ),
             ("Weitere SW", remainder),
-            ("Ohne SW-Beleg", no_sw),
+            ("Keine eindeutige SW bis Tausch", missing_at_swap),
         ]))
+        coverage = Counter(row.swap_context_kind for row in visible)
+        self.donut_time.set_counts((
+            ("SW vor Tausch", coverage["before"]),
+            ("Nur am Tauschtag", coverage["on_day_only"]),
+            ("SW-Konflikt am Tauschtag", coverage["on_day_conflict"]),
+            ("SW erst nach Tausch", coverage["after_only"]),
+            ("SW sonst zeitlich unklar", coverage["not_assignable"]),
+            ("Keine SW-Beobachtung", coverage["no_sw"]),
+        ))
         frequencies = ecu_software_frequencies(visible)
         self.sw_frequency_model.set_rows([
             (
@@ -422,6 +479,7 @@ class CPC3PumpOverviewPanel(QWidget):
             return
         self.reload_button.setEnabled(False)
         self.ecu_selector.setEnabled(False)
+        self.cpc3_button.setEnabled(False)
         self.export_button.setEnabled(False)
         ecu = self.ecu_selector.currentText().strip().upper() or "CPC3"
         self.heading.setText(f"{ecu} · Software- und Pumpentauschübersicht")
@@ -444,6 +502,7 @@ class CPC3PumpOverviewPanel(QWidget):
         self._task = None
         self.reload_button.setEnabled(True)
         self.ecu_selector.setEnabled(True)
+        self.cpc3_button.setEnabled(True)
         self.export_button.setEnabled(self.report is not None)
 
     def _failed(self, category: str) -> None:
@@ -477,9 +536,18 @@ class CPC3PumpOverviewPanel(QWidget):
                 item.case_id, item.fin, item.component,
                 item.swap_day.isoformat() if item.swap_day else "Unbekannt",
                 item.ecu,
-                item.before_sw or "Nicht belegt",
-                item.after_sw or "Nicht belegt",
-                "; ".join(item.sw_versions) or "Nicht belegt",
+                item.before_sw or "Nicht vor Tausch belegt",
+                item.after_sw or "Nicht nach Tausch belegt",
+                "; ".join(item.swap_day_sw) or "Am Tauschtag keine SW-Messung",
+                {
+                    "before": "SW vor Tausch belegt",
+                    "on_day_only": "Nur am Tauschtag – Zeitfolge offen",
+                    "on_day_conflict": "Mehrere SW am Tauschtag – unklar",
+                    "after_only": "SW erst nach Tausch belegt",
+                    "not_assignable": "SW zeitlich nicht zuordenbar",
+                    "no_sw": "Keine SW-Daten für dieses ECU",
+                }[item.swap_context_kind],
+                "; ".join(item.sw_versions) or "Keine SW-Daten",
                 " → ".join(item.sw_history) or "Nicht belegt",
                 len(item.sw_versions),
                 item.update_status, item.interval_description or "—",
@@ -511,6 +579,12 @@ class CPC3PumpOverviewPanel(QWidget):
         self.heading.setText(
             f"{report.ecu} · Software- und Pumpentauschübersicht"
         )
+        sw_any = sum(bool(case.sw_versions) for case in report.cases)
+        sw_same_day = sum(bool(case.swap_day_sw) for case in report.cases)
+        only_swap_day = sum(
+            case.swap_context_kind == "on_day_only"
+            for case in report.cases
+        )
         self.summary.setText(
             f"{report.total_pump_cases} Pumpenfälle · "
             f"{report.unique_fins} unterschiedliche FINs · "
@@ -520,7 +594,11 @@ class CPC3PumpOverviewPanel(QWidget):
             f"{report.changed_sw_observed} SW-Standabweichungen ohne "
             f"belegten Updatezeitpunkt · "
             f"{report.unchanged_sw_observed} gleicher Stand beobachtet · "
-            f"{report.not_assessable} ohne vergleichbare SW-/Tauschdaten. "
+            f"{report.not_assessable} ohne sicheren Vor-/Nach-SW-Vergleich "
+            "(nicht gleich fehlende SW-Daten). "
+            f"SW irgendwo beobachtet: {sw_any}; "
+            f"SW am Tauschtag: {sw_same_day}, "
+            f"davon {only_swap_day} ohne belegten Vor-Tausch-Stand. "
             f"{report.ecu}-DTC nach Tausch erneut: {report.dtc_returned}; "
             f"in Nachtests nicht erneut gesehen: {report.dtc_not_seen} "
             "(keine SW-Kausalitätsbestätigung)."
