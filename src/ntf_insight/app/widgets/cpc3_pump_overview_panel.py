@@ -105,6 +105,7 @@ class CPC3PumpOverviewPanel(QWidget):
     """One row per investigated pump case, including missing evidence."""
 
     case_requested = Signal(str)
+    ecu_selected = Signal(str)
 
     def __init__(
         self, cases: list[NTFCase],
@@ -469,6 +470,7 @@ class CPC3PumpOverviewPanel(QWidget):
     def set_report(self, report: CPC3PumpOverviewReport) -> None:
         """Also supports direct synchronous synthetic GUI tests."""
         self.report = report
+        self.ecu_selected.emit(report.ecu)
         self.proxy.source_cases = report.cases
         self.model.set_rows([
             (
