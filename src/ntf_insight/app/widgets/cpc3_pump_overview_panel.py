@@ -145,7 +145,8 @@ class CPC3PumpOverviewPanel(QWidget):
         )
         self.ecu_selector.setMinimumWidth(145)
         self.ecu_selector.addItem("CPC3")
-        self.ecu_selector.currentTextChanged.connect(self._ecu_changed)
+        self.ecu_selector.activated.connect(self._ecu_changed)
+        self.ecu_selector.lineEdit().returnPressed.connect(self._ecu_changed)
         top.addWidget(self.ecu_selector)
         self.reload_button = QPushButton("Alle Pumpenfälle auswerten")
         self.reload_button.clicked.connect(self.run_analysis)
@@ -154,6 +155,11 @@ class CPC3PumpOverviewPanel(QWidget):
         self.export_button.setEnabled(False)
         self.export_button.clicked.connect(self.export_visible)
         top.addWidget(self.export_button)
+        self.toggle_charts = QPushButton("Kennzahlen ausblenden")
+        self.toggle_charts.setCheckable(True)
+        self.toggle_charts.setChecked(True)
+        self.toggle_charts.toggled.connect(self._toggle_charts)
+        top.addWidget(self.toggle_charts)
         top.addStretch(1)
         layout.addLayout(top)
 
@@ -302,19 +308,109 @@ class CPC3PumpOverviewPanel(QWidget):
         self.details.setWordWrap(True)
         layout.addWidget(self.details)
 
+    def _ecu_changed(self, *_args) -> None:
+        ecu = self.ecu_selector.currentText().strip().upper()
+        if (
+            not self._updating_choices and ecu and self._task is None
+            and (self.report is None or ecu != self.report.ecu)
+        ):
+            self.report = None
+            self.run_analysis()
+
+    def _toggle_charts(self, visible: bool) -> None:
+        for widget in (
+            self.donut_pre, self.donut_sw, self.donut_post,
+            self.sw_frequency_heading, self.sw_frequency_table,
+        ):
+            widget.setVisible(visible)
+        self.toggle_charts.setText(
+            "Kennzahlen ausblenden" if visible else "Kennzahlen anzeigen"
+        )
+
     def _set_filters(self, *_args) -> None:
         self.proxy.status_group = self.update_filter.currentData() or "all"
         self.proxy.dtc_group = self.dtc_filter.currentData() or "all"
         self.proxy.invalidateFilter()
         self._update_visible_count()
 
-    def _update_visible_count(self) -> None:
-        if self.report is not None:
-            self.details.setText(
-                f"{self.proxy.rowCount()} von {self.report.total_pump_cases} "
-                "Pumpenfällen sichtbar. Doppelklick öffnet die FIN/Fallanalyse. "
-                "Excel enthält nur die aktuell sichtbaren Fälle."
+    def _visible_cases(self) -> tuple:
+        if self.report is None:
+            return ()
+        return tuple(
+            self.report.cases[
+                self.proxy.mapToSource(self.proxy.index(row, 0)).row()
+            ]
+            for row in range(self.proxy.rowCount())
+        )
+
+    def _update_visible_count(self, *_args) -> None:
+        if self.report is None:
+            return
+        visible = self._visible_cases()
+        self.details.setText(
+            f"{len(visible)} von {self.report.total_pump_cases} "
+            "Pumpenfällen sichtbar. Doppelklick öffnet die FIN/Fallanalyse. "
+            "Excel enthält nur die aktuell sichtbaren Fälle."
+        )
+        before = Counter(row.pre_dtc_evidence for row in visible)
+        after = Counter(row.post_dtc_evidence for row in visible)
+        self.donut_pre.set_counts((
+            ("ECU-DTC gesehen", before["present"]),
+            ("QT ohne ECU-DTC", before["tested_none"]),
+            ("Keine genügenden Belege", before["unknown"]),
+        ))
+        self.donut_post.set_counts((
+            ("ECU-DTC gesehen", after["present"]),
+            ("QT ohne ECU-DTC", after["tested_none"]),
+            ("Keine genügenden Belege", after["unknown"]),
+        ))
+        common = Counter(
+            row.before_sw for row in visible
+            if row.before_sw and not row.truncated
+        )
+        top = common.most_common(5)
+        used = sum(n for _, n in top)
+        remainder = sum(common.values()) - used
+        no_sw = len(visible) - sum(common.values())
+        self.donut_sw.set_counts(tuple([
+            *((str(sw), int(n)) for sw, n in top),
+            ("Weitere SW", remainder),
+            ("Ohne SW-Beleg", no_sw),
+        ]))
+        frequencies = ecu_software_frequencies(visible)
+        self.sw_frequency_model.set_rows([
+            (
+                freq.version, freq.cases, freq.fins,
+                freq.with_pre_dtc, freq.with_pre_complete_comparison,
+                freq.same_dtc_returned,
+                (
+                    f"{freq.recurrence_percent:.1f} %"
+                    if freq.recurrence_percent is not None
+                    else "— (weniger als 5 QT-Paare)"
+                ),
             )
+            for freq in frequencies[:25]
+        ])
+        if self.proxy.rowCount():
+            self._show_selected_history(self.proxy.index(0, 0))
+        else:
+            self.sw_detail_model.set_rows([])
+
+    def _show_selected_history(self, index) -> None:
+        if self.report is None or not index.isValid():
+            self.sw_detail_model.set_rows([])
+            return
+        row = self.proxy.mapToSource(index).row()
+        if row >= len(self.report.cases):
+            return
+        item = self.report.cases[row]
+        self.sw_detail_label.setText(
+            f"SW-Messhistorie · ECU {item.ecu} · Fall {item.case_id}"
+        )
+        self.sw_detail_model.set_rows([
+            (when, version, context, source)
+            for when, version, context, source in item.sw_observations
+        ])
 
     def ensure_loaded(self) -> None:
         if self.report is None and self._task is None:
@@ -324,15 +420,20 @@ class CPC3PumpOverviewPanel(QWidget):
         if self._task is not None:
             return
         self.reload_button.setEnabled(False)
+        self.ecu_selector.setEnabled(False)
         self.export_button.setEnabled(False)
+        ecu = self.ecu_selector.currentText().strip().upper() or "CPC3"
+        self.heading.setText(f"{ecu} · Software- und Pumpentauschübersicht")
         self.summary.setText(
-            "CPC3-SW-Verlauf und vollständige QuickTest-Belege "
+            f"{ecu}-SW-Verlauf und vorhandene Diagnosebelege "
             "aller Pumpenfälle werden lokal ausgewertet …"
         )
-        job = _CPC3OverviewTask(self.cases, self.source_knowledge)
+        job = _CPC3OverviewTask(
+            self.cases, self.source_knowledge, ecu,
+        )
         self._task = job
         _RUNNING_CPC3_TASKS.add(job)
-        job.completed.connect(self.set_report)
+        job.completed.connect(self._received_report)
         job.failed.connect(self._failed)
         job.finished.connect(self._task_finished)
         job.finished.connect(lambda: _RUNNING_CPC3_TASKS.discard(job))
@@ -341,6 +442,7 @@ class CPC3PumpOverviewPanel(QWidget):
     def _task_finished(self) -> None:
         self._task = None
         self.reload_button.setEnabled(True)
+        self.ecu_selector.setEnabled(True)
         self.export_button.setEnabled(self.report is not None)
 
     def _failed(self, category: str) -> None:
@@ -350,6 +452,20 @@ class CPC3PumpOverviewPanel(QWidget):
             "Es wurden keine Quelldaten verändert."
         )
 
+    def _received_report(
+        self, report: CPC3PumpOverviewReport,
+        ecu_names: tuple[str, ...],
+    ) -> None:
+        self._updating_choices = True
+        current = report.ecu
+        self.ecu_selector.clear()
+        self.ecu_selector.addItems(
+            [current, *(name for name in ecu_names if name != current)]
+        )
+        self.ecu_selector.setCurrentText(current)
+        self._updating_choices = False
+        self.set_report(report)
+
     def set_report(self, report: CPC3PumpOverviewReport) -> None:
         """Also supports direct synchronous synthetic GUI tests."""
         self.report = report
@@ -358,11 +474,25 @@ class CPC3PumpOverviewPanel(QWidget):
             (
                 item.case_id, item.fin, item.component,
                 item.swap_day.isoformat() if item.swap_day else "Unbekannt",
+                item.ecu,
                 item.before_sw or "Nicht belegt",
                 item.after_sw or "Nicht belegt",
+                "; ".join(item.sw_versions) or "Nicht belegt",
+                " → ".join(item.sw_history) or "Nicht belegt",
+                len(item.sw_versions),
                 item.update_status, item.interval_description or "—",
-                ", ".join(item.pre_cpc3_dtcs) or "Keine belegt",
-                ", ".join(item.post_cpc3_dtcs) or "Keine belegt",
+                {
+                    "present": "ECU-DTC gesehen",
+                    "tested_none": "Vollständiger QT ohne DTC",
+                    "unknown": "Nicht beurteilbar",
+                }[item.pre_dtc_evidence],
+                {
+                    "present": "ECU-DTC gesehen",
+                    "tested_none": "Vollständiger QT ohne DTC",
+                    "unknown": "Nicht beurteilbar",
+                }[item.post_dtc_evidence],
+                ", ".join(item.pre_dtc_observed) or "Keine belegt",
+                ", ".join(item.post_dtc_observed) or "Keine belegt",
                 item.dtc_status, item.sw_effect,
                 f"{item.pre_complete_tests} / {item.post_complete_tests}",
                 f"{item.sw_pre_complete_tests} / {item.sw_post_complete_tests}",
@@ -376,6 +506,9 @@ class CPC3PumpOverviewPanel(QWidget):
             for item in report.cases
         ])
         self.proxy.invalidateFilter()
+        self.heading.setText(
+            f"{report.ecu} · Software- und Pumpentauschübersicht"
+        )
         self.summary.setText(
             f"{report.total_pump_cases} Pumpenfälle · "
             f"{report.unique_fins} unterschiedliche FINs · "
@@ -386,7 +519,7 @@ class CPC3PumpOverviewPanel(QWidget):
             f"belegten Updatezeitpunkt · "
             f"{report.unchanged_sw_observed} gleicher Stand beobachtet · "
             f"{report.not_assessable} ohne vergleichbare SW-/Tauschdaten. "
-            f"CPC3-DTC nach Tausch erneut: {report.dtc_returned}; "
+            f"{report.ecu}-DTC nach Tausch erneut: {report.dtc_returned}; "
             f"in Nachtests nicht erneut gesehen: {report.dtc_not_seen} "
             "(keine SW-Kausalitätsbestätigung)."
         )
@@ -403,20 +536,15 @@ class CPC3PumpOverviewPanel(QWidget):
     def export_visible(self) -> None:
         if self.report is None:
             return
-        chosen = tuple(
-            self.report.cases[
-                self.proxy.mapToSource(self.proxy.index(row, 0)).row()
-            ]
-            for row in range(self.proxy.rowCount())
-        )
+        chosen = self._visible_cases()
         if not chosen:
             QMessageBox.information(
-                self, "CPC3-Excel", "Keine sichtbaren Fälle zum Exportieren."
+                self, "ECU-Excel", "Keine sichtbaren Fälle zum Exportieren."
             )
             return
         filename, _ = QFileDialog.getSaveFileName(
-            self, "CPC3-Fallübersicht lokal als Excel speichern",
-            "NTF_CPC3_SW_Pumpentausch_Uebersicht.xlsx",
+            self, "ECU-Fallübersicht lokal als Excel speichern",
+            f"NTF_{self.report.ecu}_SW_Pumpentausch_Uebersicht.xlsx",
             "Excel (*.xlsx)",
         )
         if not filename:
@@ -427,7 +555,7 @@ class CPC3PumpOverviewPanel(QWidget):
             exported = export_cpc3_pump_overview(filename, chosen)
         except (OSError, ValueError, PermissionError):
             QMessageBox.warning(
-                self, "CPC3-Excel",
+                self, "ECU-Excel",
                 "Der Excel-Export ist fehlgeschlagen. Bitte lokalen "
                 "Dateipfad und Schreibberechtigung prüfen.",
             )
