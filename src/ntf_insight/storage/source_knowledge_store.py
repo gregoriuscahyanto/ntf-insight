@@ -281,6 +281,68 @@ class SourceKnowledgeStore:
                 result[fin] = [(a, b, int(n)) for a, b, n in rows]
         return result
 
+    def cpc3_software_rows_for_fin(
+        self, fin: str, *, limit: int = 5000,
+    ) -> tuple[list[dict[str, Any]], bool]:
+        """Read CPC3 software evidence from locally archived AutoExport rows.
+
+        Covers FINs without a QEC case and archived CSVs not attached to a
+        case snapshot. A DTC export is an *incomplete* ECU test: absent fault
+        codes must never be interpreted as healed or absent. The capped query
+        cannot silently produce a false "no version changes" conclusion.
+        """
+        from ntf_insight.ingestion.real_source_parsers import canonical_fin
+
+        normalized = canonical_fin(fin)
+        if normalized is None:
+            return [], False
+        bound = min(max(limit, 1), 10000)
+        with self.store.connect() as con:
+            rows = con.execute(
+                """
+                SELECT source_sha256, source_location,
+                       json_extract_string(payload_json, '$.DiagStartTs'),
+                       json_extract_string(payload_json, '$.DiagStartDt'),
+                       json_extract_string(payload_json, '$.EcuSwVersionTxt'),
+                       json_extract_string(payload_json, '$.EcuSuppHwVersionTxt'),
+                       json_extract_string(payload_json, '$.EcuHwPartnumberCd'),
+                       json_extract_string(payload_json, '$.EcuFaultNm'),
+                       json_extract_string(payload_json, '$.KmReadingNum')
+                FROM source_knowledge_rows
+                WHERE category = 'autoexport_dtc'
+                  AND upper(trim(fin)) IN (?, ?)
+                  AND upper(trim(
+                      json_extract_string(payload_json, '$.EcuNm')
+                  )) = 'CPC3'
+                  AND NULLIF(trim(
+                      json_extract_string(payload_json, '$.EcuSwVersionTxt')
+                  ), '') IS NOT NULL
+                ORDER BY
+                    coalesce(
+                        json_extract_string(payload_json, '$.DiagStartTs'),
+                        json_extract_string(payload_json, '$.DiagStartDt')
+                    ),
+                    source_sha256, source_location
+                LIMIT ?
+                """,
+                [normalized, "MBC" + normalized, bound + 1],
+            ).fetchall()
+        truncated = len(rows) > bound
+        return [
+            {
+                "source_ref": f"raw:{sha}#{location}",
+                "diag_timestamp": ts,
+                "diag_date": day,
+                "software_version": sw,
+                "hardware_version": hw,
+                "hardware_part_number": part,
+                "dtc_code": dtc,
+                "mileage_km": km,
+            }
+            for sha, location, ts, day, sw, hw, part, dtc, km
+            in rows[:bound]
+        ], truncated
+
     def autoexport_population(self) -> dict[str, int]:
         """Count rows and distinct FINs by source category, not QEC cases.
 
