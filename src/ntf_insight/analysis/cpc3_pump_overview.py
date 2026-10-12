@@ -64,6 +64,9 @@ class CPC3PumpOverviewCase:
     pre_complete_tests: int
     post_complete_tests: int
     sw_effect: str
+    sw_pre_complete_tests: int
+    sw_post_complete_tests: int
+    sw_post_returned_dtcs: tuple[str, ...]
     note: str
     truncated: bool
 
@@ -206,6 +209,72 @@ def _update_near_swap(
     )
 
 
+def _effect_after_software_action(
+    case: NTFCase, review: CPC3SoftwareReview,
+    swap_day: date | None, *, days: int,
+) -> tuple[str, int, int, tuple[str, ...]]:
+    """Compare complete CPC3 tests around an explicitly recorded SW action.
+
+    Even a clearly worded update and vanishing DTCs only support temporal
+    association. A pump replacement between tests is a major confounder.
+    """
+    if swap_day is None:
+        return "SW-Wirkung nicht beurteilbar: Tauschdatum fehlt", 0, 0, ()
+    actions = [
+        event for event in review.documented_actions
+        if is_reported_software_update(event)
+        and abs((event.occurred_at.date() - swap_day).days) <= days
+    ]
+    if not actions:
+        return (
+            "SW-Updatedatum nicht dokumentiert: SW-Lösung nicht zuordenbar",
+            0, 0, (),
+        )
+    if len(actions) != 1:
+        return (
+            "Mehrere SW-Maßnahmen: Wirkung nicht einzeln zuordenbar",
+            0, 0, (),
+        )
+    sw_day = actions[0].occurred_at.date()
+    sessions = _complete_cpc3_tests(case)
+    before = [
+        session for session in sessions
+        if session.occurred_at.date() < sw_day
+    ]
+    after = [
+        session for session in sessions
+        if session.occurred_at.date() > sw_day
+    ]
+    if not before or not after:
+        return (
+            "SW-Wirkung nicht beurteilbar: vollständige "
+            "CPC3-QuickTests vor/nach SW-Maßnahme fehlen",
+            len(before), len(after), (),
+        )
+    latest = max(before, key=lambda s: (s.occurred_at, s.session_id))
+    old_codes = _fault_codes(case, latest)
+    new_codes = set().union(*(_fault_codes(case, s) for s in after))
+    returning = tuple(sorted(old_codes & new_codes))
+    if not old_codes:
+        label = "SW-Wirkung nicht beurteilbar: kein CPC3-Ausgangs-DTC"
+    elif returning:
+        label = "CPC3-DTC nach SW-Maßnahme erneut gesehen; keine SW-Lösung belegt"
+    elif (
+        latest.occurred_at.date() <= swap_day
+        <= max(session.occurred_at.date() for session in after)
+    ):
+        label = (
+            "CPC3-DTC nach SW nicht erneut gesehen; Pumpentausch "
+            "im Messfenster, SW-Wirkung nicht isolierbar"
+        )
+    else:
+        label = (
+            "CPC3-DTC nach SW nicht erneut gesehen; zeitlicher "
+            "Hinweis, keine kausal bestätigte SW-Heilung"
+        )
+    return label, len(before), len(after), returning
+
+
 def evaluate_cpc3_pump_case(
     case: NTFCase,
     *,
@@ -226,16 +295,11 @@ def evaluate_cpc3_pump_case(
     dtc, pre_codes, post_codes, returned, n_pre, n_post = _outcome(
         case, swap_day,
     )
-    if not n_pre or not n_post:
-        effect = "SW-Wirkung nicht beurteilbar (Diagnosen fehlen)"
-    elif not pre_codes:
-        effect = "SW-Wirkung nicht beurteilbar (Ausgangs-DTC fehlt)"
-    elif returned:
-        effect = "DTC erneut beobachtet; SW-Lösung nicht belegt"
-    elif group in {"documented_same_day", "documented_nearby", "observed_change"}:
-        effect = "DTC nicht erneut beobachtet; SW-Wirkung nicht isolierbar"
-    else:
-        effect = "DTC nicht erneut beobachtet; kein SW-Wirkungsbeleg"
+    effect, sw_pre_tests, sw_post_tests, sw_returned = (
+        _effect_after_software_action(
+            case, review, swap_day, days=nearby_days,
+        )
+    )
     missing = []
     if not swap_day:
         missing.append("Pumpentauschdatum fehlt")
@@ -277,7 +341,11 @@ def evaluate_cpc3_pump_case(
         dtc_status=dtc, pre_cpc3_dtcs=pre_codes,
         post_cpc3_dtcs=post_codes, returned_dtcs=returned,
         pre_complete_tests=n_pre, post_complete_tests=n_post,
-        sw_effect=effect, note="; ".join(missing), truncated=review.truncated,
+        sw_effect=effect,
+        sw_pre_complete_tests=sw_pre_tests,
+        sw_post_complete_tests=sw_post_tests,
+        sw_post_returned_dtcs=sw_returned,
+        note="; ".join(missing), truncated=review.truncated,
     )
 
 
