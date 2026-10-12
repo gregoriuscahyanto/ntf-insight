@@ -1,6 +1,7 @@
 """Local CPC3 software evidence panel for one FIN, without remote access."""
 from __future__ import annotations
 
+from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QAbstractItemView, QHeaderView, QLabel, QTableView, QVBoxLayout, QWidget,
 )
@@ -42,9 +43,11 @@ class CPC3SoftwarePanel(QWidget):
             objectName="CardTitle",
         ))
         self.swap_summary = QLabel(objectName="PageSubtitle")
+        self.swap_summary.setTextFormat(Qt.TextFormat.PlainText)
         self.swap_summary.setWordWrap(True)
         layout.addWidget(self.swap_summary)
         self.evidence_note = QLabel(objectName="PageSubtitle")
+        self.evidence_note.setTextFormat(Qt.TextFormat.PlainText)
         self.evidence_note.setWordWrap(True)
         layout.addWidget(self.evidence_note)
 
@@ -72,12 +75,21 @@ class CPC3SoftwarePanel(QWidget):
         self.change_model.set_rows([])
 
     @staticmethod
-    def _state_description(state) -> str:
+    def _when(value, precision: str | None = None) -> str:
+        if precision == "date":
+            return f"{value:%d.%m.%Y} (nur Datum)"
+        return f"{value:%d.%m.%Y %H:%M}"
+
+    @classmethod
+    def _state_description(cls, state) -> str:
         if state is None:
             return "nicht belegbar"
+        moment = cls._when(
+            state.occurred_at, getattr(state, "time_precision", None),
+        )
         return (
             f"{state.software_version} "
-            f"(Messung {state.occurred_at:%d.%m.%Y %H:%M}; "
+            f"(Messung {moment}; "
             f"Quelle: {state.source_ref or 'nicht angegeben'})"
         )
 
@@ -156,8 +168,8 @@ class CPC3SoftwarePanel(QWidget):
         self.version_model.set_rows([
             (
                 item.version,
-                item.first_seen.strftime("%d.%m.%Y %H:%M"),
-                item.last_seen.strftime("%d.%m.%Y %H:%M"),
+                self._when(item.first_seen, item.first_precision),
+                self._when(item.last_seen, item.last_precision),
                 item.observation_count,
                 ", ".join(item.sources),
                 ", ".join(item.observed_dtcs) or "Keine Codes beobachtet",
@@ -168,8 +180,14 @@ class CPC3SoftwarePanel(QWidget):
             (
                 evidence.change.previous_version,
                 evidence.change.new_version,
-                evidence.change.last_previous_at.strftime("%d.%m.%Y %H:%M"),
-                evidence.change.first_observed_at.strftime("%d.%m.%Y %H:%M"),
+                self._when(
+                    evidence.change.last_previous_at,
+                    getattr(evidence.change.previous, "time_precision", None),
+                ),
+                self._when(
+                    evidence.change.first_observed_at,
+                    getattr(evidence.change.current, "time_precision", None),
+                ),
                 (
                     ", ".join(evidence.new_dtcs) or "Keine"
                     if evidence.comparable_tests else "Nicht vergleichbar"
