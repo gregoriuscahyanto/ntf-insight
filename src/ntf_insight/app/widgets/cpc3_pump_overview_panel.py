@@ -135,8 +135,8 @@ class CPC3PumpOverviewPanel(QWidget):
         intro = QLabel(
             "Eine Zeile je Kühlmittelpumpenfall (auch mehrere Fälle derselben FIN). "
             "Dokumentierte SW-Maßnahmen und beobachtete Versionsabweichungen "
-            "werden getrennt. Kein DTC im Nachtest beweist nicht, dass ein "
-            "Softwareupdate den Fehler behoben hat.",
+            "werden getrennt. Ein im Nachtest nicht beobachteter DTC "
+            "beweist keine softwarebedingte Fehlerbehebung.",
             objectName="PageSubtitle",
         )
         intro.setWordWrap(True)
@@ -216,7 +216,7 @@ class CPC3PumpOverviewPanel(QWidget):
         ))
         self.sw_frequency_table = QTableView()
         self.sw_frequency_table.setModel(self.sw_frequency_model)
-        self.sw_frequency_table.setMaximumHeight(130)
+        self.sw_frequency_table.setMaximumHeight(110)
         self.sw_frequency_table.setMinimumHeight(60)
         self.sw_frequency_table.setAlternatingRowColors(True)
         self.sw_frequency_table.setEditTriggers(
@@ -294,6 +294,7 @@ class CPC3PumpOverviewPanel(QWidget):
         self.table.setAlternatingRowColors(True)
         self.table.setSortingEnabled(True)
         self.table.setWordWrap(False)
+        self.table.setMinimumHeight(215)
         self.table.setSelectionBehavior(
             QAbstractItemView.SelectionBehavior.SelectRows
         )
@@ -314,24 +315,33 @@ class CPC3PumpOverviewPanel(QWidget):
         self.table.doubleClicked.connect(self._open_case)
         self.table.clicked.connect(self._show_selected_history)
         layout.addWidget(self.table, 1)
+        self.detail_toggle = QPushButton("SW-Messhistorie einblenden")
+        self.detail_toggle.setCheckable(True)
+        self.detail_toggle.toggled.connect(self._toggle_detail)
+        layout.addWidget(self.detail_toggle)
+        self.sw_detail_panel = QWidget()
+        history_layout = QVBoxLayout(self.sw_detail_panel)
+        history_layout.setContentsMargins(0, 0, 0, 0)
         self.sw_detail_label = QLabel(
             "Chronologische SW-Messungen der ausgewählten Fall-FIN",
             objectName="CardTitle",
         )
-        layout.addWidget(self.sw_detail_label)
+        history_layout.addWidget(self.sw_detail_label)
         self.sw_detail_model = SimpleTableModel((
             "Diagnosezeit", "SW aus EcuSwVersionTxt",
             "Bezug zum Pumpentausch", "Originalquelle",
         ))
         self.sw_detail_table = QTableView()
         self.sw_detail_table.setModel(self.sw_detail_model)
-        self.sw_detail_table.setMaximumHeight(135)
+        self.sw_detail_table.setMaximumHeight(155)
         self.sw_detail_table.setMinimumHeight(55)
         self.sw_detail_table.setAlternatingRowColors(True)
         self.sw_detail_table.setEditTriggers(
             QAbstractItemView.EditTrigger.NoEditTriggers
         )
-        layout.addWidget(self.sw_detail_table)
+        history_layout.addWidget(self.sw_detail_table)
+        self.sw_detail_panel.setVisible(False)
+        layout.addWidget(self.sw_detail_panel)
         self.details = QLabel(
             "Doppelklick auf eine Fallzeile öffnet die zugehörige FIN/Fallanalyse.",
             objectName="PageSubtitle",
@@ -353,6 +363,13 @@ class CPC3PumpOverviewPanel(QWidget):
             return
         self.ecu_selector.setCurrentText("CPC3")
         self._ecu_changed()
+
+    def _toggle_detail(self, visible: bool) -> None:
+        self.sw_detail_panel.setVisible(visible)
+        self.detail_toggle.setText(
+            "SW-Messhistorie ausblenden"
+            if visible else "SW-Messhistorie einblenden"
+        )
 
     def _toggle_charts(self, visible: bool) -> None:
         for widget in (
@@ -477,6 +494,18 @@ class CPC3PumpOverviewPanel(QWidget):
     def run_analysis(self) -> None:
         if self._task is not None:
             return
+        # Never leave the previous ECU's case table/charts visible while a
+        # different selected ECU is being loaded asynchronously.
+        self.report = None
+        self.proxy.source_cases = ()
+        self.model.set_rows([])
+        self.proxy.invalidateFilter()
+        self.sw_frequency_model.set_rows([])
+        self.sw_detail_model.set_rows([])
+        for donut in (
+            self.donut_pre, self.donut_sw, self.donut_time, self.donut_post,
+        ):
+            donut.set_counts(())
         self.reload_button.setEnabled(False)
         self.ecu_selector.setEnabled(False)
         self.cpc3_button.setEnabled(False)
