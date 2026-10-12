@@ -16,6 +16,7 @@ from ntf_insight.analysis.cpc3_pump_overview import (
 from ntf_insight.app.widgets.cpc3_pump_overview_panel import (
     CPC3PumpOverviewPanel,
 )
+from ntf_insight.app.widgets.cpc3_software_panel import CPC3SoftwarePanel
 from ntf_insight.domain.case import NTFCase
 from ntf_insight.domain.events import (
     DiagnosticEvent, DiagnosticSession, ECUStateObservation,
@@ -594,3 +595,24 @@ def test_software_only_after_swap_not_classified_as_missing():
     assert result.swap_day_sw == ()
     assert result.before_sw is None
     assert result.after_sw == "SW-AFTER"
+
+
+def test_single_case_sw_panel_explicitly_names_same_day_sw():
+    case = _pump(328, with_quicktests=False)
+    case.ecu_states = [
+        ECUStateObservation(
+            vin=FIN, ecu="CPC3", occurred_at=BASE + timedelta(days=7),
+            software_version="SW-AT-REPAIR",
+            time_precision="date", source_ref="raw:synthetic#snapshot",
+        )
+    ]
+    app = QApplication.instance() or QApplication([])
+    detail = CPC3SoftwarePanel()
+    detail.show()
+    app.processEvents()
+    detail.show_case(case)
+    assert "SW-AT-REPAIR" in detail.swap_summary.text()
+    assert "am Tauschtag beobachtet" in detail.swap_summary.text()
+    assert "weder Vorher noch Nachher belegt" in detail.swap_summary.text()
+    assert "nicht belegbar" in detail.swap_summary.text()
+    detail.close()
