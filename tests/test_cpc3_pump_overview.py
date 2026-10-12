@@ -275,10 +275,16 @@ def test_gui_search_filter_navigation_and_visible_excel(tmp_path):
     panel.set_report(report)
     assert panel.model.rowCount() == 2
     assert "2 Pumpenfälle" in panel.summary.text()
+    assert panel.ecu_selector.currentText() == "CPC3"
+    assert sum(n for _, n in panel.donut_pre.donut.entries) == 2
+    assert sum(n for _, n in panel.donut_sw.donut.entries) == 2
+    assert sum(n for _, n in panel.donut_post.donut.entries) == 2
+    assert panel.sw_detail_model.rowCount() >= 1
     panel.update_filter.setCurrentIndex(
         panel.update_filter.findData("documented_same_day")
     )
     assert panel.proxy.rowCount() == 1
+    assert sum(n for _, n in panel.donut_pre.donut.entries) == 1
     selected = []
     panel.case_requested.connect(selected.append)
     panel._open_case(panel.proxy.index(0, 0))
@@ -293,10 +299,13 @@ def test_gui_search_filter_navigation_and_visible_excel(tmp_path):
     assert export_cpc3_pump_overview(filename, visible) == 1
     wb = load_workbook(filename, read_only=True)
     try:
-        ws = wb["CPC3-Pumpenfälle"]
+        ws = wb["ECU-Pumpenfälle"]
         assert ws.max_row == 2
         assert ws["A2"].value == "QEC-SYNTH-1"
         assert "Bewertungsregeln" in wb.sheetnames
+        assert "SW-Messhistorie" in wb.sheetnames
+        assert ws["AB2"].value == "CPC3"
+        assert "SW-A" in ws["AC2"].value
     finally:
         wb.close()
     panel.search.setText("does-not-exist")
@@ -316,7 +325,7 @@ def test_excel_escapes_untrusted_formula_like_software_event(tmp_path):
     export_cpc3_pump_overview(path, (row,))
     wb = load_workbook(path)
     try:
-        ws = wb["CPC3-Pumpenfälle"]
+        ws = wb["ECU-Pumpenfälle"]
         assert ws["E2"].data_type == "s"
         assert ws["E2"].value.startswith("'=")
         assert ws["F2"].data_type == "s"
