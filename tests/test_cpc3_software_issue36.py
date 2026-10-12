@@ -170,6 +170,45 @@ def test_conflicting_precise_sw_at_same_moment_has_no_boundary_or_change():
     assert result.changes == ()
 
 
+
+def test_date_only_autoexport_does_not_display_invented_clock_time():
+    case = _case()
+    row = {
+        "diag_date": "2026-02-01", "software_version": "SW-DATE-ONLY",
+        "dtc_code": "PUMP-1", "source_ref": "raw:DATE-ONLY#csv:row:1",
+    }
+    result = assess_cpc3_software(case, autoexport_rows=[row])
+    assert result.last_before_swap is not None
+    assert result.versions[0].first_precision == "date"
+    app = QApplication.instance() or QApplication([])
+    panel = CPC3SoftwarePanel()
+    panel.show_case(case)
+    # Without a source-knowledge store, the panel correctly has no raw rows.
+    assert "nicht belegbar" in panel.swap_summary.text()
+    assert panel._when(
+        result.last_before_swap.occurred_at,
+        result.last_before_swap.time_precision,
+    ) == "01.02.2026 (nur Datum)"
+    app.processEvents()
+    panel.close()
+
+
+def test_mixed_quicktest_and_autoexport_clocks_same_day_are_not_ordered():
+    case = _case(
+        states=(_state(0, "SW-OLD", session="quicktest"),),
+        sessions=(_quicktest_session(0, "quicktest"),),
+    )
+    raw = [{
+        "diag_timestamp": "2026-02-01T10:00:00Z",
+        "software_version": "SW-OTHER",
+        "source_ref": "raw:CSV1#csv:row:2",
+    }]
+    result = assess_cpc3_software(case, autoexport_rows=raw)
+    assert result.changes == ()
+    assert result.before_ambiguous
+    assert len(result.ambiguous_days) == 1
+
+
 def test_manual_cpc3_software_event_is_not_invented_from_version_labels():
     case = _case(actions=(
         SoftwareEvent(
