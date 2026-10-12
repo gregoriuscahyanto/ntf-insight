@@ -178,7 +178,7 @@ def test_case_workspace_has_only_one_clustering_tab(tmp_path, monkeypatch) -> No
     assert tabs.tabText(0) == "Clusteranalyse"
     assert tabs.tabText(1) == "FIN / Fallanalyse"
     assert tabs.tabText(2) == "QuickTests nach FIN"
-    assert tabs.tabText(3) == "CPC3 · SW-Übersicht"
+    assert tabs.tabText(3) == "ECU · SW-Übersicht"
     assert tabs.widget(3) is cases.cpc3_overview
     assert cases.cluster_workspace is cases.autoexport_fin_workspace
     assert cases.cluster_workspace is tabs.widget(0)
