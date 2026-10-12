@@ -6,7 +6,7 @@ from PySide6.QtWidgets import (
     QAbstractItemView, QHeaderView, QLabel, QTableView, QVBoxLayout, QWidget,
 )
 
-from ntf_insight.analysis.cpc3_software import assess_cpc3_software
+from ntf_insight.analysis.cpc3_software import assess_ecu_software
 from ntf_insight.app.models.simple_table_model import SimpleTableModel
 from ntf_insight.domain.case import NTFCase
 from ntf_insight.storage.source_knowledge_store import SourceKnowledgeStore
@@ -32,16 +32,20 @@ class CPC3SoftwarePanel(QWidget):
 
     def __init__(
         self, source_knowledge: SourceKnowledgeStore | None = None,
+        *, ecu: str = "CPC3",
     ) -> None:
         super().__init__()
         self.source_knowledge = source_knowledge
+        self.ecu = str(ecu).strip().upper() or "CPC3"
+        self._current_case: NTFCase | None = None
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 8, 0, 8)
         layout.setSpacing(8)
-        layout.addWidget(QLabel(
-            "CPC3 · Softwarestand bei ausgefallener Kühlmittelpumpe",
+        self.heading = QLabel(
+            f"{self.ecu} · Softwarestand beim Pumpentausch",
             objectName="CardTitle",
-        ))
+        )
+        layout.addWidget(self.heading)
         self.swap_summary = QLabel(objectName="PageSubtitle")
         self.swap_summary.setTextFormat(Qt.TextFormat.PlainText)
         self.swap_summary.setWordWrap(True)
@@ -56,10 +60,11 @@ class CPC3SoftwarePanel(QWidget):
             "Anzahl", "Quellen", "Beobachtete CPC3-DTCs",
         ))
         layout.addWidget(_table(self.version_model, max_height=175))
-        layout.addWidget(QLabel(
-            "CPC3 · Beobachtete SW-Wechsel und Diagnoseverhalten",
+        self.change_heading = QLabel(
+            f"{self.ecu} · SW-Wechsel und Diagnoseverhalten",
             objectName="CardTitle",
-        ))
+        )
+        layout.addWidget(self.change_heading)
         self.change_model = SimpleTableModel((
             "SW vorher", "SW nachher", "Letzter alter Stand",
             "Erster neuer Stand", "DTC neu gesehen",
@@ -67,6 +72,21 @@ class CPC3SoftwarePanel(QWidget):
         ))
         layout.addWidget(_table(self.change_model, max_height=185))
         self.clear()
+
+    def set_ecu(self, ecu: str) -> None:
+        """Follow the ECU chosen in the all-pump overview on detail navigation."""
+        selected = str(ecu or "").strip().upper()
+        if not selected or selected == self.ecu:
+            return
+        self.ecu = selected
+        self.heading.setText(
+            f"{self.ecu} · Softwarestand beim Pumpentausch"
+        )
+        self.change_heading.setText(
+            f"{self.ecu} · SW-Wechsel und Diagnoseverhalten"
+        )
+        if self._current_case is not None:
+            self.show_case(self._current_case)
 
     def clear(self) -> None:
         self.swap_summary.setText("Keine FIN / kein Fall ausgewählt.")
@@ -94,14 +114,18 @@ class CPC3SoftwarePanel(QWidget):
         )
 
     def show_case(self, case: NTFCase) -> None:
+        self._current_case = case
         rows = ()
         truncated = False
         if self.source_knowledge is not None:
-            rows, truncated = self.source_knowledge.cpc3_software_rows_for_fin(
-                case.vin
-            )
-        review = assess_cpc3_software(
-            case, autoexport_rows=rows, truncated=truncated,
+            rows, truncated = self.source_knowledge.ecu_software_rows_for_fins(
+                [case.vin], self.ecu,
+            ).get(case.vin, ([], False))
+        review = assess_ecu_software(
+            case, ecu=self.ecu, autoexport_rows=rows, truncated=truncated,
+        )
+        self.heading.setText(
+            f"{self.ecu} · Softwarestand beim Pumpentausch"
         )
         if review.replacement_day is None:
             anchor = "Kein dokumentierter Pumpentauschanker"
@@ -118,8 +142,8 @@ class CPC3SoftwarePanel(QWidget):
             else self._state_description(review.first_after_swap)
         )
         self.swap_summary.setText(
-            f"{anchor}. CPC3-SW zuletzt VOR dem Tauschtag: {before}. "
-            f"CPC3-SW erstmals NACH dem Tauschtag: {after}. "
+            f"{anchor}. {self.ecu}-SW zuletzt VOR dem Tauschtag: {before}. "
+            f"{self.ecu}-SW erstmals NACH dem Tauschtag: {after}. "
             "Der exakte SW-Stand beim eigentlichen Pumpenausfall ist "
             "damit nicht automatisch belegt."
         )
@@ -127,11 +151,11 @@ class CPC3SoftwarePanel(QWidget):
             evidence.comparable_tests for evidence in review.changes
         )
         note = (
-            f"{review.observation_count} CPC3-SW-Beobachtungen; "
+            f"{review.observation_count} {self.ecu}-SW-Beobachtungen; "
             f"{len(review.versions)} unterschiedliche SW-Stände; "
             f"{len(review.changes)} zeitlich eingegrenzte SW-Standabweichungen. "
             f"{comparable} Standwechsel mit vergleichbaren vollständigen "
-            "CPC3-QuickTests. Ein DTC-Unterschied ist eine Beobachtung, "
+            f"{self.ecu}-QuickTests. Ein DTC-Unterschied ist eine Beobachtung, "
             "kein Nachweis einer SW-Wirkung oder Lieferantenverursachung. "
             "Welche Funktionen oder Kalibrierungen geändert wurden, ist "
             "ohne freigegebene Software-Release-Notes nicht bestimmbar."
@@ -161,7 +185,7 @@ class CPC3SoftwarePanel(QWidget):
             extra = " …" if len(review.documented_actions) > 3 else ""
             note += (
                 f" {len(review.documented_actions)} dokumentierte "
-                f"CPC3-Softwareereignisse: {samples}{extra}."
+                f"{self.ecu}-Softwareereignisse: {samples}{extra}."
             )
         self.evidence_note.setText(note)
 
