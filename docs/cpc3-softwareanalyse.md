@@ -25,9 +25,22 @@ erhalten. Alle *verschiedenen* SW-Stände und ihr Beobachtungsverlauf
 bleiben dagegen verfügbar.
 
 Neben `SW vor Tausch` und `SW nach Tausch` gibt es deshalb
+`SW am Tauschtag (Reihenfolge offen)`, `SW-Zeitlage`,
 `Alle SW-Stände dieser FIN`, `Chronologischer SW-Verlauf`,
 `Anzahl SW-Stände` sowie eine **SW-Messhistorientabelle** zum
-ausgewählten Fall. Der lokale Excel-Export enthält eine eigene
+ausgewählten Fall. **Eine SW-Messung am Tauschtag ist ein gültiger
+Softwarebeleg, auch wenn das Tauschprotokoll keine Reparaturuhrzeit
+enthält.** Die App erfindet daraus keinen Vorher- oder Nachher-Stand.
+Das gilt auch bei mehreren Messungen mit identischem SW-Stand. Bei
+unterschiedlichen SW-Ständen am Tauschtag wird der Konflikt benannt.
+
+Der zusätzliche **SW-Zeitlage-Filter** sowie das Diagramm
+**„Zeitliche SW-Datenlage“** unterscheiden sicher vorher gemessene
+Stände, ausschließlich am Tauschtag gemessene Stände, widersprüchliche
+Tauschtagsmessungen, erst danach gemessene Stände und echte Datenlücken.
+Ein eigener **CPC3 anzeigen**-Button stellt die Standardsteuergerätewahl
+wieder her. Die SW-Messhistorie kann eingeklappt werden, damit bei
+vielen Pumpenfällen mehr Platz für die Haupttabelle bleibt. Der lokale Excel-Export enthält eine eigene
 Tabelle **SW-Messhistorie** mit Zeit und Quellbeleg. Tagesgenaue
 Beobachtungen erhalten niemals eine künstliche Uhrzeit.
 
@@ -36,7 +49,7 @@ höchstens **20.000 zusammengefasste Beobachtungen** geladen.
 Bei einer Begrenzung wird der Fall als unvollständig markiert.
 Die Quelldateien werden weder erneut geschrieben noch auf GitHub geladen.
 
-### Die drei Ringdiagramme
+### Die vier Ringdiagramme
 
 Die Donuts verwenden ausschließlich **gegenseitig ausschließende
 Pumpenfälle im aktuell sichtbaren Filter** als Nenner, keine
@@ -45,11 +58,16 @@ CSV-Zeilen:
 1. **ECU-DTC vor Pumpentausch:** positiv beobachteter ECU-DTC;
    vollständiger ECU-QuickTest ohne ECU-DTC; oder
    **keine ausreichende Diagnose**.
-2. **Häufigste SW vor Pumpentausch:** fünf häufigste belegte
-   Vor-Tausch-SW-Stände, weitere und fehlende SW-Beobachtungen.
+2. **SW vor / am Tauschtag:** fünf häufigste belegte
+   Vor-Tausch-SW-Stände und separat etikettierte Tauschtags-SW-Stände,
+   weitere und fehlende/unklare SW-Beobachtungen.
    **Jeder Fall zählt genau einmal**, unabhängig von der Anzahl
-   der Diagnosezeilen.
-3. **ECU-DTC nach Pumpentausch:** DTC positiv beobachtet;
+   der Diagnosezeilen. Eine reine Tauschtagsmessung ist **nicht** als
+   zuvor installierter Stand nachgewiesen.
+3. **Zeitliche SW-Datenlage:** SW sicher vor dem Tausch, nur am
+   Tauschtag, SW-Konflikt am Tauschtag, erst nach dem Tausch,
+   sonst zeitlich unklar oder keine SW-Daten.
+4. **ECU-DTC nach Pumpentausch:** DTC positiv beobachtet;
    vollständiger ECU-Nachtest ohne DTC; oder
    **kein belastbarer Nachtest**.
 
@@ -95,9 +113,12 @@ freigegebene Ablage gelangen. Automatische Datenuploads finden nicht statt.
 
 Die Spalten trennen:
 
-- **CPC3-SW vor/nach Pumpentausch**: Letzte belegte Version vor,
-  erste belegte Version nach dem Tauschtag; Messungen am Tauschtag
-  bleiben ohne belastbare Reihenfolge unzugeordnet.
+- **ECU-SW vor/nach Pumpentausch**: Letzte belegte Version vor,
+  erste belegte Version nach dem Tauschtag.
+- **ECU-SW am Tauschtag**: Hier wird der tatsächlich am Reparaturtag
+  beobachtete `EcuSwVersionTxt` einschließlich Quelldokumentation
+  angezeigt. Ohne Reparaturuhrzeit ist das **kein gesichert vor** oder
+  **nach** dem mechanischen Tausch installierter Stand.
 - **SW-Maßnahme am Tauschtag**: Nur dann als **dokumentiert**
   ausgewiesen, wenn ein explizites CPC3-Softwareereignis mit
   Update-/Programmierungsaktion am selben Kalendertag vorliegt.
