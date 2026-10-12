@@ -281,6 +281,141 @@ class SourceKnowledgeStore:
                 result[fin] = [(a, b, int(n)) for a, b, n in rows]
         return result
 
+    def autoexport_ecu_names(self) -> tuple[str, ...]:
+        """ECUs actually present in the immutable local AutoExport DTC index."""
+        with self.store.connect() as con:
+            names = con.execute(
+                """
+                SELECT DISTINCT upper(trim(
+                    json_extract_string(payload_json, '$.EcuNm')
+                )) AS ecu
+                FROM source_knowledge_rows
+                WHERE category = 'autoexport_dtc'
+                  AND NULLIF(trim(
+                    json_extract_string(payload_json, '$.EcuNm')
+                  ), '') IS NOT NULL
+                ORDER BY ecu
+                """
+            ).fetchall()
+        return tuple(row[0] for row in names)
+
+    def ecu_software_rows_for_fins(
+        self, fins: Sequence[str], ecu: str, *,
+        per_fin_limit: int = 20000,
+    ) -> dict[str, tuple[list[dict[str, Any]], bool]]:
+        """Read EVERY distinct ECU diagnostic observation for a cohort.
+
+        Aggregate repeated DTC export lines by actual FIN, source and ECU
+        snapshot rather than silently showing only the first two SW versions.
+        The original EcuSwVersionTxt is preserved verbatim; rows without SW
+        also survive as *positive* DTC evidence, never as SW readings.
+        Missing rows/quicktests are NOT evidence of no fault or no SW update.
+
+        A single read-only SQL query is issued per 200 FINs. No raw FIN or
+        document is transferred outside the local DuckDB connection.
+        """
+        from ntf_insight.ingestion.real_source_parsers import canonical_fin
+
+        normalized = sorted({
+            valid for raw in fins if (valid := canonical_fin(raw)) is not None
+        })
+        selected_ecu = str(ecu or "").strip().upper()
+        if not selected_ecu or not normalized:
+            return {}
+        bound = max(1, min(int(per_fin_limit), 50000))
+        result: dict[str, tuple[list[dict[str, Any]], bool]] = {
+            fin: ([], False) for fin in normalized
+        }
+        normalized_fin = """
+            CASE
+                WHEN length(trim(fin)) = 20
+                 AND left(upper(trim(fin)), 3) = 'MBC'
+                THEN substr(upper(trim(fin)), 4)
+                ELSE upper(trim(fin))
+            END
+        """
+        with self.store.connect() as con:
+            for offset in range(0, len(normalized), 200):
+                group = normalized[offset:offset + 200]
+                tokens = ", ".join("?" for _ in group)
+                cursor = con.execute(
+                    f"""
+                    WITH matched AS (
+                        SELECT {normalized_fin} AS case_fin,
+                               source_sha256, source_location,
+                               NULLIF(trim(json_extract_string(
+                                   payload_json, '$.DiagStartTs'
+                               )), '') AS diag_ts,
+                               NULLIF(trim(json_extract_string(
+                                   payload_json, '$.DiagStartDt'
+                               )), '') AS diag_date,
+                               NULLIF(trim(json_extract_string(
+                                   payload_json, '$.EcuSwVersionTxt'
+                               )), '') AS sw,
+                               NULLIF(trim(json_extract_string(
+                                   payload_json, '$.EcuSuppHwVersionTxt'
+                               )), '') AS hw,
+                               NULLIF(trim(json_extract_string(
+                                   payload_json, '$.EcuHwPartnumberCd'
+                               )), '') AS part,
+                               NULLIF(trim(json_extract_string(
+                                   payload_json, '$.EcuFaultNm'
+                               )), '') AS dtc,
+                               NULLIF(trim(json_extract_string(
+                                   payload_json, '$.KmReadingNum'
+                               )), '') AS km,
+                               NULLIF(trim(json_extract_string(
+                                   payload_json, '$.CntXDDiagnosisHeaderSid'
+                               )), '') AS diagnosis_ref
+                        FROM source_knowledge_rows
+                        WHERE category = 'autoexport_dtc'
+                          AND {normalized_fin} IN ({tokens})
+                          AND upper(trim(json_extract_string(
+                              payload_json, '$.EcuNm'
+                          ))) = ?
+                    )
+                    SELECT case_fin, source_sha256,
+                           min(source_location) AS first_location,
+                           diag_ts, diag_date, sw, hw, part, km,
+                           diagnosis_ref,
+                           string_agg(
+                               DISTINCT upper(dtc), ' | '
+                               ORDER BY upper(dtc)
+                           ) FILTER (WHERE dtc IS NOT NULL) AS fault_codes,
+                           count(*) AS source_rows
+                    FROM matched
+                    GROUP BY case_fin, source_sha256,
+                             diag_ts, diag_date, sw, hw, part, km,
+                             diagnosis_ref
+                    ORDER BY case_fin, coalesce(diag_ts, diag_date),
+                             source_sha256, first_location
+                    """,
+                    [*group, selected_ecu],
+                )
+                while batch := cursor.fetchmany(5000):
+                    for (fin, sha, location, ts, day, sw, hw, part,
+                         km, diag_ref, codes, count) in batch:
+                        gathered, was_truncated = result[fin]
+                        if len(gathered) >= bound:
+                            result[fin] = (gathered, True)
+                            continue
+                        gathered.append({
+                            "source_ref": f"raw:{sha}#{location}",
+                            "diag_timestamp": ts,
+                            "diag_date": day,
+                            "software_version": sw,
+                            "hardware_version": hw,
+                            "hardware_part_number": part,
+                            "mileage_km": km,
+                            "diagnosis_ref": diag_ref,
+                            "dtc_codes": tuple(
+                                code.strip() for code in (codes or "").split(" | ")
+                                if code.strip()
+                            ),
+                            "raw_observation_count": int(count),
+                        })
+        return result
+
     def cpc3_software_rows_for_fin(
         self, fin: str, *, limit: int = 5000,
     ) -> tuple[list[dict[str, Any]], bool]:
