@@ -9,7 +9,7 @@ from __future__ import annotations
 from collections import Counter
 from dataclasses import dataclass
 from datetime import date
-from typing import Callable, Iterable, Mapping
+from typing import Callable, Iterable
 
 from ntf_insight.analysis.cpc3_software import (
     CPC3SoftwareReview, assess_cpc3_software,
