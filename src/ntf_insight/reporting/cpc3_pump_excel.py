@@ -43,6 +43,9 @@ _HEADERS = (
     "ECU-DTC-Status vor Tausch", "ECU-DTC-Status nach Tausch",
     "Positiv belegte ECU-DTCs vor Tausch",
     "Positiv belegte ECU-DTCs nach Tausch",
+    "SW-Beobachtungen am Tauschtag",
+    "SW-Zeitlage zum Pumpentausch",
+    "Quellbelege SW am Tauschtag",
 )
 
 
@@ -83,6 +86,9 @@ def export_cpc3_pump_overview(
             _safe(case.post_dtc_evidence),
             _safe("; ".join(case.pre_dtc_observed)),
             _safe("; ".join(case.post_dtc_observed)),
+            _safe("; ".join(case.swap_day_sw)),
+            _safe(case.swap_context_kind),
+            _safe("; ".join(case.swap_day_sources)),
         ))
     ws.freeze_panes = "D2"
     ws.auto_filter.ref = (
@@ -91,7 +97,10 @@ def export_cpc3_pump_overview(
     ws.sheet_view.showGridLines = False
     widths = (22, 25, 22, 19, 24, 24, 49, 22, 27, 48, 48, 33,
               44, 57, 26, 26, 27, 28, 30, 56, 60, 60, 60, 21, 26, 27, 38)
-    widths = (*widths, 20, 48, 80, 20, 25, 25, 46, 46)
+    widths = (
+        *widths, 20, 48, 80, 20, 25, 25, 46, 46,
+        46, 34, 70,
+    )
     for index, width in enumerate(widths, 1):
         ws.column_dimensions[get_column_letter(index)].width = width
     ws.row_dimensions[1].height = 44
@@ -133,14 +142,16 @@ def export_cpc3_pump_overview(
     for heading, value in (
         ("Analyseobjekt", "Eine Zeile je Pumpenfall; gleiche FIN kann mehrfach vorkommen."),
         ("Anker", "Pumpentauschdatum aus dokumentierter Quelle; nicht automatisch Ausfalldatum."),
-        ("SW am Tauschtag", "Nur eine explizit dokumentierte SW-Maßnahme mit demselben Kalendertag."),
+        ("SW-Maßnahme am Tauschtag", "Explizit dokumentierter Softwareeingriff am selben Kalendertag."),
+        ("SW-Messung am Tauschtag", "SW aus AutoExport/QT am Tauschtag belegt; die Uhrzeit der mechanischen Reparatur ist unbekannt. Kein sicherer Vorher- oder Nachher-Stand."),
         ("SW zeitnah", "SW-Maßnahme im offengelegten Zeitfenster von 14 Tagen um den Tauschtag."),
         ("SW-Versionen", "Ein Unterschied vor/nach dem Tausch beweist kein Update am Tauschtag."),
         ("Diagnose", "Positive AutoExport-DTCs sind Belege, aber nur vollständige ECU-QuickTests begründen ein 0-DTC-Ergebnis."),
         ("DTC nicht erneut", "Im vollständigen ECU-Nachtest kein DTC; ohne ECU-Test unbekannt, keine Heilungsbestätigung."),
         ("Ursache", "Pumpe und Software können gleichzeitig verändert worden sein; SW-Heilung ist nicht isoliert bewiesen."),
         ("Datenlücken", "Fehlende/mehrdeutige Beobachtungen bleiben explizit unbekannt."),
-        ("SW-Standhäufigkeit", "Zählt Pumpenfälle mit bekannter SW vor Tausch; keine Fahrzeug-Flottenfehlerquote."),
+        ("SW-Standhäufigkeit", "Donut: sicher vorher gemessene SW getrennt von ausschließlich am Tauschtag beobachteter SW; keine Flotten-Ausfallquote."),
+        ("SW-Zeitlage", "Nur am Tauschtag / erst danach / überhaupt keine SW sind unterschiedliche Kategorien."),
         ("Fachprüfung", "Softwareänderungen brauchen freigegebene Release-/Kalibrierungsunterlagen."),
         ("Datenschutz", "Enthält FINs und Werkstattbelege; nur auf freigegebenen lokalen Ablagen speichern."),
     ):
