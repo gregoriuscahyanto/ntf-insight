@@ -38,6 +38,11 @@ _HEADERS = (
     "Dokumentierte SW-Maßnahmen", "Quellbeleg SW vor",
     "Quellbeleg SW nach", "Datenlücken", "AutoExport-Begrenzung",
     "Befundungsbericht prüfen", "SW-Releasenotes prüfen", "Fachliche Notiz",
+    "Steuergerät", "Alle beobachteten SW-Stände (EcuSwVersionTxt)",
+    "Chronologischer SW-Verlauf", "Anzahl unterschiedlicher SW-Stände",
+    "ECU-DTC-Status vor Tausch", "ECU-DTC-Status nach Tausch",
+    "Positiv belegte ECU-DTCs vor Tausch",
+    "Positiv belegte ECU-DTCs nach Tausch",
 )
 
 
@@ -48,7 +53,7 @@ def export_cpc3_pump_overview(
     """Write the currently selected true case rows, no guessed conclusions."""
     workbook = Workbook()
     ws = workbook.active
-    ws.title = "CPC3-Pumpenfälle"
+    ws.title = "ECU-Pumpenfälle"
     ws.append(_HEADERS)
     for case in cases:
         ws.append((
@@ -70,12 +75,23 @@ def export_cpc3_pump_overview(
             _safe(case.before_source), _safe(case.after_source),
             _safe(case.note), "Ja" if case.truncated else "Nein",
             "Offen", "Offen", "",
+            _safe(case.ecu),
+            _safe("; ".join(case.sw_versions)),
+            _safe(" → ".join(case.sw_history)),
+            len(case.sw_versions),
+            _safe(case.pre_dtc_evidence),
+            _safe(case.post_dtc_evidence),
+            _safe("; ".join(case.pre_dtc_observed)),
+            _safe("; ".join(case.post_dtc_observed)),
         ))
     ws.freeze_panes = "D2"
-    ws.auto_filter.ref = f"A1:AA{max(1, ws.max_row)}"
+    ws.auto_filter.ref = (
+        f"A1:{get_column_letter(len(_HEADERS))}{max(1, ws.max_row)}"
+    )
     ws.sheet_view.showGridLines = False
     widths = (22, 25, 22, 19, 24, 24, 49, 22, 27, 48, 48, 33,
               44, 57, 26, 26, 27, 28, 30, 56, 60, 60, 60, 21, 26, 27, 38)
+    widths = (*widths, 20, 48, 80, 20, 25, 25, 46, 46)
     for index, width in enumerate(widths, 1):
         ws.column_dimensions[get_column_letter(index)].width = width
     ws.row_dimensions[1].height = 44
@@ -90,6 +106,28 @@ def export_cpc3_pump_overview(
         for col in (25, 26, 27):
             row[col - 1].font = Font(name="Arial", size=10, color="2456A6")
 
+    history = workbook.create_sheet("SW-Messhistorie")
+    history.append((
+        "Fall-ID", "FIN", "Steuergerät", "Diagnosezeit",
+        "EcuSwVersionTxt (original)", "Tauschbezug", "Quellbeleg",
+    ))
+    for case in cases:
+        for observed_at, sw, relation, source in case.sw_observations:
+            history.append((
+                _safe(case.case_id), _safe(case.fin), _safe(case.ecu),
+                _safe(observed_at), _safe(sw), _safe(relation),
+                _safe(source),
+            ))
+    history.freeze_panes = "D2"
+    history.auto_filter.ref = (
+        f"A1:G{max(1, history.max_row)}"
+    )
+    for col, width in enumerate((22, 25, 18, 25, 26, 35, 75), 1):
+        history.column_dimensions[get_column_letter(col)].width = width
+    for cell in history[1]:
+        cell.fill = PatternFill("solid", fgColor="22252A")
+        cell.font = Font(color="FFFFFF", bold=True)
+
     info = workbook.create_sheet("Bewertungsregeln")
     info.append(("Hinweis", "Bedeutung"))
     for heading, value in (
@@ -98,10 +136,11 @@ def export_cpc3_pump_overview(
         ("SW am Tauschtag", "Nur eine explizit dokumentierte SW-Maßnahme mit demselben Kalendertag."),
         ("SW zeitnah", "SW-Maßnahme im offengelegten Zeitfenster von 14 Tagen um den Tauschtag."),
         ("SW-Versionen", "Ein Unterschied vor/nach dem Tausch beweist kein Update am Tauschtag."),
-        ("Diagnose", "Nur fallbezogene vollständige CPC3-QuickTests vor/nach dem Tauschtag."),
-        ("DTC nicht erneut", "Im vorhandenen Nachtest nicht mehr gesehen; keine Heilungsbestätigung."),
+        ("Diagnose", "Positive AutoExport-DTCs sind Belege, aber nur vollständige ECU-QuickTests begründen ein 0-DTC-Ergebnis."),
+        ("DTC nicht erneut", "Im vollständigen ECU-Nachtest kein DTC; ohne ECU-Test unbekannt, keine Heilungsbestätigung."),
         ("Ursache", "Pumpe und Software können gleichzeitig verändert worden sein; SW-Heilung ist nicht isoliert bewiesen."),
         ("Datenlücken", "Fehlende/mehrdeutige Beobachtungen bleiben explizit unbekannt."),
+        ("SW-Standhäufigkeit", "Zählt Pumpenfälle mit bekannter SW vor Tausch; keine Fahrzeug-Flottenfehlerquote."),
         ("Fachprüfung", "Softwareänderungen brauchen freigegebene Release-/Kalibrierungsunterlagen."),
         ("Datenschutz", "Enthält FINs und Werkstattbelege; nur auf freigegebenen lokalen Ablagen speichern."),
     ):
