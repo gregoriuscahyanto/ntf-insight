@@ -396,6 +396,7 @@ class CasePage(QWidget):
         # FIN-wide CPC3-SW evidence also includes AutoExport rows not attached
         # to the current QEC case. Read-only, no inferred update dates.
         self.cpc3_panel = CPC3SoftwarePanel(self.source_knowledge)
+        self.cpc3_overview.ecu_selected.connect(self.cpc3_panel.set_ecu)
         layout.addWidget(self.cpc3_panel)
 
         layout.addWidget(QLabel(
