@@ -5,6 +5,8 @@ No plotting data or vehicle identifiers leave the local process.
 """
 from __future__ import annotations
 
+from html import escape
+
 from PySide6.QtCore import QRectF, QSize, Qt
 from PySide6.QtGui import QColor, QFont, QPainter, QPen
 from PySide6.QtWidgets import QHBoxLayout, QLabel, QVBoxLayout, QWidget
@@ -92,7 +94,7 @@ class ECUOverviewDonutCard(QWidget):
         self.donut = ECUCaseDonut(title)
         body.addWidget(self.donut)
         self.legend = QLabel("Keine Auswertung")
-        self.legend.setTextFormat(Qt.TextFormat.PlainText)
+        self.legend.setTextFormat(Qt.TextFormat.RichText)
         self.legend.setWordWrap(True)
         self.legend.setMinimumWidth(135)
         body.addWidget(self.legend, 1)
@@ -101,8 +103,9 @@ class ECUOverviewDonutCard(QWidget):
 
     def set_counts(self, entries: tuple[tuple[str, int], ...]) -> None:
         self.donut.set_counts(entries)
-        self.legend.setText("\n".join(
-            f"● {label[:22]}: {count}"
-            for label, count in entries if count
+        self.legend.setText("<br>".join(
+            f'<span style="color:{COLORS[index % len(COLORS)]}">●</span> '
+            f"{escape(label[:22])}: {count}"
+            for index, (label, count) in enumerate(entries) if count
         ) or "Keine Fälle")
         self.legend.setToolTip(self.donut.toolTip())
