@@ -89,6 +89,7 @@ class CPC3SoftwarePanel(QWidget):
             self.show_case(self._current_case)
 
     def clear(self) -> None:
+        self._current_case = None
         self.swap_summary.setText("Keine FIN / kein Fall ausgewählt.")
         self.evidence_note.setText("Keine CPC3-Softwaredaten ausgewertet.")
         self.version_model.set_rows([])
