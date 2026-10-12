@@ -468,3 +468,129 @@ def test_gui_renders_selected_other_ecu_sw_and_all_observations():
     assert panel.sw_detail_model.rowCount() == 2
     assert sum(n for _, n in panel.donut_sw.donut.entries) == 1
     panel.close()
+
+
+def test_sw_measured_on_pump_swap_day_is_visible_but_not_ordered(tmp_path):
+    """Screenshot-like date-only QEC anchor + AutoExport 06:32 on that day."""
+    case = _pump(321, with_quicktests=False)
+    case.ecu_states = []
+    diagnosis_day = (BASE + timedelta(days=7)).date().isoformat()
+    observations = [
+        {
+            "source_ref": f"raw:synthetic-source-{index}#csv:{index}",
+            "diag_timestamp": f"{diagnosis_day}T06:32:00",
+            "diag_date": diagnosis_day,
+            "software_version": "SW-SYNTH-42",
+            "dtc_codes": ("SYNTH-FAULT",),
+        }
+        for index in (1, 2)
+    ]
+    row = evaluate_cpc3_pump_case(
+        case, autoexport_rows=observations,
+    )
+    assert row.before_sw is None and row.after_sw is None
+    assert row.sw_versions == ("SW-SYNTH-42",)
+    assert row.swap_day_sw == ("SW-SYNTH-42",)
+    assert len(row.swap_day_sources) == 2
+    assert row.swap_context_sw == "SW-SYNTH-42"
+    assert row.swap_context_kind == "on_day_only"
+    assert row.update_group == "unknown"
+    assert row.pre_dtc_evidence == "unknown"
+    assert row.post_dtc_evidence == "unknown"
+    assert "Tauschtag" in row.note
+    assert len(row.sw_observations) == 2
+
+    report = build_cpc3_pump_overview(
+        [case], load_autoexport=lambda fin: (observations, False),
+    )
+    app = QApplication.instance() or QApplication([])
+    panel = CPC3PumpOverviewPanel([case], None)
+    panel.show()
+    app.processEvents()
+    panel.set_report(report)
+    assert panel.model.rowCount() == 1
+    assert panel.model.rows[0][5] == "Nicht vor Tausch belegt"
+    assert panel.model.rows[0][6] == "Nicht nach Tausch belegt"
+    assert panel.model.rows[0][7] == "SW-SYNTH-42"
+    assert "Zeitfolge offen" in panel.model.rows[0][8]
+    assert "SW am Tauschtag: 1" in panel.summary.text()
+    assert panel.donut_time.donut.entries[1] == ("Nur am Tauschtag", 1)
+    assert sum(value for _, value in panel.donut_sw.donut.entries) == 1
+    assert panel.donut_sw.donut.entries[0] == (
+        "SW-SYNTH-42 (Tauschtag)", 1,
+    )
+    panel.sw_time_filter.setCurrentIndex(
+        panel.sw_time_filter.findData("on_day_only")
+    )
+    assert panel.proxy.rowCount() == 1
+    panel.sw_time_filter.setCurrentIndex(
+        panel.sw_time_filter.findData("before")
+    )
+    assert panel.proxy.rowCount() == 0
+    panel.sw_time_filter.setCurrentIndex(0)
+
+    filename = tmp_path / "all-sw-same-day.xlsx"
+    export_cpc3_pump_overview(filename, report.cases)
+    workbook = load_workbook(filename, read_only=True)
+    try:
+        sheet = workbook["ECU-Pumpenfälle"]
+        fields = tuple(cell.value for cell in sheet[1])
+        swap_sw_col = fields.index("SW-Beobachtungen am Tauschtag") + 1
+        swap_kind_col = fields.index("SW-Zeitlage zum Pumpentausch") + 1
+        assert sheet.cell(2, swap_sw_col).value == "SW-SYNTH-42"
+        assert sheet.cell(2, swap_kind_col).value == "on_day_only"
+        assert workbook["SW-Messhistorie"].max_row == 3
+    finally:
+        workbook.close()
+    panel.close()
+
+
+def test_sw_on_swap_day_conflicts_and_earlier_sw_remain_distinct():
+    case = _pump(325, with_quicktests=False)
+    case.ecu_states = []
+    day = (BASE + timedelta(days=7)).date().isoformat()
+    raw = [
+        {
+            "source_ref": "raw:synthetic#1",
+            "diag_date": day,
+            "software_version": "SW-1",
+        },
+        {
+            "source_ref": "raw:synthetic#2",
+            "diag_date": day,
+            "software_version": "SW-2",
+        },
+    ]
+    conflict = evaluate_cpc3_pump_case(case, autoexport_rows=raw)
+    assert conflict.swap_day_sw == ("SW-1", "SW-2")
+    assert conflict.swap_context_kind == "on_day_conflict"
+    assert conflict.swap_context_sw is None
+    assert conflict.before_sw is None
+    assert conflict.after_sw is None
+
+    raw.append({
+        "source_ref": "raw:synthetic#3",
+        "diag_date": (BASE + timedelta(days=3)).date().isoformat(),
+        "software_version": "SW-0",
+    })
+    with_prior = evaluate_cpc3_pump_case(case, autoexport_rows=raw)
+    assert with_prior.swap_context_kind == "before"
+    assert with_prior.swap_context_sw == "SW-0"
+    assert with_prior.before_sw == "SW-0"
+    assert with_prior.swap_day_sw == ("SW-1", "SW-2")
+
+
+def test_software_only_after_swap_not_classified_as_missing():
+    case = _pump(326, with_quicktests=False)
+    case.ecu_states = []
+    raw = [{
+        "source_ref": "raw:synthetic#post",
+        "diag_date": (BASE + timedelta(days=10)).date().isoformat(),
+        "software_version": "SW-AFTER",
+    }]
+    result = evaluate_cpc3_pump_case(case, autoexport_rows=raw)
+    assert result.sw_versions == ("SW-AFTER",)
+    assert result.swap_context_kind == "after_only"
+    assert result.swap_day_sw == ()
+    assert result.before_sw is None
+    assert result.after_sw == "SW-AFTER"
