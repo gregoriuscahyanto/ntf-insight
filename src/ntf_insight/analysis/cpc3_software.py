@@ -36,6 +36,8 @@ class CPC3VersionEvidence:
     version: str
     first_seen: datetime
     last_seen: datetime
+    first_precision: str
+    last_precision: str
     observation_count: int
     sources: tuple[str, ...]
     observed_dtcs: tuple[str, ...]
@@ -148,9 +150,16 @@ def _date_ambiguous_days(
         if len({
             _version(event.software_version).casefold()
             for event in events if _version(event.software_version)
-        }) > 1 and any(
-            getattr(event, "time_precision", None) == "date"
-            for event in events
+        }) > 1 and (
+            any(
+                getattr(event, "time_precision", None) == "date"
+                for event in events
+            )
+            or len({
+                "AutoExport" if event.event_id.startswith("cpc3-raw:")
+                else "Falldiagnose/QuickTest"
+                for event in events
+            }) > 1
         )
     }
 
@@ -284,10 +293,17 @@ def assess_cpc3_software(
             )
             codes.update(raw_codes.get(state.event_id, ()))
             codes.update(complete_codes.get(state.event_id, ()))
+        last_sample = max(
+            versions_group, key=lambda state: (
+                state.occurred_at, state.event_id,
+            )
+        )
         items.append(CPC3VersionEvidence(
             version=_version(sample.software_version) or "",
-            first_seen=min(s.occurred_at for s in versions_group),
-            last_seen=max(s.occurred_at for s in versions_group),
+            first_seen=sample.occurred_at,
+            last_seen=last_sample.occurred_at,
+            first_precision=getattr(sample, "time_precision", "datetime"),
+            last_precision=getattr(last_sample, "time_precision", "datetime"),
             observation_count=len(versions_group),
             sources=tuple(sorted(source_types)),
             observed_dtcs=tuple(sorted(codes)),
