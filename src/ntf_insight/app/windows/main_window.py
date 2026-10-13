@@ -13,6 +13,7 @@ from ntf_insight.app.pages.dtc_page import DTCExplorerPage
 from ntf_insight.app.pages.prediction_page import PredictionPage
 from ntf_insight.app.pages.sources_page import SourcesPage
 from ntf_insight.app.pages.quicktest_download_page import QuickTestDownloadPage
+from ntf_insight.app.pages.qec_download_page import QecDownloadPage
 from ntf_insight.app.pages.source_knowledge_page import SourceKnowledgePage
 from ntf_insight.app.pages.supplier_page import SupplierPage
 from ntf_insight.app.widgets.navigation import NavigationPanel
@@ -80,6 +81,9 @@ class MainWindow(QMainWindow):
             "quicktest_download": QuickTestDownloadPage(
                 self.application_data.paths.data_dir, self.repository, self.application_data.mode,
             ),
+            "qec_download": QecDownloadPage(
+                self.application_data.paths.data_dir, self.repository, self.application_data.mode,
+            ),
             "cases": CasePage(
                 self.repository, self.reference_repository, self.manual_service,
                 review_store=review_store,
@@ -94,6 +98,7 @@ class MainWindow(QMainWindow):
         }
         pages["cases"].case_saved.connect(self._reload_after_manual_change)
         pages["quicktest_download"].import_requested.connect(pages["sources"]._archive_paths)
+        pages["qec_download"].import_requested.connect(pages["sources"]._archive_paths)
         pages["sources"].sources_updated.connect(self._reload_after_source_import)
         return pages
 
