@@ -640,7 +640,7 @@ class CasePage(QWidget):
             return
         history = {
             result.fin: (
-                result.last_attempt_at,
+                result.last_attempt_at if result.files else "",
                 self.quicktest_download_root / result.fin,
                 len(result.files),
             )
