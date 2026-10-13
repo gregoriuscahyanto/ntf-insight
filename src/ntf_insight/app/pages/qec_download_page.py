@@ -155,6 +155,14 @@ class QecDownloadPage(QWidget):
         self.status = QLabel("Bereit", objectName="PageSubtitle")
         self.status.setWordWrap(True)
         layout.addWidget(self.status)
+        layout.addWidget(QLabel("Ablaufprotokoll", objectName="CardTitle"))
+        self.activity = QPlainTextEdit()
+        self.activity.setReadOnly(True)
+        self.activity.setMaximumHeight(125)
+        self.activity.setPlaceholderText(
+            "Der QEC-Status wird hier mitgeschrieben. Keine Passwoerter oder Cookies enthalten."
+        )
+        layout.addWidget(self.activity)
         self.table = QTableWidget(0, 5)
         self.table.setHorizontalHeaderLabels(
             ("FIN", "Status", "Schadteile", "Anhänge", "Hinweise / Fehler")
@@ -162,6 +170,13 @@ class QecDownloadPage(QWidget):
         self.table.horizontalHeader().setStretchLastSection(True)
         self.table.setAlternatingRowColors(True)
         layout.addWidget(self.table, 1)
+
+    def _progress(self, message: str) -> None:
+        self.status.setText(message)
+        self.activity.appendPlainText(message)
+
+    def _error(self, message: str) -> None:
+        self._progress("Fehler: " + message)
 
     def _forget_login(self) -> None:
         try:
@@ -247,18 +262,19 @@ class QecDownloadPage(QWidget):
             QMessageBox.warning(self, "FIN / Anmeldung pruefen", str(exc))
             return
         self.table.setRowCount(0)
+        self.activity.clear()
         self.worker = QecDownloadWorker(
             targets, Path(self.folder.text()), self.data_dir / "edge-qec-profile",
             self.pump_only.isChecked(), login=login,
         )
         self.password.clear()  # Passwort nicht nach dem Start in der GUI halten.
-        self.worker.progress.connect(self.status.setText)
+        self.worker.progress.connect(self._progress)
         self.worker.completed.connect(self._completed)
-        self.worker.failed.connect(lambda message: self.status.setText("Fehler: " + message))
+        self.worker.failed.connect(self._error)
         self.worker.finished.connect(self._finished)
         self.start.setEnabled(False)
         self.stop.setEnabled(True)
-        self.status.setText(f"QEC-Edge startet · {len(targets)} FIN(s)")
+        self._progress(f"QEC-Edge startet · {len(targets)} FIN(s)")
         self.worker.start()
 
     def _stop(self) -> None:
@@ -278,9 +294,9 @@ class QecDownloadPage(QWidget):
                 self.table.setItem(row, column, QTableWidgetItem(value))
         files = list(dict.fromkeys(path for result in results for path in result.files))
         pages = sum(len(result.snapshots) for result in results)
-        self.status.setText(
+        self._progress(
             f"QEC abgeschlossen: {len(results)} FIN(s), {pages} Reiter-Snapshots, "
-            f"{len(files)} Anhänge. Ablage: {self.folder.text()}"
+            f"{len(files)} Anhaenge. Ablage: {self.folder.text()}"
         )
         if files and self.archive.isChecked():
             self.import_requested.emit(files)
