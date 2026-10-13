@@ -282,8 +282,8 @@ def test_fin_case_overview_shows_readonly_quicktest_timeline_without_qec(
 
     assert not window.repository.list_cases()
     assert page.case_model.rowCount() == 1
-    assert page.case_model.data(page.case_model.index(0, 0)) == "Nur QuickTests (kein Fall)"
-    assert page.case_model.data(page.case_model.index(0, 1)) == FIN
+    assert page.case_model.data(page.case_model.index(0, 1)) == "Nur QuickTests (kein Fall)"
+    assert page.case_model.data(page.case_model.index(0, 2)) == FIN
     assert len(page.fin_only_previews) == 1
     assert page.selector.currentData() == "FIN-QUICKTEST:" + FIN
     assert page.timeline_model.rowCount() == 4  # 1 session, 1 DTC, 2 ECU states
