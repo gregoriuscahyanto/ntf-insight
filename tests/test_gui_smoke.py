@@ -14,8 +14,13 @@ def test_main_window_can_be_constructed(tmp_path, monkeypatch) -> None:
 
     assert "dashboard" in window.pages
     assert "sources" in window.pages
+    assert "quicktest_download" not in window.pages
+    assert "quicktest_download" not in window.navigation.buttons
     assert "cases" in window.pages
     assert hasattr(window.pages["cases"], "case_table")
+    assert hasattr(window.pages["cases"], "quicktest_download_all_button")
+    assert hasattr(window.pages["cases"], "quicktest_download_selected_button")
+    assert not window.pages["cases"].quicktest_download_selected_button.isEnabled()
     assert hasattr(window.pages["cases"], "time_plot")
     assert "dtcs" in window.pages
     assert "clusters" not in window.pages
