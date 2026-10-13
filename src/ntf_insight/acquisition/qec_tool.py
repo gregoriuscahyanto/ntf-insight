@@ -892,7 +892,7 @@ class QecDownloader:
         return page
 
     def _one_target(self, context, page, target: QecTarget, progress: Progress,
-                    cancel: Event, run_id: str) -> tuple[QecResult, object]:
+                    cancel: Event) -> tuple[QecResult, object]:
         result = QecResult(fin=target.fin, status="Abruf gestartet",
                            attempted_at=datetime.now(timezone.utc).isoformat())
         root = self.output_dir / target.fin
@@ -906,6 +906,8 @@ class QecDownloader:
                 result_html, target.fin, part_number=target.part_number,
                 pump_only=self.pump_only,
             )
+            if target.reference:
+                hits = [hit for hit in hits if hit.reference == target.reference]
             if not hits:
                 reported = evidence["qec_trefferzahl"]
                 visible = evidence["sichtbare_zeilen"]
@@ -936,7 +938,7 @@ class QecDownloader:
                 self._check_cancel(cancel)
                 progress(f"{target.fin}: Schadteil {index}/{len(hits)} – {hit.reference} …")
                 try:
-                    page = self._one_hit(context, page, target, hit, result, progress, cancel, run_id)
+                    page = self._one_hit(context, page, target, hit, result, progress, cancel)
                 except QecCancelled:
                     raise
                 except Exception as exc:
@@ -957,16 +959,25 @@ class QecDownloader:
             cancel: Event | None = None) -> list[QecResult]:
         if not targets:
             raise ValueError("Mindestens eine FIN erforderlich.")
-        # Nie aus unvalidierten QecTarget-Objekten Verzeichnisse anlegen.
-        validated = parse_qec_targets("\n".join(
-            f"{target.fin};{target.part_number}" if target.part_number else target.fin
-            for target in targets
-        ))
+        # Mehrere Schadteilfaelle koennen dieselbe FIN haben: exakte
+        # QEC-Referenzen bleiben beim Batch-Abruf erhalten.
+        validated: list[QecTarget] = []
+        seen: set[tuple[str, str, str]] = set()
+        for target in targets:
+            raw = target.fin + (f";{target.part_number}" if target.part_number else "")
+            item = parse_qec_targets(raw)[0]
+            reference = str(target.reference or "").strip()
+            if reference and not re.fullmatch(r"[0-9]{1,14}", reference):
+                raise ValueError("Ungueltige QEC-Referenznummer.")
+            key = (item.fin, _normalize_part(item.part_number), reference)
+            if key in seen:
+                continue
+            seen.add(key)
+            validated.append(QecTarget(item.fin, item.part_number, reference))
         progress = progress or (lambda _: None)
         cancel = cancel or Event()
         self.output_dir.mkdir(parents=True, exist_ok=True)
         self.profile_dir.mkdir(parents=True, exist_ok=True)
-        run_id = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
         try:
             from playwright.sync_api import sync_playwright
         except ImportError as exc:
@@ -986,11 +997,31 @@ class QecDownloader:
                 for target in validated:
                     if cancel.is_set():
                         break
-                    result, page = self._one_target(context, page, target, progress, cancel, run_id)
+                    result, page = self._one_target(context, page, target, progress, cancel)
                     results.append(result)
                     if result.status == "Abgebrochen":
                         break
             finally:
                 context.close()
                 self.password = ""
+        # FIN manifest aggregates individual reference-scoped downloads.
+        # This avoids losing the first case when the same FIN has multiple refs.
+        by_fin: dict[str, QecResult] = {}
+        for item in results:
+            combined = by_fin.get(item.fin)
+            if combined is None:
+                combined = QecResult(item.fin, status=item.status,
+                                     attempted_at=item.attempted_at)
+                by_fin[item.fin] = combined
+            elif combined.status != item.status:
+                combined.status = "Teilweise erfolgreich"
+            for attr in ("references", "files", "snapshots", "warnings", "errors"):
+                target_list = getattr(combined, attr)
+                for value in getattr(item, attr):
+                    if value not in target_list:
+                        target_list.append(value)
+            combined.search_diagnostics = item.search_diagnostics
+            combined.attempted_at = item.attempted_at
+        for fin, combined in by_fin.items():
+            _write_result(self.output_dir / fin, combined)
         return results
