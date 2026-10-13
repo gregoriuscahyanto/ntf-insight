@@ -75,12 +75,12 @@ class FakePage:
         self.handlers[event].remove(callback)
 
     def evaluate(self, script, arg=None):
+        if "delete window[key]" in script:
+            self.watching = False
+            return None
         if "const key = '__ntfInsightQuicktestS3Watcher'" in script:
             self.watching = True
             self.observed = False
-            return None
-        if "delete window[key]" in script:
-            self.watching = False
             return None
         if "() => Boolean(window.__ntfInsightQuicktestS3Watcher?.matched)" in script:
             return self.observed
