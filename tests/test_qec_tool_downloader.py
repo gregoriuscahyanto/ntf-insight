@@ -11,7 +11,7 @@ from ntf_insight.acquisition.qec_tool import (
     QEC_SECTIONS, QEC_START, QecDownloader, QecHit, QecResult, QecTarget,
     _qec_url, _snapshot, _store_attachment, _write_result,
     parse_attachment_urls, parse_qec_targets, parse_search_hits,
-    inspect_search_results,
+    inspect_search_results, parse_attachment_listing, _validate_attachment_response_url,
 )
 
 FIN = "WDD12345678901234"
@@ -126,6 +126,9 @@ def test_only_qec_urls_and_attachment_ids():
     </body></html>"""
     files = parse_attachment_urls(doc)
     assert [key for key, _ in files] == ["1001", "1002"]
+    inventory = parse_attachment_listing(doc)
+    assert [i["anhang_id"] for i in inventory] == ["1001", "1002"]
+    assert inventory[0]["linktext"] == "Bericht"
     assert all("displayPruefberichtFile.qec" in url for _, url in files)
 
 
@@ -143,6 +146,8 @@ def test_attachment_is_atomic_deduplicated_and_safe(tmp_path):
         _store_attachment(folder, "1001", {"content-type": "text/html"}, b"<html>SSO</html>")
     with pytest.raises(ValueError):
         _store_attachment(folder, "1001", {}, b"")
+    with pytest.raises(ValueError, match="PDF-Header"):
+        _store_attachment(folder, "1001", headers, b"THIS IS NOT A PDF")
     assert not list(folder.glob("*.partial"))
 
 
@@ -164,8 +169,11 @@ class SnapshotPage:
         assert selector == "body"
         return SimpleNamespace(inner_text=lambda timeout: "Kühlmittelpumpe: geprüft")
 
-    def evaluate(self, _):
-        return [{"name": "befund", "typ": "text", "wert": "NTF", "deaktiviert": False}]
+    def evaluate(self, script):
+        if "querySelectorAll('table')" in script:
+            return [{"nummer": 1, "zeilen": [[{"typ": "td", "text": "Gefunden", "colspan": 1}]]}]
+        return [{"name": "befund", "typ": "text", "wert": "NTF",
+                 "auswahltext": "Kein Fehler", "deaktiviert": False}]
 
 
 def test_snapshot_saves_json_and_read_only_html(tmp_path):
@@ -174,9 +182,12 @@ def test_snapshot_saves_json_and_read_only_html(tmp_path):
     result = _snapshot(SnapshotPage(), tmp_path, QEC_SECTIONS[0], hit)
     data = json.loads(result.read_text(encoding="utf-8"))
     assert data["felder"][0]["wert"] == "NTF"
+    assert data["felder"][0]["auswahltext"] == "Kein Fehler"
+    assert data["tabellen"][0]["zeilen"][0][0]["text"] == "Gefunden"
     html = (tmp_path / "ansicht.html").read_text(encoding="utf-8")
     assert "<script" not in html
     assert "Kühlmittelpumpe" in html
+    assert "Gefunden" in html and "Kein Fehler" in html
 
 
 class FakeControl:
@@ -393,3 +404,176 @@ def test_no_live_browser_or_credentials_needed_for_parsers():
     assert QEC_SECTIONS == (
         "WE-Daten", "Voranalysen", "Stellungnahme Lieferant", "Ergebnis + Nachanalyse", "Historie"
     )
+
+
+def test_attachment_destination_may_redirect_within_qec_but_never_to_sso():
+    valid = "https://qect.mo360cp.i.mercedes-benz.com/qec-access/attachmentDownload.qec?id=1001"
+    assert _validate_attachment_response_url(valid) == valid
+    for unsafe in (
+        "https://login.mercedes-benz.com/authorize",
+        "https://qect.mo360cp.i.mercedes-benz.com/qec-access/supp/login.qec",
+        "https://qect.mo360cp.i.mercedes-benz.com/qec-access/qecentry.qec",
+        "https://other.example/qec-access/attachmentDownload.qec",
+        "http://qect.mo360cp.i.mercedes-benz.com/qec-access/attachmentDownload.qec",
+        "https://qect.mo360cp.i.mercedes-benz.com:8443/qec-access/attachmentDownload.qec",
+    ):
+        with pytest.raises(ValueError):
+            _validate_attachment_response_url(unsafe)
+
+
+def test_api_attachment_accepts_safe_internal_redirect(tmp_path):
+    from types import SimpleNamespace
+
+    class Request:
+        headers = None
+        def get(self, url, **kwargs):
+            self.headers = kwargs.get("headers")
+            return SimpleNamespace(
+                url="https://qect.mo360cp.i.mercedes-benz.com/qec-access/redirectedDownload.qec",
+                ok=True, status=200,
+                headers={"content-type": "application/pdf",
+                         "content-disposition": 'attachment; filename="lieferantenbericht.pdf"'},
+                body=lambda: b"%PDF-1.7\nTest data",
+            )
+    request = Request()
+    context = SimpleNamespace(request=request)
+    popup = SimpleNamespace(url="https://qect.mo360cp.i.mercedes-benz.com/qec-access/listAttachments.qec")
+    dl = QecDownloader(tmp_path, tmp_path / "profile")
+    url = "https://qect.mo360cp.i.mercedes-benz.com/qec-access/displayPruefberichtFile.qec?attachmentId=1001"
+    result = dl._download_attachment_api(context, popup, "1001", url, tmp_path)
+    assert result.name == "1001_lieferantenbericht.pdf"
+    assert result.read_bytes().startswith(b"%PDF-")
+    assert request.headers == {"Referer": popup.url}
+
+
+def test_api_attachment_rejects_login_html_instead_of_pdf(tmp_path):
+    from types import SimpleNamespace
+
+    class Request:
+        def get(self, url, **kwargs):
+            return SimpleNamespace(url="https://qect.mo360cp.i.mercedes-benz.com/qec-access/supp/login.qec",
+                                   ok=True, status=200, headers={"content-type": "text/html"},
+                                   body=lambda: b"<html>Login</html>")
+    dl = QecDownloader(tmp_path, tmp_path / "profile")
+    popup = SimpleNamespace(url="https://qect.mo360cp.i.mercedes-benz.com/qec-access/listAttachments.qec")
+    url = "https://qect.mo360cp.i.mercedes-benz.com/qec-access/displayPruefberichtFile.qec?attachmentId=1001"
+    with pytest.raises(ValueError, match="Anmeldung"):
+        dl._download_attachment_api(SimpleNamespace(request=Request()), popup, "1001", url, tmp_path)
+    assert not list(tmp_path.glob("*.pdf"))
+
+
+def test_visible_browser_download_can_replace_failed_api_download(tmp_path):
+    from types import SimpleNamespace
+
+    url = "https://qect.mo360cp.i.mercedes-benz.com/qec-access/displayPruefberichtFile.qec?attachmentId=1001"
+
+    class Link:
+        def get_attribute(self, _):
+            return url
+        def click(self, **_):
+            pass
+
+    class Locator:
+        def count(self):
+            return 1
+        def nth(self, _):
+            return Link()
+
+    class Download:
+        suggested_filename = "beweis.pdf"
+        def failure(self):
+            return None
+        def save_as(self, path):
+            Path(path).write_bytes(b"%PDF-1.7\nBrowser download")
+
+    class Event:
+        def __enter__(self):
+            return SimpleNamespace(value=Download())
+        def __exit__(self, *args):
+            return False
+
+    class Popup:
+        def locator(self, _):
+            return Locator()
+        def expect_download(self, **_):
+            return Event()
+
+    saved = QecDownloader(tmp_path, tmp_path / "profile")._download_attachment_browser(
+        Popup(), "1001", url, tmp_path,
+    )
+    assert saved.name == "1001_beweis.pdf"
+    assert not list(tmp_path.glob("*.partial"))
+
+
+def test_popup_inventory_is_saved_and_existing_files_not_redownloaded(tmp_path):
+    from types import SimpleNamespace
+
+    document = '''<html><body><table>
+      <tr><td>10.04.2026</td><td><a href="displayPruefberichtFile.qec?attachmentId=1001">Befund A</a></td></tr>
+      <tr><td>11.04.2026</td><td><a href="displayPruefberichtFile.qec?attachmentId=1002">Befund B</a></td></tr>
+      <tr><td><a href="displayPruefberichtFile.qec?attachmentId=1001">Befund A</a></td></tr>
+    </table></body></html>'''
+    popup_url = "https://qect.mo360cp.i.mercedes-benz.com/qec-access/listAttachments.qec"
+
+    class FakePopup:
+        url = popup_url
+
+        def wait_for_load_state(self, *_args, **_kwargs):
+            pass
+
+        def content(self):
+            return document
+
+        def close(self):
+            pass
+
+    class Clickable:
+        def is_visible(self):
+            return True
+
+        def click(self, **_kwargs):
+            pass
+
+    class PopupButton:
+        def count(self):
+            return 1
+
+        def nth(self, _):
+            return Clickable()
+
+    class Event:
+        def __enter__(self):
+            return SimpleNamespace(value=FakePopup())
+
+        def __exit__(self, *args):
+            return False
+
+    class FakePage:
+        def locator(self, _):
+            return PopupButton()
+
+        def expect_popup(self, **_kwargs):
+            return Event()
+
+    downloader = QecDownloader(tmp_path, tmp_path / "profile")
+    calls = []
+
+    def api(_context, _popup, attachment_id, _url, folder):
+        calls.append(attachment_id)
+        return _store_attachment(folder, attachment_id,
+                                 {"content-disposition": 'attachment; filename="befund.pdf"'},
+                                 b"%PDF-1.7\nTest")
+
+    downloader._download_attachment_api = api
+    folder = tmp_path / "ref_test" / "anhaenge"
+    result = QecResult(FIN)
+    downloader._save_popups(SimpleNamespace(), FakePage(), folder, result,
+                            lambda _msg: None, __import__("threading").Event())
+    assert calls == ["1001", "1002"]
+    assert len(result.files) == 2 and not result.errors
+    listing = json.loads((folder.parent / "anhangliste.json").read_text(encoding="utf-8"))
+    assert [x["anhang_id"] for x in listing["anhaenge"]] == ["1001", "1002"]
+    assert all(x["status"] == "Gespeichert" for x in listing["anhaenge"])
+    downloader._save_popups(SimpleNamespace(), FakePage(), folder, result,
+                            lambda _msg: None, __import__("threading").Event())
+    assert calls == ["1001", "1002"]
