@@ -585,21 +585,44 @@ class DiagnosisViewerDownloader:
                     icon = page.locator("tbody tr").nth(descriptor.position).locator(
                         "span.cursor-pointer:has(svg.lucide-file-down)"
                     )
-                    self._pace(cancel)
-                    with page.expect_download(timeout=self.pdf_timeout_seconds * 1000) as event:
-                        icon.first.click(timeout=15000)
-                    downloaded = event.value
+                    downloaded = self._download_or_skip(page, icon.first, cancel)
                     if downloaded.failure():
                         raise RuntimeError(downloaded.failure())
                     saved = _save_pdf(downloaded, folder, descriptor)
                     if saved not in result.files:
                         result.files.append(saved)
+                except QuickTestDataUnavailable:
+                    result.no_quicktest_sessions.append(
+                        f"Sitzung {number} ({descriptor.timestamp})"
+                    )
+                    progress(
+                        f"{fin}: Sitzung {number}/{len(rows)} – "
+                        "keine QuickTest-Daten in S3, übersprungen."
+                    )
+                except DownloadCancelled:
+                    raise
+                except TimeoutError:
+                    result.errors.append(
+                        f"Sitzung {number} ({descriptor.timestamp}): "
+                        f"PDF-Timeout nach {self.pdf_timeout_seconds:g} Sekunden."
+                    )
+                    progress(
+                        f"{fin}: Sitzung {number}/{len(rows)} – "
+                        "PDF-Timeout, nächste Sitzung."
+                    )
                 except Exception as exc:
                     result.errors.append(f"Sitzung {number} ({descriptor.timestamp}): {exc}")
-            result.status = "Erfolgreich" if not result.errors else (
-                "Teilweise erfolgreich" if result.files else "Fehler"
+            result.status = (
+                "Erfolgreich" if result.files and not result.errors
+                else "Teilweise erfolgreich" if result.files
+                else "Keine Quicktests" if result.no_quicktest_sessions and not result.errors
+                else "Fehler"
             )
-            progress(f"{fin}: {len(result.files)} PDF(s) gespeichert, {len(result.errors)} Fehler.")
+            progress(
+                f"{fin}: {len(result.files)} PDF(s), "
+                f"{len(result.no_quicktest_sessions)} ohne QuickTest, "
+                f"{len(result.errors)} Fehler."
+            )
             return result, page
         except DownloadCancelled:
             result.status = "Abgebrochen"
