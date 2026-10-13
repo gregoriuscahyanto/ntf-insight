@@ -9,7 +9,7 @@ import pytest
 
 from ntf_insight.acquisition.qec_tool import (
     QEC_SECTIONS, QEC_START, QecDownloader, QecHit, QecResult, QecTarget,
-    _qec_url, _snapshot, _store_attachment, _write_result,
+    _qec_url, _snapshot_data, _store_attachment, _write_result,
     parse_attachment_urls, parse_qec_targets, parse_search_hits,
     inspect_search_results, parse_attachment_listing, _validate_attachment_response_url,
 )
@@ -176,18 +176,16 @@ class SnapshotPage:
                  "auswahltext": "Kein Fehler", "deaktiviert": False}]
 
 
-def test_snapshot_saves_json_and_read_only_html(tmp_path):
+def test_section_snapshot_is_structured_and_does_not_write_html(tmp_path):
     hit = QecHit("123456789", SACHNUMMER, "Pumpe", FIN,
                  "schadteilSelektieren.qec?schadteilID=1234", "1234")
-    result = _snapshot(SnapshotPage(), tmp_path, QEC_SECTIONS[0], hit)
-    data = json.loads(result.read_text(encoding="utf-8"))
+    data = _snapshot_data(SnapshotPage(), QEC_SECTIONS[0], hit)
     assert data["felder"][0]["wert"] == "NTF"
     assert data["felder"][0]["auswahltext"] == "Kein Fehler"
     assert data["tabellen"][0]["zeilen"][0][0]["text"] == "Gefunden"
-    html = (tmp_path / "ansicht.html").read_text(encoding="utf-8")
-    assert "<script" not in html
-    assert "Kühlmittelpumpe" in html
-    assert "Gefunden" in html and "Kein Fehler" in html
+    assert data["sichtbarer_text"] == "Kühlmittelpumpe: geprüft"
+    assert not list(tmp_path.rglob("*.html"))
+    assert not list(tmp_path.rglob("*.json"))
 
 
 class FakeControl:
@@ -282,7 +280,8 @@ def test_every_search_reopens_qec_start_and_fills_after_login(has_nav):
     page = FakeQecPage(has_nav=has_nav)
     context = SimpleNamespace(pages=[page])
     messages = []
-    downloader = QecDownloader(Path("/tmp/a"), Path("/tmp/b"), navigation_timeout_ms=1000)
+    downloader = QecDownloader(Path("/tmp/a"), Path("/tmp/b"),
+                               navigation_timeout_ms=1000, click_delay_seconds=0)
     returned, scope, document, evidence = downloader._search(
         context, page, QecTarget(FIN), messages.append, Event(),
     )
@@ -318,7 +317,7 @@ def test_no_match_manifest_distinguishes_real_server_response(tmp_path):
     page = object()
     downloader._search = lambda *_args: (page, page, document, evidence)
     result, _ = downloader._one_target(
-        SimpleNamespace(pages=[]), page, target, lambda _: None, Event(), "dummy-run"
+        SimpleNamespace(pages=[]), page, target, lambda _: None, Event()
     )
     assert result.status == "Keine passenden Schadteile"
     manifest = json.loads((tmp_path / FIN / "abrufstatus.json").read_text(encoding="utf-8"))
@@ -335,7 +334,7 @@ def test_partial_result_count_is_not_reported_as_zero_parts(tmp_path):
     page = object()
     downloader._search = lambda *_args: (page, page, document, evidence)
     result, _ = downloader._one_target(
-        SimpleNamespace(pages=[]), page, target, lambda _: None, Event(), "dummy-run"
+        SimpleNamespace(pages=[]), page, target, lambda _: None, Event()
     )
     assert result.status == "Ergebnispruefung erforderlich"
     assert result.errors and not result.references
@@ -555,7 +554,7 @@ def test_popup_inventory_is_saved_and_existing_files_not_redownloaded(tmp_path):
         def expect_popup(self, **_kwargs):
             return Event()
 
-    downloader = QecDownloader(tmp_path, tmp_path / "profile")
+    downloader = QecDownloader(tmp_path, tmp_path / "profile", click_delay_seconds=0)
     calls = []
 
     def api(_context, _popup, attachment_id, _url, folder):
@@ -567,13 +566,14 @@ def test_popup_inventory_is_saved_and_existing_files_not_redownloaded(tmp_path):
     downloader._download_attachment_api = api
     folder = tmp_path / "ref_test" / "anhaenge"
     result = QecResult(FIN)
+    inventory = {}
     downloader._save_popups(SimpleNamespace(), FakePage(), folder, result,
-                            lambda _msg: None, __import__("threading").Event())
+                            lambda _msg: None, __import__("threading").Event(), inventory)
     assert calls == ["1001", "1002"]
     assert len(result.files) == 2 and not result.errors
-    listing = json.loads((folder.parent / "anhangliste.json").read_text(encoding="utf-8"))
-    assert [x["anhang_id"] for x in listing["anhaenge"]] == ["1001", "1002"]
-    assert all(x["status"] == "Gespeichert" for x in listing["anhaenge"])
+    assert sorted(inventory) == ["1001", "1002"]
+    assert all(x["status"] == "Gespeichert" for x in inventory.values())
+    assert not (folder.parent / "anhangliste.json").exists()
     downloader._save_popups(SimpleNamespace(), FakePage(), folder, result,
-                            lambda _msg: None, __import__("threading").Event())
+                            lambda _msg: None, __import__("threading").Event(), inventory)
     assert calls == ["1001", "1002"]
