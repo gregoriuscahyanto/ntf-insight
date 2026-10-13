@@ -308,22 +308,47 @@ def _write_result(folder: Path, result: QecResult) -> None:
 
 
 def _visible_fields(page) -> list[dict[str, str | bool]]:
-    """Formularwerte, einschliesslich deaktivierter Felder, aber ohne SSO-Tokens."""
+    """Visible form values with selected labels and radio/checkbox option values.
+
+    No passwords, hidden inputs, SSO tokens or executable page source are exported.
+    """
     return page.evaluate("""() => Array.from(document.querySelectorAll('input, textarea, select'))
-      .filter(e => !['hidden', 'password', 'submit', 'button'].includes((e.type || '').toLowerCase()))
+      .filter(e => !['hidden', 'password', 'submit', 'button', 'file'].includes((e.type || '').toLowerCase()))
+      .filter(e => e.getClientRects().length > 0)
       .map(e => ({
         name: e.name || e.id || '',
         typ: (e.type || e.tagName || '').toLowerCase(),
         wert: e.type === 'checkbox' || e.type === 'radio'
           ? (e.checked ? 'ja' : 'nein') : String(e.value || ''),
+        optionwert: ['checkbox', 'radio'].includes(e.type) ? String(e.value || '') : '',
+        beschriftung: Array.from(e.labels || []).map(label => label.innerText.trim()).join(' | '),
+        auswahltext: e.tagName.toLowerCase() === 'select'
+          ? Array.from(e.selectedOptions).map(option => option.textContent.trim()).join(' | ') : '',
         deaktiviert: Boolean(e.disabled),
       }))""")
+
+
+def _visible_tables(page) -> list[dict]:
+    """Preserve visible QEC rows and columns, not just flattened body.innerText."""
+    return page.evaluate("""() => Array.from(document.querySelectorAll('table'))
+      .filter(table => table.getClientRects().length > 0)
+      .map((table, index) => ({
+        nummer: index + 1,
+        zeilen: Array.from(table.rows)
+          .filter(row => row.getClientRects().length > 0)
+          .map(row => Array.from(row.cells).map(cell => ({
+            typ: cell.tagName.toLowerCase(),
+            text: cell.innerText.trim(),
+            colspan: cell.colSpan,
+          }))),
+      })).filter(table => table.zeilen.length > 0)""")
 
 
 def _snapshot(page, folder: Path, section: str, hit: QecHit) -> Path:
     folder.mkdir(parents=True, exist_ok=True)
     text = page.locator("body").inner_text(timeout=15000)
     fields = _visible_fields(page)
+    tables = _visible_tables(page)
     payload = {
         "referenznummer": hit.reference,
         "sachnummer": hit.part_number,
@@ -333,19 +358,33 @@ def _snapshot(page, folder: Path, section: str, hit: QecHit) -> Path:
         "zeitpunkt_utc": datetime.now(timezone.utc).isoformat(),
         "sichtbarer_text": text,
         "felder": fields,
+        "tabellen": tables,
     }
     _write_json(folder / "daten.json", payload)
     # Lesbare Offline-Kopie ohne Cookies, Token, Skripte oder aktive Links.
     rows = "\n".join(
         f"<tr><td>{html.escape(str(f['name']))}</td>"
-        f"<td>{html.escape(str(f['wert']))}</td></tr>" for f in fields
+        f"<td>{html.escape(str(f['wert']))}</td>"
+        f"<td>{html.escape(str(f.get('auswahltext') or f.get('beschriftung') or f.get('optionwert') or ''))}</td></tr>"
+        for f in fields
     )
+    table_blocks = []
+    for table in tables:
+        rendered_rows = []
+        for cells in table["zeilen"]:
+            rendered_rows.append("<tr>" + "".join(
+                f"<td>{html.escape(str(cell['text']))}</td>" for cell in cells
+            ) + "</tr>")
+        table_blocks.append(
+            f"<h3>Tabelle {table['nummer']}</h3><table>" + "".join(rendered_rows) + "</table>"
+        )
     content = (
         '<!doctype html><html lang="de"><head><meta charset="utf-8">'
         '<title>QEC-Offline-Befund</title></head><body>'
         f"<h1>{html.escape(section)}</h1><p>Referenz: {html.escape(hit.reference)}</p>"
         f"<pre>{html.escape(text)}</pre><h2>Formularfelder</h2>"
-        f"<table><tr><th>Feld</th><th>Wert</th></tr>{rows}</table></body></html>"
+        f"<table><tr><th>Feld</th><th>Wert</th><th>Auswahl / Option</th></tr>{rows}</table>"
+        f"<h2>QEC-Tabellen</h2>{''.join(table_blocks)}</body></html>"
     )
     (folder / "ansicht.html").write_text(content, encoding="utf-8")
     return folder / "daten.json"
