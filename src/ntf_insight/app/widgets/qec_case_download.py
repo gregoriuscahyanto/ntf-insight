@@ -68,6 +68,7 @@ class QecCaseDownloadPanel(QWidget):
         self.all_targets = all_targets
         self.selected_targets = selected_targets
         self.worker: QecCaseWorker | None = None
+        self._pending_import: list[Path] = []
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 4, 0, 8)
@@ -161,6 +162,7 @@ class QecCaseDownloadPanel(QWidget):
         except RuntimeError:
             login = None  # Manuelle Mercedes-SSO/PING-ID bleibt möglich.
         self.log.clear()
+        self._pending_import = []
         self.worker = QecCaseWorker(targets, self.data_dir, login)
         self.worker.progress.connect(self._progress)
         self.worker.completed.connect(self._completed)
@@ -197,8 +199,9 @@ class QecCaseDownloadPanel(QWidget):
             f"{len(attachments)} Anhaenge, {errors} Fehler."
         )
         self.downloads_completed.emit(results)
-        if reports or attachments:
-            self.import_requested.emit([*reports, *attachments])
+        # Archive only after the browser worker has actually finished, so
+        # SourcesPage cannot rebuild/destroy a QWidget holding an active QThread.
+        self._pending_import = [*reports, *attachments]
 
     def _failed(self, message: str) -> None:
         self._progress("QEC-Fehler: " + message)
@@ -211,3 +214,6 @@ class QecCaseDownloadPanel(QWidget):
             self.worker.deleteLater()
             self.worker = None
         self.refresh_credentials()
+        files, self._pending_import = self._pending_import, []
+        if files:
+            self.import_requested.emit(files)
