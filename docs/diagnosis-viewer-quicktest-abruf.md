@@ -1,8 +1,30 @@
 # Diagnosis Viewer: QuickTest-PDF-Abruf
 
-In **QuickTest-Abruf** FINs eintragen (eine pro Zeile), Ordner wählen und
-**QuickTests abrufen** klicken. Alternativ die FINs aus den lokalen NTF-Fällen
-übernehmen oder eine TXT/CSV-Datei laden.
+Die Bedienung befindet sich jetzt ausschließlich unter **Fälle / FIN →
+FIN / Fallanalyse**. Der separate Navigationseintrag **QuickTest-Abruf** wurde
+entfernt.
+
+Die bestehende Falltabelle bietet links eine **Auswahl-Checkbox je Fall** und
+rechts die Spalte **„QuickTest-Abruf-Datum“**. Ein vorhandenes Abrufdatum
+erscheint als **anklickbarer Link auf den lokalen FIN-Ordner**. Ohne lokales
+Abrufprotokoll steht dort \`n.a.\`; existiert bereits ein PDF-Ordner, kann
+auch \`n.a.\` als Ordnerlink verwendet werden.
+
+Unter der Tabelle stehen:
+
+- **„Alle Quicktests herunterladen/aktualisieren“**: sämtliche in der
+  Falltabelle enthaltenen FINs, unabhängig von Sortierung und Filter;
+  gleiche FINs werden nur einmal abgerufen.
+- **„Quicktests für ausgewählte Fälle herunterladen/aktualisieren“**:
+  ausschließlich die über Checkboxen markierten Fälle. Die Taste ist bis
+  zur ersten Auswahl deaktiviert.
+- **„Abbrechen“** für laufende Downloads und eine bewusst aktivierbare
+  Option zur einmaligen Umgehung der lokalen 24-Stunden-Sperre.
+
+Benutzer-ID und Passwort, „Sicher speichern“ und „Anmeldedaten löschen“
+befinden sich ebenfalls unter der Falltabelle. Nach dem PDF-Download
+werden die Dateien über den bestehenden Quellenimport archiviert und die
+Fallanalyse aktualisiert, ohne auf den separaten QuickTest-Explorer umzuschalten.
 
 ## SSO und PING ID
 
@@ -55,14 +77,15 @@ NTF-Insight-Pakete bringen \`keyring\` als Abhängigkeit mit.
 Standardordner: \`%USERPROFILE%\.ntf-insight\quicktests\<FIN>\`.
 
 - Pro FIN ein Unterordner mit PDF-Dateien und \`abrufstatus.json\`.
-- Die Tabelle wird **beim Öffnen der Seite, beim Ordnerwechsel und nach einem Abruf**
-  aus **allen gültigen FIN-Unterordnern** aufgebaut – unabhängig von der
-  aktuellen FIN-Liste. Über **„Bestand aktualisieren“** wird sie manuell
-  neu eingelesen.
-- Auch ältere FIN-Verzeichnisse, die nur PDF-Dateien und noch keine
-  \`abrufstatus.json\` enthalten, erscheinen mit der Anzahl aller PDFs.
-  Das Datum lautet dann **„Nicht dokumentiert“**, da das Dateidatum kein
-  zuverlässiges Datum des tatsächlichen Abrufversuchs ist.
+- Die separate frühere Bestandsansicht wurde in die **Spalte „QuickTest-Abruf-Datum“**
+  der Falltabelle überführt. Die Datumsanzeige wird **beim Öffnen der Fallanalyse
+  und nach jedem Abruf**
+  aus **allen gültigen FIN-Unterordnern** gelesen, die zu einer FIN in der
+  Falltabelle gehören. Dateien anderer FINs bleiben selbstverständlich im
+  Speicher, werden aber ohne zugehörigen Fall nicht als neue Fallzeilen erzeugt.
+- Auch ältere FIN-Verzeichnisse mit PDFs ohne \`abrufstatus.json\` werden
+  erkannt. Das Datum lautet dann \`n.a.\`, kann bei vorhandenem Ordner aber
+  angeklickt werden. Das PDF-Dateidatum wird nicht als Abrufdatum ausgegeben.
 - Die App merkt sich den **letzten Abrufversuch**, nicht nur erfolgreiche
   Downloads, und zeigt ihn als **„Letzter Abruf“** in der GUI-Tabelle.
 - Liegt der letzte Versuch weniger als 24 Stunden zurück, wird diese FIN
