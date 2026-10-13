@@ -58,7 +58,11 @@ class CaseTableModel(QAbstractTableModel):
         return 0 if parent.isValid() else len(self.HEADERS)
 
     def _has_folder(self, row: CaseRow) -> bool:
-        return row.quicktest_folder is not None and row.quicktest_folder.is_dir()
+        return (
+            row.quicktest_folder is not None
+            and row.quicktest_pdf_count > 0
+            and row.quicktest_folder.is_dir()
+        )
 
     def data(self, index: QModelIndex, role: int = Qt.ItemDataRole.DisplayRole):
         if not index.isValid() or not (0 <= index.row() < len(self._rows)):
