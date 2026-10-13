@@ -18,7 +18,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from threading import Event
 from typing import Callable
-from urllib.parse import parse_qs, unquote, urljoin, urlsplit
+from urllib.parse import parse_qs, quote, unquote, urljoin, urlsplit
 
 from lxml import html as lxml_html
 
@@ -234,6 +234,47 @@ def parse_attachment_urls(document: str) -> list[tuple[str, str]]:
     return urls
 
 
+def _validate_attachment_response_url(url: str) -> str:
+    """A QEC attachment may redirect internally to a different download action.
+
+    Accept only HTTPS within the original QEC application. Never accept the
+    login page, off-domain redirects, or unexpected application roots as files.
+    """
+    try:
+        final = _qec_url(url)
+    except ValueError as exc:
+        raise ValueError(
+            "Anhang wurde ausserhalb der freigegebenen QEC-Anwendung umgeleitet."
+        ) from exc
+    parsed = urlsplit(final)
+    if parsed.port not in (None, 443):
+        raise ValueError("Anhang wurde auf einen unzulaessigen QEC-Port umgeleitet.")
+    if parsed.path.endswith(("/login.qec", "/qecentry.qec")):
+        raise ValueError("QEC leitete den Anhang zur Anmeldung weiter (SSO pruefen).")
+    return final
+
+
+def parse_attachment_listing(document: str) -> list[dict[str, str]]:
+    """Store attachment IDs and visible popup-row metadata without active links."""
+    root = lxml_html.fromstring(document)
+    items: list[dict[str, str]] = []
+    seen: set[str] = set()
+    for anchor in root.xpath("//a[contains(@href, 'displayPruefberichtFile.qec')]"):
+        url = _qec_url(anchor.get("href", ""), expected_path="displayPruefberichtFile.qec")
+        ids = parse_qs(urlsplit(url).query).get("attachmentId", [])
+        if len(ids) != 1 or not ids[0].isdigit() or ids[0] in seen:
+            continue
+        seen.add(ids[0])
+        rows = anchor.xpath("ancestor::tr[1]")
+        columns = [" ".join(c.text_content().split()) for c in rows[0].xpath("./td|./th")] if rows else []
+        items.append({
+            "anhang_id": ids[0],
+            "linktext": " ".join(anchor.text_content().split()),
+            "spalten": columns,
+        })
+    return items
+
+
 def _filename_from_headers(headers: dict, attachment_id: str, data: bytes) -> str:
     disposition = headers.get("content-disposition", "")
     match = re.search(r"filename\*?=(?:UTF-8''|\")?([^\";]+)", disposition, re.I)
@@ -262,6 +303,8 @@ def _store_attachment(folder: Path, attachment_id: str, headers: dict, data: byt
     if ("text/html" in content_type or stripped.startswith((b"<!doctype html", b"<html"))):
         raise ValueError("Statt eines Anhangs wurde HTML geliefert (Anmeldung pruefen).")
     filename = _filename_from_headers(headers, attachment_id, data)
+    if filename.lower().endswith(".pdf") and b"%PDF-" not in data[:1024]:
+        raise ValueError("Als PDF bezeichneter QEC-Anhang enthaelt keinen PDF-Header.")
     folder.mkdir(parents=True, exist_ok=True)
     digest = hashlib.sha256(data).hexdigest()
     target = folder / filename
@@ -634,6 +677,62 @@ class QecDownloader:
                 return True
         return False
 
+    def _download_attachment_api(self, context, popup, attachment_id: str,
+                                 url: str, folder: Path) -> Path:
+        """Use the browser-context cookies; accept valid QEC-internal redirects.
+
+        The old check required the final URL to be displayPruefberichtFile.qec,
+        incorrectly rejecting the QEC download endpoint after a 302 redirect.
+        """
+        referer = _qec_url(popup.url)
+        response = context.request.get(
+            url, timeout=self.attachment_timeout_ms,
+            headers={"Referer": referer},
+        )
+        _validate_attachment_response_url(response.url)
+        if not response.ok:
+            raise RuntimeError(f"QEC-Anhang: HTTP {response.status}.")
+        headers = {str(k).lower(): str(v) for k, v in response.headers.items()}
+        if int(headers.get("content-length", "0") or 0) > MAX_ATTACHMENT_BYTES:
+            raise ValueError("Anhang groesser als 100 MB.")
+        return _store_attachment(folder, attachment_id, headers, response.body())
+
+    def _download_attachment_browser(self, popup, attachment_id: str,
+                                     url: str, folder: Path) -> Path:
+        """Fallback: click the actual authenticated QEC link in visible Edge."""
+        links = popup.locator('a[href*="displayPruefberichtFile.qec"]')
+        chosen = None
+        for index in range(links.count()):
+            link = links.nth(index)
+            try:
+                href = _qec_url(link.get_attribute("href"), expected_path="displayPruefberichtFile.qec")
+            except ValueError:
+                continue
+            if href == url:
+                chosen = link
+                break
+        if chosen is None:
+            raise RuntimeError("Anhanglink im QEC-Popup nicht mehr vorhanden.")
+        with popup.expect_download(timeout=min(self.attachment_timeout_ms, 20000)) as pending:
+            chosen.click(timeout=12000)
+        download = pending.value
+        if download.failure():
+            raise RuntimeError("Edge konnte den QEC-Anhang nicht herunterladen.")
+        folder.mkdir(parents=True, exist_ok=True)
+        with tempfile.NamedTemporaryFile(dir=folder, suffix=".partial", delete=False) as stream:
+            temporary = Path(stream.name)
+        try:
+            download.save_as(str(temporary))
+            if temporary.stat().st_size > MAX_ATTACHMENT_BYTES:
+                raise ValueError("Anhang groesser als 100 MB.")
+            headers = {
+                "content-disposition": "attachment; filename*=UTF-8''"
+                + quote(str(download.suggested_filename), safe=""),
+            }
+            return _store_attachment(folder, attachment_id, headers, temporary.read_bytes())
+        finally:
+            temporary.unlink(missing_ok=True)
+
     def _save_popups(self, context, page, folder: Path, result: QecResult,
                      progress: Progress, cancel: Event) -> None:
         buttons = page.locator('input[type="button"][value="Dateianhänge"], button:has-text("Dateianhänge")')
@@ -647,25 +746,66 @@ class QecDownloader:
                 popup = popup_event.value
                 try:
                     popup.wait_for_load_state("domcontentloaded", timeout=15000)
-                    attachments = parse_attachment_urls(popup.content())
+                    original_url = _qec_url(popup.url)
+                    document = popup.content()
+                    attachments = parse_attachment_urls(document)
+                    listing = parse_attachment_listing(document)
+                    inventory_path = folder.parent / "anhangliste.json"
+                    try:
+                        old = json.loads(inventory_path.read_text(encoding="utf-8"))
+                        inventory = {x["anhang_id"]: x for x in old.get("anhaenge", [])}
+                    except (OSError, ValueError, KeyError, TypeError):
+                        inventory = {}
+                    inventory.update({x["anhang_id"]: x for x in listing})
                     if not attachments:
                         result.warnings.append("Anhang-Fenster ohne erkennbare Dateien.")
                     for number, (attachment_id, url) in enumerate(attachments, 1):
                         self._check_cancel(cancel)
                         progress(f"{result.fin}: Anhang {number}/{len(attachments)} wird geladen …")
+                        entry = inventory[attachment_id]
+                        already = next(folder.glob(f"{attachment_id}_*"), None) if folder.is_dir() else None
+                        if already and already.is_file():
+                            entry.update(status="Bereits vorhanden", datei=already.name)
+                            if already not in result.files:
+                                result.files.append(already)
+                            continue
                         try:
-                            response = context.request.get(url, timeout=self.attachment_timeout_ms)
-                            _qec_url(response.url, expected_path="displayPruefberichtFile.qec")
-                            if not response.ok:
-                                raise RuntimeError(f"HTTP {response.status}")
-                            headers = {str(k).lower(): str(v) for k, v in response.headers.items()}
-                            if int(headers.get("content-length", "0") or 0) > MAX_ATTACHMENT_BYTES:
-                                raise ValueError("Anhang groesser als 100 MB.")
-                            path = _store_attachment(folder, attachment_id, headers, response.body())
+                            try:
+                                path = self._download_attachment_api(
+                                    context, popup, attachment_id, url, folder,
+                                )
+                            except Exception as api_error:
+                                progress(f"{result.fin}: Anhang {attachment_id}, QEC-Weiterleitung/Antwort; "
+                                         "Download direkt ueber Edge versuchen …")
+                                try:
+                                    path = self._download_attachment_browser(
+                                        popup, attachment_id, url, folder,
+                                    )
+                                except Exception as edge_error:
+                                    # No signed URLs, passwords or cookies in status logs.
+                                    kind = type(api_error).__name__
+                                    raise RuntimeError(
+                                        f"API-Antwort nicht als Datei verwendbar ({kind}); "
+                                        f"Edge-Download fehlgeschlagen ({type(edge_error).__name__})."
+                                    ) from edge_error
+                                finally:
+                                    if not popup.is_closed() and popup.url != original_url:
+                                        try:
+                                            popup.goto(original_url, wait_until="domcontentloaded", timeout=15000)
+                                        except Exception:
+                                            pass
+                            entry.update(status="Gespeichert", datei=path.name)
                             if path not in result.files:
                                 result.files.append(path)
+                        except QecCancelled:
+                            raise
                         except Exception as exc:
+                            entry.update(status="Fehler", fehler=str(exc))
                             result.errors.append(f"Anhang {attachment_id}: {exc}")
+                    _write_json(inventory_path, {
+                        "zeitpunkt_utc": datetime.now(timezone.utc).isoformat(),
+                        "anhaenge": list(inventory.values()),
+                    })
                 finally:
                     popup.close()
             except QecCancelled:
