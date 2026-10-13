@@ -338,7 +338,8 @@ def _write_json(target: Path, payload: dict) -> None:
 
 def _write_result(folder: Path, result: QecResult) -> None:
     def relative(path: Path) -> str:
-        return str(path.relative_to(folder))
+        # Stable POSIX separators in JSON, including on Windows.
+        return path.relative_to(folder).as_posix()
     _write_json(folder / "abrufstatus.json", {
         "fin": result.fin,
         "stand_utc": result.attempted_at,
