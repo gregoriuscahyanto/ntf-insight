@@ -52,6 +52,7 @@ from ntf_insight.app.models.simple_table_model import SimpleTableModel
 from ntf_insight.app.models.timeline_table_model import TimelineTableModel
 from ntf_insight.app.widgets.event_time_plot import EventTimePlot
 from ntf_insight.app.widgets.quicktest_browser import QuickTestBrowser
+from ntf_insight.app.widgets.case_checkbox_delegate import CaseCheckboxDelegate
 from ntf_insight.app.widgets.autoexport_fin_workspace import AutoExportFinWorkspace
 from ntf_insight.ingestion.manual_entry import ManualCaseService, ManualEntryError
 from ntf_insight.ingestion.real_source_parsers import canonical_fin
@@ -261,6 +262,9 @@ class CasePage(QWidget):
 
         self.case_table = QTableView()
         self.case_table.setModel(self.case_proxy)
+        self.case_table.setItemDelegateForColumn(
+            CaseTableModel.CHECK_COLUMN, CaseCheckboxDelegate(self.case_table)
+        )
         self.case_table.setMaximumHeight(190)
         self.case_table.setAlternatingRowColors(True)
         self.case_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
