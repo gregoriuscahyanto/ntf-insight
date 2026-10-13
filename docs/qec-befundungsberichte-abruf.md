@@ -145,3 +145,50 @@ oder oeffentlichen Tickets ablegen.
   Reiter und Live-SSO sind nur im Unternehmensnetz verifizierbar.
 - Fuer Rueckfragen bitte nur **Statusmeldungen ohne FIN und sonstige Falldaten**
   weitergeben. Niemals Passwort, Cookies, SSO-Tokens oder interne HTML-Dumps senden.
+
+## Anhangdownload: interne Weiterleitungen und Befundvollstaendigkeit
+
+Bei QEC-Anhaengen bezeichnet der Link `displayPruefberichtFile.qec?attachmentId=...`
+nur den **Einstiegspunkt**. Der Server kann intern auf eine andere QEC-Downloadaktion
+weiterleiten. Die automatisierte Pruefung erwartet deshalb nicht mehr, dass
+auch die **finale Antwort-URL** genau diese Dateibezeichnung traegt. Sie akzeptiert
+nur HTTPS-Antworten innerhalb der erlaubten `/qec-access/`-Anwendung auf der
+urspruenglichen QEC-Domain. Loginseiten, HTML-Antworten und falsch deklarierte
+PDFs sind ausdruecklich **keine** gueltigen Befundungsberichte.
+
+Der Abruf versucht zuerst eine Dateianforderung im eingeloggten Edge-Browserkontext
+(mit dem QEC-Popup als Referer). Falls daraus keine nutzbare Datei entsteht,
+klickt Playwright den Original-Anhanglink im sichtbaren Edge-Popup als Fallback.
+Berechtigungen und PING ID werden nicht umgangen. Das Ablaufprotokoll zeigt
+diesen zweiten Versuch separat an. Kann Edge die Datei ebenfalls nicht laden,
+bleibt der Anhang im lokalen Manifest als Fehler sichtbar.
+
+Zu jeder QEC-Referenz entsteht jetzt lokal `ref_<Referenz>/anhangliste.json`.
+Sie enthaelt eindeutige Anhang-IDs, sichtbare Popup-Metadaten und den Downloadstatus
+sowie ggf. den lokal gespeicherten Dateinamen. Erfolgreich gespeicherte Anhaenge
+werden bei weiteren Reiter-Popups nicht erneut angefordert. Die
+Datei `abrufstatus.json` zeigt weiterhin die tatsaechlich gespeicherten
+Anhaenge unter `anhaenge`, Fehler unter `fehler`.
+
+Die Reiter-Snapshots `daten.json` enthalten zusaetzlich zu `sichtbarer_text`
+und `felder` jetzt die strukturierten `tabellen` (sichtbare Zeilen und Zellen).
+Bei Formularfeldern werden, wo DOM-seitig vorhanden, `optionwert`,
+`beschriftung` und `auswahltext` abgelegt. Dadurch bleibt beispielsweise die
+ausgewaehlte SSL-Endbefund-Bezeichnung neben ihrem internen Code erhalten.
+`ansicht.html` ist weiterhin eine **ausfuehrungsfreie, vereinfachte
+Offline-Ansicht** – kein Original-QEC-HTML mit Scripts und Session-Tokens.
+
+### Grenzen der Vollstaendigkeitspruefung
+
+Ein Archiv mit nur `ansicht.html`/`daten.json` kann mit den gespeicherten
+Werten abgeglichen werden, beweist aber **nicht**, dass jede urspruengliche
+QEC-DOM-Information gespeichert wurde. Bildinhalte, fremde Frames,
+nicht geoeffnete Dialoge, ausgeblendete Bereiche und Dateien hinter den
+Anhanglinks werden damit nicht ersetzt. Bei unvollstaendigen Anhaengen darf
+ein Fall nicht als vollstaendig befundet gewertet werden.
+
+Fuer einen Folgetest genuegen anonymisierte Angaben:
+Zahl der `anhaenge`, Zahl der `fehler`, Statuswerte der
+`anhangliste.json` sowie die letzten Protokollschritte.
+Echte FINs, Personen, Befundtexte, PDFs oder interne QEC-HTMLs nicht in
+GitHub/CI hochladen.
