@@ -829,12 +829,14 @@ class QecDownloader:
         reference_folder = case_folder(self.output_dir, target.fin, hit.reference)
         report_path = reference_folder / "qec.json"
         inventory: dict[str, dict[str, str]] = {}
+        previous_case: dict | None = None
         # A repeated download must not silently lose existing attachment evidence.
         if report_path.is_file():
             try:
                 previous = json.loads(report_path.read_text(encoding="utf-8"))
                 if (previous.get("fin") == target.fin
                         and previous.get("referenznummer") == hit.reference):
+                    previous_case = previous
                     for item in previous.get("anhaenge", []):
                         if (isinstance(item, dict) and
                                 str(item.get("anhang_id", "")).isdigit()):
@@ -868,6 +870,24 @@ class QecDownloader:
                     result, progress, cancel, inventory,
                 )
         finally:
+            # Keep missing previously captured tabs, marked as *older* evidence.
+            # Never claim a stale tab was recaptured during the current run.
+            freshly_captured = {item["bereich"] for item in sections}
+            if previous_case is not None:
+                for old_section in previous_case.get("abschnitte", []):
+                    if (not isinstance(old_section, dict) or
+                            old_section.get("bereich") not in QEC_SECTIONS or
+                            old_section["bereich"] in freshly_captured):
+                        continue
+                    restored = dict(old_section)
+                    restored["aus_vorherigem_abruf"] = True
+                    sections.append(restored)
+                sections.sort(key=lambda item: QEC_SECTIONS.index(item["bereich"]))
+            if len(freshly_captured) != len(QEC_SECTIONS):
+                result.warnings.append(
+                    f"{hit.reference}: Nicht alle QEC-Reiter im aktuellen Lauf erfasst. "
+                    "Uebernommene alte Reiter sind entsprechend gekennzeichnet."
+                )
             # No laeufe/NN_Reiter folders and no active HTML: ONE JSON per case.
             report = {
                 "schema_version": 2,
@@ -878,7 +898,7 @@ class QecDownloader:
                 "schadteil_id": hit.schadteil_id,
                 "abgerufen_am_utc": datetime.now(timezone.utc).isoformat(),
                 "abschnitte": sections,
-                "vollstaendige_reiter": len({p["bereich"] for p in sections}) == len(QEC_SECTIONS),
+                "vollstaendige_reiter": len(freshly_captured) == len(QEC_SECTIONS),
                 "anhaenge": sorted(
                     inventory.values(), key=lambda item: int(item["anhang_id"])
                 ),
