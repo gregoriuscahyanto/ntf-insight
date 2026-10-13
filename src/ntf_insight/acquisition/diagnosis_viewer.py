@@ -276,9 +276,11 @@ class DiagnosisViewerDownloader:
                 if candidate.is_closed():
                     continue
                 try:
+                    fin_field = candidate.locator('input[name="finVin"]')
                     if (
-                        urlsplit(candidate.url).hostname == VIEWER_HOST
-                        and candidate.locator('input[name="finVin"]').count()
+                        urlsplit(candidate.url).scheme == "https"
+                        and urlsplit(candidate.url).hostname == VIEWER_HOST
+                        and fin_field.count() and fin_field.is_visible()
                     ):
                         progress("PING ID abgeschlossen. Diagnosis Viewer ist bereit.")
                         return candidate
