@@ -378,19 +378,36 @@ class DiagnosisViewerDownloader:
             "Bitte Benutzer-ID, Passwort und die PING-ID-Freigabe in Edge prüfen."
         )
 
-    def _wait_results(self, page, cancel: Event):
+    def _wait_results(self, page, cancel: Event, fin: str):
+        """Wait until the displayed rows belong to the *requested* FIN.
+
+        Search is asynchronous; otherwise old rows from the preceding FIN could
+        accidentally be downloaded while the new search is still loading.
+        """
         deadline = time.monotonic() + self.result_timeout_seconds
         while time.monotonic() < deadline:
             self._check_cancel(cancel)
             candidates, empty = _visible_rows(page)
-            if candidates or empty:
-                return candidates
-            # There may be diagnosis sessions with Quicktest Count = 0 only.
-            rows = page.locator("tbody tr")
-            if any(rows.nth(i).locator("td").count() >= 11 for i in range(rows.count())):
+            if empty:
                 return []
+            rows = page.locator("tbody tr")
+            matching = set()
+            for index in range(rows.count()):
+                cells = rows.nth(index).locator("td")
+                if cells.count() < 11:
+                    continue
+                if fin in (
+                    cells.nth(3).inner_text().strip().upper(),
+                    cells.nth(4).inner_text().strip().upper(),
+                ):
+                    matching.add(index)
+            if matching:
+                # Rows with Quicktest Count=0 have no clickable PDF icon.
+                return [row for row in candidates if row.position in matching]
             page.wait_for_timeout(850)
-        raise TimeoutError("Zeitüberschreitung beim Laden der Suchergebnisse.")
+        raise TimeoutError(
+            "Zeitüberschreitung: keine Ergebnisse für die angeforderte FIN geladen."
+        )
 
     def _one_fin(self, context, page, fin: str, progress: Progress, cancel: Event) -> tuple[FinDownloadResult, object]:
         result = FinDownloadResult(
@@ -417,7 +434,8 @@ class DiagnosisViewerDownloader:
             self._pace(cancel)
             search.click(timeout=15000)
             progress(f"{fin}: Ergebnisse werden geladen …")
-            rows = self._wait_results(page, cancel)
+            self._pace(cancel)  # Give the asynchronous search time to refresh its table.
+            rows = self._wait_results(page, cancel, fin)
             result.available = len(rows)
             if not rows:
                 result.status = "Keine Quicktests"
