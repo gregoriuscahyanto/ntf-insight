@@ -174,6 +174,39 @@ def read_last_attempt(folder: Path, fin: str) -> FinDownloadResult | None:
         return None
 
 
+def scan_local_quicktests(folder: Path) -> list[FinDownloadResult]:
+    """List *all* existing FIN directories, even without an abrufstatus.json.
+
+    The GUI inventory is intentionally independent of the last batch selection.
+    A manifest is an attempt record, not an inventory of all PDFs on disk.
+    """
+    root = Path(folder)
+    if not root.is_dir():
+        return []
+    entries: list[FinDownloadResult] = []
+    for fin_folder in root.iterdir():
+        if (
+            not fin_folder.is_dir()
+            or fin_folder.is_symlink()
+            or not _FIN.fullmatch(fin_folder.name)
+        ):
+            continue
+        pdfs = sorted(
+            path for path in fin_folder.iterdir()
+            if path.is_file() and not path.is_symlink() and path.suffix.lower() == ".pdf"
+        )
+        previous = read_last_attempt(root, fin_folder.name)
+        if previous is None:
+            previous = FinDownloadResult(
+                fin=fin_folder.name,
+                status="PDFs lokal (ohne Abrufprotokoll)" if pdfs else "Ordner ohne PDFs",
+            )
+        # The current or legacy manifest may refer only to the most recent run.
+        previous.files = pdfs
+        entries.append(previous)
+    return sorted(entries, key=lambda result: result.fin)
+
+
 def recently_attempted(
     folder: Path, fin: str, *, now: datetime | None = None
 ) -> FinDownloadResult | None:
@@ -216,6 +249,7 @@ class DiagnosisViewerDownloader:
         user_id: str = "",
         password: str = "",
         retry_recent: bool = False,
+        action_interval_seconds: float = 1.5,
     ) -> None:
         self.output_dir = Path(output_dir)
         self.profile_dir = Path(profile_dir)
@@ -225,11 +259,38 @@ class DiagnosisViewerDownloader:
         self.user_id = user_id
         self.password = password
         self.retry_recent = retry_recent
+        # Fixed, conservative pacing to limit request rate and avoid overloading the service.
+        self.action_interval_seconds = max(0.0, float(action_interval_seconds))
+        self._last_action_at: float | None = None
 
     @staticmethod
     def _check_cancel(cancel: Event) -> None:
         if cancel.is_set():
             raise DownloadCancelled("Abruf durch Benutzer beendet.")
+
+
+    def _pace(self, cancel: Event | None = None) -> None:
+        """Keep a minimum interval between our own browser actions.
+
+        This is request pacing, not an attempt to bypass bot defenses. Dynamic
+        page transitions are still awaited through Playwright's state checks.
+        """
+        if self._last_action_at is not None:
+            deadline = self._last_action_at + self.action_interval_seconds
+            while True:
+                if cancel is not None:
+                    self._check_cancel(cancel)
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    break
+                pause = min(remaining, 0.2)
+                if cancel is not None:
+                    cancel.wait(pause)
+                else:
+                    time.sleep(pause)
+        if cancel is not None:
+            self._check_cancel(cancel)
+        self._last_action_at = time.monotonic()
 
     @staticmethod
     def _is_login_host(url: str) -> bool:
@@ -237,20 +298,26 @@ class DiagnosisViewerDownloader:
         parsed = urlsplit(url)
         return parsed.scheme == "https" and parsed.hostname == LOGIN_HOST
 
-    def _enter_credentials(self, candidate, submitted: dict[str, bool], progress: Progress) -> None:
+    def _enter_credentials(
+        self, candidate, submitted: dict[str, bool], progress: Progress,
+        cancel: Event | None = None,
+    ) -> None:
         """Fill the two Mercedes SSO form steps, but leave PING ID to the user."""
         if not self._is_login_host(candidate.url):
             return
         cookie = candidate.locator("#c-s-bn")
         if cookie.count() and cookie.is_visible():
             # Necessary cookies only. This is sufficient for signing in.
+            self._pace(cancel)
             cookie.click(timeout=2500)
         user_field = candidate.locator("#userid")
         if (
             self.user_id and not submitted["user"]
             and user_field.count() and user_field.is_visible()
         ):
+            self._pace(cancel)
             user_field.fill(self.user_id)
+            self._pace(cancel)
             candidate.locator("#next-btn").click(timeout=8000)
             submitted["user"] = True
             progress("Benutzer-ID eingetragen. Passwortseite wird geöffnet …")
@@ -260,7 +327,9 @@ class DiagnosisViewerDownloader:
             self.password and not submitted["password"]
             and password_field.count() and password_field.is_visible()
         ):
+            self._pace(cancel)
             password_field.fill(self.password)
+            self._pace(cancel)
             candidate.locator("#loginSubmitButton").click(timeout=8000)
             submitted["password"] = True
             progress("Anmeldung gesendet. Bitte PING ID auf dem Smartphone bestätigen …")
@@ -285,7 +354,7 @@ class DiagnosisViewerDownloader:
                         progress("PING ID abgeschlossen. Diagnosis Viewer ist bereit.")
                         return candidate
                     if self._is_login_host(candidate.url):
-                        self._enter_credentials(candidate, submitted, progress)
+                        self._enter_credentials(candidate, submitted, progress, cancel)
                         continue
                     if not clicked_sso:
                         for role in ("button", "link"):
@@ -293,6 +362,7 @@ class DiagnosisViewerDownloader:
                                 role, name=re.compile(r"SSO|Single Sign.On", re.IGNORECASE)
                             )
                             if sso.count() and sso.first.is_visible():
+                                self._pace(cancel)
                                 sso.first.click(timeout=3000)
                                 clicked_sso = True
                                 progress("SSO gestartet. PING ID nach der Passwort-Anmeldung bestätigen.")
@@ -319,7 +389,7 @@ class DiagnosisViewerDownloader:
             rows = page.locator("tbody tr")
             if any(rows.nth(i).locator("td").count() >= 11 for i in range(rows.count())):
                 return []
-            page.wait_for_timeout(500)
+            page.wait_for_timeout(850)
         raise TimeoutError("Zeitüberschreitung beim Laden der Suchergebnisse.")
 
     def _one_fin(self, context, page, fin: str, progress: Progress, cancel: Event) -> tuple[FinDownloadResult, object]:
@@ -333,15 +403,18 @@ class DiagnosisViewerDownloader:
             self._check_cancel(cancel)
             progress(f"{fin}: Diagnosis Viewer öffnen …")
             try:
+                self._pace(cancel)
                 page.goto(search_url(fin), wait_until="domcontentloaded", timeout=45000)
             except Exception:
                 # An interactive SSO redirect may exceed the navigation timeout.
                 pass
             page = self._login(context, page, progress, cancel)
             field = page.locator('input[name="finVin"]')
+            self._pace(cancel)
             field.fill(fin)
             # Required even when the FIN was already passed in the address.
             search = page.get_by_role("button", name=re.compile(r"^(Search|Suchen)$", re.I))
+            self._pace(cancel)
             search.click(timeout=15000)
             progress(f"{fin}: Ergebnisse werden geladen …")
             rows = self._wait_results(page, cancel)
@@ -357,6 +430,7 @@ class DiagnosisViewerDownloader:
                     icon = page.locator("tbody tr").nth(descriptor.position).locator(
                         "span.cursor-pointer:has(svg.lucide-file-down)"
                     )
+                    self._pace(cancel)
                     with page.expect_download(timeout=self.pdf_timeout_seconds * 1000) as event:
                         icon.first.click(timeout=15000)
                     downloaded = event.value
