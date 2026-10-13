@@ -16,6 +16,7 @@ from ntf_insight.acquisition.credentials import (
 )
 from ntf_insight.acquisition.diagnosis_viewer import (
     DiagnosisViewerDownloader, format_last_attempt, parse_fins, read_last_attempt,
+    recently_attempted,
 )
 
 
@@ -229,12 +230,16 @@ class QuickTestDownloadPage(QWidget):
             return
         try:
             fins = parse_fins(self.fins.toPlainText())
-            login = self._resolve_login()
+            folder = Path(self.folder.text())
+            # When every FIN is fresh, no credentials or browser are required.
+            needs_browser = self.retry_recent.isChecked() or any(
+                recently_attempted(folder, fin) is None for fin in fins
+            )
+            login = self._resolve_login() if needs_browser else None
         except ValueError as exc:
             QMessageBox.warning(self, "Eingabe prüfen", str(exc))
             return
 
-        folder = Path(self.folder.text())
         self.table.setRowCount(len(fins))
         for i, fin in enumerate(fins):
             previous = read_last_attempt(folder, fin)
