@@ -126,7 +126,7 @@ class CaseTableModel(QAbstractTableModel):
         case_id = self.case_id_at(index.row())
         if case_id is None:
             return False
-        if int(value) == int(Qt.CheckState.Checked.value):
+        if value in (Qt.CheckState.Checked, Qt.CheckState.Checked.value):
             self._checked_case_ids.add(case_id)
         else:
             self._checked_case_ids.discard(case_id)
