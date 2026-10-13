@@ -2,6 +2,8 @@
 
 import json
 import sys
+import time
+from threading import Event
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
@@ -11,7 +13,8 @@ import pytest
 from ntf_insight.acquisition.diagnosis_viewer import (
     DIAGNOSIS_VIEWER, DownloadRow, FinDownloadResult,
     _save_pdf, _visible_rows, _write_manifest, parse_fins, search_url,
-    DiagnosisViewerDownloader, format_last_attempt, read_last_attempt, recently_attempted,
+    DiagnosisViewerDownloader, DownloadCancelled, format_last_attempt,
+    read_last_attempt, recently_attempted, scan_local_quicktests,
 )
 
 from ntf_insight.acquisition.credentials import (
@@ -222,3 +225,46 @@ def test_credentials_are_stored_only_in_mocked_keyring(monkeypatch):
     assert load_saved_credentials() == LoginCredentials("uid", "pw")
     clear_saved_credentials()
     assert load_saved_credentials() is None
+
+
+
+def test_local_inventory_includes_all_fins_and_legacy_pdfs(tmp_path):
+    """Older FIN folders without JSON manifests must appear in the GUI."""
+    second_fin = "WDD12345678901235"
+    (tmp_path / FIN).mkdir()
+    (tmp_path / FIN / "one.pdf").write_bytes(b"%PDF-1.7\nLegacy")
+    _write_manifest(
+        tmp_path / FIN,
+        FinDownloadResult(
+            fin=FIN, status="Erfolgreich",
+            last_attempt_at="2026-10-12T08:20:00+00:00",
+        ),
+    )
+    (tmp_path / second_fin).mkdir()
+    (tmp_path / second_fin / "two.pdf").write_bytes(b"%PDF-1.7\nPDF2")
+    (tmp_path / second_fin / "THREE.PDF").write_bytes(b"%PDF-1.7\nPDF3")
+    (tmp_path / "not-a-fin").mkdir()
+    (tmp_path / "not-a-fin" / "junk.pdf").write_bytes(b"%PDF-1.7")
+
+    inventory = scan_local_quicktests(tmp_path)
+    assert [entry.fin for entry in inventory] == [FIN, second_fin]
+    assert [len(entry.files) for entry in inventory] == [1, 2]
+    assert inventory[0].status == "Erfolgreich"
+    assert inventory[1].status == "PDFs lokal (ohne Abrufprotokoll)"
+    assert inventory[1].last_attempt_at == ""
+    assert recently_attempted(tmp_path, second_fin) is None
+
+
+def test_action_pacing_is_fixed_and_interruptible(tmp_path):
+    downloader = DiagnosisViewerDownloader(
+        tmp_path, tmp_path / "edge", action_interval_seconds=0.03
+    )
+    assert downloader.action_interval_seconds == 0.03
+    downloader._pace()
+    before = time.monotonic()
+    downloader._pace()
+    assert time.monotonic() - before >= 0.028
+    stopped = Event()
+    stopped.set()
+    with pytest.raises(DownloadCancelled):
+        downloader._pace(stopped)
