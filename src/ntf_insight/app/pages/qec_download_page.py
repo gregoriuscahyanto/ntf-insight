@@ -7,11 +7,15 @@ from threading import Event
 
 from PySide6.QtCore import QThread, Signal
 from PySide6.QtWidgets import (
-    QCheckBox, QFileDialog, QHBoxLayout, QLabel, QMessageBox, QPlainTextEdit,
+    QCheckBox, QFileDialog, QHBoxLayout, QLabel, QLineEdit, QMessageBox, QPlainTextEdit,
     QPushButton, QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget,
 )
 
 from ntf_insight.acquisition.qec_tool import QecDownloader, parse_qec_targets
+from ntf_insight.acquisition.credentials import (
+    QEC_SERVICE_NAME, LoginCredentials, clear_saved_credentials,
+    load_saved_credentials, save_credentials,
+)
 
 
 class QecDownloadWorker(QThread):
@@ -19,22 +23,30 @@ class QecDownloadWorker(QThread):
     completed = Signal(object)
     failed = Signal(str)
 
-    def __init__(self, targets, folder: Path, profile: Path, pump_only: bool):
+    def __init__(
+        self, targets, folder: Path, profile: Path, pump_only: bool,
+        login: LoginCredentials | None = None,
+    ):
         super().__init__()
         self.targets = targets
         self.folder = Path(folder)
         self.profile = Path(profile)
         self.pump_only = pump_only
+        self.login = login
         self.cancel = Event()
 
     def run(self) -> None:
         try:
             results = QecDownloader(
-                self.folder, self.profile, pump_only=self.pump_only
+                self.folder, self.profile, pump_only=self.pump_only,
+                user_id=self.login.user_id if self.login else "",
+                password=self.login.password if self.login else "",
             ).run(self.targets, progress=self.progress.emit, cancel=self.cancel)
             self.completed.emit(results)
         except Exception as exc:
             self.failed.emit(str(exc))
+        finally:
+            self.login = None
 
 
 class QecDownloadPage(QWidget):
@@ -57,11 +69,40 @@ class QecDownloadPage(QWidget):
             "QEC-Tool · Microsoft Edge · Unternehmens-SSO. Je FIN werden passende "
             "Kühlmittelpumpen-Schadteile, alle fünf Informationsreiter und die "
             "Dateianhänge der Lieferantenstellungnahme gesichert. "
-            "Die Anmeldung erfolgt interaktiv im eigenen Edge-Profil.",
+            "Benutzer-ID/Passwort werden bei Bedarf auf der Mercedes-SSO-Seite eingetragen; "
+            "PING ID bleibt eine manuelle Freigabe im Smartphone.",
             objectName="PageSubtitle",
         )
         description.setWordWrap(True)
         layout.addWidget(description)
+
+        layout.addWidget(QLabel("SSO-Anmeldung (optional)", objectName="CardTitle"))
+        login_row = QHBoxLayout()
+        self.user_id = QLineEdit()
+        self.user_id.setPlaceholderText("Benutzer-ID")
+        self.user_id.setMaxLength(20)
+        login_row.addWidget(self.user_id)
+        self.password = QLineEdit()
+        self.password.setPlaceholderText("Passwort (gespeichertes Passwort: leer lassen)")
+        self.password.setEchoMode(QLineEdit.EchoMode.Password)
+        login_row.addWidget(self.password)
+        layout.addLayout(login_row)
+        remember_row = QHBoxLayout()
+        self.remember_login = QCheckBox(
+            "QEC-Zugangsdaten im Windows-Anmeldeinformationsmanager speichern"
+        )
+        self.remember_login.setChecked(False)
+        remember_row.addWidget(self.remember_login)
+        self.forget_login = QPushButton("QEC-Zugangsdaten loeschen")
+        self.forget_login.clicked.connect(self._forget_login)
+        remember_row.addWidget(self.forget_login)
+        layout.addLayout(remember_row)
+        try:
+            saved = load_saved_credentials(service_name=QEC_SERVICE_NAME)
+        except RuntimeError:
+            saved = None
+        if saved:
+            self.user_id.setText(saved.user_id)
 
         layout.addWidget(QLabel("FIN-Liste / optionale Sachnummer", objectName="CardTitle"))
         self.fins = QPlainTextEdit()
@@ -122,6 +163,45 @@ class QecDownloadPage(QWidget):
         self.table.setAlternatingRowColors(True)
         layout.addWidget(self.table, 1)
 
+    def _forget_login(self) -> None:
+        try:
+            clear_saved_credentials(service_name=QEC_SERVICE_NAME)
+            self.user_id.clear()
+            self.password.clear()
+            self.status.setText("Gespeicherte QEC-Anmeldedaten aus dem System-Tresor geloescht.")
+        except RuntimeError as exc:
+            QMessageBox.warning(self, "QEC-Anmeldedaten", str(exc))
+
+    def _resolve_login(self) -> LoginCredentials | None:
+        user_id = self.user_id.text().strip()
+        password = self.password.text()
+        if password and not user_id:
+            raise ValueError("Zum Passwort gehoert eine Benutzer-ID.")
+        if user_id and password:
+            if self.remember_login.isChecked():
+                try:
+                    save_credentials(user_id, password, service_name=QEC_SERVICE_NAME)
+                except RuntimeError as exc:
+                    reply = QMessageBox.question(
+                        self, "Sicheres Speichern nicht verfuegbar",
+                        str(exc) + "\n\nOhne Speichern nur fuer diesen Abruf fortfahren?",
+                    )
+                    if reply != QMessageBox.StandardButton.Yes:
+                        raise ValueError("Abruf abgebrochen.")
+            return LoginCredentials(user_id=user_id, password=password)
+        if user_id:
+            try:
+                saved = load_saved_credentials(service_name=QEC_SERVICE_NAME)
+            except RuntimeError:
+                saved = None
+            if saved and saved.user_id == user_id:
+                return saved
+            raise ValueError(
+                "Fuer diese Benutzer-ID ist kein QEC-Passwort sicher gespeichert. "
+                "Bitte Passwort eingeben oder beide Felder leer lassen und in Edge anmelden."
+            )
+        return None
+
     def _load_fins(self) -> None:
         filename, _ = QFileDialog.getOpenFileName(
             self, "FIN-Liste laden", "", "Textdateien (*.txt *.csv);;Alle Dateien (*)"
@@ -162,14 +242,16 @@ class QecDownloadPage(QWidget):
             return
         try:
             targets = parse_qec_targets(self.fins.toPlainText())
+            login = self._resolve_login()
         except ValueError as exc:
-            QMessageBox.warning(self, "FIN prüfen", str(exc))
+            QMessageBox.warning(self, "FIN / Anmeldung pruefen", str(exc))
             return
         self.table.setRowCount(0)
         self.worker = QecDownloadWorker(
             targets, Path(self.folder.text()), self.data_dir / "edge-qec-profile",
-            self.pump_only.isChecked(),
+            self.pump_only.isChecked(), login=login,
         )
+        self.password.clear()  # Passwort nicht nach dem Start in der GUI halten.
         self.worker.progress.connect(self.status.setText)
         self.worker.completed.connect(self._completed)
         self.worker.failed.connect(lambda message: self.status.setText("Fehler: " + message))
