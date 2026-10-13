@@ -744,12 +744,11 @@ class CasePage(QWidget):
             QMessageBox.warning(self, "SSO-Anmeldung", str(exc))
             return
 
-        from ntf_insight.app.settings import AppPaths
         self._quicktest_files_for_import = []
         self._quicktest_worker = DownloadWorker(
             valid_fins,
             self.quicktest_download_root,
-            AppPaths.default().data_dir / "edge-diagnosis-viewer-profile",
+            self.quicktest_download_root.parent / "edge-diagnosis-viewer-profile",
             login=login,
             retry_recent=self.quicktest_retry_24h.isChecked(),
         )
