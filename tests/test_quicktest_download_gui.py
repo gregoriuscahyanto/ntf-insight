@@ -155,3 +155,19 @@ def test_only_chosen_fins_sent_to_worker_with_stored_credentials(tmp_path, monke
     assert page.quicktest_download_selected_button.isEnabled()
     page.close()
     app.processEvents()
+
+
+
+def test_s3_without_quicktest_shows_separate_skipped_counter(tmp_path, monkeypatch):
+    app, page = _case_page(tmp_path, monkeypatch)
+    page._quicktest_download_completed([
+        FinDownloadResult(
+            fin=FIN, status="Keine Quicktests",
+            no_quicktest_sessions=["Sitzung 1 (2026-10-13 09:00:00)"],
+        )
+    ])
+    text = page.quicktest_download_status.text()
+    assert "1 S3-Sitzung(en) ohne QuickTest übersprungen" in text
+    assert "0 Fehler" in text
+    page.close()
+    app.processEvents()
