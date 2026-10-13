@@ -55,12 +55,27 @@ NTF-Insight-Pakete bringen \`keyring\` als Abhängigkeit mit.
 Standardordner: \`%USERPROFILE%\.ntf-insight\quicktests\<FIN>\`.
 
 - Pro FIN ein Unterordner mit PDF-Dateien und \`abrufstatus.json\`.
+- Die Tabelle wird **beim Öffnen der Seite, beim Ordnerwechsel und nach einem Abruf**
+  aus **allen gültigen FIN-Unterordnern** aufgebaut – unabhängig von der
+  aktuellen FIN-Liste. Über **„Bestand aktualisieren“** wird sie manuell
+  neu eingelesen.
+- Auch ältere FIN-Verzeichnisse, die nur PDF-Dateien und noch keine
+  \`abrufstatus.json\` enthalten, erscheinen mit der Anzahl aller PDFs.
+  Das Datum lautet dann **„Nicht dokumentiert“**, da das Dateidatum kein
+  zuverlässiges Datum des tatsächlichen Abrufversuchs ist.
 - Die App merkt sich den **letzten Abrufversuch**, nicht nur erfolgreiche
   Downloads, und zeigt ihn als **„Letzter Abruf“** in der GUI-Tabelle.
 - Liegt der letzte Versuch weniger als 24 Stunden zurück, wird diese FIN
   standardmäßig **übersprungen**, ohne erneut Edge anzusteuern.
 - Für einen notwendigen gezielten Wiederholungsversuch gibt es die explizite
   Option **„24-Stunden-Sperre einmalig übergehen“**.
+- Zwischen automatisierten Browseraktionen (Navigation, SSO-Klicks,
+  Eingaben, Suche und Download-Klicks) wird ein **Mindestabstand von 1,5 s**
+  eingehalten. Zusätzlich wartet Playwright auf erfolgreiche Navigation,
+  die richtigen FIN-Suchergebnisse und abgeschlossene PDF-Downloads.
+  Diese begrenzte Abrufrate dient Stabilität und Rücksicht auf das System;
+  sie ist **keine Umgehung eines Bot-Schutzes** und bietet keine Garantie,
+  dass die Webseite den Abruf zulässt.
 - PDF-Dateien werden am Header geprüft, bereits vorhandene gleiche Dateien
   nicht erneut gespeichert; fehlerhafte Dateien werden nicht importiert.
 - Neue Dateien werden mit SHA-256-Provenienz durch die bestehende lokale
