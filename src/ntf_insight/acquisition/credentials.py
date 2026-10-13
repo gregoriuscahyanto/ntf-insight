@@ -9,7 +9,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 SERVICE_NAME = "NTF Insight - Diagnosis Viewer"
-QEC_SERVICE_NAME = "NTF Insight - QEC"
 USER_KEY = "benutzer-id"
 PASSWORD_KEY = "passwort"
 
@@ -37,12 +36,12 @@ def _keyring():
     return keyring
 
 
-def load_saved_credentials(*, service_name: str = SERVICE_NAME) -> LoginCredentials | None:
+def load_saved_credentials() -> LoginCredentials | None:
     """Only read from an OS-managed key store; no filesystem secrets."""
     ring = _keyring()
     try:
-        user_id = ring.get_password(service_name, USER_KEY)
-        password = ring.get_password(service_name, PASSWORD_KEY)
+        user_id = ring.get_password(SERVICE_NAME, USER_KEY)
+        password = ring.get_password(SERVICE_NAME, PASSWORD_KEY)
     except Exception as exc:
         raise RuntimeError("Anmeldedaten konnten nicht aus dem Betriebssystem-Tresor gelesen werden.") from exc
     if user_id and password:
@@ -50,14 +49,14 @@ def load_saved_credentials(*, service_name: str = SERVICE_NAME) -> LoginCredenti
     return None
 
 
-def save_credentials(user_id: str, password: str, *, service_name: str = SERVICE_NAME) -> None:
+def save_credentials(user_id: str, password: str) -> None:
     """Save credentials to the OS password vault. Passwords are never logged."""
     if not user_id.strip() or not password:
         raise ValueError("Benutzer-ID und Passwort werden zum Speichern benötigt.")
     ring = _keyring()
     try:
-        ring.set_password(service_name, USER_KEY, user_id.strip())
-        ring.set_password(service_name, PASSWORD_KEY, password)
+        ring.set_password(SERVICE_NAME, USER_KEY, user_id.strip())
+        ring.set_password(SERVICE_NAME, PASSWORD_KEY, password)
     except Exception as exc:
         raise RuntimeError(
             "Anmeldedaten konnten nicht sicher gespeichert werden. "
@@ -65,11 +64,11 @@ def save_credentials(user_id: str, password: str, *, service_name: str = SERVICE
         ) from exc
 
 
-def clear_saved_credentials(*, service_name: str = SERVICE_NAME) -> None:
+def clear_saved_credentials() -> None:
     """Remove saved credentials without inspecting or displaying them."""
     ring = _keyring()
     for key in (USER_KEY, PASSWORD_KEY):
         try:
-            ring.delete_password(service_name, key)
+            ring.delete_password(SERVICE_NAME, key)
         except Exception:
             pass

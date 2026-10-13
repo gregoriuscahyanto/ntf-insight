@@ -23,6 +23,7 @@ DIAGNOSIS_VIEWER = "https://app.diagviewer.prod.gspp-eu.cloud.corpintra.net/sear
 LOGIN_HOST = "login.mercedes-benz.com"
 VIEWER_HOST = urlsplit(DIAGNOSIS_VIEWER).hostname
 SOURCES = "XD,XD(AQT),TD,DAS"
+NO_QUICKTEST_DATA_MESSAGE = "Diagnosis payload loaded from S3 does not contain quicktest data"
 _FIN = re.compile(r"[A-HJ-NPR-Z0-9]{17}\Z")
 _ILLEGAL_FILENAME = re.compile(r"[^A-Za-z0-9._-]+")
 Progress = Callable[[str], None]
@@ -30,6 +31,10 @@ Progress = Callable[[str], None]
 
 class DownloadCancelled(RuntimeError):
     """Raised when the user requests cancellation."""
+
+
+class QuickTestDataUnavailable(RuntimeError):
+    """A diagnosis exists, but its S3 payload has no QuickTest PDF."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -44,6 +49,7 @@ class FinDownloadResult:
     fin: str
     files: list[Path] = field(default_factory=list)
     errors: list[str] = field(default_factory=list)
+    no_quicktest_sessions: list[str] = field(default_factory=list)
     available: int = 0
     status: str = "Ausstehend"
     last_attempt_at: str = ""
@@ -140,6 +146,7 @@ def _write_manifest(folder: Path, result: FinDownloadResult) -> None:
         "verfuegbare_sitzungen": result.available,
         "pdf_dateien": [file.name for file in result.files],
         "fehler": result.errors,
+        "ohne_quicktest": result.no_quicktest_sessions,
     }
     (folder / "abrufstatus.json").write_text(
         json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8"
@@ -168,10 +175,46 @@ def read_last_attempt(folder: Path, fin: str) -> FinDownloadResult | None:
             files=files,
             available=int(payload.get("verfuegbare_sitzungen", 0)),
             status=str(payload.get("status", "")),
+            no_quicktest_sessions=[
+                str(item) for item in payload.get("ohne_quicktest", [])
+            ],
             last_attempt_at=parsed.astimezone(timezone.utc).isoformat(),
         )
     except (OSError, ValueError, TypeError, KeyError, AttributeError):
         return None
+
+
+def scan_local_quicktests(folder: Path) -> list[FinDownloadResult]:
+    """List *all* existing FIN directories, even without an abrufstatus.json.
+
+    The GUI inventory is intentionally independent of the last batch selection.
+    A manifest is an attempt record, not an inventory of all PDFs on disk.
+    """
+    root = Path(folder)
+    if not root.is_dir():
+        return []
+    entries: list[FinDownloadResult] = []
+    for fin_folder in root.iterdir():
+        if (
+            not fin_folder.is_dir()
+            or fin_folder.is_symlink()
+            or not _FIN.fullmatch(fin_folder.name)
+        ):
+            continue
+        pdfs = sorted(
+            path for path in fin_folder.iterdir()
+            if path.is_file() and not path.is_symlink() and path.suffix.lower() == ".pdf"
+        )
+        previous = read_last_attempt(root, fin_folder.name)
+        if previous is None:
+            previous = FinDownloadResult(
+                fin=fin_folder.name,
+                status="PDFs lokal (ohne Abrufprotokoll)" if pdfs else "Ordner ohne PDFs",
+            )
+        # The current or legacy manifest may refer only to the most recent run.
+        previous.files = pdfs
+        entries.append(previous)
+    return sorted(entries, key=lambda result: result.fin)
 
 
 def recently_attempted(
@@ -212,10 +255,11 @@ class DiagnosisViewerDownloader:
         *,
         login_timeout_seconds: int = 240,
         result_timeout_seconds: int = 60,
-        pdf_timeout_seconds: int = 90,
+        pdf_timeout_seconds: int = 60,
         user_id: str = "",
         password: str = "",
         retry_recent: bool = False,
+        action_interval_seconds: float = 1.5,
     ) -> None:
         self.output_dir = Path(output_dir)
         self.profile_dir = Path(profile_dir)
@@ -225,11 +269,38 @@ class DiagnosisViewerDownloader:
         self.user_id = user_id
         self.password = password
         self.retry_recent = retry_recent
+        # Fixed, conservative pacing to limit request rate and avoid overloading the service.
+        self.action_interval_seconds = max(0.0, float(action_interval_seconds))
+        self._last_action_at: float | None = None
 
     @staticmethod
     def _check_cancel(cancel: Event) -> None:
         if cancel.is_set():
             raise DownloadCancelled("Abruf durch Benutzer beendet.")
+
+
+    def _pace(self, cancel: Event | None = None) -> None:
+        """Keep a minimum interval between our own browser actions.
+
+        This is request pacing, not an attempt to bypass bot defenses. Dynamic
+        page transitions are still awaited through Playwright's state checks.
+        """
+        if self._last_action_at is not None:
+            deadline = self._last_action_at + self.action_interval_seconds
+            while True:
+                if cancel is not None:
+                    self._check_cancel(cancel)
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    break
+                pause = min(remaining, 0.2)
+                if cancel is not None:
+                    cancel.wait(pause)
+                else:
+                    time.sleep(pause)
+        if cancel is not None:
+            self._check_cancel(cancel)
+        self._last_action_at = time.monotonic()
 
     @staticmethod
     def _is_login_host(url: str) -> bool:
@@ -237,20 +308,26 @@ class DiagnosisViewerDownloader:
         parsed = urlsplit(url)
         return parsed.scheme == "https" and parsed.hostname == LOGIN_HOST
 
-    def _enter_credentials(self, candidate, submitted: dict[str, bool], progress: Progress) -> None:
+    def _enter_credentials(
+        self, candidate, submitted: dict[str, bool], progress: Progress,
+        cancel: Event | None = None,
+    ) -> None:
         """Fill the two Mercedes SSO form steps, but leave PING ID to the user."""
         if not self._is_login_host(candidate.url):
             return
         cookie = candidate.locator("#c-s-bn")
         if cookie.count() and cookie.is_visible():
             # Necessary cookies only. This is sufficient for signing in.
+            self._pace(cancel)
             cookie.click(timeout=2500)
         user_field = candidate.locator("#userid")
         if (
             self.user_id and not submitted["user"]
             and user_field.count() and user_field.is_visible()
         ):
+            self._pace(cancel)
             user_field.fill(self.user_id)
+            self._pace(cancel)
             candidate.locator("#next-btn").click(timeout=8000)
             submitted["user"] = True
             progress("Benutzer-ID eingetragen. Passwortseite wird geöffnet …")
@@ -260,7 +337,9 @@ class DiagnosisViewerDownloader:
             self.password and not submitted["password"]
             and password_field.count() and password_field.is_visible()
         ):
+            self._pace(cancel)
             password_field.fill(self.password)
+            self._pace(cancel)
             candidate.locator("#loginSubmitButton").click(timeout=8000)
             submitted["password"] = True
             progress("Anmeldung gesendet. Bitte PING ID auf dem Smartphone bestätigen …")
@@ -276,14 +355,16 @@ class DiagnosisViewerDownloader:
                 if candidate.is_closed():
                     continue
                 try:
+                    fin_field = candidate.locator('input[name="finVin"]')
                     if (
-                        urlsplit(candidate.url).hostname == VIEWER_HOST
-                        and candidate.locator('input[name="finVin"]').count()
+                        urlsplit(candidate.url).scheme == "https"
+                        and urlsplit(candidate.url).hostname == VIEWER_HOST
+                        and fin_field.count() and fin_field.is_visible()
                     ):
                         progress("PING ID abgeschlossen. Diagnosis Viewer ist bereit.")
                         return candidate
                     if self._is_login_host(candidate.url):
-                        self._enter_credentials(candidate, submitted, progress)
+                        self._enter_credentials(candidate, submitted, progress, cancel)
                         continue
                     if not clicked_sso:
                         for role in ("button", "link"):
@@ -291,6 +372,7 @@ class DiagnosisViewerDownloader:
                                 role, name=re.compile(r"SSO|Single Sign.On", re.IGNORECASE)
                             )
                             if sso.count() and sso.first.is_visible():
+                                self._pace(cancel)
                                 sso.first.click(timeout=3000)
                                 clicked_sso = True
                                 progress("SSO gestartet. PING ID nach der Passwort-Anmeldung bestätigen.")
@@ -306,19 +388,163 @@ class DiagnosisViewerDownloader:
             "Bitte Benutzer-ID, Passwort und die PING-ID-Freigabe in Edge prüfen."
         )
 
-    def _wait_results(self, page, cancel: Event):
+    def _wait_results(self, page, cancel: Event, fin: str):
+        """Wait until the displayed rows belong to the *requested* FIN.
+
+        Search is asynchronous; otherwise old rows from the preceding FIN could
+        accidentally be downloaded while the new search is still loading.
+        """
         deadline = time.monotonic() + self.result_timeout_seconds
         while time.monotonic() < deadline:
             self._check_cancel(cancel)
             candidates, empty = _visible_rows(page)
-            if candidates or empty:
-                return candidates
-            # There may be diagnosis sessions with Quicktest Count = 0 only.
-            rows = page.locator("tbody tr")
-            if any(rows.nth(i).locator("td").count() >= 11 for i in range(rows.count())):
+            if empty:
                 return []
-            page.wait_for_timeout(500)
-        raise TimeoutError("Zeitüberschreitung beim Laden der Suchergebnisse.")
+            rows = page.locator("tbody tr")
+            matching = set()
+            for index in range(rows.count()):
+                cells = rows.nth(index).locator("td")
+                if cells.count() < 11:
+                    continue
+                if fin in (
+                    cells.nth(3).inner_text().strip().upper(),
+                    cells.nth(4).inner_text().strip().upper(),
+                ):
+                    matching.add(index)
+            if matching:
+                # Rows with Quicktest Count=0 have no clickable PDF icon.
+                return [row for row in candidates if row.position in matching]
+            page.wait_for_timeout(850)
+        raise TimeoutError(
+            "Zeitüberschreitung: keine Ergebnisse für die angeforderte FIN geladen."
+        )
+
+    @staticmethod
+    def _watch_no_quicktest_message(page) -> bool:
+        """Watch *new* S3 notices, not a toast left from the previous row.
+
+        This observer only watches DOM changes. It does not change the Diagnosis
+        Viewer or its authentication state.
+        """
+        try:
+            page.evaluate(
+                """(needle) => {
+                    const key = '__ntfInsightQuicktestS3Watcher';
+                    const old = window[key];
+                    if (old?.observer) old.observer.disconnect();
+                    const state = { matched: false, observer: null };
+                    const expected = needle.toLowerCase();
+                    const root = document.body || document.documentElement;
+                    if (!root) return;
+                    state.observer = new MutationObserver((mutations) => {
+                        for (const mutation of mutations) {
+                            const nodes = mutation.type === 'characterData'
+                                ? [mutation.target]
+                                : Array.from(mutation.addedNodes || []);
+                            if (nodes.some((node) =>
+                                (node.textContent || '').toLowerCase().includes(expected)
+                            )) {
+                                state.matched = true;
+                                break;
+                            }
+                        }
+                    });
+                    state.observer.observe(root, {
+                        subtree: true, childList: true, characterData: true
+                    });
+                    window[key] = state;
+                }""",
+                NO_QUICKTEST_DATA_MESSAGE,
+            )
+            return True
+        except Exception:
+            # Fallback: detect a newly visible DOM message after clicking.
+            return False
+
+    @staticmethod
+    def _no_quicktest_visible(page) -> bool:
+        try:
+            matching = page.get_by_text(NO_QUICKTEST_DATA_MESSAGE, exact=False)
+            return bool(matching.count() and matching.first.is_visible())
+        except Exception:
+            # The page may be navigating while the toast is rendered.
+            return False
+
+    @staticmethod
+    def _no_quicktest_observed(page) -> bool:
+        try:
+            return bool(page.evaluate(
+                "() => Boolean(window.__ntfInsightQuicktestS3Watcher?.matched)"
+            ))
+        except Exception:
+            return False
+
+    @staticmethod
+    def _stop_no_quicktest_watcher(page) -> None:
+        try:
+            page.evaluate("""() => {
+                const key = '__ntfInsightQuicktestS3Watcher';
+                if (window[key]?.observer) window[key].observer.disconnect();
+                delete window[key];
+            }""")
+        except Exception:
+            pass
+
+    def _download_or_skip(self, page, icon, cancel: Event):
+        """Wait for a download or the S3 no-data notice, within 60s by default.
+
+        Playwright's expect_download() cannot observe a new in-page error while
+        waiting. The event-driven loop can skip quickly instead of waiting until
+        the timeout when the site explicitly reports no QuickTest.
+        """
+        self._check_cancel(cancel)
+        self._pace(cancel)
+        initially_visible = self._no_quicktest_visible(page)
+        observer_installed = self._watch_no_quicktest_message(page)
+        downloads: list[object] = []
+        notices: list[str] = []
+        unexpected_dialog = [False]
+
+        def on_download(download) -> None:
+            downloads.append(download)
+
+        def on_dialog(dialog) -> None:
+            if NO_QUICKTEST_DATA_MESSAGE.casefold() in dialog.message.casefold():
+                notices.append(NO_QUICKTEST_DATA_MESSAGE)
+            else:
+                unexpected_dialog[0] = True
+            # Registered dialog handlers must close native dialogs to unblock
+            # subsequent browser actions. An unknown dialog is reported.
+            dialog.dismiss()
+
+        page.on("download", on_download)
+        page.on("dialog", on_dialog)
+        try:
+            deadline = time.monotonic() + self.pdf_timeout_seconds
+            icon.click(timeout=min(15000, max(1, int(self.pdf_timeout_seconds * 1000))))
+            while True:
+                self._check_cancel(cancel)
+                if downloads:
+                    return downloads[0]
+                if notices or self._no_quicktest_observed(page):
+                    raise QuickTestDataUnavailable(NO_QUICKTEST_DATA_MESSAGE)
+                if unexpected_dialog[0]:
+                    raise RuntimeError("Unerwartetes Dialogfenster beim PDF-Abruf.")
+                if not initially_visible and self._no_quicktest_visible(page):
+                    raise QuickTestDataUnavailable(NO_QUICKTEST_DATA_MESSAGE)
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise TimeoutError(
+                        f"Nach {self.pdf_timeout_seconds:g} Sekunden wurde kein "
+                        "PDF-Download gestartet."
+                    )
+                # Playwright dispatches on('download') while its event loop runs.
+                page.wait_for_timeout(max(1, int(min(0.25, remaining) * 1000)))
+        finally:
+            page.remove_listener("download", on_download)
+            page.remove_listener("dialog", on_dialog)
+            if observer_installed:
+                self._stop_no_quicktest_watcher(page)
 
     def _one_fin(self, context, page, fin: str, progress: Progress, cancel: Event) -> tuple[FinDownloadResult, object]:
         result = FinDownloadResult(
@@ -331,18 +557,22 @@ class DiagnosisViewerDownloader:
             self._check_cancel(cancel)
             progress(f"{fin}: Diagnosis Viewer öffnen …")
             try:
+                self._pace(cancel)
                 page.goto(search_url(fin), wait_until="domcontentloaded", timeout=45000)
             except Exception:
                 # An interactive SSO redirect may exceed the navigation timeout.
                 pass
             page = self._login(context, page, progress, cancel)
             field = page.locator('input[name="finVin"]')
+            self._pace(cancel)
             field.fill(fin)
             # Required even when the FIN was already passed in the address.
             search = page.get_by_role("button", name=re.compile(r"^(Search|Suchen)$", re.I))
+            self._pace(cancel)
             search.click(timeout=15000)
             progress(f"{fin}: Ergebnisse werden geladen …")
-            rows = self._wait_results(page, cancel)
+            self._pace(cancel)  # Give the asynchronous search time to refresh its table.
+            rows = self._wait_results(page, cancel, fin)
             result.available = len(rows)
             if not rows:
                 result.status = "Keine Quicktests"
@@ -355,20 +585,44 @@ class DiagnosisViewerDownloader:
                     icon = page.locator("tbody tr").nth(descriptor.position).locator(
                         "span.cursor-pointer:has(svg.lucide-file-down)"
                     )
-                    with page.expect_download(timeout=self.pdf_timeout_seconds * 1000) as event:
-                        icon.first.click(timeout=15000)
-                    downloaded = event.value
+                    downloaded = self._download_or_skip(page, icon.first, cancel)
                     if downloaded.failure():
                         raise RuntimeError(downloaded.failure())
                     saved = _save_pdf(downloaded, folder, descriptor)
                     if saved not in result.files:
                         result.files.append(saved)
+                except QuickTestDataUnavailable:
+                    result.no_quicktest_sessions.append(
+                        f"Sitzung {number} ({descriptor.timestamp})"
+                    )
+                    progress(
+                        f"{fin}: Sitzung {number}/{len(rows)} – "
+                        "keine QuickTest-Daten in S3, übersprungen."
+                    )
+                except DownloadCancelled:
+                    raise
+                except TimeoutError:
+                    result.errors.append(
+                        f"Sitzung {number} ({descriptor.timestamp}): "
+                        f"PDF-Timeout nach {self.pdf_timeout_seconds:g} Sekunden."
+                    )
+                    progress(
+                        f"{fin}: Sitzung {number}/{len(rows)} – "
+                        "PDF-Timeout, nächste Sitzung."
+                    )
                 except Exception as exc:
                     result.errors.append(f"Sitzung {number} ({descriptor.timestamp}): {exc}")
-            result.status = "Erfolgreich" if not result.errors else (
-                "Teilweise erfolgreich" if result.files else "Fehler"
+            result.status = (
+                "Erfolgreich" if result.files and not result.errors
+                else "Teilweise erfolgreich" if result.files
+                else "Keine Quicktests" if result.no_quicktest_sessions and not result.errors
+                else "Fehler"
             )
-            progress(f"{fin}: {len(result.files)} PDF(s) gespeichert, {len(result.errors)} Fehler.")
+            progress(
+                f"{fin}: {len(result.files)} PDF(s), "
+                f"{len(result.no_quicktest_sessions)} ohne QuickTest, "
+                f"{len(result.errors)} Fehler."
+            )
             return result, page
         except DownloadCancelled:
             result.status = "Abgebrochen"

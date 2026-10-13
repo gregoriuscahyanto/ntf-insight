@@ -1,63 +1,78 @@
 # QEC-Befundungsberichte in der FIN-/Fallanalyse
 
-## Bedienung
+## Bedienung auf dem aktuellen Hauptbranch
 
-Der QEC-Abruf befindet sich **nicht mehr in einer eigenen Navigationsseite**,
-sondern direkt unter **Fälle / FIN → FIN / Fallanalyse**, unterhalb der Falltabelle.
+Der QEC-Abruf ist unmittelbar unter **Fälle / FIN → FIN / Fallanalyse** in
+die bestehende QuickTest-Downloadoberfläche eingebaut. Er verwendet **genau
+dieselben Checkboxen in der ersten Spalte der Falltabelle** wie QuickTest.
+Das Ankreuzen bleibt auch beim Sortieren und Filtern an die stabile Fall-ID
+gebunden.
 
-- **Alle QEC-Berichte herunterladen** ruft alle geeigneten Tabellenfälle ab,
-  auch bei aktivem Textfilter. Für größere Mengen fragt die App vorab nach.
-- **Ausgewählte herunterladen** ruft nur die in der Tabelle markierten
-  Zeilen ab; Mehrfachauswahl mit Strg bzw. Umschalt. Der Bezug zu einer
-  vorhandenen QEC-Referenznummer bleibt erhalten, auch bei mehreren
-  Schadteilfällen derselben FIN. Eine FIN ohne bekannte QEC-Referenz wird
-  ausschließlich mit der vollständigen FIN und Pumpenbezeichnung gesucht.
-- Die neue Spalte **QEC-Abrufdatum ↗** zeigt Datum/Uhrzeit des lokalen
-  Abrufs. Anklicken öffnet den **Fallordner im Datei-Explorer**.
-  Der Link wird nur angezeigt, wenn **vollständige FIN und QEC-Referenz**
-  im gespeicherten JSON übereinstimmen.
-- Die neue Spalte **TIPS-Fall** zeigt `Ja` bei einer fallbezogen verknüpften
-  TIPS-Beobachtung, `FIN-Hinweis` bei bislang nur über dieselbe FIN bekannten
-  TIPS-Vorgängen und `—` ohne erfassten Zusammenhang. Ein FIN-Hinweis
-  ist **keine bestätigte Verknüpfung** zu einem Schadteilfall.
+**QuickTest und QEC erscheinen in zwei gleich gestalteten Bereichen:**
 
-Der Abruf bleibt mit Microsoft Edge sichtbar. Automatische Klicks und
-Seitenwechsel besitzen eine kurze, abbrechbare Sicherheitswartezeit.
-Benutzer-ID und Passwort sind **dieselben wie beim QuickTest-Abruf**.
-Nur dessen Betriebssystem-Tresoreintrag wird verwendet. Ist ein gültiges
-Paar gespeichert, zeigen QuickTest und Fallanalyse den Status grün und
-mit einem Text-Häkchen an. Die Eingabe/Änderung der Zugangsdaten erfolgt
-weiterhin unter **QuickTest-Abruf**. Ohne gespeicherte Daten kann das
-SSO manuell in Edge abgeschlossen werden. PING ID bleibt eine manuelle
-Freigabe auf dem Smartphone.
+- `Alle Quicktests herunterladen/aktualisieren`
+- `Quicktests für ausgewählte Fälle herunterladen/aktualisieren`
+- `Alle QEC-Berichte herunterladen/aktualisieren`
+- `QEC-Berichte für ausgewählte Fälle herunterladen/aktualisieren`
 
-## Sichere Zuordnung
+QEC übernimmt **keine eigene Anmeldung**: Die Benutzer-ID, das Passwort und
+die Option **Sicher speichern** stehen gemeinsam direkt über den
+QuickTest-Aktionen. Gespeicherte SSO-Zugangsdaten im
+Betriebssystem-Anmeldeinformationsmanager werden im Bereich **grün mit Text**
+markiert. Bei QEC werden nicht gespeicherte, aber gerade eingegebene
+QuickTest-Zugangsdaten ebenfalls für den jeweiligen Abruf benutzt.
+**PING ID muss weiterhin manuell bestätigt werden.** Die Anwendungen haben
+getrennte Edge-Profile und unabhängige Download-Threads.
 
-QEC sucht anhand der Baureihe (FIN-Stellen 4–6) und der Endnummer
-(letzte sechs Stellen). Der Download akzeptiert einen Treffer erst nach
-Prüfung der **kompletten FIN** aus der Ergebnistabelle. Für einen aus
-der Falltabelle gewählten QEC-Fall wird zusätzlich die **exakte
-Referenznummer** geprüft; führende Nullen bleiben erhalten.
-Unbekannte oder ungültige Referenzen werden nicht stillschweigend
-durch FIN-weite Ergebnisse ersetzt.
+Der QEC-Downloader wartet etwa 0,85 Sekunden nach Navigationsaktionen und
+Klicks, zusätzlich zu Playwrights Sichtbarkeits- und Ladeprüfungen.
+Wartezeiten lassen sich über die Abbruch-Schaltfläche unterbrechen.
 
-## Neues lokales Ablageformat
+## Neue Spalten
+
+Die Tabelle zeigt **TIPS-Fall**, **QEC-Abrufdatum** und das vorhandene
+**QuickTest-Abruf-Datum**. Ein blau unterstrichenes QEC-Datum öffnet
+den jeweiligen QEC-Referenzordner. Ein Datum wird nur aus einem
+lokalen Export übernommen, wenn FIN und QEC-Referenznummer **exakt**
+zu diesem Fall passen.
+
+`TIPS-Fall = Ja`: Eine TIPS-Beobachtung ist dem konkreten Fall zugeordnet.
+`FIN-Hinweis`: TIPS-Einträge sind unter derselben FIN bekannt, aber
+nicht sicher mit diesem konkreten QEC-Schadteilfall verknüpft.
+`—`: keine bekannte fallbezogene TIPS-Beobachtung.
+
+## Download-Zuordnung
+
+Bei **allen** Fällen werden die in der Tabelle vorhandenen eindeutigen FINs
+und – falls vorhanden – QEC-Referenzen benutzt. Bei **ausgewählten** Fällen
+werden nur die IDs mit aktivierter Checkbox betrachtet, unabhängig davon,
+ob diese Zeilen aktuell weggefiltert sind.
+
+QEC sucht zunächst nach FIN-Baureihe (Stellen 4–6) und letzter
+Endnummer (sechs Zeichen). Ein Schadteil wird erst dann verwendet,
+wenn die komplette FIN und bei referenzbezogenem Abruf die **exakte
+Referenznummer** übereinstimmen. Führende Nullen bleiben erhalten.
+Eine fehlerhafte Referenz darf nicht stillschweigend zu einem
+FIN-weiten Abruf erweitert werden.
+
+## Neues Speicherformat (lokal)
 
 ```text
 %USERPROFILE%\.ntf-insight\
   qec\
     <FIN>\
-      abrufstatus.json                 # FIN-weiter technischer Abrufstatus
+      abrufstatus.json
       ref_<QEC-Referenz>\
-        qec.json                       # alle 5 QEC-Reiter in einer JSON-Datei
+        qec.json
         anhaenge\
-          <Anhang-ID>_<Dateiname>       # echte Originaldokumente
+          <ID>_<Originaldateiname>
   edge-qec-profile\
 ```
 
-`qec.json` enthält `schema_version=2`, die vollständige FIN,
-QEC-Referenz, Sachnummer, Bezeichnung, Zeitpunkt `abgerufen_am_utc`
-und das Array `abschnitte`. Die fünf Elemente heißen:
+`qec.json` pro **QEC-Schadteilfall** enthält `schema_version=2`,
+`fin`, `referenznummer`, `sachnummer`, `bezeichnung`,
+`abgerufen_am_utc`, `vollstaendige_reiter`, `anhaenge`,
+`hinweise` und `fehler` sowie die vollständigen `abschnitte`:
 
 1. WE-Daten
 2. Voranalysen
@@ -65,36 +80,31 @@ und das Array `abschnitte`. Die fünf Elemente heißen:
 4. Ergebnis + Nachanalyse
 5. Historie
 
-Jeder Abschnitt enthält `sichtbarer_text`, `felder` einschließlich
-Optionen/Auswahltexte, `tabellen` mit Zeilen/Spalten und den einzelnen
-Aufnahmezeitpunkt. `vollstaendige_reiter` kennzeichnet die Abdeckung.
-Die Anhangliste samt Downloadstatus, sichtbaren Metadaten, Fehlern und
-lokal gespeichertem Dateinamen steht unter `anhaenge` im selben JSON.
-Das separate `anhangliste.json` wird **nicht mehr neu erzeugt**.
-Ein `abrufstatus.json` je FIN bleibt für den technischen Batchstatus
-und die Zuordnung mehrerer Referenzen vorhanden.
+Jeder Abschnitt enthält sichtbaren Text, Felder einschließlich
+ausgewählter Optionsbezeichnungen und Tabellenzeilen. Dateianhänge
+bleiben als **echte Dateien** im `anhaenge/`-Ordner.
 
-Neue Abrufe erzeugen **weder `laeufe/` noch
-`01_WE-Daten/` bis `05_Historie/` und keine `ansicht.html`**.
-Ältere Exporte bleiben unverändert erhalten; die Falltabelle kann deren
-Datum aus den vorhandenen `daten.json`-Dateien weiterhin lesen.
-Die Anwendung löscht ältere Befunde niemals automatisch. Sobald ein
-neuer Abruf stattfindet, entsteht daneben `qec.json` im Fallordner.
+**Neue Abrufe erzeugen keine** `laeufe/`, `01_WE-Daten/` usw.
+und keine `ansicht.html`. Alte exportierte Fälle bleiben
+aus Nachvollziehbarkeitsgründen unverändert; ihr Datum kann die
+Anwendung weiter anzeigen. Vorherige Reiterdaten, die bei einem
+erneuten, unvollständigen Abruf übernommen werden, erhalten den
+Hinweis `aus_vorherigem_abruf` und zählen nicht als frischer
+Vollständigkeitsbeleg.
 
-Erfolgreich heruntergeladene Fall-JSONs und Anhänge werden außerdem
-der lokalen Datenquellenarchivierung übergeben. Unbekannte Formate
-bleiben Originaldateien ohne automatische fachliche Klassifizierung.
+Die QEC-Hauptansicht wird für jeden Schadteilfall erneut geöffnet,
+um veraltete Suchergebnisse zu vermeiden. Für echte Anhänge akzeptiert
+der Download QEC-interne Weiterleitungen, verwendet bei Bedarf
+einen Browser-Fallback und lehnt fremde Hosts sowie Login-HTML als
+Dateianhänge ab.
 
-## Einschränkungen
+## Grenzen und Sicherheit
 
-- Die QEC-Detailreiter und Downloads benötigen den berechtigten
-  Unternehmenszugang. Eine vollständige Live-Browserprüfung ist
-  nur auf dem freigegebenen Firmenrechner möglich.
-- Ausgeblendete Dialoge, nicht geöffnete Popups oder Inhalte anderer
-  Frames sind nicht automatisch Teil eines Reiter-Snapshots.
-- Interne QEC-Anhangweiterleitungen sind erlaubt, nicht aber
-  fremde Domains, unerwartete Login-HTMLs oder ungültige PDFs.
-- Die strukturierten Werte sind **Originalbefunde**, nicht automatisch
-  eine sichere Ursache oder ein Lieferantenverschulden.
-- **Keine echten FINs, QEC-Berichte, Kennwörter, Cookies oder
-  Browserprofile in GitHub/CI/öffentliche Tickets hochladen.**
+- Der vollständige QEC-Liveablauf und tatsächliche Dateidownload
+  können nur im berechtigten Mercedes-Benz-Unternehmensnetz geprüft werden.
+- Ein QEC-Datenexport ist ein Ausgangsbefund, keine automatische
+  Lieferanten-Schuldzuweisung.
+- FINs, Befundungsberichte, Betriebsdaten, Cookies und Anmeldeinformationen
+  dürfen weder in GitHub noch in CI-Protokolle oder Releases gelangen.
+- Die TIPS-Spalte unterscheidet eine bestätigte Verknüpfung explizit
+  von einem bloßen FIN-Hinweis.

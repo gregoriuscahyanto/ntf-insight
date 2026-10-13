@@ -21,7 +21,6 @@ class NavigationPanel(QFrame):
     ITEMS = (
         ("dashboard", "Übersicht"),
         ("sources", "Datenquellen"),
-        ("quicktest_download", "QuickTest-Abruf"),
         ("knowledge", "Quellenwissen"),
         ("cases", "Fälle / FIN"),
         ("dtcs", "DTC-Explorer"),

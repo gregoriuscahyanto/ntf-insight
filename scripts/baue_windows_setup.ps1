@@ -41,6 +41,7 @@ try {
         "--collect-all", "polars",
         "--collect-all", "pyarrow",
         "--collect-all", "playwright",
+        "--collect-all", "keyring",
         "--hidden-import", "PySide6.QtSvg",
         "src\ntf_insight\__main__.py"
     )

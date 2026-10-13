@@ -12,7 +12,6 @@ from ntf_insight.app.pages.data_quality_page import DataQualityPage
 from ntf_insight.app.pages.dtc_page import DTCExplorerPage
 from ntf_insight.app.pages.prediction_page import PredictionPage
 from ntf_insight.app.pages.sources_page import SourcesPage
-from ntf_insight.app.pages.quicktest_download_page import QuickTestDownloadPage
 from ntf_insight.app.pages.source_knowledge_page import SourceKnowledgePage
 from ntf_insight.app.pages.supplier_page import SupplierPage
 from ntf_insight.app.widgets.navigation import NavigationPanel
@@ -38,6 +37,7 @@ class MainWindow(QMainWindow):
         self.manual_service = ManualCaseService(
             DuckDBStore(self.application_data.paths.database_path)
         )
+        self._case_quicktest_import_pending = False
 
         root = QWidget(objectName="AppRoot")
         layout = QHBoxLayout(root)
@@ -77,13 +77,10 @@ class MainWindow(QMainWindow):
                 str(self.application_data.paths.database_path),
             ),
             "knowledge": SourceKnowledgePage(knowledge),
-            "quicktest_download": QuickTestDownloadPage(
-                self.application_data.paths.data_dir, self.repository, self.application_data.mode,
-            ),
             "cases": CasePage(
                 self.repository, self.reference_repository, self.manual_service,
                 review_store=review_store,
-                data_dir=self.application_data.paths.data_dir,
+                download_root=self.application_data.paths.data_dir / "quicktests",
             ),
             "dtcs": DTCExplorerPage(
                 self.repository, self.reference_repository,
@@ -94,24 +91,45 @@ class MainWindow(QMainWindow):
             "quality": DataQualityPage(self.repository, self.reference_repository),
         }
         pages["cases"].case_saved.connect(self._reload_after_manual_change)
-        pages["quicktest_download"].import_requested.connect(pages["sources"]._archive_paths)
-        pages["cases"].qec_download.import_requested.connect(pages["sources"]._archive_paths)
+        pages["cases"].quicktests_downloaded.connect(self._import_downloaded_case_quicktests)
+        pages["cases"].qec_reports_downloaded.connect(self._import_downloaded_case_quicktests)
         pages["sources"].sources_updated.connect(self._reload_after_source_import)
         return pages
 
+    def _import_downloaded_case_quicktests(self, paths: list) -> None:
+        """Archive QuickTest/QEC files from the case table with source provenance."""
+        if not paths:
+            return
+        source_page = self.pages["sources"]
+        if source_page._worker is not None:
+            # PDFs remain safely on disk and can be imported through Datenquellen.
+            from PySide6.QtWidgets import QMessageBox
+            QMessageBox.warning(
+                self, "Quellenimport ist beschäftigt",
+                "Die QEC-/QuickTest-Dateien wurden gespeichert, aber ein anderer Quellenimport "
+                "läuft bereits. Bitte die Dateien anschließend unter Datenquellen importieren.",
+            )
+            return
+        self._case_quicktest_import_pending = True
+        source_page._archive_paths(paths)
+
     def _reload_after_source_import(self, summary: str, quicktests_saved: int = 0) -> None:
-        """Keep the FIN focus when QEC attachments refresh the local source archive."""
-        selected_case = self.pages["cases"].selector.currentData()
-        was_on_cases = self.stack.currentWidget() is self.pages["cases"]
+        """Refresh all views while preserving case analysis after case-led downloads."""
+        from_case_download = self._case_quicktest_import_pending
+        current_case = (
+            self.pages["cases"].selector.currentData() if from_case_download else None
+        )
+        self._case_quicktest_import_pending = False
         self._reload_data()
+        if from_case_download:
+            if current_case:
+                self.pages["cases"].select_case(current_case)
+            self.navigation.select_page("cases")
+            return
         self.pages["sources"].import_status.setText(summary)
         if quicktests_saved:
             self.navigation.select_page("cases")
             self.pages["cases"].show_quicktests()
-        elif was_on_cases:
-            self.navigation.select_page("cases")
-            if selected_case:
-                self.pages["cases"].select_case(selected_case)
         else:
             self.navigation.select_page("sources")
 
@@ -142,5 +160,8 @@ class MainWindow(QMainWindow):
             return
         if key == "cases":
             page.cluster_workspace.refresh_review_priorities()
+            page._refresh_quicktest_download_dates()
+            page._refresh_qec_download_dates()
+            page._refresh_shared_credentials_status()
         self.stack.setCurrentWidget(page)
         self.stack.setFocus(Qt.FocusReason.OtherFocusReason)
