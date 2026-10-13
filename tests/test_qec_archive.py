@@ -1,7 +1,6 @@
 """Lokale QEC-Fallordner ohne Fremdzuordnung oder Legacy-Datenverlust."""
 
 import json
-from pathlib import Path
 
 import pytest
 
