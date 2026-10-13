@@ -268,3 +268,26 @@ def test_action_pacing_is_fixed_and_interruptible(tmp_path):
     stopped.set()
     with pytest.raises(DownloadCancelled):
         downloader._pace(stopped)
+
+
+
+def test_search_waits_for_rows_from_requested_fin(tmp_path):
+    second = "WDD12345678901235"
+    def columns(fin):
+        return ["TD", "2026-10-12 10:00", "", fin, fin, "167", "1", "", "2000", "", ""]
+    class ChangingPage(Page):
+        def __init__(self):
+            super().__init__([Row(columns(FIN), True)])
+            self.waits = 0
+
+        def wait_for_timeout(self, milliseconds):
+            self.waits += 1
+            self.rows = [Row(columns(second), True)]
+
+    downloader = DiagnosisViewerDownloader(
+        tmp_path, tmp_path / "profile", result_timeout_seconds=3
+    )
+    page = ChangingPage()
+    selected = downloader._wait_results(page, Event(), second)
+    assert len(selected) == 1
+    assert page.waits == 1
