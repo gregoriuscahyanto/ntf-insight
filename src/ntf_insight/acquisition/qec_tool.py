@@ -21,6 +21,8 @@ from urllib.parse import parse_qs, quote, unquote, urljoin, urlsplit
 
 from lxml import html as lxml_html
 
+from ntf_insight.acquisition.qec_archive import case_folder
+
 QEC_START = "https://qect.mo360cp.i.mercedes-benz.com/qec-access/supp/login.qec"
 QEC_HOST = urlsplit(QEC_START).hostname
 SSO_LOGIN_HOST = "login.mercedes-benz.com"
@@ -805,37 +807,87 @@ class QecDownloader:
                 result.errors.append(f"Dateianhaenge-Popup {index + 1}: {exc}")
 
     def _one_hit(self, context, page, target: QecTarget, hit: QecHit,
-                 result: QecResult, progress: Progress, cancel: Event, run_id: str):
+                 result: QecResult, progress: Progress, cancel: Event):
         page, result_scope, result_html, _ = self._search(context, page, target, progress, cancel)
-        # Kein direkter HTTP-Link: erst den aktuell sichtbaren Treffer selektieren.
-        hits = parse_search_hits(result_html, target.fin,
-                                 part_number=target.part_number, pump_only=self.pump_only)
+        # Selection is by exact QEC ID from a verified full-FIN and reference match.
+        hits = parse_search_hits(
+            result_html, target.fin,
+            part_number=target.part_number, pump_only=self.pump_only,
+        )
+        if target.reference:
+            hits = [entry for entry in hits if entry.reference == target.reference]
         if hit.schadteil_id not in {entry.schadteil_id for entry in hits}:
             raise RuntimeError("Schadteil nach erneutem Oeffnen nicht mehr eindeutig gefunden.")
+        self._pause(cancel)
         result_scope.locator(f'a[href*="schadteilID={hit.schadteil_id}"]').first.click(
             timeout=self.navigation_timeout_ms
         )
+        self._pause(cancel)
         page.get_by_text("Schadteilmonitor", exact=False).first.wait_for(
             timeout=self.navigation_timeout_ms
         )
-        reference_folder = self.output_dir / target.fin / f"ref_{_safe_name(hit.reference)}"
-        run_folder = reference_folder / "laeufe" / run_id
+        reference_folder = case_folder(self.output_dir, target.fin, hit.reference)
+        report_path = reference_folder / "qec.json"
+        inventory: dict[str, dict[str, str]] = {}
+        # A repeated download must not silently lose existing attachment evidence.
+        if report_path.is_file():
+            try:
+                previous = json.loads(report_path.read_text(encoding="utf-8"))
+                if (previous.get("fin") == target.fin
+                        and previous.get("referenznummer") == hit.reference):
+                    for item in previous.get("anhaenge", []):
+                        if (isinstance(item, dict) and
+                                str(item.get("anhang_id", "")).isdigit()):
+                            inventory[str(item["anhang_id"])] = dict(item)
+            except (OSError, ValueError, TypeError, AttributeError):
+                result.warnings.append(
+                    f"{hit.reference}: Vorherige Fall-JSON nicht lesbar; Original bleibt erhalten."
+                )
+
+        sections: list[dict] = []
+        warning_offset, error_offset = len(result.warnings), len(result.errors)
         previous_signature = None
-        for index, section in enumerate(QEC_SECTIONS):
-            self._check_cancel(cancel)
-            progress(f"{target.fin}: {hit.reference} – {section} …")
-            if not self._click_section(page, section):
-                result.warnings.append(f"{hit.reference}: Reiter {section} nicht gefunden.")
-                continue
-            folder = run_folder / f"{index + 1:02d}_{_safe_name(section)}"
-            path = _snapshot(page, folder, section, hit)
-            current = json.loads(path.read_text(encoding="utf-8"))
-            signature = (current["sichtbarer_text"], str(current["felder"]))
-            if signature == previous_signature:
-                result.warnings.append(f"{hit.reference}: {section} zeigt dieselben Daten wie der vorherige Reiter; bitte pruefen.")
-            previous_signature = signature
-            result.snapshots.append(path)
-            self._save_popups(context, page, reference_folder / "anhaenge", result, progress, cancel)
+        try:
+            for section in QEC_SECTIONS:
+                self._check_cancel(cancel)
+                progress(f"{target.fin}: {hit.reference} – {section} …")
+                if not self._click_section(page, section, cancel):
+                    result.warnings.append(f"{hit.reference}: Reiter {section} nicht gefunden.")
+                    continue
+                data = _snapshot_data(page, section, hit)
+                signature = (data["sichtbarer_text"], str(data["felder"]))
+                if signature == previous_signature:
+                    result.warnings.append(
+                        f"{hit.reference}: {section} zeigt dieselben Daten wie "
+                        "der vorherige Reiter; bitte pruefen."
+                    )
+                previous_signature = signature
+                sections.append(data)
+                self._save_popups(
+                    context, page, reference_folder / "anhaenge",
+                    result, progress, cancel, inventory,
+                )
+        finally:
+            # No laeufe/NN_Reiter folders and no active HTML: ONE JSON per case.
+            report = {
+                "schema_version": 2,
+                "fin": hit.fin,
+                "referenznummer": hit.reference,
+                "sachnummer": hit.part_number,
+                "bezeichnung": hit.description,
+                "schadteil_id": hit.schadteil_id,
+                "abgerufen_am_utc": datetime.now(timezone.utc).isoformat(),
+                "abschnitte": sections,
+                "vollstaendige_reiter": len({p["bereich"] for p in sections}) == len(QEC_SECTIONS),
+                "anhaenge": sorted(
+                    inventory.values(), key=lambda item: int(item["anhang_id"])
+                ),
+                "hinweise": result.warnings[warning_offset:],
+                "fehler": result.errors[error_offset:],
+            }
+            _write_json(report_path, report)
+            if report_path not in result.snapshots:
+                result.snapshots.append(report_path)
         result.references.append(hit.reference)
         return page
 
