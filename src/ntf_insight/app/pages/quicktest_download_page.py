@@ -96,6 +96,9 @@ class QuickTestDownloadPage(QWidget):
         self.forget_login.clicked.connect(self._forget_login)
         security_row.addWidget(self.forget_login)
         layout.addLayout(security_row)
+        self.credential_state = QLabel(objectName="PageSubtitle")
+        self.credential_state.setWordWrap(True)
+        layout.addWidget(self.credential_state)
 
         try:
             saved = load_saved_credentials()
@@ -103,6 +106,7 @@ class QuickTestDownloadPage(QWidget):
             saved = None
         if saved:
             self.user_id.setText(saved.user_id)
+        self._update_credential_state()
 
         layout.addWidget(QLabel("FIN-Liste", objectName="CardTitle"))
         self.fins = QPlainTextEdit()
@@ -161,11 +165,27 @@ class QuickTestDownloadPage(QWidget):
         self.table.setAlternatingRowColors(True)
         layout.addWidget(self.table, 1)
 
+    def _update_credential_state(self) -> None:
+        """Single shared vault status for QuickTest and QEC."""
+        try:
+            stored = load_saved_credentials()
+        except RuntimeError:
+            stored = None
+        if stored:
+            self.credential_state.setText(
+                "✓ Benutzer-ID und Passwort für QuickTest und QEC sicher gespeichert"
+            )
+            self.credential_state.setStyleSheet("color: #268b52; font-weight: 600;")
+        else:
+            self.credential_state.setText("Keine Zugangsdaten im Betriebssystem-Tresor gespeichert.")
+            self.credential_state.setStyleSheet("")
+
     def _forget_login(self) -> None:
         try:
             clear_saved_credentials()
             self.password.clear()
             self.user_id.clear()
+            self._update_credential_state()
             self.status.setText("Gespeicherte Zugangsdaten aus dem System-Tresor gelöscht.")
         except RuntimeError as exc:
             QMessageBox.warning(self, "Zugangsdaten", str(exc))
@@ -209,6 +229,7 @@ class QuickTestDownloadPage(QWidget):
                     )
                     if answer != QMessageBox.StandardButton.Yes:
                         raise ValueError("Abruf abgebrochen.")
+            self._update_credential_state()
             return LoginCredentials(user_id=user_id, password=password)
         if user_id:
             try:
@@ -294,3 +315,4 @@ class QuickTestDownloadPage(QWidget):
         if self.worker is not None:
             self.worker.deleteLater()
             self.worker = None
+        self._update_credential_state()
