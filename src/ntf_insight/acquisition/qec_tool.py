@@ -8,7 +8,6 @@ muessen mit einem berechtigten QEC-Zugang im Unternehmensnetz geprueft werden.
 from __future__ import annotations
 
 import hashlib
-import html
 import json
 import re
 import tempfile
@@ -51,6 +50,7 @@ class QecCancelled(RuntimeError):
 class QecTarget:
     fin: str
     part_number: str = ""
+    reference: str = ""  # Optionaler exakter Schadteilfall: keine FIN-weite Fremdzuordnung.
 
 
 @dataclass(frozen=True, slots=True)
@@ -387,50 +387,22 @@ def _visible_tables(page) -> list[dict]:
       })).filter(table => table.zeilen.length > 0)""")
 
 
-def _snapshot(page, folder: Path, section: str, hit: QecHit) -> Path:
-    folder.mkdir(parents=True, exist_ok=True)
-    text = page.locator("body").inner_text(timeout=15000)
-    fields = _visible_fields(page)
-    tables = _visible_tables(page)
-    payload = {
+def _snapshot_data(page, section: str, hit: QecHit) -> dict:
+    """Collect one complete tab into memory; only the per-case JSON is written.
+
+    Never persist executable scripts, active form links, or credentials.
+    """
+    return {
         "referenznummer": hit.reference,
         "sachnummer": hit.part_number,
         "bezeichnung": hit.description,
         "fin": hit.fin,
         "bereich": section,
         "zeitpunkt_utc": datetime.now(timezone.utc).isoformat(),
-        "sichtbarer_text": text,
-        "felder": fields,
-        "tabellen": tables,
+        "sichtbarer_text": page.locator("body").inner_text(timeout=15000),
+        "felder": _visible_fields(page),
+        "tabellen": _visible_tables(page),
     }
-    _write_json(folder / "daten.json", payload)
-    # Lesbare Offline-Kopie ohne Cookies, Token, Skripte oder aktive Links.
-    rows = "\n".join(
-        f"<tr><td>{html.escape(str(f['name']))}</td>"
-        f"<td>{html.escape(str(f['wert']))}</td>"
-        f"<td>{html.escape(str(f.get('auswahltext') or f.get('beschriftung') or f.get('optionwert') or ''))}</td></tr>"
-        for f in fields
-    )
-    table_blocks = []
-    for table in tables:
-        rendered_rows = []
-        for cells in table["zeilen"]:
-            rendered_rows.append("<tr>" + "".join(
-                f"<td>{html.escape(str(cell['text']))}</td>" for cell in cells
-            ) + "</tr>")
-        table_blocks.append(
-            f"<h3>Tabelle {table['nummer']}</h3><table>" + "".join(rendered_rows) + "</table>"
-        )
-    content = (
-        '<!doctype html><html lang="de"><head><meta charset="utf-8">'
-        '<title>QEC-Offline-Befund</title></head><body>'
-        f"<h1>{html.escape(section)}</h1><p>Referenz: {html.escape(hit.reference)}</p>"
-        f"<pre>{html.escape(text)}</pre><h2>Formularfelder</h2>"
-        f"<table><tr><th>Feld</th><th>Wert</th><th>Auswahl / Option</th></tr>{rows}</table>"
-        f"<h2>QEC-Tabellen</h2>{''.join(table_blocks)}</body></html>"
-    )
-    (folder / "ansicht.html").write_text(content, encoding="utf-8")
-    return folder / "daten.json"
 
 
 class QecDownloader:
@@ -439,7 +411,8 @@ class QecDownloader:
     def __init__(self, output_dir: Path, profile_dir: Path, *,
                  login_timeout_seconds: int = 240, navigation_timeout_ms: int = 45000,
                  attachment_timeout_ms: int = 90000, pump_only: bool = True,
-                 user_id: str = "", password: str = "") -> None:
+                 user_id: str = "", password: str = "",
+                 click_delay_seconds: float = 0.65) -> None:
         self.output_dir = Path(output_dir)
         self.profile_dir = Path(profile_dir)
         self.login_timeout_seconds = login_timeout_seconds
@@ -448,6 +421,12 @@ class QecDownloader:
         self.pump_only = pump_only
         self.user_id = user_id
         self.password = password
+        self.click_delay_seconds = min(4.0, max(0.0, float(click_delay_seconds)))
+
+    def _pause(self, cancel: Event) -> None:
+        """Cancellable pause after QEC navigation/clicks (legacy server UI)."""
+        if cancel.wait(self.click_delay_seconds):
+            raise QecCancelled("Abruf durch Benutzer beendet.")
 
     @staticmethod
     def _check_cancel(cancel: Event) -> None:
@@ -618,6 +597,7 @@ class QecDownloader:
             # Interactive SSO may interrupt the initial navigation.
             progress("QEC: Weiterleitung zur Anmeldung; warte auf QEC-Hauptansicht ...")
         page = self._wait_for_login(context, progress, cancel)
+        self._pause(cancel)
 
         nav = None
         for scope in self._scopes(page):
@@ -638,14 +618,17 @@ class QecDownloader:
                 expected_path="navigationDispatch.qec",
             )
             page.goto(destination, wait_until="domcontentloaded", timeout=self.navigation_timeout_ms)
+            self._pause(cancel)
         else:
             progress("QEC: Schadteilsuche anklicken ...")
             nav.click(timeout=self.navigation_timeout_ms)
+            self._pause(cancel)
 
         page, form = self._search_form(context, cancel)
         progress("QEC: FIN-Suchfelder erkannt; BR und Endnummer eintragen ...")
         form.locator('input[name="_finBR"]').fill(target.fin[3:6])
         form.locator('input[name="_finEndnummerFrom"]').fill(target.fin[-6:])
+        self._pause(cancel)
         progress("QEC: Filtern klicken ...")
         button = form.locator('input[type="submit"][value="Filtern"]')
         if button.count():
@@ -654,18 +637,18 @@ class QecDownloader:
             form.get_by_role("button", name="Filtern", exact=True).click(
                 timeout=self.navigation_timeout_ms
             )
+        self._pause(cancel)
         progress("QEC: Auf bestaetigte Suchergebnisse warten ...")
         return self._wait_search_results(context, target, progress, cancel)
 
-    @staticmethod
-    def _click_section(page, title: str) -> bool:
+    def _click_section(self, page, title: str, cancel: Event) -> bool:
         for role in ("tab", "link", "button"):
             matches = page.get_by_role(role, name=title, exact=True)
             for index in range(min(matches.count(), 4)):
                 candidate = matches.nth(index)
                 if candidate.is_visible():
                     candidate.click(timeout=12000)
-                    page.wait_for_timeout(250)
+                    self._pause(cancel)
                     return True
         # QEC besitzt in einigen Ansichten klickbare Div-/Tabellenreiter.
         matches = page.get_by_text(title, exact=True)
@@ -673,7 +656,7 @@ class QecDownloader:
             item = matches.nth(index)
             if item.is_visible():
                 item.click(timeout=12000)
-                page.wait_for_timeout(250)
+                self._pause(cancel)
                 return True
         return False
 
