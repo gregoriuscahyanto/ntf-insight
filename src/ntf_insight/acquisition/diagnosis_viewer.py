@@ -419,6 +419,133 @@ class DiagnosisViewerDownloader:
             "Zeitüberschreitung: keine Ergebnisse für die angeforderte FIN geladen."
         )
 
+    @staticmethod
+    def _watch_no_quicktest_message(page) -> bool:
+        """Watch *new* S3 notices, not a toast left from the previous row.
+
+        This observer only watches DOM changes. It does not change the Diagnosis
+        Viewer or its authentication state.
+        """
+        try:
+            page.evaluate(
+                """(needle) => {
+                    const key = '__ntfInsightQuicktestS3Watcher';
+                    const old = window[key];
+                    if (old?.observer) old.observer.disconnect();
+                    const state = { matched: false, observer: null };
+                    const expected = needle.toLowerCase();
+                    const root = document.body || document.documentElement;
+                    if (!root) return;
+                    state.observer = new MutationObserver((mutations) => {
+                        for (const mutation of mutations) {
+                            const nodes = mutation.type === 'characterData'
+                                ? [mutation.target]
+                                : Array.from(mutation.addedNodes || []);
+                            if (nodes.some((node) =>
+                                (node.textContent || '').toLowerCase().includes(expected)
+                            )) {
+                                state.matched = true;
+                                break;
+                            }
+                        }
+                    });
+                    state.observer.observe(root, {
+                        subtree: true, childList: true, characterData: true
+                    });
+                    window[key] = state;
+                }""",
+                NO_QUICKTEST_DATA_MESSAGE,
+            )
+            return True
+        except Exception:
+            # Fallback: detect a newly visible DOM message after clicking.
+            return False
+
+    @staticmethod
+    def _no_quicktest_visible(page) -> bool:
+        try:
+            matching = page.get_by_text(NO_QUICKTEST_DATA_MESSAGE, exact=False)
+            return bool(matching.count() and matching.first.is_visible())
+        except Exception:
+            # The page may be navigating while the toast is rendered.
+            return False
+
+    @staticmethod
+    def _no_quicktest_observed(page) -> bool:
+        try:
+            return bool(page.evaluate(
+                "() => Boolean(window.__ntfInsightQuicktestS3Watcher?.matched)"
+            ))
+        except Exception:
+            return False
+
+    @staticmethod
+    def _stop_no_quicktest_watcher(page) -> None:
+        try:
+            page.evaluate("""() => {
+                const key = '__ntfInsightQuicktestS3Watcher';
+                if (window[key]?.observer) window[key].observer.disconnect();
+                delete window[key];
+            }""")
+        except Exception:
+            pass
+
+    def _download_or_skip(self, page, icon, cancel: Event):
+        """Wait for a download or the S3 no-data notice, within 60s by default.
+
+        Playwright's expect_download() cannot observe a new in-page error while
+        waiting. The event-driven loop can skip quickly instead of waiting until
+        the timeout when the site explicitly reports no QuickTest.
+        """
+        self._check_cancel(cancel)
+        self._pace(cancel)
+        initially_visible = self._no_quicktest_visible(page)
+        observer_installed = self._watch_no_quicktest_message(page)
+        downloads: list[object] = []
+        notices: list[str] = []
+        unexpected_dialog = [False]
+
+        def on_download(download) -> None:
+            downloads.append(download)
+
+        def on_dialog(dialog) -> None:
+            if NO_QUICKTEST_DATA_MESSAGE.casefold() in dialog.message.casefold():
+                notices.append(NO_QUICKTEST_DATA_MESSAGE)
+            else:
+                unexpected_dialog[0] = True
+            # Registered dialog handlers must close native dialogs to unblock
+            # subsequent browser actions. An unknown dialog is reported.
+            dialog.dismiss()
+
+        page.on("download", on_download)
+        page.on("dialog", on_dialog)
+        try:
+            deadline = time.monotonic() + self.pdf_timeout_seconds
+            icon.click(timeout=min(15000, max(1, int(self.pdf_timeout_seconds * 1000))))
+            while True:
+                self._check_cancel(cancel)
+                if downloads:
+                    return downloads[0]
+                if notices or self._no_quicktest_observed(page):
+                    raise QuickTestDataUnavailable(NO_QUICKTEST_DATA_MESSAGE)
+                if unexpected_dialog[0]:
+                    raise RuntimeError("Unerwartetes Dialogfenster beim PDF-Abruf.")
+                if not initially_visible and self._no_quicktest_visible(page):
+                    raise QuickTestDataUnavailable(NO_QUICKTEST_DATA_MESSAGE)
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise TimeoutError(
+                        f"Nach {self.pdf_timeout_seconds:g} Sekunden wurde kein "
+                        "PDF-Download gestartet."
+                    )
+                # Playwright dispatches on('download') while its event loop runs.
+                page.wait_for_timeout(max(1, int(min(0.25, remaining) * 1000)))
+        finally:
+            page.remove_listener("download", on_download)
+            page.remove_listener("dialog", on_dialog)
+            if observer_installed:
+                self._stop_no_quicktest_watcher(page)
+
     def _one_fin(self, context, page, fin: str, progress: Progress, cancel: Event) -> tuple[FinDownloadResult, object]:
         result = FinDownloadResult(
             fin=fin, status="Abruf gestartet",
