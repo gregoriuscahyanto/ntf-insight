@@ -24,6 +24,8 @@ from lxml import html as lxml_html
 
 QEC_START = "https://qect.mo360cp.i.mercedes-benz.com/qec-access/supp/login.qec"
 QEC_HOST = urlsplit(QEC_START).hostname
+SSO_LOGIN_HOST = "login.mercedes-benz.com"
+_QEC_NAV_SELECTOR = 'a[href*="navigationDispatch.qec"][href*="nav_schadteile=1"]'
 QEC_SECTIONS = (
     "WE-Daten", "Voranalysen", "Stellungnahme Lieferant",
     "Ergebnis + Nachanalyse", "Historie",
@@ -304,60 +306,186 @@ class QecDownloader:
 
     def __init__(self, output_dir: Path, profile_dir: Path, *,
                  login_timeout_seconds: int = 240, navigation_timeout_ms: int = 45000,
-                 attachment_timeout_ms: int = 90000, pump_only: bool = True) -> None:
+                 attachment_timeout_ms: int = 90000, pump_only: bool = True,
+                 user_id: str = "", password: str = "") -> None:
         self.output_dir = Path(output_dir)
         self.profile_dir = Path(profile_dir)
         self.login_timeout_seconds = login_timeout_seconds
         self.navigation_timeout_ms = navigation_timeout_ms
         self.attachment_timeout_ms = attachment_timeout_ms
         self.pump_only = pump_only
+        self.user_id = user_id
+        self.password = password
 
     @staticmethod
     def _check_cancel(cancel: Event) -> None:
         if cancel.is_set():
             raise QecCancelled("Abruf durch Benutzer beendet.")
 
+    @staticmethod
+    def _is_sso_page(url: str) -> bool:
+        parsed = urlsplit(url)
+        return parsed.scheme == "https" and parsed.hostname == SSO_LOGIN_HOST
+
+    @staticmethod
+    def _is_qec_page(url: str) -> bool:
+        parsed = urlsplit(url)
+        return (parsed.scheme == "https" and parsed.hostname == QEC_HOST
+                and parsed.path.startswith("/qec-access/"))
+
+    @staticmethod
+    def _scopes(page):
+        # In some QEC deployments navigation lives in a child frame.
+        yield page
+        main = getattr(page, "main_frame", None)
+        for frame in getattr(page, "frames", ()):
+            if frame is not main:
+                yield frame
+
+    @classmethod
+    def _is_qec_ready(cls, page) -> bool:
+        if not cls._is_qec_page(page.url):
+            return False
+        # A completed SSO can land on qecentry.qec before the navigation
+        # menu is available. Do not require one exact anchor as login proof.
+        if urlsplit(page.url).path.endswith("/qecentry.qec"):
+            return True
+        for scope in cls._scopes(page):
+            if (scope.locator(_QEC_NAV_SELECTOR).count()
+                    or (scope.locator('input[name="_finBR"]').count()
+                        and scope.locator('input[name="_finEndnummerFrom"]').count())):
+                return True
+        return False
+
+    def _enter_credentials(self, page, submitted: dict[str, bool], progress: Progress) -> None:
+        """Fill only the verified Mercedes SSO pages; PING ID remains manual."""
+        if not self._is_sso_page(page.url):
+            return
+        cookie = page.locator("#c-s-bn")
+        if cookie.count() and cookie.is_visible():
+            cookie.click(timeout=3000)
+        user = page.locator("#userid")
+        if self.user_id and not submitted["user"] and user.count() and user.is_visible():
+            user.fill(self.user_id)
+            page.locator("#next-btn").click(timeout=10000)
+            submitted["user"] = True
+            progress("Mercedes SSO: Benutzer-ID uebermittelt; Passwortseite wird geoeffnet.")
+            return
+        password = page.locator("#password")
+        if (self.password and not submitted["password"] and password.count()
+                and password.is_visible()):
+            password.fill(self.password)
+            page.locator("#loginSubmitButton").click(timeout=10000)
+            submitted["password"] = True
+            progress("Mercedes SSO: Anmeldung gesendet; bitte gegebenenfalls PING ID bestaetigen.")
+
     def _wait_for_login(self, context, progress: Progress, cancel: Event):
         deadline = time.monotonic() + self.login_timeout_seconds
-        announced = False
+        submitted = {"user": False, "password": False}
+        progress("QEC: SSO abwarten. Benutzer-ID/Passwort bei Bedarf in Edge eingeben; PING ID bestaetigen.")
+        next_heartbeat = time.monotonic() + 12
         while time.monotonic() < deadline:
             self._check_cancel(cancel)
-            for candidate in context.pages:
+            for candidate in reversed(context.pages):
                 if candidate.is_closed():
                     continue
                 try:
-                    if urlsplit(candidate.url).hostname == QEC_HOST and candidate.locator(
-                        'a[href*="navigationDispatch.qec?nav_schadteile=1"]'
-                    ).count():
+                    if self._is_qec_ready(candidate):
+                        progress("QEC: Anmeldung abgeschlossen; Schadteilsuche wird geoeffnet.")
                         return candidate
+                    if self._is_sso_page(candidate.url):
+                        self._enter_credentials(candidate, submitted, progress)
+                except QecCancelled:
+                    raise
                 except Exception:
+                    # A navigation can invalidate the locator during SSO redirect.
                     continue
-            if not announced:
-                progress("QEC: Bitte Anmeldung/SSO in Edge abschliessen; keine Anmeldedaten werden ausgelesen.")
-                announced = True
-            time.sleep(0.5)
-        raise TimeoutError("QEC-Anmeldung nicht abgeschlossen oder Schadteilsuche nicht erreichbar.")
+            if time.monotonic() >= next_heartbeat:
+                progress("QEC: Anmeldung / PING ID wird noch abgewartet (Abbrechen ist moeglich).")
+                next_heartbeat = time.monotonic() + 12
+            time.sleep(0.4)
+        raise TimeoutError(
+            "QEC-Anmeldung nicht erkannt. Bitte pruefen, ob die angemeldete "
+            "QEC-Hauptansicht im von NTF Insight gestarteten Edge-Fenster "
+            "geoeffnet ist (qecentry.qec)."
+        )
+
+    def _search_form(self, context, cancel: Event):
+        deadline = time.monotonic() + self.navigation_timeout_ms / 1000
+        while time.monotonic() < deadline:
+            self._check_cancel(cancel)
+            for candidate in reversed(context.pages):
+                if candidate.is_closed() or not self._is_qec_page(candidate.url):
+                    continue
+                for scope in self._scopes(candidate):
+                    try:
+                        if (scope.locator('input[name="_finBR"]').count()
+                                and scope.locator('input[name="_finEndnummerFrom"]').count()):
+                            return candidate, scope
+                    except Exception:
+                        continue
+            time.sleep(0.3)
+        raise TimeoutError(
+            "QEC-Schadteilsuche nicht bereit: die Suchfelder _finBR und "
+            "_finEndnummerFrom fehlen. Bitte QEC-Rolle und Navigation pruefen."
+        )
 
     def _search(self, context, page, target: QecTarget, progress: Progress, cancel: Event):
-        # Dokumentierte QEC-Eigenheit: JEDE Suche mit neuer Hauptansicht beginnen.
+        # The QEC instructions require a fresh start for each FIN/reference.
         self._check_cancel(cancel)
+        progress("QEC: Hauptansicht neu oeffnen ...")
         try:
             page.goto(QEC_START, wait_until="domcontentloaded", timeout=self.navigation_timeout_ms)
         except Exception:
-            # Interaktives SSO kann die Navigation unterbrechen; den Login
-            # trotzdem bis zum Ende des vorgesehenen Zeitlimits abwarten.
-            pass
+            # Interactive SSO may interrupt the initial navigation.
+            progress("QEC: Weiterleitung zur Anmeldung; warte auf QEC-Hauptansicht ...")
         page = self._wait_for_login(context, progress, cancel)
-        page.locator('a[href*="navigationDispatch.qec?nav_schadteile=1"]').first.click(
-            timeout=self.navigation_timeout_ms
-        )
-        page.locator('input[name="_finBR"]').fill(target.fin[3:6])
-        page.locator('input[name="_finEndnummerFrom"]').fill(target.fin[-6:])
-        page.locator('input[type="submit"][value="Filtern"]').first.click(
-            timeout=self.navigation_timeout_ms
-        )
-        page.locator('input[name="_finBR"]').wait_for(timeout=self.navigation_timeout_ms)
+
+        nav = None
+        for scope in self._scopes(page):
+            links = scope.locator(_QEC_NAV_SELECTOR)
+            for index in range(min(links.count(), 3)):
+                item = links.nth(index)
+                if item.is_visible():
+                    _qec_url(item.get_attribute("href"), expected_path="navigationDispatch.qec")
+                    nav = item
+                    break
+            if nav is not None:
+                break
+        if nav is None:
+            # This path comes from the provided QEC example, not a guessed URL.
+            progress("QEC: Navigationslink fehlt; dokumentierte Schadteilsuche direkt oeffnen ...")
+            destination = _qec_url(
+                "navigationDispatch.qec?nav_schadteile=1",
+                expected_path="navigationDispatch.qec",
+            )
+            page.goto(destination, wait_until="domcontentloaded", timeout=self.navigation_timeout_ms)
+        else:
+            progress("QEC: Schadteilsuche anklicken ...")
+            nav.click(timeout=self.navigation_timeout_ms)
+
+        page, form = self._search_form(context, cancel)
+        progress("QEC: FIN-Suchfelder erkannt; BR und Endnummer eintragen ...")
+        form.locator('input[name="_finBR"]').fill(target.fin[3:6])
+        form.locator('input[name="_finEndnummerFrom"]').fill(target.fin[-6:])
+        progress("QEC: Filtern klicken ...")
+        button = form.locator('input[type="submit"][value="Filtern"]')
+        if button.count():
+            button.first.click(timeout=self.navigation_timeout_ms)
+        else:
+            form.get_by_role("button", name="Filtern", exact=True).click(
+                timeout=self.navigation_timeout_ms
+            )
+        progress("QEC: Suchergebnisse werden ausgewertet ...")
         return page
+
+    @classmethod
+    def _search_html(cls, page) -> str:
+        for scope in cls._scopes(page):
+            if (scope.locator('input[name="_finBR"]').count()
+                    and scope.locator('input[name="_finEndnummerFrom"]').count()):
+                return scope.content()
+        return page.content()
 
     @staticmethod
     def _click_section(page, title: str) -> bool:
@@ -422,7 +550,7 @@ class QecDownloader:
                  result: QecResult, progress: Progress, cancel: Event, run_id: str):
         page = self._search(context, page, target, progress, cancel)
         # Kein direkter HTTP-Link: erst den aktuell sichtbaren Treffer selektieren.
-        hits = parse_search_hits(page.content(), target.fin,
+        hits = parse_search_hits(self._search_html(page), target.fin,
                                  part_number=target.part_number, pump_only=self.pump_only)
         if hit.schadteil_id not in {entry.schadteil_id for entry in hits}:
             raise RuntimeError("Schadteil nach erneutem Oeffnen nicht mehr eindeutig gefunden.")
@@ -461,7 +589,7 @@ class QecDownloader:
         _write_result(root, result)
         try:
             page = self._search(context, page, target, progress, cancel)
-            hits = parse_search_hits(page.content(), target.fin, part_number=target.part_number,
+            hits = parse_search_hits(self._search_html(page), target.fin, part_number=target.part_number,
                                      pump_only=self.pump_only)
             if not hits:
                 result.status = "Keine passenden Schadteile"
@@ -527,4 +655,5 @@ class QecDownloader:
                         break
             finally:
                 context.close()
+                self.password = ""
         return results
