@@ -100,12 +100,18 @@ class MainWindow(QMainWindow):
         return pages
 
     def _reload_after_source_import(self, summary: str, quicktests_saved: int = 0) -> None:
-        """Refresh all views after an archived ZIP created or updated real cases."""
+        """Keep the FIN focus when QEC attachments refresh the local source archive."""
+        selected_case = self.pages["cases"].selector.currentData()
+        was_on_cases = self.stack.currentWidget() is self.pages["cases"]
         self._reload_data()
         self.pages["sources"].import_status.setText(summary)
         if quicktests_saved:
             self.navigation.select_page("cases")
             self.pages["cases"].show_quicktests()
+        elif was_on_cases:
+            self.navigation.select_page("cases")
+            if selected_case:
+                self.pages["cases"].select_case(selected_case)
         else:
             self.navigation.select_page("sources")
 
