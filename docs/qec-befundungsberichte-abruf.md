@@ -7,16 +7,25 @@ Diagnosis-Viewer-QuickTest-Abruf (unabhängige Edge-Profile und Threads).
 ## Voraussetzung und Bedienung
 
 - Das System muss Microsoft Edge, Playwright und einen berechtigten Zugang zum
-  QEC-Tool im Mercedes-Benz-Unternehmensnetz besitzen. SSO und gegebenenfalls
-  PING ID erfolgen **interaktiv im sichtbaren Edge-Fenster**.
+  QEC-Tool im Mercedes-Benz-Unternehmensnetz besitzen. Benutzer-ID und Passwort
+  koennen optional in der QEC-Abruf-Maske eingegeben werden. Playwright fuellt die
+  Felder **nur auf https://login.mercedes-benz.com** aus; die PING-ID-Bestaetigung
+  erfolgt stets manuell am Smartphone. Alternativ beide Felder leer lassen und
+  die komplette SSO-Anmeldung im sichtbaren Edge-Fenster selbst eingeben.
+- Die optionale Einstellung zum Merken speichert die QEC-Zugangsdaten ausschliesslich
+  im Betriebssystem-Tresor unter einem separaten QEC-Eintrag. Ohne Zustimmung
+  findet keine dauerhafte Passwortspeicherung statt. Kein Klartext-Fallback.
 - In **QEC-Abruf** FINs zeilenweise eintragen, aus lokalen Fällen uebernehmen
   oder eine TXT-/CSV-Datei laden. Pro Zeile ist optional eine Sachnummer möglich:
   `17-STELLIGE-FIN;SACHNUMMER`. Die Anzeige der FIN erfolgt **nicht** im Repo.
 - Standardmäßig werden nur Schadteile gesucht, deren QEC-Bezeichnung
   Kühlmittelpumpe, Umwälzpumpe oder `coolant pump` enthaelt. Bei abweichender
   Benennung kann der Filter deaktiviert und/oder die exakte Sachnummer angegeben werden.
-- **QEC-Daten und Berichte abrufen** klicken, bei Bedarf SSO bestätigen und
-  die fallbezogenen Ergebnisse im lokalen Ordner pruefen.
+- **QEC-Daten und Berichte abrufen** klicken, SSO/PING ID bei Bedarf bestaetigen
+  und das **Ablaufprotokoll** beobachten. Nach der Anmeldung muss dort der
+  Schritt **QEC: Anmeldung abgeschlossen; Schadteilsuche wird geoeffnet.**
+  erscheinen. Anschliessend werden die Suchfelder ausgefuellt und Filtern geklickt.
+  Die fallbezogenen Ergebnisse im lokalen Ordner pruefen.
 - Unter **QuickTest-Abruf** können unabhängig davon Diagnose-PDFs fuer die
   gleichen FINs heruntergeladen werden. Beide Downloads können mit
   unterschiedlichen Profilen nebeneinander laufen.
@@ -24,8 +33,11 @@ Diagnosis-Viewer-QuickTest-Abruf (unabhängige Edge-Profile und Threads).
 ## Abfolge laut gelieferter QEC-Anleitung
 
 1. **Fuer jede neue FIN und jeden weiteren Schadteil-Treffer** die
-   QEC-Hauptansicht neu öffnen. Laut Anleitung zeigt QEC andernfalls
-   möglicherweise noch den vorherigen Vorgang.
+   QEC-Hauptansicht neu oeffnen. Laut Anleitung zeigt QEC andernfalls
+   moeglicherweise noch den vorherigen Vorgang. Nach SSO wird neben dem
+   Navigationslink auch die Hauptseite `qecentry.qec` erkannt. Falls der Link
+   im HTML noch fehlt, wird der aus dem Beispiel bekannte gleichnamige
+   QEC-Navigationspfad verwendet.
 2. In **Schadteilsuche** die Felder `_finBR` (FIN-Stellen 4 bis 6)
    und `_finEndnummerFrom` (letzte 6 Zeichen) ausfuellen, **Filtern** klicken.
 3. Den Tabellen-Treffer ausschliesslich bei Übereinstimmung der **gesamten FIN**
@@ -75,11 +87,27 @@ ist nicht Bestandteil dieser ersten Ausbaustufe.
   HTML-Dateien** offline getestet. Die Detailreiter liegen nur als Screenshots
   vor. Ihre Klickbarkeit, Popups, Paginierung und die Berechtigungen muessen
   im Unternehmensnetz anhand freigegebener Faelle validiert werden.
-- Nur aktive, autorisierte SSO-Sitzungen verwenden; keine Login-Automation,
-  Cookie-Extraktion oder Umgehung von Freigaben. Browserprofil, Downloads,
+- Nur aktive, autorisierte SSO-Sitzungen verwenden. Das automatische Ausfuellen
+  des Mercedes-SSO-Formulars umgeht **keine** Anmeldung und **keine** PING-ID-Freigabe.
+  Keine Cookie-Extraktion oder Umgehung von Freigaben. Browserprofil, Downloads,
   Fallberichte und FINs **nie** in GitHub, Releases oder CI hochladen.
 - Bei einem HTML-/Anmeldeseiten-Download anstelle eines Anhangs wird ein Fehler
   protokolliert, keine HTML-Datei als vermeintlicher PDF-Bericht ausgegeben.
 - Unvollständige Reiter und nicht erreichbare Dateianhänge bleiben in
   `abrufstatus.json` als Warnung bzw. Fehler sichtbar und dürfen bei der
   Ursachenbewertung nicht stillschweigend als vollstaendige Befundung gelten.
+
+## Wenn nach der Anmeldung nichts passiert
+
+- Das Ablaufprotokoll unterscheidet **Warte auf SSO**, **QEC-Hauptansicht erkannt**,
+  **Schadteilsuche wird geoeffnet**, **Suchfelder erkannt** und **Filtern**.
+  Erst wenn alle Schritte sichtbar sind, wurde die FIN-Suche gestartet.
+- Wenn die Hauptansicht offen ist, aber das Protokoll auf SSO wartet: Sicherstellen,
+  dass die Webseite im von der App gestarteten Edge-Fenster und nicht in einem
+  anderen Browserprofil geoeffnet ist. Pruefen, ob die URL nach der Anmeldung
+  die QEC-Anwendungsdomain und `qecentry.qec` enthaelt.
+- Wenn die Suche nicht geladen werden kann, gibt der Downloader jetzt eine
+  konkrete Meldung ueber fehlende Suchfelder aus. Berechtigungen, abweichende
+  Reiter und Live-SSO sind nur im Unternehmensnetz verifizierbar.
+- Fuer Rueckfragen bitte nur **Statusmeldungen ohne FIN und sonstige Falldaten**
+  weitergeben. Niemals Passwort, Cookies, SSO-Tokens oder interne HTML-Dumps senden.
