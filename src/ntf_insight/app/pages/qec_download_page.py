@@ -294,9 +294,12 @@ class QecDownloadPage(QWidget):
                 self.table.setItem(row, column, QTableWidgetItem(value))
         files = list(dict.fromkeys(path for result in results for path in result.files))
         pages = sum(len(result.snapshots) for result in results)
+        failed = sum(r.status in {"Fehler", "Ergebnispruefung erforderlich"} for r in results)
+        unmatched = sum(r.status == "Keine passenden Schadteile" for r in results)
         self._progress(
-            f"QEC abgeschlossen: {len(results)} FIN(s), {pages} Reiter-Snapshots, "
-            f"{len(files)} Anhaenge. Ablage: {self.folder.text()}"
+            f"QEC-Abruf beendet: {len(results)} FIN(s), {pages} Reiter-Snapshots, "
+            f"{len(files)} Anhaenge; {failed} Fehler, {unmatched} ohne passenden "
+            f"Schadteiltreffer. Ablage: {self.folder.text()}"
         )
         if files and self.archive.isChecked():
             self.import_requested.emit(files)
