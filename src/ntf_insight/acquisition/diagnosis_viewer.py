@@ -23,6 +23,7 @@ DIAGNOSIS_VIEWER = "https://app.diagviewer.prod.gspp-eu.cloud.corpintra.net/sear
 LOGIN_HOST = "login.mercedes-benz.com"
 VIEWER_HOST = urlsplit(DIAGNOSIS_VIEWER).hostname
 SOURCES = "XD,XD(AQT),TD,DAS"
+NO_QUICKTEST_DATA_MESSAGE = "Diagnosis payload loaded from S3 does not contain quicktest data"
 _FIN = re.compile(r"[A-HJ-NPR-Z0-9]{17}\Z")
 _ILLEGAL_FILENAME = re.compile(r"[^A-Za-z0-9._-]+")
 Progress = Callable[[str], None]
@@ -30,6 +31,10 @@ Progress = Callable[[str], None]
 
 class DownloadCancelled(RuntimeError):
     """Raised when the user requests cancellation."""
+
+
+class QuickTestDataUnavailable(RuntimeError):
+    """A diagnosis exists, but its S3 payload has no QuickTest PDF."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -44,6 +49,7 @@ class FinDownloadResult:
     fin: str
     files: list[Path] = field(default_factory=list)
     errors: list[str] = field(default_factory=list)
+    no_quicktest_sessions: list[str] = field(default_factory=list)
     available: int = 0
     status: str = "Ausstehend"
     last_attempt_at: str = ""
@@ -140,6 +146,7 @@ def _write_manifest(folder: Path, result: FinDownloadResult) -> None:
         "verfuegbare_sitzungen": result.available,
         "pdf_dateien": [file.name for file in result.files],
         "fehler": result.errors,
+        "ohne_quicktest": result.no_quicktest_sessions,
     }
     (folder / "abrufstatus.json").write_text(
         json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8"
@@ -168,6 +175,9 @@ def read_last_attempt(folder: Path, fin: str) -> FinDownloadResult | None:
             files=files,
             available=int(payload.get("verfuegbare_sitzungen", 0)),
             status=str(payload.get("status", "")),
+            no_quicktest_sessions=[
+                str(item) for item in payload.get("ohne_quicktest", [])
+            ],
             last_attempt_at=parsed.astimezone(timezone.utc).isoformat(),
         )
     except (OSError, ValueError, TypeError, KeyError, AttributeError):
@@ -245,7 +255,7 @@ class DiagnosisViewerDownloader:
         *,
         login_timeout_seconds: int = 240,
         result_timeout_seconds: int = 60,
-        pdf_timeout_seconds: int = 90,
+        pdf_timeout_seconds: int = 60,
         user_id: str = "",
         password: str = "",
         retry_recent: bool = False,
