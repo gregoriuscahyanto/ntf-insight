@@ -97,6 +97,40 @@ ist nicht Bestandteil dieser ersten Ausbaustufe.
   `abrufstatus.json` als Warnung bzw. Fehler sichtbar und dürfen bei der
   Ursachenbewertung nicht stillschweigend als vollstaendige Befundung gelten.
 
+## Wenn "Keine passenden Schadteile" trotz manuellem QEC-Treffer erscheint
+
+Der Downloader wartet nach **Filtern** auf die bestaetigte Serverantwort. Die
+QEC-Suchergebnisse gelten erst als geladen, wenn die Seite die abgesendeten
+BR-/Endnummer-Werte in den HTML-Formularattributen wiederholt und entweder
+eine Ergebnistabelle oder eine explizite Meldung **0 Treffer** enthaelt.
+Eine noch leere Suchmaske gilt **nicht** als negativer Suchnachweis.
+
+Die Datei `<Speicherort>/qec/<FIN>/abrufstatus.json` enthaelt jetzt unter
+`suchdiagnose` (nur lokal) folgende Felder:
+
+- `bestaetigt`: Ob die Suchantwort eindeutig geladen wurde.
+- `qec_trefferzahl`: Anzahl laut QEC-Meldung, sofern auslesbar.
+- `sichtbare_zeilen`: Anzahl aktuell erkennbarer Tabellenlinks.
+- `fin_identisch`: Treffer mit **vollstaendig** gleicher FIN (WHC + BR + BM + Werk + Endnummer).
+- `pumpen`: Davon durch die QEC-Benennung als Pumpe identifizierbar.
+- `sachnummer`: Treffer nach aktivem Pumpenfilter und optionalem Sachnummerfilter.
+
+Beispiel: `qec_trefferzahl=2`, `fin_identisch=0` bedeutet, dass in der
+angezeigten Liste zwar Treffer vorhanden sind, aber keiner die komplette FIN
+belegt. QEC sucht laut Anleitung nur mit Baureihe und Endnummer; ein passender
+BR-/Endnummer-Wert allein beweist keine identische FIN. Deshalb wird keine
+fremde Referenznummer automatisch dem Fahrzeug zugeordnet.
+
+Wenn die Suche nach Ablauf der Wartezeit nicht eindeutig bestaetigt wird,
+erzeugt der Downloader **Status Fehler**, statt "Keine passenden Schadteile".
+Wenn mehr Treffer als sichtbare Zeilen gemeldet werden, wird auf moegliche
+weitere Ergebnisseiten hingewiesen. Eine vollstaendige Paginierung ist noch
+nicht anhand echter Firmen-Suchseiten verifiziert.
+
+Bei Rueckfragen nur die Werte aus `suchdiagnose` und die letzten anonymisierten
+Protokollzeilen mitteilen. Keine echten FINs, Anhaenge oder HTML-Seiten in GitHub
+oder oeffentlichen Tickets ablegen.
+
 ## Wenn nach der Anmeldung nichts passiert
 
 - Das Ablaufprotokoll unterscheidet **Warte auf SSO**, **QEC-Hauptansicht erkannt**,
