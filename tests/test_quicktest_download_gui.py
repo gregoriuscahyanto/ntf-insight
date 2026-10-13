@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+from pathlib import Path
 from threading import Event
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
@@ -97,7 +98,7 @@ def test_date_link_opens_real_local_fin_folder_and_na_is_inert(tmp_path, monkeyp
         lambda url: opened.append(url.toLocalFile()) or True,
     )
     page._case_table_quicktest_link_clicked(proxy)
-    assert opened == [str(folder)]
+    assert [Path(value) for value in opened] == [folder]
     page.close()
     app.processEvents()
 
