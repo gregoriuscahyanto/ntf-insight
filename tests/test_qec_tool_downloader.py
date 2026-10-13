@@ -11,6 +11,7 @@ from ntf_insight.acquisition.qec_tool import (
     QEC_SECTIONS, QEC_START, QecDownloader, QecHit, QecResult, QecTarget,
     _qec_url, _snapshot, _store_attachment, _write_result,
     parse_attachment_urls, parse_qec_targets, parse_search_hits,
+    inspect_search_results,
 )
 
 FIN = "WDD12345678901234"
@@ -65,6 +66,53 @@ def test_search_filters_full_fin_pump_and_part():
     assert parse_search_hits("<html><body>Keine Ergebnisse</body></html>", FIN) == []
 
 
+def _search_html(fin=FIN, rows=None, *, echo=True, total=1):
+    """Synthetic structure matching QEC's sample: server-echo + Treffer indicator."""
+    rows = [_row()] if rows is None else rows
+    br = fin[3:6] if echo else ""
+    end = fin[-6:] if echo else ""
+    return (
+        "<html><body><form>"
+        f'<input name="_finBR" value="{br}">'
+        f'<input name="_finEndnummerFrom" value="{end}">'
+        "</form>"
+        f'<div class="messageGreen">{total} Treffer</div>'
+        "<table>" + "".join(rows) + "</table></body></html>"
+    )
+
+
+def test_server_echo_and_result_rows_required_for_confirmed_search():
+    target = QecTarget(FIN, SACHNUMMER)
+    pending = inspect_search_results(_search_html(rows=[], echo=False, total=0), target)
+    assert pending["bestaetigt"] is False
+    complete = inspect_search_results(_search_html(), target)
+    assert complete == {
+        "bestaetigt": True, "qec_trefferzahl": 1, "sichtbare_zeilen": 1,
+        "fin_identisch": 1, "pumpen": 1, "sachnummer": 1,
+    }
+    no_results = inspect_search_results(_search_html(rows=[], total=0), target)
+    assert no_results["bestaetigt"] is True
+    assert no_results["sichtbare_zeilen"] == 0
+    no_links_yet = inspect_search_results(_search_html(rows=[], total=1), target)
+    assert no_links_yet["bestaetigt"] is False
+
+
+def test_search_diagnostics_separate_wrong_vin_and_wrong_part():
+    target = QecTarget(FIN, SACHNUMMER)
+    different_fin = "WDD98745678901234"
+    doc = _search_html(rows=[_row("000123456", different_fin)])
+    summary = inspect_search_results(doc, target)
+    assert summary["bestaetigt"] is True
+    assert summary["fin_identisch"] == 0
+    assert parse_search_hits(doc, FIN) == []
+    doc = _search_html(rows=[_row("000123456", FIN, part="A 111 222 33 44")])
+    summary = inspect_search_results(doc, target)
+    assert summary["fin_identisch"] == summary["pumpen"] == 1
+    assert summary["sachnummer"] == 0
+    doc = _search_html(rows=[_row("000123456")])
+    assert parse_search_hits(doc, FIN)[0].reference == "000123456"
+
+
 def test_only_qec_urls_and_attachment_ids():
     assert _qec_url("/qec-access/displayPruefberichtFile.qec?attachmentId=1001").startswith(QEC_START.split("/qec-access")[0])
     with pytest.raises(ValueError):
@@ -108,6 +156,7 @@ def test_write_manifest_contains_only_local_relative_paths(tmp_path):
     payload = json.loads((tmp_path / "abrufstatus.json").read_text(encoding="utf-8"))
     assert payload["fin"] == FIN
     assert payload["anhaenge"] == ["ref_123/anhaenge/1001_bericht.pdf"]
+    assert payload["suchdiagnose"] == {}
 
 
 class SnapshotPage:
@@ -163,6 +212,9 @@ class FakeControl:
         if "nav_schadteile" in self.selector:
             self.page.state = "search"
             self.page.url = "https://qect.mo360cp.i.mercedes-benz.com/qec-access/schadteileSearchlist.qec"
+        if "Filtern" in self.selector:
+            self.page.state = "pending"
+            self.page.pending_polls = 2
 
     def fill(self, value):
         self.page.calls.append(("fill", self.selector, value))
@@ -174,6 +226,19 @@ class FakeQecPage:
         self.state = "entry"
         self.calls = []
         self.url = "https://qect.mo360cp.i.mercedes-benz.com/qec-access/qecentry.qec"
+        self.pending_polls = 0
+        self.content_reads = 0
+
+    def content(self):
+        self.content_reads += 1
+        if self.state == "pending":
+            if self.pending_polls > 0:
+                self.pending_polls -= 1
+                return _search_html(rows=[], echo=False, total=0)
+            self.state = "filtered"
+        if self.state == "filtered":
+            return _search_html()
+        return _search_html(rows=[], echo=False, total=0)
 
     def is_closed(self):
         return False
@@ -207,8 +272,13 @@ def test_every_search_reopens_qec_start_and_fills_after_login(has_nav):
     context = SimpleNamespace(pages=[page])
     messages = []
     downloader = QecDownloader(Path("/tmp/a"), Path("/tmp/b"), navigation_timeout_ms=1000)
-    returned = downloader._search(context, page, QecTarget(FIN), messages.append, Event())
-    assert returned is page
+    returned, scope, document, evidence = downloader._search(
+        context, page, QecTarget(FIN), messages.append, Event(),
+    )
+    assert returned is page and scope is page
+    assert evidence["bestaetigt"] and evidence["fin_identisch"] == 1
+    assert parse_search_hits(document, FIN)[0].reference == "123456789"
+    assert page.content_reads >= 3  # initial empty form must not pass
     assert page.calls[0] == ("goto", QEC_START)
     assert ("fill", 'input[name="_finBR"]', "123") in page.calls
     assert ("fill", 'input[name="_finEndnummerFrom"]', "901234") in page.calls
@@ -225,6 +295,19 @@ def test_every_search_reopens_qec_start_and_fills_after_login(has_nav):
         assert any(
             "navigationDispatch.qec?nav_schadteile=1" in value
             for action, value, *rest in page.calls if action == "goto"
+        )
+
+
+def test_wait_search_rejects_stale_filter_response():
+    page = FakeQecPage()
+    page.state = "search"
+    page.content = lambda: _search_html(
+        fin="WDD77745678905432", rows=[_row()], total=1,
+    )
+    downloader = QecDownloader(Path("/tmp/a"), Path("/tmp/b"), navigation_timeout_ms=100)
+    with pytest.raises(TimeoutError, match="nicht bestaetigt"):
+        downloader._wait_search_results(
+            SimpleNamespace(pages=[page]), QecTarget(FIN), lambda _: None, Event(),
         )
 
 
