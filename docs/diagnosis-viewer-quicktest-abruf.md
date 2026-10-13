@@ -4,42 +4,80 @@ In **QuickTest-Abruf** FINs eintragen (eine pro Zeile), Ordner wählen und
 **QuickTests abrufen** klicken. Alternativ die FINs aus den lokalen NTF-Fällen
 übernehmen oder eine TXT/CSV-Datei laden.
 
-## Ablauf
+## SSO und PING ID
+
+Die zusätzliche Anleitung stellt folgende, im Login-HTML belegte Schritte dar:
 
 1. Playwright startet ausschließlich das bereits installierte **Microsoft Edge**
-   über \`channel="msedge"\`, sichtbar mit eigenem lokalen Profil.
-2. Die Anwendung öffnet
-   \`https://app.diagviewer.prod.gspp-eu.cloud.corpintra.net/search?fin=<FIN>&sources=XD%2CXD%28AQT%29%2CTD%2CDAS\`.
-3. Bei der ersten Sitzung SSO und PING ID manuell auf dem Mobilgerät bestätigen.
-   Es werden weder Passwörter abgefragt noch SSO-Schutzmechanismen umgangen.
-4. Die Anwendung füllt das Feld \`name="finVin"\` und klickt genau einmal
-   die Schaltfläche **Search**.
-5. Sie ermittelt in den Diagnosezeilen die freigeschalteten
-   \`span.cursor-pointer:has(svg.lucide-file-down)\`. Deaktivierte Symbole
-   werden übersprungen. Die Anwendung erwartet einen Browser-PDF-Download.
-6. Pro FIN werden PDFs mit Zeitstempel und Quellart gespeichert.
-   Die Datei wird anhand des PDF-Headers geprüft und nicht überschrieben.
-   Ein \`abrufstatus.json\` zeigt erfolgreiche und fehlgeschlagene Downloads.
-7. Die bereits implementierte lokale Importpipeline archiviert die PDFs mit
-   Provenienz und erstellt die QuickTest-FIN-Daten für die NTF-Analyse.
+   über \`channel="msedge"\` im sichtbaren Modus. Es installiert keinen zweiten Browser.
+2. Die Anwendung öffnet den Diagnosis Viewer mit der FIN in der URL. Beim
+   erstmaligen Besuch auf **SSO** klicken (automatisch, wenn der Button erscheint).
+3. Bei einer erforderlichen neuen Anmeldung kann die App die **Benutzer-ID**
+   in \`#userid\` ausfüllen und **Weiter** (\`#next-btn\`) klicken.
+4. Danach wird das Passwort in \`#password\` eingetragen und **Anmelden**
+   (\`#loginSubmitButton\`) geklickt. Die Anmeldung wird nur auf der
+   überprüften HTTPS-Domain \`login.mercedes-benz.com\` automatisiert.
+5. Die Freigabe per **PING ID** bleibt zwingend beim Benutzer und erfolgt
+   auf dessen Smartphone. Die Anwendung wartet bis zur automatischen
+   Weiterleitung zum Diagnosis Viewer, statt voreilig eine zweite Suche zu starten.
+6. Die App füllt dort \`input[name="finVin"]\`, klickt einmal auf **Search**,
+   sucht aktiv anklickbare \`span.cursor-pointer:has(svg.lucide-file-down)\`
+   und speichert die verfügbaren PDF-QuickTests.
 
-## Lokale Ablage
+Falls PING ID mehr als etwa zehn Sekunden benötigt, wartet die App weiter
+(bis zu vier Minuten). Abgelaufene oder fehlerhafte SSO-Sitzungen können
+weiterhin manuell in Edge abgeschlossen werden.
 
-Standardmäßig: \`%USERPROFILE%\.ntf-insight\quicktests\<FIN>\`.
+## Zugangsdaten und Sicherheit
 
-Das separat gespeicherte Edge-Profil liegt unter
+- Beim ersten Abruf können **Benutzer-ID** und **Passwort** in der App
+  eingegeben werden. Das Passwortfeld ist maskiert und wird nach Start geleert.
+- Ist „Zugangsdaten im Windows-Anmeldeinformationsmanager speichern“
+  ausgewählt, werden sie ausschließlich im geschützten Betriebssystem-Tresor
+  gespeichert; kein Klartext in Konfigurationsdateien oder Protokollen.
+- Bei einem Folgeabruf kann das Passwortfeld leer bleiben, wenn passende
+  Zugangsdaten sicher gespeichert sind. Die PING-ID-Freigabe kann dennoch
+  erneut verlangt werden.
+- „Zugangsdaten löschen“ entfernt die gespeicherten Einträge.
+- Die manuelle Anmeldung in Edge ohne gespeicherte Zugangsdaten bleibt möglich
+  (beide Loginfelder leer lassen).
+- Die automatische Passwortverwendung sollte den internen IT-/SSO-Richtlinien
+  entsprechen. Wenn der Passwort-Tresor gesperrt ist, gibt es keinen unsicheren
+  Datei-Fallback.
+
+Für bestehende Python-/Wheel-Installationen ist das Zusatzpaket \`keyring\`
+erforderlich: \`python -m pip install keyring\` in der **gleichen**
+Python-Umgebung, in der NTF Insight ausgeführt wird. Neu gebaute
+NTF-Insight-Pakete bringen \`keyring\` als Abhängigkeit mit.
+
+## Ablage und 24-Stunden-Regel
+
+Standardordner: \`%USERPROFILE%\.ntf-insight\quicktests\<FIN>\`.
+
+- Pro FIN ein Unterordner mit PDF-Dateien und \`abrufstatus.json\`.
+- Die App merkt sich den **letzten Abrufversuch**, nicht nur erfolgreiche
+  Downloads, und zeigt ihn als **„Letzter Abruf“** in der GUI-Tabelle.
+- Liegt der letzte Versuch weniger als 24 Stunden zurück, wird diese FIN
+  standardmäßig **übersprungen**, ohne erneut Edge anzusteuern.
+- Für einen notwendigen gezielten Wiederholungsversuch gibt es die explizite
+  Option **„24-Stunden-Sperre einmalig übergehen“**.
+- PDF-Dateien werden am Header geprüft, bereits vorhandene gleiche Dateien
+  nicht erneut gespeichert; fehlerhafte Dateien werden nicht importiert.
+- Neue Dateien werden mit SHA-256-Provenienz durch die bestehende lokale
+  Importpipeline archiviert und der jeweiligen FIN zugeordnet.
+
+Das separate Edge-Profil liegt unter
 \`%USERPROFILE%\.ntf-insight\edge-diagnosis-viewer-profile\`.
-Die Unternehmensrichtlinien können eine erneute Anmeldung verlangen.
+Die Unternehmensrichtlinien können eine erneute SSO-Anmeldung verlangen.
 
-## Technische Grenzen
+## Grenzen und Prüfbedarf
 
-- Der GUI-Abruf funktioniert nur mit installiertem Edge und erlaubt keine
-  vollständige Headless-Anmeldung mit PING ID. Das ist beabsichtigt.
-- Falls der Diagnosis Viewer den Downloadtyp HTML eingestellt hat, muss dieser
-  in den Benutzereinstellungen auf **PDF** umgestellt werden.
-- Die Anwendung folgt den im Beispiel-HTML sichtbaren Ergebnissen; die
-  dynamische Produktivseite, Rollen/Berechtigungen, Ergebnis-Paginierung und
-  eventuelle Änderungen sind vor Ort mit freigegebenen FINs zu prüfen.
-- Download-Dateien und Browserprofile dürfen **niemals in GitHub, CI-Artefakte
-  oder Releases** gelangen. Die Funktion ist nur im Unternehmensnetz und mit
-  entsprechendem Benutzerzugriff einzusetzen.
+- Es wurde **kein** Zugriff auf den internen Produktivserver oder echte
+  PING-ID-Bestätigungen zum Testen verwendet. Die HTML-Auszüge zeigen
+  die Selektoren, nicht das vollständige dynamische Login-Verhalten.
+- Falls der Diagnosis Viewer HTML statt PDF herunterlädt, muss der
+  **Downloadtyp PDF** in den Benutzereinstellungen ausgewählt werden.
+- Die Ergebnis-Paginierung und Rollen/Berechtigungen sollten anhand einer
+  freigegebenen Test-FIN im Unternehmensnetz überprüft werden.
+- Keine echten FINs, Passwörter, SSO-Cookies, QuickTest-Berichte oder
+  interne Daten in GitHub, CI-Artefakte oder Releasepakete übertragen.
