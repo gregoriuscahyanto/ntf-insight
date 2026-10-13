@@ -130,36 +130,148 @@ def test_snapshot_saves_json_and_read_only_html(tmp_path):
     assert "Kühlmittelpumpe" in html
 
 
-def test_every_search_reopens_qec_start_and_uses_exact_fin_parts():
-    calls = []
+class FakeControl:
+    def __init__(self, page, selector: str):
+        self.page = page
+        self.selector = selector
 
-    class Element:
-        def __init__(self, name):
-            self.name = name
-        @property
-        def first(self):
-            return self
-        def click(self, **_):
-            calls.append(("click", self.name))
-        def fill(self, value):
-            calls.append(("fill", self.name, value))
-        def wait_for(self, **_):
-            calls.append(("wait_for", self.name))
+    def count(self):
+        if "nav_schadteile" in self.selector:
+            return int(self.page.has_nav and self.page.state == "entry")
+        if "_finBR" in self.selector or "_finEndnummerFrom" in self.selector:
+            return int(self.page.state == "search")
+        if "Filtern" in self.selector:
+            return int(self.page.state == "search")
+        return 0
 
-    class Page:
-        def goto(self, url, **_):
-            calls.append(("goto", url))
-        def locator(self, name):
-            return Element(name)
+    @property
+    def first(self):
+        return self
 
-    page = Page()
+    def nth(self, _index):
+        return self
+
+    def is_visible(self):
+        return bool(self.count())
+
+    def get_attribute(self, name):
+        assert name == "href"
+        return "navigationDispatch.qec?nav_schadteile=1"
+
+    def click(self, **_kwargs):
+        self.page.calls.append(("click", self.selector))
+        if "nav_schadteile" in self.selector:
+            self.page.state = "search"
+            self.page.url = "https://qect.mo360cp.i.mercedes-benz.com/qec-access/schadteileSearchlist.qec"
+
+    def fill(self, value):
+        self.page.calls.append(("fill", self.selector, value))
+
+
+class FakeQecPage:
+    def __init__(self, *, has_nav=True):
+        self.has_nav = has_nav
+        self.state = "entry"
+        self.calls = []
+        self.url = "https://qect.mo360cp.i.mercedes-benz.com/qec-access/qecentry.qec"
+
+    def is_closed(self):
+        return False
+
+    def locator(self, selector):
+        return FakeControl(self, selector)
+
+    def goto(self, url, **_kwargs):
+        self.calls.append(("goto", url))
+        if url == QEC_START:
+            self.state = "entry"
+            self.url = "https://qect.mo360cp.i.mercedes-benz.com/qec-access/qecentry.qec"
+        elif "navigationDispatch.qec" in url:
+            self.state = "search"
+            self.url = "https://qect.mo360cp.i.mercedes-benz.com/qec-access/schadteileSearchlist.qec"
+
+
+def test_qec_entry_is_ready_after_sso_even_without_exact_nav_link():
+    page = FakeQecPage(has_nav=False)
     downloader = QecDownloader(Path("/tmp/a"), Path("/tmp/b"))
-    downloader._wait_for_login = lambda context, progress, cancel: page
-    downloader._search(None, page, QecTarget(FIN), lambda _: None, Event())
-    assert calls[0] == ("goto", QEC_START)
-    assert ("fill", 'input[name="_finBR"]', "123") in calls
-    assert ("fill", 'input[name="_finEndnummerFrom"]', "901234") in calls
-    assert ("click", 'input[type="submit"][value="Filtern"]') in calls
+    assert downloader._is_qec_ready(page) is True
+    page.url = QEC_START  # QEC login endpoint is not an authenticated landing.
+    assert downloader._is_qec_ready(page) is False
+    page.url = "https://example.org/qec-access/qecentry.qec"
+    assert downloader._is_qec_ready(page) is False
+
+
+@pytest.mark.parametrize("has_nav", [True, False])
+def test_every_search_reopens_qec_start_and_fills_after_login(has_nav):
+    page = FakeQecPage(has_nav=has_nav)
+    context = SimpleNamespace(pages=[page])
+    messages = []
+    downloader = QecDownloader(Path("/tmp/a"), Path("/tmp/b"), navigation_timeout_ms=1000)
+    returned = downloader._search(context, page, QecTarget(FIN), messages.append, Event())
+    assert returned is page
+    assert page.calls[0] == ("goto", QEC_START)
+    assert ("fill", 'input[name="_finBR"]', "123") in page.calls
+    assert ("fill", 'input[name="_finEndnummerFrom"]', "901234") in page.calls
+    assert ("click", 'input[type="submit"][value="Filtern"]') in page.calls
+    assert any("Anmeldung abgeschlossen" in message for message in messages)
+    if has_nav:
+        assert ("click", 'a[href*="navigationDispatch.qec"][href*="nav_schadteile=1"]') in page.calls
+        assert not any(
+            "navigationDispatch.qec" in value
+            for action, value, *rest in page.calls
+            if action == "goto" and value != QEC_START
+        )
+    else:
+        assert any(
+            "navigationDispatch.qec?nav_schadteile=1" in value
+            for action, value, *rest in page.calls if action == "goto"
+        )
+
+
+def test_sso_credentials_are_submitted_only_on_verified_mercedes_login_host():
+    class LoginField:
+        def __init__(self, selector, page):
+            self.selector = selector
+            self.page = page
+
+        def count(self):
+            return int(self.selector in self.page.visible_fields)
+
+        def is_visible(self):
+            return bool(self.count())
+
+        def fill(self, value):
+            self.page.filled.append((self.selector, value))
+
+        def click(self, **_kwargs):
+            self.page.clicked.append(self.selector)
+
+    class LoginPage:
+        def __init__(self, url, fields):
+            self.url = url
+            self.visible_fields = fields
+            self.filled = []
+            self.clicked = []
+
+        def locator(self, selector):
+            return LoginField(selector, self)
+
+    downloader = QecDownloader(Path("/tmp/a"), Path("/tmp/b"),
+                               user_id="test-id", password="test-secret")
+    submitted = {"user": False, "password": False}
+    impostor = LoginPage("https://login.mercedes-benz.com.attacker.invalid/sso",
+                         {"#userid", "#next-btn", "#password", "#loginSubmitButton"})
+    downloader._enter_credentials(impostor, submitted, lambda _: None)
+    assert impostor.filled == [] and impostor.clicked == []
+    assert submitted == {"user": False, "password": False}
+
+    actual = LoginPage("https://login.mercedes-benz.com/sso", {"#userid", "#next-btn"})
+    downloader._enter_credentials(actual, submitted, lambda _: None)
+    actual.visible_fields = {"#password", "#loginSubmitButton"}
+    downloader._enter_credentials(actual, submitted, lambda _: None)
+    assert submitted == {"user": True, "password": True}
+    assert actual.filled == [("#userid", "test-id"), ("#password", "test-secret")]
+    assert actual.clicked == ["#next-btn", "#loginSubmitButton"]
 
 
 def test_no_live_browser_or_credentials_needed_for_parsers():
