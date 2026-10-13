@@ -92,11 +92,12 @@ class MainWindow(QMainWindow):
         }
         pages["cases"].case_saved.connect(self._reload_after_manual_change)
         pages["cases"].quicktests_downloaded.connect(self._import_downloaded_case_quicktests)
+        pages["cases"].qec_reports_downloaded.connect(self._import_downloaded_case_quicktests)
         pages["sources"].sources_updated.connect(self._reload_after_source_import)
         return pages
 
     def _import_downloaded_case_quicktests(self, paths: list) -> None:
-        """Use the same provenance-preserving importer for the case table downloads."""
+        """Archive QuickTest/QEC files from the case table with source provenance."""
         if not paths:
             return
         source_page = self.pages["sources"]
@@ -105,7 +106,7 @@ class MainWindow(QMainWindow):
             from PySide6.QtWidgets import QMessageBox
             QMessageBox.warning(
                 self, "Quellenimport ist beschäftigt",
-                "Die QuickTest-PDFs wurden gespeichert, aber ein anderer Quellenimport "
+                "Die QEC-/QuickTest-Dateien wurden gespeichert, aber ein anderer Quellenimport "
                 "läuft bereits. Bitte die Dateien anschließend unter Datenquellen importieren.",
             )
             return
@@ -160,5 +161,7 @@ class MainWindow(QMainWindow):
         if key == "cases":
             page.cluster_workspace.refresh_review_priorities()
             page._refresh_quicktest_download_dates()
+            page._refresh_qec_download_dates()
+            page._refresh_shared_credentials_status()
         self.stack.setCurrentWidget(page)
         self.stack.setFocus(Qt.FocusReason.OtherFocusReason)

@@ -25,6 +25,9 @@ class CaseRow:
     quicktest_last_attempt: str = ""
     quicktest_folder: Path | None = None
     quicktest_pdf_count: int = 0
+    tips_status: str = "—"
+    qec_date: str = ""
+    qec_folder: Path | None = None
 
 
 class CaseTableModel(QAbstractTableModel):
@@ -33,7 +36,10 @@ class CaseTableModel(QAbstractTableModel):
     selection_changed = Signal()
 
     CHECK_COLUMN = 0
-    QUICKTEST_DATE_COLUMN = 8
+    TIPS_COLUMN = 8
+    QEC_DATE_COLUMN = 9
+    QEC_COLUMN = QEC_DATE_COLUMN
+    QUICKTEST_DATE_COLUMN = 10
     HEADERS = (
         "Auswahl",
         "Fall",
@@ -43,6 +49,8 @@ class CaseTableModel(QAbstractTableModel):
         "Tausch",
         "Wiederauftreten",
         "Bewertung",
+        "TIPS-Fall",
+        "QEC-Abrufdatum",
         "QuickTest-Abruf-Datum",
     )
 
@@ -64,6 +72,13 @@ class CaseTableModel(QAbstractTableModel):
             and row.quicktest_folder.is_dir()
         )
 
+    def _has_qec_folder(self, row: CaseRow) -> bool:
+        return (
+            row.qec_folder is not None
+            and bool(row.qec_date)
+            and row.qec_folder.is_dir()
+        )
+
     def data(self, index: QModelIndex, role: int = Qt.ItemDataRole.DisplayRole):
         if not index.isValid() or not (0 <= index.row() < len(self._rows)):
             return None
@@ -77,6 +92,29 @@ class CaseTableModel(QAbstractTableModel):
             )
         if role == Qt.ItemDataRole.UserRole:
             return row.case_id
+        if column == self.TIPS_COLUMN:
+            if role == Qt.ItemDataRole.DisplayRole:
+                return row.tips_status
+            if role == Qt.ItemDataRole.ToolTipRole:
+                if row.tips_status == "Ja":
+                    return "TIPS-Vorgang ist diesem konkreten Schadteilfall zugeordnet."
+                if row.tips_status == "FIN-Hinweis":
+                    return "TIPS zur FIN gefunden, aber keinem Schadteilfall sicher zugeordnet."
+                return "Kein TIPS-Bezug dokumentiert."
+        if column == self.QEC_DATE_COLUMN:
+            if role == Qt.ItemDataRole.DisplayRole:
+                return row.qec_date or "n.a."
+            if role == Qt.ItemDataRole.ToolTipRole:
+                if self._has_qec_folder(row):
+                    return f"QEC-Fallordner öffnen:\n{row.qec_folder}"
+                return "Noch kein lokaler QEC-Export zur exakten FIN und Referenznummer."
+            if self._has_qec_folder(row):
+                if role == Qt.ItemDataRole.ForegroundRole:
+                    return QBrush(QApplication.palette().color(QPalette.ColorRole.Link))
+                if role == Qt.ItemDataRole.FontRole:
+                    font = QFont()
+                    font.setUnderline(True)
+                    return font
         if column == self.QUICKTEST_DATE_COLUMN:
             if role == Qt.ItemDataRole.DisplayRole:
                 if row.quicktest_last_attempt:
@@ -155,6 +193,38 @@ class CaseTableModel(QAbstractTableModel):
             return None
         row = self._rows[source_row]
         return row.quicktest_folder if self._has_folder(row) else None
+
+    def qec_folder_at(self, source_row: int) -> Path | None:
+        if not 0 <= source_row < len(self._rows):
+            return None
+        row = self._rows[source_row]
+        return row.qec_folder if self._has_qec_folder(row) else None
+
+    def set_qec_history(
+        self,
+        history: Mapping[str, tuple[str, Path | None]],
+    ) -> None:
+        """Update QEC cells by stable case IDs, keeping checkbox state intact."""
+        if not self._rows:
+            return
+        changed = False
+        for index, row in enumerate(self._rows):
+            date, folder = history.get(row.case_id, ("", None))
+            new_row = replace(row, qec_date=date, qec_folder=folder)
+            if new_row != row:
+                self._rows[index] = new_row
+                changed = True
+        if changed:
+            self.dataChanged.emit(
+                self.index(0, self.QEC_DATE_COLUMN),
+                self.index(len(self._rows) - 1, self.QEC_DATE_COLUMN),
+                [
+                    Qt.ItemDataRole.DisplayRole,
+                    Qt.ItemDataRole.ToolTipRole,
+                    Qt.ItemDataRole.FontRole,
+                    Qt.ItemDataRole.ForegroundRole,
+                ],
+            )
 
     def set_quicktest_history(
         self,

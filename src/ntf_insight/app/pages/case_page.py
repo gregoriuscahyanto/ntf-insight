@@ -30,6 +30,8 @@ from ntf_insight.acquisition.credentials import (
     LoginCredentials, clear_saved_credentials, load_saved_credentials, save_credentials,
 )
 from ntf_insight.acquisition.diagnosis_viewer import parse_fins, recently_attempted, scan_local_quicktests
+from ntf_insight.acquisition.qec_archive import local_qec_archive
+from ntf_insight.acquisition.qec_tool import QecTarget, parse_qec_targets
 from ntf_insight.app.quicktest_download_worker import DownloadWorker
 from ntf_insight.analysis.evidence_engine import generate_case_evidence
 from ntf_insight.analysis.qec_findings import qec_ssl_finding_label
@@ -52,6 +54,7 @@ from ntf_insight.app.models.simple_table_model import SimpleTableModel
 from ntf_insight.app.models.timeline_table_model import TimelineTableModel
 from ntf_insight.app.widgets.event_time_plot import EventTimePlot
 from ntf_insight.app.widgets.quicktest_browser import QuickTestBrowser
+from ntf_insight.app.widgets.qec_case_download import QecCaseDownloadPanel
 from ntf_insight.app.widgets.case_checkbox_delegate import CaseCheckboxDelegate
 from ntf_insight.app.widgets.autoexport_fin_workspace import AutoExportFinWorkspace
 from ntf_insight.ingestion.manual_entry import ManualCaseService, ManualEntryError
@@ -70,6 +73,7 @@ class CasePage(QWidget):
 
     case_saved = Signal(str)
     quicktests_downloaded = Signal(object)
+    qec_reports_downloaded = Signal(object)
 
     def __init__(
         self,
@@ -79,6 +83,7 @@ class CasePage(QWidget):
         *,
         review_store: DtcReviewStore | None = None,
         download_root: Path | None = None,
+        qec_data_dir: Path | None = None,
     ) -> None:
         super().__init__()
         self.repository = repository
@@ -86,6 +91,11 @@ class CasePage(QWidget):
         self.manual_service = manual_service
         self.review_store = review_store
         self.quicktest_download_root = Path(download_root) if download_root is not None else None
+        self.qec_data_dir = (
+            Path(qec_data_dir) if qec_data_dir is not None
+            else self.quicktest_download_root.parent if self.quicktest_download_root is not None
+            else None
+        )
         self._quicktest_worker: DownloadWorker | None = None
         self._quicktest_files_for_import: list[Path] = []
         self.source_knowledge = (
@@ -105,6 +115,11 @@ class CasePage(QWidget):
             *self.real_cases,
             *self.fin_only_previews.values(),
         ]
+        self._case_by_id = {case.case_id: case for case in self.view_cases}
+        self._tips_fins = (
+            self.source_knowledge.autoexport_source_fins("autoexport_tips")
+            if self.source_knowledge is not None else frozenset()
+        )
         self._syncing_quicktest_fin = False
 
         outer_layout = QVBoxLayout(self)
@@ -223,6 +238,11 @@ class CasePage(QWidget):
         for case in self.view_cases:
             is_preview = case.case_id.startswith(FIN_ONLY_PREFIX)
             replacement = case.investigated_replacement()
+            tips_status = (
+                "Ja" if any(obs.tips_case_id for obs in case.tips_observations)
+                else "FIN-Hinweis" if case.vin in self._tips_fins
+                else "—"
+            )
             recurrence = analyze_recurrence(case)
             if is_preview:
                 recurrence_text = "Ohne Tauschanker"
@@ -249,11 +269,13 @@ class CasePage(QWidget):
                         if case.assessment is not None
                         else None
                     ),
+                    tips_status=tips_status,
                 )
             )
 
         self.case_model = CaseTableModel(case_rows)
         self.case_model.selection_changed.connect(self._update_quicktest_selection)
+        self.case_model.selection_changed.connect(self._update_qec_selection)
         self.case_proxy = QSortFilterProxyModel(self)
         self.case_proxy.setSourceModel(self.case_model)
         self.case_proxy.setFilterCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
@@ -280,8 +302,15 @@ class CasePage(QWidget):
         self.case_table.horizontalHeader().setSectionResizeMode(
             CaseTableModel.QUICKTEST_DATE_COLUMN, QHeaderView.ResizeMode.ResizeToContents
         )
+        self.case_table.horizontalHeader().setSectionResizeMode(
+            CaseTableModel.QEC_DATE_COLUMN, QHeaderView.ResizeMode.ResizeToContents
+        )
+        self.case_table.horizontalHeader().setSectionResizeMode(
+            CaseTableModel.TIPS_COLUMN, QHeaderView.ResizeMode.ResizeToContents
+        )
         self.case_table.clicked.connect(self._case_clicked)
         self.case_table.clicked.connect(self._case_table_quicktest_link_clicked)
+        self.case_table.clicked.connect(self._case_table_qec_link_clicked)
         self.case_table.selectionModel().currentRowChanged.connect(
             lambda current, _previous: self._case_clicked(current)
         )
@@ -317,6 +346,15 @@ class CasePage(QWidget):
             credentials = None
         if credentials:
             self.quicktest_user_id.setText(credentials.user_id)
+        self.shared_credentials_status = QLabel(objectName="PageSubtitle")
+        self.shared_credentials_status.setWordWrap(True)
+        self.shared_credentials_status.setToolTip(
+            "Gemeinsame Benutzer-ID und Passwort für Diagnosis Viewer und QEC. "
+            "Nur im Windows-Anmeldeinformationsmanager gespeichert. "
+            "PING ID wird weiterhin manuell bestätigt."
+        )
+        layout.addWidget(self.shared_credentials_status)
+        self._refresh_shared_credentials_status()
 
         download_row = QHBoxLayout()
         self.quicktest_download_all_button = QPushButton(
@@ -355,6 +393,24 @@ class CasePage(QWidget):
         layout.addWidget(self.quicktest_download_status)
         self._refresh_quicktest_download_dates()
         self._update_quicktest_selection()
+
+        # QEC reuses the existing CheckState column AND Mercedes-SSO login row.
+        # Its buttons mirror the existing QuickTest action row and status.
+        self.qec_download = None
+        if self.qec_data_dir is not None:
+            self.qec_download = QecCaseDownloadPanel(
+                self.qec_data_dir,
+                all_targets=self._all_qec_targets,
+                selected_targets=self._selected_qec_targets,
+                login_resolver=self._resolve_qec_credentials,
+            )
+            self.qec_download.downloads_completed.connect(
+                lambda _results: self._refresh_qec_download_dates()
+            )
+            self.qec_download.import_requested.connect(self.qec_reports_downloaded.emit)
+            layout.addWidget(self.qec_download)
+        self._refresh_qec_download_dates()
+        self._update_qec_selection()
 
         summary = QGridLayout()
         summary.setHorizontalSpacing(24)
@@ -633,6 +689,103 @@ class CasePage(QWidget):
             self._clear_view()
 
 
+    def _qec_archive_for_case(self, case):
+        if self.qec_data_dir is None:
+            return None
+        reference = str(getattr(case, "qec_reference", "") or "").strip()
+        return local_qec_archive(
+            self.qec_data_dir / "qec", str(case.vin), reference,
+        ) if reference else None
+
+    def _refresh_qec_download_dates(self) -> None:
+        """Show only local QEC folders matching this case's FIN + exact ref."""
+        history = {}
+        for case in self.view_cases:
+            archive = self._qec_archive_for_case(case)
+            if archive:
+                history[case.case_id] = (archive.date_label, archive.folder)
+        self.case_model.set_qec_history(history)
+
+    def _qec_target_for_case(self, case) -> QecTarget | None:
+        try:
+            valid = parse_qec_targets(str(case.vin or ""))
+        except ValueError:
+            return None
+        reference = str(getattr(case, "qec_reference", "") or "").strip()
+        if reference and (not reference.isdigit() or len(reference) > 14):
+            return None  # A malformed reference is never silently widened to every case.
+        return QecTarget(valid[0].fin, reference=reference)
+
+    def _qec_targets(self, cases) -> list[QecTarget]:
+        targets: list[QecTarget] = []
+        seen: set[tuple[str, str]] = set()
+        for case in cases:
+            target = self._qec_target_for_case(case)
+            if target is None:
+                continue
+            key = target.fin, target.reference
+            if key not in seen:
+                seen.add(key)
+                targets.append(target)
+        return targets
+
+    def _all_qec_targets(self) -> list[QecTarget]:
+        return self._qec_targets(self.view_cases)
+
+    def _selected_qec_targets(self) -> list[QecTarget]:
+        """Use exactly the same persistent case-checkbox state as QuickTest."""
+        ids = self.case_model.checked_case_ids()
+        return self._qec_targets(
+            [case for case in self.view_cases if case.case_id in ids]
+        )
+
+    def _update_qec_selection(self) -> None:
+        if self.qec_download is not None:
+            self.qec_download.set_selection_count(
+                len(self._all_qec_targets()),
+                len(self._selected_qec_targets()),
+            )
+
+    def _case_table_qec_link_clicked(self, index) -> None:
+        if not index.isValid() or index.column() != CaseTableModel.QEC_DATE_COLUMN:
+            return
+        source = self.case_proxy.mapToSource(index)
+        folder = self.case_model.qec_folder_at(source.row())
+        if folder is None:
+            return
+        if not QDesktopServices.openUrl(QUrl.fromLocalFile(str(folder))):
+            QMessageBox.warning(
+                self, "QEC-Fallordner",
+                "Der lokale QEC-Fallordner konnte nicht geöffnet werden.",
+            )
+
+    def _refresh_shared_credentials_status(self) -> None:
+        try:
+            stored = load_saved_credentials()
+        except RuntimeError:
+            stored = None
+        if stored:
+            self.shared_credentials_status.setText(
+                "✓ Mercedes-SSO für QuickTest und QEC sicher gespeichert · "
+                "PING ID bei Bedarf am Smartphone bestätigen"
+            )
+            self.shared_credentials_status.setStyleSheet(
+                "color: #268b52; font-weight: 600;"
+            )
+        else:
+            self.shared_credentials_status.setText(
+                "Noch keine gemeinsamen SSO-Zugangsdaten gespeichert. "
+                "Alternativ Anmeldung manuell in Edge abschließen."
+            )
+            self.shared_credentials_status.setStyleSheet("")
+
+    def _resolve_qec_credentials(self) -> LoginCredentials | None:
+        """Read the same visible user ID/password and OS vault as QuickTest."""
+        credentials = self._resolve_quicktest_credentials()
+        self.quicktest_password.clear()
+        self._refresh_shared_credentials_status()
+        return credentials
+
     def _refresh_quicktest_download_dates(self) -> None:
         """Show persisted FIN manifests and PDF-only folders without a network request."""
         if self.quicktest_download_root is None:
@@ -679,6 +832,7 @@ class CasePage(QWidget):
             return
         self.quicktest_user_id.clear()
         self.quicktest_password.clear()
+        self._refresh_shared_credentials_status()
         self.quicktest_download_status.setText(
             "SSO-Zugangsdaten wurden aus dem Betriebssystem-Tresor gelöscht."
         )
@@ -700,6 +854,7 @@ class CasePage(QWidget):
                     )
                     if answer != QMessageBox.StandardButton.Yes:
                         raise ValueError("Abruf abgebrochen.")
+            self._refresh_shared_credentials_status()
             return LoginCredentials(user_id, password)
         if user_id:
             try:
@@ -757,6 +912,7 @@ class CasePage(QWidget):
             retry_recent=self.quicktest_retry_24h.isChecked(),
         )
         self.quicktest_password.clear()
+        self._refresh_shared_credentials_status()
         self._quicktest_worker.progress.connect(self.quicktest_download_status.setText)
         self._quicktest_worker.completed.connect(self._quicktest_download_completed)
         self._quicktest_worker.failed.connect(self._quicktest_download_failed)
