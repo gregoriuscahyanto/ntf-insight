@@ -577,3 +577,118 @@ def test_popup_inventory_is_saved_and_existing_files_not_redownloaded(tmp_path):
     downloader._save_popups(SimpleNamespace(), FakePage(), folder, result,
                             lambda _msg: None, __import__("threading").Event(), inventory)
     assert calls == ["1001", "1002"]
+
+
+def test_one_case_contains_five_sections_and_no_reiter_or_html_files(tmp_path):
+    """Offline Playwright substitute for case-specific tab and metadata export."""
+    class Locator:
+        def __init__(self, callback=lambda: None):
+            self._callback = callback
+
+        @property
+        def first(self):
+            return self
+
+        def nth(self, _):
+            return self
+
+        def count(self):
+            return 1
+
+        def is_visible(self):
+            return True
+
+        def click(self, **_):
+            self._callback()
+
+        def wait_for(self, **_):
+            pass
+
+        def inner_text(self, **_):
+            return page.active_section
+
+    class TabPage:
+        active_section = ""
+
+        def locator(self, selector):
+            return Locator()
+
+        def get_by_text(self, *_args, **_kwargs):
+            return Locator()
+
+        def get_by_role(self, _role, *, name, exact):
+            return Locator(lambda: setattr(self, "active_section", name))
+
+        def evaluate(self, script):
+            if "querySelectorAll('table')" in script:
+                return [{"nummer": 1, "zeilen": [[{
+                    "typ": "td", "text": self.active_section, "colspan": 1
+                }]]}]
+            return [{"name": "feld", "typ": "text", "wert": self.active_section}]
+
+    page = TabPage()
+    hit = QecHit("022301658", SACHNUMMER, "KUEHLMITTELPUMPE 100-140W", FIN,
+                 "schadteilSelektieren.qec?schadteilID=1234", "1234")
+    target = QecTarget(FIN, reference="022301658")
+    result = QecResult(FIN)
+    downloader = QecDownloader(tmp_path, tmp_path / "profile", click_delay_seconds=0)
+    downloader._search = lambda *_args: (page, page, _search_html(
+        rows=[_row(reference=hit.reference)]), {})
+    downloader._save_popups = lambda _ctx, _page, _folder, _result, _log, _cancel, inv: inv.update({
+        "1001": {"anhang_id": "1001", "linktext": "Bericht", "status": "Gespeichert",
+                 "datei": "1001_bericht.pdf"},
+    })
+    downloader._one_hit(SimpleNamespace(), page, target, hit, result,
+                        lambda _: None, Event())
+    folder = tmp_path / FIN / "ref_022301658"
+    report = json.loads((folder / "qec.json").read_text(encoding="utf-8"))
+    assert report["schema_version"] == 2
+    assert report["referenznummer"] == "022301658"
+    assert [a["bereich"] for a in report["abschnitte"]] == list(QEC_SECTIONS)
+    assert report["vollstaendige_reiter"] is True
+    assert report["anhaenge"][0]["anhang_id"] == "1001"
+    assert report["abschnitte"][1]["felder"][0]["wert"] == "Voranalysen"
+    assert result.snapshots == [folder / "qec.json"]
+    assert not (folder / "laeufe").exists()
+    assert not list(folder.rglob("ansicht.html"))
+    assert not (folder / "anhangliste.json").exists()
+
+
+def test_target_reference_restricts_hits_even_when_same_fin(tmp_path):
+    target = QecTarget(FIN, reference="022301658")
+    document = _search_html(rows=[
+        _row(reference="022301658", identifier="1001"),
+        _row(reference="022301659", identifier="1002"),
+    ], total=2)
+    evidence = inspect_search_results(document, target)
+    downloader = QecDownloader(tmp_path, tmp_path / "profile", click_delay_seconds=0)
+    page = object()
+    downloader._search = lambda *_args: (page, page, document, evidence)
+    selected = []
+
+    def select_one(_context, current_page, _target, hit, result, *_args):
+        selected.append(hit.reference)
+        result.references.append(hit.reference)
+        return current_page
+
+    downloader._one_hit = select_one
+    result, _ = downloader._one_target(
+        SimpleNamespace(), page, target, lambda _: None, Event()
+    )
+    assert selected == ["022301658"]
+    assert result.references == selected
+    assert result.status == "Erfolgreich"
+
+
+def test_unknown_reference_does_not_download_other_case(tmp_path):
+    target = QecTarget(FIN, reference="022301660")
+    document = _search_html(rows=[_row(reference="022301658")])
+    evidence = inspect_search_results(document, target)
+    downloader = QecDownloader(tmp_path, tmp_path / "profile", click_delay_seconds=0)
+    page = object()
+    downloader._search = lambda *_args: (page, page, document, evidence)
+    result, _ = downloader._one_target(
+        SimpleNamespace(), page, target, lambda _: None, Event()
+    )
+    assert result.status == "Keine passenden Schadteile"
+    assert not result.references
