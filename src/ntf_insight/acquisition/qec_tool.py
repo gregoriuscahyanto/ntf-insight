@@ -699,7 +699,17 @@ class QecDownloader:
                         "QEC-Suche bestaetigt, aber kein eindeutiger Voll-FIN- / "
                         "Pumpen- / Sachnummer-Treffer. Suchdiagnose im abrufstatus.json pruefen."
                     )
+                progress(
+                    f"{target.fin}: {result.status}. "
+                    + (result.errors or result.warnings)[0]
+                )
                 return result, page
+            if (evidence["qec_trefferzahl"] is not None
+                    and evidence["qec_trefferzahl"] > evidence["sichtbare_zeilen"]):
+                result.warnings.append(
+                    "Es sind moeglicherweise weitere Ergebnisseiten vorhanden; "
+                    "bisher nur die sichtbaren QEC-Zeilen geprueft."
+                )
             for index, hit in enumerate(hits, 1):
                 self._check_cancel(cancel)
                 progress(f"{target.fin}: Schadteil {index}/{len(hits)} – {hit.reference} …")
