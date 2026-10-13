@@ -15,8 +15,8 @@ from ntf_insight.acquisition.credentials import (
     LoginCredentials, clear_saved_credentials, load_saved_credentials, save_credentials,
 )
 from ntf_insight.acquisition.diagnosis_viewer import (
-    DiagnosisViewerDownloader, format_last_attempt, parse_fins, read_last_attempt,
-    recently_attempted,
+    DiagnosisViewerDownloader, FinDownloadResult, format_last_attempt, parse_fins,
+    recently_attempted, scan_local_quicktests,
 )
 
 
@@ -70,7 +70,8 @@ class QuickTestDownloadPage(QWidget):
         subtitle = QLabel(
             "Diagnosis Viewer · Microsoft Edge · Mercedes SSO. "
             "Benutzer-ID und Passwort können sicher im Windows-Anmeldeinformationsmanager "
-            "gespeichert werden. PING ID muss weiterhin auf dem Smartphone bestätigt werden.",
+            "gespeichert werden. PING ID muss weiterhin auf dem Smartphone bestätigt werden. "
+            "Zwischen automatisierten Aktionen liegt mindestens eine kurze Wartezeit.",
             objectName="PageSubtitle",
         )
         subtitle.setWordWrap(True)
@@ -129,6 +130,9 @@ class QuickTestDownloadPage(QWidget):
         choose = QPushButton("Ordner ändern …")
         choose.clicked.connect(self._choose_folder)
         folder_row.addWidget(choose)
+        self.refresh_button = QPushButton("Bestand aktualisieren")
+        self.refresh_button.clicked.connect(self._refresh_download_history)
+        folder_row.addWidget(self.refresh_button)
         layout.addLayout(folder_row)
 
         run_row = QHBoxLayout()
@@ -154,6 +158,8 @@ class QuickTestDownloadPage(QWidget):
         )
         self.status.setWordWrap(True)
         layout.addWidget(self.status)
+        self.history_info = QLabel("Lokaler Download-Bestand wird geladen …", objectName="PageSubtitle")
+        layout.addWidget(self.history_info)
         self.table = QTableWidget(0, 5)
         self.table.setHorizontalHeaderLabels(
             ("FIN", "Letzter Abruf", "Status", "PDFs", "Fehler")
@@ -161,6 +167,57 @@ class QuickTestDownloadPage(QWidget):
         self.table.horizontalHeader().setStretchLastSection(True)
         self.table.setAlternatingRowColors(True)
         layout.addWidget(self.table, 1)
+        self._refresh_download_history()
+
+    def _refresh_download_history(
+        self,
+        pending: set[str] | None = None,
+        completed: list[FinDownloadResult] | None = None,
+    ) -> None:
+        """Show the entire local FIN inventory, not only the latest batch."""
+        entries = scan_local_quicktests(Path(self.folder.text()))
+        by_fin = {entry.fin: entry for entry in entries}
+        self.history_info.setText(
+            f"Lokaler Bestand: {len(entries)} FIN-Ordner · "
+            f"{sum(len(entry.files) for entry in entries)} PDF-Datei(en)"
+        )
+        for fin in pending or ():
+            entry = by_fin.setdefault(fin, FinDownloadResult(fin=fin))
+            entry.status = "Wartend"
+        for result in completed or ():
+            entry = by_fin.get(result.fin)
+            if entry is None:
+                by_fin[result.fin] = result
+                continue
+            # Keep the whole local PDF inventory; the run result only describes
+            # files from its own batch (or potentially a skipped manifest).
+            entry.status = result.status
+            entry.last_attempt_at = result.last_attempt_at or entry.last_attempt_at
+            entry.errors = result.errors
+        rows = [by_fin[key] for key in sorted(by_fin)]
+        self.table.setRowCount(len(rows))
+        for i, entry in enumerate(rows):
+            when = (
+                format_last_attempt(entry.last_attempt_at) if entry.last_attempt_at
+                else "Nicht dokumentiert" if entry.files else "Noch kein Abruf"
+            )
+            values = (
+                entry.fin,
+                when,
+                entry.status,
+                str(len(entry.files)),
+                "; ".join(entry.errors[:2]),
+            )
+            for j, value in enumerate(values):
+                item = QTableWidgetItem(value)
+                if j == 1 and not entry.last_attempt_at and entry.files:
+                    item.setToolTip(
+                        "Kein Abrufprotokoll vorhanden: Aus dem PDF-Dateidatum "
+                        "wird bewusst kein Abrufdatum abgeleitet."
+                    )
+                if j == 3 and entry.files:
+                    item.setToolTip("\n".join(path.name for path in entry.files[:30]))
+                self.table.setItem(i, j, item)
 
     def _forget_login(self) -> None:
         try:
@@ -193,6 +250,7 @@ class QuickTestDownloadPage(QWidget):
         folder = QFileDialog.getExistingDirectory(self, "Speicherort", self.folder.text())
         if folder:
             self.folder.setText(folder)
+            self._refresh_download_history()
 
     def _resolve_login(self) -> LoginCredentials | None:
         user_id = self.user_id.text().strip()
@@ -240,17 +298,7 @@ class QuickTestDownloadPage(QWidget):
             QMessageBox.warning(self, "Eingabe prüfen", str(exc))
             return
 
-        self.table.setRowCount(len(fins))
-        for i, fin in enumerate(fins):
-            previous = read_last_attempt(folder, fin)
-            for j, label in enumerate((
-                fin,
-                format_last_attempt(previous.last_attempt_at if previous else ""),
-                "Wartend",
-                str(len(previous.files)) if previous else "0",
-                "",
-            )):
-                self.table.setItem(i, j, QTableWidgetItem(label))
+        self._refresh_download_history(pending=set(fins))
         self.worker = DownloadWorker(
             fins, folder, self.data_dir / "edge-diagnosis-viewer-profile",
             login=login, retry_recent=self.retry_recent.isChecked(),
@@ -272,22 +320,13 @@ class QuickTestDownloadPage(QWidget):
             self.status.setText("Abbruch angefordert …")
 
     def _completed(self, results) -> None:
-        self.table.setRowCount(len(results))
-        for i, result in enumerate(results):
-            for j, label in enumerate((
-                result.fin,
-                format_last_attempt(result.last_attempt_at),
-                result.status,
-                str(len(result.files)),
-                "; ".join(result.errors[:2]),
-            )):
-                self.table.setItem(i, j, QTableWidgetItem(label))
+        self._refresh_download_history(completed=results)
         files = list(dict.fromkeys(
             file for result in results if not result.status.startswith("Übersprungen")
             for file in result.files
         ))
         self.status.setText(
-            f"Fertig: {len(results)} FIN(s), {len(files)} neue PDF(s). "
+            f"Fertig: {len(results)} FIN(s), {len(files)} PDF(s) im aktuellen Abruf. "
             f"Ordner: {self.folder.text()}"
         )
         if files:
