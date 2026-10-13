@@ -22,6 +22,7 @@ class NavigationPanel(QFrame):
         ("dashboard", "Übersicht"),
         ("sources", "Datenquellen"),
         ("quicktest_download", "QuickTest-Abruf"),
+        ("qec_download", "QEC-Abruf"),
         ("knowledge", "Quellenwissen"),
         ("cases", "Fälle / FIN"),
         ("dtcs", "DTC-Explorer"),
