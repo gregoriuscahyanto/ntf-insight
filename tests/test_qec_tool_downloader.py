@@ -298,6 +298,38 @@ def test_every_search_reopens_qec_start_and_fills_after_login(has_nav):
         )
 
 
+def test_no_match_manifest_distinguishes_real_server_response(tmp_path):
+    target = QecTarget(FIN, SACHNUMMER)
+    other = "WDD98745678901234"
+    document = _search_html(rows=[_row("000123456", fin=other)])
+    evidence = inspect_search_results(document, target)
+    downloader = QecDownloader(tmp_path, tmp_path / "profile")
+    page = object()
+    downloader._search = lambda *_args: (page, page, document, evidence)
+    result, _ = downloader._one_target(
+        SimpleNamespace(pages=[]), page, target, lambda _: None, Event(), "dummy-run"
+    )
+    assert result.status == "Keine passenden Schadteile"
+    manifest = json.loads((tmp_path / FIN / "abrufstatus.json").read_text(encoding="utf-8"))
+    assert manifest["suchdiagnose"]["bestaetigt"] is True
+    assert manifest["suchdiagnose"]["fin_identisch"] == 0
+    assert manifest["status"] == "Keine passenden Schadteile"
+
+
+def test_partial_result_count_is_not_reported_as_zero_parts(tmp_path):
+    target = QecTarget(FIN)
+    document = _search_html(rows=[_row("000123456", fin="WDD98745678901234")], total=2)
+    evidence = inspect_search_results(document, target)
+    downloader = QecDownloader(tmp_path, tmp_path / "profile")
+    page = object()
+    downloader._search = lambda *_args: (page, page, document, evidence)
+    result, _ = downloader._one_target(
+        SimpleNamespace(pages=[]), page, target, lambda _: None, Event(), "dummy-run"
+    )
+    assert result.status == "Ergebnispruefung erforderlich"
+    assert result.errors and not result.references
+
+
 def test_wait_search_rejects_stale_filter_response():
     page = FakeQecPage()
     page.state = "search"
