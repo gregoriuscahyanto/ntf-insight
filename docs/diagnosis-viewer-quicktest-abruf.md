@@ -99,6 +99,18 @@ Standardordner: \`%USERPROFILE%\.ntf-insight\quicktests\<FIN>\`.
   Diese begrenzte Abrufrate dient Stabilität und Rücksicht auf das System;
   sie ist **keine Umgehung eines Bot-Schutzes** und bietet keine Garantie,
   dass die Webseite den Abruf zulässt.
+- Zeigt der Diagnosis Viewer beim Klicken auf einen Bericht die Meldung
+  \`Diagnosis payload loaded from S3 does not contain quicktest data\`, wird
+  **nur diese Sitzung** als „Ohne QuickTest“ übersprungen. Die App prüft neue
+  Toast-Nachrichten und Browser-Dialoge, statt für diesen Fall erst den
+  Download-Timeout abzuwarten. Nachfolgende PDFs und FINs laufen weiter.
+- Die Wartezeit **pro PDF beträgt maximal 60 Sekunden bis zum Start des
+  Browser-Downloads** (vorher 90 Sekunden). Bei Timeout wird diese Sitzung
+  als Fehler protokolliert, die nächste wird versucht. Ein bereits gestarteter
+  Download kann für die vollständige Dateiübertragung zusätzliche Zeit brauchen.
+- Die Datei \`abrufstatus.json\` unterscheidet \`ohne_quicktest\` (S3 ohne
+  QuickTest-Daten) und \`fehler\` (z. B. PDF-Timeout). Die Fallanalyse zeigt
+  getrennte Zähler für beide Fälle.
 - PDF-Dateien werden am Header geprüft, bereits vorhandene gleiche Dateien
   nicht erneut gespeichert; fehlerhafte Dateien werden nicht importiert.
 - Neue Dateien werden mit SHA-256-Provenienz durch die bestehende lokale
