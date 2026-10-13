@@ -73,6 +73,7 @@ class QecResult:
     warnings: list[str] = field(default_factory=list)
     errors: list[str] = field(default_factory=list)
     attempted_at: str = ""
+    search_diagnostics: dict[str, int | bool | None] = field(default_factory=dict)
 
 
 def parse_qec_targets(raw: str) -> list[QecTarget]:
@@ -168,6 +169,54 @@ def parse_search_hits(document: str, fin: str, *, part_number: str = "",
     return hits
 
 
+def inspect_search_results(document: str, target: QecTarget, *, pump_only: bool = True) -> dict[str, int | bool | None]:
+    """Check server-rendered filter values before trusting any QEC result rows.
+
+    Form .fill() changes the DOM property, not the original HTML value
+    attribute. QEC echoes the submitted values in the *result response*.
+    Thus an untouched search form cannot be mistaken for a valid empty result.
+    """
+    root = lxml_html.fromstring(document)
+    br_fields = root.xpath('//input[@name="_finBR"]')
+    end_fields = root.xpath('//input[@name="_finEndnummerFrom"]')
+    confirmed_filters = bool(
+        br_fields and end_fields
+        and br_fields[0].get("value", "").strip() == target.fin[3:6]
+        and end_fields[0].get("value", "").strip() == target.fin[-6:]
+    )
+    reported: int | None = None
+    for node in root.xpath('//*[contains(concat(" ", normalize-space(@class), " "), " messageGreen ")]'):
+        match = re.search(r"(?<!\d)(\d+)\s+Treffer\b", node.text_content(), re.I)
+        if match:
+            reported = int(match.group(1))
+            break
+    rows = len(root.xpath("//a[contains(@href, 'schadteilSelektieren.qec')]"))
+    ready = confirmed_filters and (rows > 0 or reported == 0)
+    # Never interpret *unconfirmed* UI as a zero-result search.
+    if not ready:
+        return {
+            "bestaetigt": False,
+            "qec_trefferzahl": reported,
+            "sichtbare_zeilen": rows,
+            "fin_identisch": 0,
+            "pumpen": 0,
+            "sachnummer": 0,
+        }
+    fin_matches = len(parse_search_hits(document, target.fin, pump_only=False))
+    pump_matches = len(parse_search_hits(document, target.fin, pump_only=True))
+    final_matches = len(parse_search_hits(
+        document, target.fin, pump_only=pump_only, part_number=target.part_number,
+    ))
+    return {
+        "bestaetigt": True,
+        "qec_trefferzahl": reported,
+        "sichtbare_zeilen": rows,
+        "fin_identisch": fin_matches,
+        "pumpen": pump_matches,
+        "sachnummer": final_matches,
+    }
+
+
 def parse_attachment_urls(document: str) -> list[tuple[str, str]]:
     """Anhang-Popup: doppelte Linktexte/Anchors anhand attachmentId entfernen."""
     root = lxml_html.fromstring(document)
@@ -254,6 +303,7 @@ def _write_result(folder: Path, result: QecResult) -> None:
         "seiten": [relative(path) for path in result.snapshots],
         "hinweise": result.warnings,
         "fehler": result.errors,
+        "suchdiagnose": result.search_diagnostics,
     })
 
 
@@ -430,6 +480,52 @@ class QecDownloader:
             "_finEndnummerFrom fehlen. Bitte QEC-Rolle und Navigation pruefen."
         )
 
+    def _wait_search_results(self, context, target: QecTarget,
+                             progress: Progress, cancel: Event):
+        """Wait for a confirmed server response, scanning QEC pages and frames.
+
+        The search form is present *before* filtering. A URL/form wait alone
+        can incorrectly treat an initial empty table as a real zero result.
+        """
+        deadline = time.monotonic() + self.navigation_timeout_ms / 1000
+        last_reported: int | None = None
+        last_rows = 0
+        while time.monotonic() < deadline:
+            self._check_cancel(cancel)
+            for candidate in reversed(context.pages):
+                if candidate.is_closed() or not self._is_qec_page(candidate.url):
+                    continue
+                for scope in self._scopes(candidate):
+                    try:
+                        document = scope.content()
+                        evidence = inspect_search_results(
+                            document, target, pump_only=self.pump_only,
+                        )
+                    except (QecCancelled, KeyboardInterrupt):
+                        raise
+                    except Exception:
+                        # Frames may navigate during the polling cycle.
+                        continue
+                    last_reported = evidence["qec_trefferzahl"]
+                    last_rows = max(last_rows, int(evidence["sichtbare_zeilen"]))
+                    if evidence["bestaetigt"]:
+                        progress(
+                            f"QEC: Suchantwort bestaetigt ({evidence['sichtbare_zeilen']} "
+                            f"sichtbare Zeilen, {evidence['fin_identisch']} volle FIN-Treffer, "
+                            f"{evidence['sachnummer']} passende Bauteile)."
+                        )
+                        return candidate, scope, document, evidence
+            time.sleep(0.35)
+        details = (
+            f"QEC-Trefferzahl: {last_reported if last_reported is not None else 'unbekannt'}, "
+            f"erkannte Trefferlinks: {last_rows}."
+        )
+        raise TimeoutError(
+            "QEC-Suchantwort nach 'Filtern' nicht bestaetigt. "
+            "Die Serverantwort muss BR und Endnummer sowie Ergebniszeilen "
+            "oder '0 Treffer' enthalten. " + details
+        )
+
     def _search(self, context, page, target: QecTarget, progress: Progress, cancel: Event):
         # The QEC instructions require a fresh start for each FIN/reference.
         self._check_cancel(cancel)
@@ -476,16 +572,8 @@ class QecDownloader:
             form.get_by_role("button", name="Filtern", exact=True).click(
                 timeout=self.navigation_timeout_ms
             )
-        progress("QEC: Suchergebnisse werden ausgewertet ...")
-        return page
-
-    @classmethod
-    def _search_html(cls, page) -> str:
-        for scope in cls._scopes(page):
-            if (scope.locator('input[name="_finBR"]').count()
-                    and scope.locator('input[name="_finEndnummerFrom"]').count()):
-                return scope.content()
-        return page.content()
+        progress("QEC: Auf bestaetigte Suchergebnisse warten ...")
+        return self._wait_search_results(context, target, progress, cancel)
 
     @staticmethod
     def _click_section(page, title: str) -> bool:
@@ -548,13 +636,13 @@ class QecDownloader:
 
     def _one_hit(self, context, page, target: QecTarget, hit: QecHit,
                  result: QecResult, progress: Progress, cancel: Event, run_id: str):
-        page = self._search(context, page, target, progress, cancel)
+        page, result_scope, result_html, _ = self._search(context, page, target, progress, cancel)
         # Kein direkter HTTP-Link: erst den aktuell sichtbaren Treffer selektieren.
-        hits = parse_search_hits(self._search_html(page), target.fin,
+        hits = parse_search_hits(result_html, target.fin,
                                  part_number=target.part_number, pump_only=self.pump_only)
         if hit.schadteil_id not in {entry.schadteil_id for entry in hits}:
             raise RuntimeError("Schadteil nach erneutem Oeffnen nicht mehr eindeutig gefunden.")
-        page.locator(f'a[href*="schadteilID={hit.schadteil_id}"]').first.click(
+        result_scope.locator(f'a[href*="schadteilID={hit.schadteil_id}"]').first.click(
             timeout=self.navigation_timeout_ms
         )
         page.get_by_text("Schadteilmonitor", exact=False).first.wait_for(
@@ -588,12 +676,29 @@ class QecDownloader:
         root = self.output_dir / target.fin
         _write_result(root, result)
         try:
-            page = self._search(context, page, target, progress, cancel)
-            hits = parse_search_hits(self._search_html(page), target.fin, part_number=target.part_number,
-                                     pump_only=self.pump_only)
+            page, _result_scope, result_html, evidence = self._search(
+                context, page, target, progress, cancel,
+            )
+            result.search_diagnostics = evidence
+            hits = parse_search_hits(
+                result_html, target.fin, part_number=target.part_number,
+                pump_only=self.pump_only,
+            )
             if not hits:
-                result.status = "Keine passenden Schadteile"
-                result.warnings.append("Kein eindeutiger FIN-/Sachnummer-/Bauteiltreffer.")
+                reported = evidence["qec_trefferzahl"]
+                visible = evidence["sichtbare_zeilen"]
+                if reported is not None and reported > visible:
+                    result.status = "Ergebnispruefung erforderlich"
+                    result.errors.append(
+                        "QEC meldet weitere Treffer, die in der sichtbaren Tabelle "
+                        "nicht enthalten sind (Moeglichkeit weiterer Ergebnisseiten)."
+                    )
+                else:
+                    result.status = "Keine passenden Schadteile"
+                    result.warnings.append(
+                        "QEC-Suche bestaetigt, aber kein eindeutiger Voll-FIN- / "
+                        "Pumpen- / Sachnummer-Treffer. Suchdiagnose im abrufstatus.json pruefen."
+                    )
                 return result, page
             for index, hit in enumerate(hits, 1):
                 self._check_cancel(cancel)
