@@ -783,11 +783,13 @@ class CasePage(QWidget):
         self._quicktest_files_for_import = list(dict.fromkeys(files))
         errors = sum(len(result.errors) for result in results)
         skipped = sum(result.status.startswith("Übersprungen") for result in results)
+        without_data = sum(len(result.no_quicktest_sessions) for result in results)
         self.quicktest_download_status.setText(
             f"Abruf beendet: {len(results)} FIN(s), "
             f"{len(self._quicktest_files_for_import)} PDF(s), "
-            f"{skipped} innerhalb von 24 h übersprungen, {errors} Fehler. "
-            "Neue PDFs werden in das lokale Quellenarchiv übernommen."
+            f"{without_data} S3-Sitzung(en) ohne QuickTest übersprungen, "
+            f"{skipped} FIN(s) innerhalb von 24 h übersprungen, {errors} Fehler. "
+            "Vorhandene PDFs werden ins lokale Quellenarchiv übernommen."
         )
 
     def _quicktest_download_failed(self, message: str) -> None:
