@@ -50,6 +50,7 @@ def test_checkbox_is_interactive_and_selection_button_only_activates_when_checke
     assert page.quicktest_download_all_button.isEnabled()
     assert not page.quicktest_download_selected_button.isEnabled()
     page.show()
+    page.detail_tabs.setCurrentWidget(page.analysis_tab)
     app.processEvents()
     proxy_index = page.case_proxy.index(0, 0)
     rect = page.case_table.visualRect(proxy_index)
