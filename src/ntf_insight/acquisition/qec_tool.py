@@ -717,40 +717,45 @@ class QecDownloader:
             temporary.unlink(missing_ok=True)
 
     def _save_popups(self, context, page, folder: Path, result: QecResult,
-                     progress: Progress, cancel: Event) -> None:
+                     progress: Progress, cancel: Event,
+                     inventory: dict[str, dict[str, str]]) -> None:
+        """Collect all popup metadata in memory for the single QEC case JSON."""
         buttons = page.locator('input[type="button"][value="Dateianhänge"], button:has-text("Dateianhänge")')
         for index in range(buttons.count()):
             self._check_cancel(cancel)
             if not buttons.nth(index).is_visible():
                 continue
+            self._pause(cancel)
             try:
                 with page.expect_popup(timeout=12000) as popup_event:
                     buttons.nth(index).click(timeout=12000)
                 popup = popup_event.value
                 try:
                     popup.wait_for_load_state("domcontentloaded", timeout=15000)
+                    self._pause(cancel)
                     original_url = _qec_url(popup.url)
                     document = popup.content()
                     attachments = parse_attachment_urls(document)
                     listing = parse_attachment_listing(document)
-                    inventory_path = folder.parent / "anhangliste.json"
-                    try:
-                        old = json.loads(inventory_path.read_text(encoding="utf-8"))
-                        inventory = {x["anhang_id"]: x for x in old.get("anhaenge", [])}
-                    except (OSError, ValueError, KeyError, TypeError):
-                        inventory = {}
-                    inventory.update({x["anhang_id"]: x for x in listing})
+                    for item in listing:
+                        inventory.setdefault(item["anhang_id"], {}).update({
+                            key: value for key, value in item.items()
+                            if key in {"anhang_id", "linktext", "spalten"}
+                        })
                     if not attachments:
                         result.warnings.append("Anhang-Fenster ohne erkennbare Dateien.")
                     for number, (attachment_id, url) in enumerate(attachments, 1):
                         self._check_cancel(cancel)
                         progress(f"{result.fin}: Anhang {number}/{len(attachments)} wird geladen …")
-                        entry = inventory[attachment_id]
-                        already = next(folder.glob(f"{attachment_id}_*"), None) if folder.is_dir() else None
-                        if already and already.is_file():
-                            entry.update(status="Bereits vorhanden", datei=already.name)
-                            if already not in result.files:
-                                result.files.append(already)
+                        entry = inventory.setdefault(attachment_id, {"anhang_id": attachment_id})
+                        existing = next(
+                            (item for item in folder.glob(f"{attachment_id}_*") if item.is_file()),
+                            None,
+                        ) if folder.is_dir() else None
+                        if existing:
+                            entry.update(status="Bereits vorhanden", datei=existing.name)
+                            if existing not in result.files:
+                                result.files.append(existing)
                             continue
                         try:
                             try:
@@ -758,26 +763,33 @@ class QecDownloader:
                                     context, popup, attachment_id, url, folder,
                                 )
                             except Exception as api_error:
-                                progress(f"{result.fin}: Anhang {attachment_id}, QEC-Weiterleitung/Antwort; "
+                                progress(f"{result.fin}: Anhang {attachment_id}, QEC-Antwort; "
                                          "Download direkt ueber Edge versuchen …")
+                                self._pause(cancel)
                                 try:
                                     path = self._download_attachment_browser(
                                         popup, attachment_id, url, folder,
                                     )
                                 except Exception as edge_error:
-                                    # No signed URLs, passwords or cookies in status logs.
-                                    kind = type(api_error).__name__
                                     raise RuntimeError(
-                                        f"API-Antwort nicht als Datei verwendbar ({kind}); "
-                                        f"Edge-Download fehlgeschlagen ({type(edge_error).__name__})."
+                                        "API-Antwort nicht als Datei verwendbar "
+                                        f"({type(api_error).__name__}); Edge-Download fehlgeschlagen "
+                                        f"({type(edge_error).__name__})."
                                     ) from edge_error
                                 finally:
                                     if not popup.is_closed() and popup.url != original_url:
                                         try:
-                                            popup.goto(original_url, wait_until="domcontentloaded", timeout=15000)
+                                            popup.goto(
+                                                original_url, wait_until="domcontentloaded",
+                                                timeout=15000,
+                                            )
+                                            self._pause(cancel)
+                                        except QecCancelled:
+                                            raise
                                         except Exception:
                                             pass
                             entry.update(status="Gespeichert", datei=path.name)
+                            entry.pop("fehler", None)
                             if path not in result.files:
                                 result.files.append(path)
                         except QecCancelled:
@@ -785,10 +797,6 @@ class QecDownloader:
                         except Exception as exc:
                             entry.update(status="Fehler", fehler=str(exc))
                             result.errors.append(f"Anhang {attachment_id}: {exc}")
-                    _write_json(inventory_path, {
-                        "zeitpunkt_utc": datetime.now(timezone.utc).isoformat(),
-                        "anhaenge": list(inventory.values()),
-                    })
                 finally:
                     popup.close()
             except QecCancelled:
