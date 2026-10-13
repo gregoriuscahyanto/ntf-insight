@@ -4,6 +4,9 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from PySide6.QtCore import QUrl
+from PySide6.QtGui import QDesktopServices
+
 from PySide6.QtCore import QSortFilterProxyModel, Qt, Signal
 from PySide6.QtWidgets import (
     QAbstractItemView,
@@ -25,6 +28,9 @@ from PySide6.QtWidgets import (
 )
 
 from ntf_insight.analysis.evidence_engine import generate_case_evidence
+from ntf_insight.acquisition.qec_archive import local_qec_archive
+from ntf_insight.acquisition.qec_tool import QecTarget, parse_qec_targets
+from ntf_insight.app.settings import AppPaths
 from ntf_insight.analysis.qec_findings import qec_ssl_finding_label
 from ntf_insight.analysis.diagnostic_observations import unique_diagnostic_observations
 from ntf_insight.analysis.fin_diagnostics import (
@@ -45,6 +51,7 @@ from ntf_insight.app.models.simple_table_model import SimpleTableModel
 from ntf_insight.app.models.timeline_table_model import TimelineTableModel
 from ntf_insight.app.widgets.event_time_plot import EventTimePlot
 from ntf_insight.app.widgets.quicktest_browser import QuickTestBrowser
+from ntf_insight.app.widgets.qec_case_download import QecCaseDownloadPanel
 from ntf_insight.app.widgets.autoexport_fin_workspace import AutoExportFinWorkspace
 from ntf_insight.ingestion.manual_entry import ManualCaseService, ManualEntryError
 from ntf_insight.ingestion.real_source_parsers import canonical_fin
@@ -69,12 +76,14 @@ class CasePage(QWidget):
         manual_service: ManualCaseService | None = None,
         *,
         review_store: DtcReviewStore | None = None,
+        data_dir: Path | None = None,
     ) -> None:
         super().__init__()
         self.repository = repository
         self.references = references
         self.manual_service = manual_service
         self.review_store = review_store
+        self.qec_data_dir = Path(data_dir) if data_dir is not None else AppPaths.default().data_dir
         self.source_knowledge = (
             SourceKnowledgeStore(manual_service.store)
             if manual_service is not None else None
@@ -92,6 +101,11 @@ class CasePage(QWidget):
             *self.real_cases,
             *self.fin_only_previews.values(),
         ]
+        self._case_by_id = {case.case_id: case for case in self.view_cases}
+        self._tips_fins = (
+            self.source_knowledge.autoexport_source_fins("autoexport_tips")
+            if self.source_knowledge is not None else frozenset()
+        )
         self._syncing_quicktest_fin = False
 
         outer_layout = QVBoxLayout(self)
@@ -210,6 +224,14 @@ class CasePage(QWidget):
         for case in self.view_cases:
             is_preview = case.case_id.startswith(FIN_ONLY_PREFIX)
             replacement = case.investigated_replacement()
+            archive = self._qec_archive_for_case(case)
+            tips_status = (
+                "Ja" if any(
+                    observation.tips_case_id for observation in case.tips_observations
+                )
+                else "FIN-Hinweis" if case.vin in self._tips_fins
+                else "—"
+            )
             recurrence = analyze_recurrence(case)
             if is_preview:
                 recurrence_text = "Ohne Tauschanker"
@@ -236,6 +258,9 @@ class CasePage(QWidget):
                         if case.assessment is not None
                         else None
                     ),
+                    tips_status=tips_status,
+                    qec_date=archive.date_label if archive else None,
+                    qec_folder=str(archive.folder) if archive else None,
                 )
             )
 
@@ -251,16 +276,30 @@ class CasePage(QWidget):
         self.case_table.setMaximumHeight(190)
         self.case_table.setAlternatingRowColors(True)
         self.case_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
-        self.case_table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
+        self.case_table.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
         self.case_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self.case_table.setSortingEnabled(True)
         self.case_table.verticalHeader().setVisible(False)
-        self.case_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        self.case_table.horizontalHeader().setSectionResizeMode(
+            QHeaderView.ResizeMode.ResizeToContents
+        )
+        self.case_table.horizontalHeader().setStretchLastSection(True)
         self.case_table.clicked.connect(self._case_clicked)
+        self.case_table.clicked.connect(self._open_qec_folder_on_click)
         self.case_table.selectionModel().currentRowChanged.connect(
             lambda current, _previous: self._case_clicked(current)
         )
         layout.addWidget(self.case_table)
+
+        self.qec_download = QecCaseDownloadPanel(
+            self.qec_data_dir,
+            all_targets=self._all_qec_targets,
+            selected_targets=self._selected_qec_targets,
+        )
+        self.qec_download.downloads_completed.connect(
+            lambda _results: self._refresh_qec_archives()
+        )
+        layout.addWidget(self.qec_download)
 
         summary = QGridLayout()
         summary.setHorizontalSpacing(24)
@@ -531,12 +570,79 @@ class CasePage(QWidget):
             self.quicktest_browser.fin_selector.currentIndexChanged.connect(
                 lambda _index: self._on_quicktest_fin_changed()
             )
+        self.detail_tabs.currentChanged.connect(
+            lambda _index: self.qec_download.refresh_credentials()
+        )
 
         if self.selector.count():
             self.case_table.selectRow(0)
             self._refresh()
         else:
             self._clear_view()
+
+    def _qec_archive_for_case(self, case):
+        reference = str(getattr(case, "qec_reference", "") or "").strip()
+        return local_qec_archive(
+            self.qec_data_dir / "qec", str(case.vin), reference,
+        ) if reference else None
+
+    def _refresh_qec_archives(self) -> None:
+        archives = {}
+        for case in self.view_cases:
+            info = self._qec_archive_for_case(case)
+            archives[case.case_id] = (
+                (info.date_label, str(info.folder)) if info else None
+            )
+        self.case_model.update_qec_archives(archives)
+
+    def _qec_target_for_case(self, case) -> QecTarget | None:
+        """Only FINs with valid syntax, optionally limited to this QEC ref."""
+        fin = str(case.vin or "").upper()
+        try:
+            parsed = parse_qec_targets(fin)
+        except ValueError:
+            return None
+        reference = str(getattr(case, "qec_reference", "") or "").strip()
+        if reference and (not reference.isdigit() or len(reference) > 14):
+            return None  # Never silently widen a malformed reference to all cases.
+        return QecTarget(parsed[0].fin, reference=reference)
+
+    def _all_qec_targets(self) -> list[QecTarget]:
+        return self._qec_targets(self.view_cases)
+
+    def _selected_qec_targets(self) -> list[QecTarget]:
+        chosen = []
+        for proxy_index in self.case_table.selectionModel().selectedRows():
+            source_index = self.case_proxy.mapToSource(proxy_index)
+            case_id = self.case_model.case_id_at(source_index.row())
+            case = self._case_by_id.get(case_id)
+            if case is not None:
+                chosen.append(case)
+        return self._qec_targets(chosen)
+
+    def _qec_targets(self, cases) -> list[QecTarget]:
+        targets: list[QecTarget] = []
+        seen: set[tuple[str, str]] = set()
+        for case in cases:
+            target = self._qec_target_for_case(case)
+            if target is None:
+                continue
+            identity = target.fin, target.reference
+            if identity not in seen:
+                seen.add(identity)
+                targets.append(target)
+        return targets
+
+    def _open_qec_folder_on_click(self, index) -> None:
+        if not index.isValid() or index.column() != CaseTableModel.QEC_COLUMN:
+            return
+        source = self.case_proxy.mapToSource(index)
+        folder_name = self.case_model.qec_folder_at(source.row())
+        if not folder_name:
+            return
+        folder = Path(folder_name)
+        if not folder.is_dir() or not QDesktopServices.openUrl(QUrl.fromLocalFile(str(folder))):
+            QMessageBox.warning(self, "QEC-Ordner", "Der lokale QEC-Fallordner konnte nicht geöffnet werden.")
 
     def _filter_cases(self, text: str) -> None:
         """Keep the editable case in sync with the visible filtered selection."""
@@ -792,7 +898,8 @@ class CasePage(QWidget):
             if proxy_index.isValid():
                 selection = self.case_table.selectionModel()
                 selection.blockSignals(True)
-                self.case_table.selectRow(proxy_index.row())
+                if not selection.isRowSelected(proxy_index.row(), self.case_proxy.index(-1, -1)):
+                    self.case_table.selectRow(proxy_index.row())
                 selection.blockSignals(False)
             break
         if self.quicktest_browser is not None:
