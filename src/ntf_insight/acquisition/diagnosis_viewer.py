@@ -13,13 +13,15 @@ import re
 import tempfile
 import time
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from threading import Event
 from typing import Callable
-from urllib.parse import quote
+from urllib.parse import quote, urlsplit
 
 DIAGNOSIS_VIEWER = "https://app.diagviewer.prod.gspp-eu.cloud.corpintra.net/search"
+LOGIN_HOST = "login.mercedes-benz.com"
+VIEWER_HOST = urlsplit(DIAGNOSIS_VIEWER).hostname
 SOURCES = "XD,XD(AQT),TD,DAS"
 _FIN = re.compile(r"[A-HJ-NPR-Z0-9]{17}\Z")
 _ILLEGAL_FILENAME = re.compile(r"[^A-Za-z0-9._-]+")
@@ -44,6 +46,7 @@ class FinDownloadResult:
     errors: list[str] = field(default_factory=list)
     available: int = 0
     status: str = "Ausstehend"
+    last_attempt_at: str = ""
 
 
 def parse_fins(text: str) -> list[str]:
@@ -126,10 +129,13 @@ def _visible_rows(page) -> tuple[list[DownloadRow], bool]:
 
 
 def _write_manifest(folder: Path, result: FinDownloadResult) -> None:
+    """An attempt timestamp is recorded once and survives the final write."""
     folder.mkdir(parents=True, exist_ok=True)
+    if not result.last_attempt_at:
+        result.last_attempt_at = datetime.now(timezone.utc).isoformat()
     payload = {
         "fin": result.fin,
-        "stand_utc": datetime.now(timezone.utc).isoformat(),
+        "stand_utc": result.last_attempt_at,
         "status": result.status,
         "verfuegbare_sitzungen": result.available,
         "pdf_dateien": [file.name for file in result.files],
@@ -138,6 +144,62 @@ def _write_manifest(folder: Path, result: FinDownloadResult) -> None:
     (folder / "abrufstatus.json").write_text(
         json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8"
     )
+
+
+def read_last_attempt(folder: Path, fin: str) -> FinDownloadResult | None:
+    """Read previous status without allowing paths from JSON to escape the FIN directory."""
+    manifest = Path(folder) / fin / "abrufstatus.json"
+    try:
+        payload = json.loads(manifest.read_text(encoding="utf-8"))
+        if payload.get("fin") != fin:
+            return None
+        timestamp = str(payload.get("stand_utc", ""))
+        parsed = datetime.fromisoformat(timestamp.replace("Z", "+00:00"))
+        if parsed.tzinfo is None:
+            return None
+        names = payload.get("pdf_dateien", [])
+        files = [
+            manifest.parent / name for name in names
+            if isinstance(name, str) and name == Path(name).name
+            and (manifest.parent / name).is_file()
+        ]
+        return FinDownloadResult(
+            fin=fin,
+            files=files,
+            available=int(payload.get("verfuegbare_sitzungen", 0)),
+            status=str(payload.get("status", "")),
+            last_attempt_at=parsed.astimezone(timezone.utc).isoformat(),
+        )
+    except (OSError, ValueError, TypeError, KeyError, AttributeError):
+        return None
+
+
+def recently_attempted(
+    folder: Path, fin: str, *, now: datetime | None = None
+) -> FinDownloadResult | None:
+    """Every request attempted in the last 24h is skipped, including unsuccessful ones."""
+    previous = read_last_attempt(folder, fin)
+    if previous is None:
+        return None
+    at = now or datetime.now(timezone.utc)
+    last = datetime.fromisoformat(previous.last_attempt_at)
+    delta = at.astimezone(timezone.utc) - last
+    if timedelta(minutes=-5) <= delta < timedelta(hours=24):
+        previous.status = "Übersprungen (< 24 h)"
+        return previous
+    return None
+
+
+def format_last_attempt(value: str) -> str:
+    """Display timestamps in the local time zone (GUI)."""
+    if not value:
+        return "Noch kein Abruf"
+    try:
+        return datetime.fromisoformat(value.replace("Z", "+00:00")).astimezone().strftime(
+            "%d.%m.%Y %H:%M"
+        )
+    except ValueError:
+        return "Unbekannt"
 
 
 class DiagnosisViewerDownloader:
@@ -151,30 +213,78 @@ class DiagnosisViewerDownloader:
         login_timeout_seconds: int = 240,
         result_timeout_seconds: int = 60,
         pdf_timeout_seconds: int = 90,
+        user_id: str = "",
+        password: str = "",
+        retry_recent: bool = False,
     ) -> None:
         self.output_dir = Path(output_dir)
         self.profile_dir = Path(profile_dir)
         self.login_timeout_seconds = login_timeout_seconds
         self.result_timeout_seconds = result_timeout_seconds
         self.pdf_timeout_seconds = pdf_timeout_seconds
+        self.user_id = user_id
+        self.password = password
+        self.retry_recent = retry_recent
 
     @staticmethod
     def _check_cancel(cancel: Event) -> None:
         if cancel.is_set():
             raise DownloadCancelled("Abruf durch Benutzer beendet.")
 
+    @staticmethod
+    def _is_login_host(url: str) -> bool:
+        """Never fill corporate credentials on an unverified redirect host."""
+        parsed = urlsplit(url)
+        return parsed.scheme == "https" and parsed.hostname == LOGIN_HOST
+
+    def _enter_credentials(self, candidate, submitted: dict[str, bool], progress: Progress) -> None:
+        """Fill the two Mercedes SSO form steps, but leave PING ID to the user."""
+        if not self._is_login_host(candidate.url):
+            return
+        cookie = candidate.locator("#c-s-bn")
+        if cookie.count() and cookie.is_visible():
+            # Necessary cookies only. This is sufficient for signing in.
+            cookie.click(timeout=2500)
+        user_field = candidate.locator("#userid")
+        if (
+            self.user_id and not submitted["user"]
+            and user_field.count() and user_field.is_visible()
+        ):
+            user_field.fill(self.user_id)
+            candidate.locator("#next-btn").click(timeout=8000)
+            submitted["user"] = True
+            progress("Benutzer-ID eingetragen. Passwortseite wird geöffnet …")
+            return
+        password_field = candidate.locator("#password")
+        if (
+            self.password and not submitted["password"]
+            and password_field.count() and password_field.is_visible()
+        ):
+            password_field.fill(self.password)
+            candidate.locator("#loginSubmitButton").click(timeout=8000)
+            submitted["password"] = True
+            progress("Anmeldung gesendet. Bitte PING ID auf dem Smartphone bestätigen …")
+
     def _login(self, context, page, progress: Progress, cancel: Event):
         deadline = time.monotonic() + self.login_timeout_seconds
         clicked_sso = False
-        progress("Edge: Bei Bedarf SSO öffnen und PING ID auf dem Handy bestätigen.")
+        submitted = {"user": False, "password": False}
+        progress("Edge: SSO öffnen. Benutzer-ID und Passwort werden bei Verfügbarkeit eingetragen.")
         while time.monotonic() < deadline:
             self._check_cancel(cancel)
             for candidate in context.pages:
                 if candidate.is_closed():
                     continue
                 try:
-                    if candidate.locator('input[name="finVin"]').count():
+                    if (
+                        urlsplit(candidate.url).hostname == VIEWER_HOST
+                        and candidate.locator('input[name="finVin"]').count()
+                    ):
+                        progress("PING ID abgeschlossen. Diagnosis Viewer ist bereit.")
                         return candidate
+                    if self._is_login_host(candidate.url):
+                        self._enter_credentials(candidate, submitted, progress)
+                        continue
                     if not clicked_sso:
                         for role in ("button", "link"):
                             sso = candidate.get_by_role(
@@ -183,12 +293,18 @@ class DiagnosisViewerDownloader:
                             if sso.count() and sso.first.is_visible():
                                 sso.first.click(timeout=3000)
                                 clicked_sso = True
-                                progress("SSO gestartet: PING ID am Handy freigeben.")
+                                progress("SSO gestartet. PING ID nach der Passwort-Anmeldung bestätigen.")
                                 break
-                except Exception:  # Corporate redirects may invalidate a page mid-poll.
+                except DownloadCancelled:
+                    raise
+                except Exception:
+                    # Login redirects can invalidate the page during a polling cycle.
                     continue
-            page.wait_for_timeout(1000)
-        raise TimeoutError("SSO/PING ID nicht innerhalb des Anmeldezeitfensters abgeschlossen.")
+            time.sleep(0.7)
+        raise TimeoutError(
+            "SSO-/PING-ID-Anmeldung nicht rechtzeitig abgeschlossen. "
+            "Bitte Benutzer-ID, Passwort und die PING-ID-Freigabe in Edge prüfen."
+        )
 
     def _wait_results(self, page, cancel: Event):
         deadline = time.monotonic() + self.result_timeout_seconds
@@ -205,9 +321,12 @@ class DiagnosisViewerDownloader:
         raise TimeoutError("Zeitüberschreitung beim Laden der Suchergebnisse.")
 
     def _one_fin(self, context, page, fin: str, progress: Progress, cancel: Event) -> tuple[FinDownloadResult, object]:
-        result = FinDownloadResult(fin=fin)
+        result = FinDownloadResult(
+            fin=fin, status="Abruf gestartet",
+            last_attempt_at=datetime.now(timezone.utc).isoformat(),
+        )
         folder = self.output_dir / fin
-        folder.mkdir(parents=True, exist_ok=True)
+        _write_manifest(folder, result)  # last download ATTEMPT, not only success
         try:
             self._check_cancel(cancel)
             progress(f"{fin}: Diagnosis Viewer öffnen …")
@@ -268,22 +387,33 @@ class DiagnosisViewerDownloader:
         progress: Progress | None = None,
         cancel: Event | None = None,
     ) -> list[FinDownloadResult]:
-        """Run one Edge instance for all FINs and retain a separate FIN folder."""
+        """Use the installed Edge for new requests; skip FINs attempted within 24h."""
         validated = parse_fins("\n".join(fins))
         progress = progress or (lambda message: None)
         cancel = cancel or Event()
         self.output_dir.mkdir(parents=True, exist_ok=True)
+        results_by_fin: dict[str, FinDownloadResult] = {}
+        pending: list[str] = []
+        for fin in validated:
+            previous = None if self.retry_recent else recently_attempted(self.output_dir, fin)
+            if previous is None:
+                pending.append(fin)
+            else:
+                results_by_fin[fin] = previous
+                progress(f"{fin}: letzter Abruf < 24 Stunden – übersprungen.")
+        if not pending:
+            progress("Alle FINs wurden innerhalb der letzten 24 Stunden bereits abgerufen.")
+            return [results_by_fin[fin] for fin in validated]
         self.profile_dir.mkdir(parents=True, exist_ok=True)
         try:
             from playwright.sync_api import sync_playwright
         except ImportError as exc:
             raise RuntimeError("Playwright fehlt. Bitte die App mit Browser-Unterstützung installieren.") from exc
-        results: list[FinDownloadResult] = []
         with sync_playwright() as playwright:
             try:
                 context = playwright.chromium.launch_persistent_context(
                     user_data_dir=str(self.profile_dir),
-                    channel="msedge",  # Uses installed Edge, downloads no other browser.
+                    channel="msedge",
                     headless=False,
                     accept_downloads=True,
                     no_viewport=True,
@@ -296,13 +426,14 @@ class DiagnosisViewerDownloader:
                 ) from exc
             try:
                 page = context.pages[0] if context.pages else context.new_page()
-                for fin in validated:
+                for fin in pending:
                     if cancel.is_set():
                         break
                     result, page = self._one_fin(context, page, fin, progress, cancel)
-                    results.append(result)
+                    results_by_fin[fin] = result
                     if result.status == "Abgebrochen":
                         break
             finally:
                 context.close()
-        return results
+                self.password = ""  # Best effort: no credential retained between runs.
+        return [results_by_fin[fin] for fin in validated if fin in results_by_fin]
