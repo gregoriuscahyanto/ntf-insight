@@ -528,6 +528,10 @@ class TipsWriterDownloader:
         errors: list[str] = []
         # Details: head information plus all ten documented tabs.
         headline = page.locator("h2").first.inner_text() if page.locator("h2").count() else ""
+        # tn-case-edit/header in the supplied HTML carries status, mileage,
+        # dates, contact/workshop metadata and case identity.
+        case_header = page.locator("tn-case-edit header")
+        header_text = case_header.first.inner_text() if case_header.count() else ""
         try:
             for section_name in TIPS_SECTIONS:
                 self._check(cancel)
@@ -568,6 +572,7 @@ class TipsWriterDownloader:
                 "fin": hit.fin,
                 "fallnummer": hit.case_id,
                 "titel": headline or hit.title,
+                "kopfdaten_text": header_text,
                 "suchtreffer": hit.cells,
                 "abgerufen_am_utc": datetime.now(timezone.utc).isoformat(),
                 "aktuell_erfasste_reiter": len(current_sections),
