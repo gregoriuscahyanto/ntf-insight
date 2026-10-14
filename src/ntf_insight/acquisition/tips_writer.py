@@ -341,6 +341,18 @@ class TipsWriterDownloader:
             submitted["password"] = True
             progress("TIPS: SSO-Anmeldung gesendet; PING ID gegebenenfalls bestaetigen.")
 
+    @staticmethod
+    def _consent(page, progress: Progress) -> None:
+        """The manual explicitly requests the one-time XENTRY consent prompt."""
+        if not _tips_url_valid(page.url):
+            return
+        consent = page.get_by_role(
+            "button", name=re.compile(r"^Alles akzeptieren$", re.I)
+        )
+        if consent.count() and consent.first.is_visible():
+            consent.first.click(timeout=7000)
+            progress("TIPS: Einmalige Portal-Einwilligung bestätigt.")
+
     def _ready(self, page) -> bool:
         if not _tips_url_valid(page.url):
             return False
@@ -372,10 +384,49 @@ class TipsWriterDownloader:
             "Bitte Anmeldung im gestarteten Edge und Berechtigung pruefen."
         )
 
+    def _all_pages(self, page, fin: str, first: list[TipsHit],
+                   progress: Progress, cancel: Event) -> list[TipsHit]:
+        """Traverse only the verified case-results paginator, not topic search."""
+        by_case = {hit.case_id: hit for hit in first}
+        for page_index in range(1, 76):
+            next_page = page.locator(
+                "p-tabpanel.p-tabpanel-active p-paginator button.p-paginator-next"
+            )
+            if not next_page.count() or next_page.first.is_disabled():
+                return list(by_case.values())
+            previous = page.locator(
+                "p-tabpanel.p-tabpanel-active tbody"
+            ).first.inner_text()
+            self._pause(cancel)
+            next_page.first.click(timeout=self.navigation_timeout_ms)
+            changed = False
+            until = time.monotonic() + self.navigation_timeout_ms / 1000
+            while time.monotonic() < until:
+                self._check(cancel)
+                now = page.locator(
+                    "p-tabpanel.p-tabpanel-active tbody"
+                ).first.inner_text()
+                if now != previous:
+                    changed = True
+                    break
+                time.sleep(0.3)
+            if not changed:
+                raise TimeoutError(
+                    "TIPS: nächste Ergebnisseite nach Klick nicht bestätigt."
+                )
+            additional = parse_tips_search_hits(page.content(), fin)
+            by_case.update({hit.case_id: hit for hit in additional})
+            progress(
+                f"TIPS: Ergebnisseite {page_index + 1} gelesen, "
+                f"{len(by_case)} passende Fälle."
+            )
+        raise RuntimeError("TIPS: Mehr als 75 Ergebnisseiten; Abruf wurde begrenzt.")
+
     def _search(self, context, page, fin: str, progress: Progress, cancel: Event):
         self._check(cancel)
         page.goto(TIPS_START, wait_until="domcontentloaded", timeout=self.navigation_timeout_ms)
         page = self._wait_login(context, progress, cancel)
+        self._consent(page, progress)
         self._pause(cancel)
         search = page.locator("tn-c-search input.xy-c-search-input")
         if search.count() == 0:
@@ -400,6 +451,7 @@ class TipsWriterDownloader:
             html = page.content()
             hits = parse_tips_search_hits(html, fin)
             if hits:
+                hits = self._all_pages(page, fin, hits, progress, cancel)
                 progress(f"TIPS: {len(hits)} Falltreffer mit identischer FIN.")
                 return page, hits
             current = page.get_by_role("tab", name=re.compile(r"^Fälle\s*:"))
