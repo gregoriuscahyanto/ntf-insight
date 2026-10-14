@@ -12,7 +12,7 @@ import pytest
 
 from ntf_insight.acquisition.tips_archive import local_tips_cases
 from ntf_insight.acquisition.tips_writer import (
-    TIPS_SECTIONS, TipsHit, TipsWriterDownloader, _capture_section, _section,
+    TIPS_SECTIONS, TipsHit, TipsWriterDownloader, _section,
     _tips_url_valid, _unpack_attachment, parse_tips_attachment_rows,
     parse_tips_search_hits,
 )
