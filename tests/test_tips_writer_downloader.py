@@ -279,3 +279,81 @@ def test_partial_followup_preserves_older_tab_without_claiming_recapture(tmp_pat
     old_section = next(x for x in payload["abschnitte"]
                        if x["bereich"] == "Kommunikation")
     assert old_section["aus_vorherigem_abruf"] is True
+
+
+def test_opening_tips_case_verifies_details_fin_and_case_id(tmp_path):
+    hit = TipsHit(FIN, "01234567")
+    calls = []
+
+    class FakeElement:
+        def __init__(self, value=""):
+            self.value = value
+            self.first = self
+
+        def count(self):
+            return 1
+
+        def inner_text(self):
+            return self.value
+
+        def click(self, **_kwargs):
+            calls.append("clicked")
+
+        def wait_for(self, **_kwargs):
+            pass
+
+    class Cells:
+        def count(self):
+            return 4
+
+        def nth(self, index):
+            return FakeElement({
+                1: hit.case_id,
+                3: hit.fin,
+            }.get(index, ""))
+
+    class Row(FakeElement):
+        def locator(self, selector):
+            assert selector == "td"
+            return Cells()
+
+    class Rows:
+        def count(self):
+            return 1
+
+        def nth(self, index):
+            assert index == 0
+            return Row()
+
+    class Page:
+        url = "https://xentry.mercedes-benz.com/tips-writer/home/topics/search"
+
+        def __init__(self, header):
+            self.header = header
+
+        def locator(self, selector):
+            if selector == "p-tabpanel.p-tabpanel-active tbody tr.p-datatable-selectable-row":
+                return Rows()
+            if selector == "tn-case-edit header":
+                return FakeElement(self.header)
+            raise AssertionError(selector)
+
+        def get_by_role(self, role, name):
+            assert role == "tab"
+            return FakeElement("Erstanfrage")
+
+    downloader = TipsWriterDownloader(
+        tmp_path / "tips", tmp_path / "profile", click_delay_seconds=0,
+    )
+    downloader._search = lambda _ctx, page, *_args: (page, [hit])
+    good = Page(f"Fallkopfdaten: ID: {hit.case_id} FIN: {FIN}")
+    assert downloader._open_case(
+        SimpleNamespace(), good, hit, lambda _: None, Event()
+    ) is good
+    assert calls == ["clicked"]
+
+    wrong = Page(f"Fallkopfdaten: ID: {hit.case_id} FIN: {OTHER_FIN}")
+    with pytest.raises(RuntimeError, match="stimmt nicht"):
+        downloader._open_case(
+            SimpleNamespace(), wrong, hit, lambda _: None, Event()
+        )
