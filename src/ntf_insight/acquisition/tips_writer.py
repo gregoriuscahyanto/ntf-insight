@@ -519,6 +519,17 @@ class TipsWriterDownloader:
         self._pause(cancel)
         if not _tips_url_valid(page.url):
             raise RuntimeError("TIPS-Falldetail wurde auf eine unerwartete Domain umgeleitet.")
+        header = page.locator("tn-case-edit header")
+        header.first.wait_for(state="visible", timeout=self.navigation_timeout_ms)
+        identity = header.first.inner_text()
+        # The supplied TIPS case HTML explicitly shows ID and full FIN here.
+        # Never attach details/attachments of another vehicle to this FIN.
+        if (hit.fin not in identity or
+                not re.search(r"\bID:\s*" + re.escape(hit.case_id) + r"\b", identity)):
+            raise RuntimeError(
+                "TIPS-Falldetail stimmt nicht mit FIN und Fallnummer der "
+                "geprüften Ergebniszeile überein."
+            )
         return page
 
     def _tab(self, page, label: str, cancel: Event):
