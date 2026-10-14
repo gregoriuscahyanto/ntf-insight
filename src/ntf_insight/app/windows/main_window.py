@@ -162,6 +162,7 @@ class MainWindow(QMainWindow):
             page.cluster_workspace.refresh_review_priorities()
             page._refresh_quicktest_download_dates()
             page._refresh_qec_download_dates()
+            page._refresh_local_tips_status()
             page._refresh_shared_credentials_status()
         self.stack.setCurrentWidget(page)
         self.stack.setFocus(Qt.FocusReason.OtherFocusReason)
