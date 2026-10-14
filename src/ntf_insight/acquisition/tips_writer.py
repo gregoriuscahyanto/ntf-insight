@@ -384,36 +384,50 @@ class TipsWriterDownloader:
             "Bitte Anmeldung im gestarteten Edge und Berechtigung pruefen."
         )
 
+    def _advance_results(self, page, cancel: Event) -> bool:
+        next_page = page.locator(
+            "p-tabpanel.p-tabpanel-active p-paginator button.p-paginator-next"
+        )
+        if not next_page.count() or next_page.first.is_disabled():
+            return False
+        rows = page.locator("p-tabpanel.p-tabpanel-active tbody")
+        previous = rows.first.inner_text()
+        self._pause(cancel)
+        next_page.first.click(timeout=self.navigation_timeout_ms)
+        until = time.monotonic() + self.navigation_timeout_ms / 1000
+        while time.monotonic() < until:
+            self._check(cancel)
+            if rows.first.inner_text() != previous:
+                return True
+            time.sleep(0.3)
+        raise TimeoutError("TIPS: Wechsel zur nächsten Ergebnisseite nicht bestätigt.")
+
+    def _reset_results(self, page, cancel: Event) -> None:
+        first_page = page.locator(
+            "p-tabpanel.p-tabpanel-active p-paginator button.p-paginator-first"
+        )
+        if not first_page.count() or first_page.first.is_disabled():
+            return
+        rows = page.locator("p-tabpanel.p-tabpanel-active tbody")
+        previous = rows.first.inner_text()
+        self._pause(cancel)
+        first_page.first.click(timeout=self.navigation_timeout_ms)
+        until = time.monotonic() + self.navigation_timeout_ms / 1000
+        while time.monotonic() < until:
+            self._check(cancel)
+            if rows.first.inner_text() != previous:
+                return
+            time.sleep(0.3)
+        raise TimeoutError("TIPS: erste Ergebnisseite nicht bestätigt.")
+
     def _all_pages(self, page, fin: str, first: list[TipsHit],
                    progress: Progress, cancel: Event) -> list[TipsHit]:
-        """Traverse only the verified case-results paginator, not topic search."""
+        """Read all paginated matches and then return to the first page."""
         by_case = {hit.case_id: hit for hit in first}
         for page_index in range(1, 76):
-            next_page = page.locator(
-                "p-tabpanel.p-tabpanel-active p-paginator button.p-paginator-next"
-            )
-            if not next_page.count() or next_page.first.is_disabled():
+            if not self._advance_results(page, cancel):
+                self._reset_results(page, cancel)
                 return list(by_case.values())
-            previous = page.locator(
-                "p-tabpanel.p-tabpanel-active tbody"
-            ).first.inner_text()
-            self._pause(cancel)
-            next_page.first.click(timeout=self.navigation_timeout_ms)
-            changed = False
-            until = time.monotonic() + self.navigation_timeout_ms / 1000
-            while time.monotonic() < until:
-                self._check(cancel)
-                now = page.locator(
-                    "p-tabpanel.p-tabpanel-active tbody"
-                ).first.inner_text()
-                if now != previous:
-                    changed = True
-                    break
-                time.sleep(0.3)
-            if not changed:
-                raise TimeoutError(
-                    "TIPS: nächste Ergebnisseite nach Klick nicht bestätigt."
-                )
             additional = parse_tips_search_hits(page.content(), fin)
             by_case.update({hit.case_id: hit for hit in additional})
             progress(
@@ -475,17 +489,22 @@ class TipsWriterDownloader:
             raise RuntimeError("TIPS-Fall ist in der erneut geprueften FIN-Suche nicht vorhanden.")
         rows = page.locator('p-tabpanel.p-tabpanel-active tbody tr.p-datatable-selectable-row')
         chosen = None
-        for index in range(rows.count()):
-            candidate = rows.nth(index)
-            values = candidate.locator("td")
-            if values.count() < 4:
-                continue
-            if (_clean_text(values.nth(1).inner_text()) == hit.case_id
-                    and _clean_text(values.nth(3).inner_text()).upper() == hit.fin):
-                chosen = candidate
+        for _page_number in range(76):
+            for index in range(rows.count()):
+                candidate = rows.nth(index)
+                values = candidate.locator("td")
+                if values.count() < 4:
+                    continue
+                if (_clean_text(values.nth(1).inner_text()) == hit.case_id
+                        and _clean_text(values.nth(3).inner_text()).upper() == hit.fin):
+                    chosen = candidate
+                    break
+            if chosen is not None or not self._advance_results(page, cancel):
                 break
         if chosen is None:
-            raise RuntimeError("TIPS-Fallzeile nicht eindeutig klickbar.")
+            raise RuntimeError(
+                "TIPS-Fallzeile ist nach erneuter FIN-Suche nicht eindeutig klickbar."
+            )
         progress(f"TIPS: Fall {hit.case_id} wird geoeffnet.")
         self._pause(cancel)
         chosen.click(timeout=self.navigation_timeout_ms)
@@ -666,7 +685,11 @@ class TipsWriterDownloader:
                         result.errors.append(
                             f"Fall {hit.case_id}: {type(exc).__name__}: {exc}"
                         )
-                result.status = "Teilweise erfolgreich" if result.errors else "Erfolgreich"
+                result.status = (
+                    "Erfolgreich" if not result.errors
+                    else "Teilweise erfolgreich" if result.reports
+                    else "Fehler"
+                )
         except TipsCancelled:
             result.status = "Abgebrochen"
         except Exception as exc:
