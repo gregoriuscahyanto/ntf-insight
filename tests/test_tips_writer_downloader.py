@@ -204,6 +204,14 @@ def test_one_case_writes_one_json_with_ten_sections_and_download_metadata(
         def locator(self, selector):
             return SimpleNamespace(first=Element(), count=lambda: 1)
 
+        def content(self):
+            return (
+                '<p-tabpanel class="p-tabpanel-active"><table>'
+                '<thead><tr><th>Datei</th></tr></thead>'
+                '<tbody><tr><td>test.pdf</td></tr></tbody>'
+                '</table></p-tabpanel>'
+            )
+
     downloader = TipsWriterDownloader(
         tmp_path / "tips", tmp_path / "edge-profile", click_delay_seconds=0,
     )
