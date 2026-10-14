@@ -55,6 +55,7 @@ from ntf_insight.app.models.timeline_table_model import TimelineTableModel
 from ntf_insight.app.widgets.event_time_plot import EventTimePlot
 from ntf_insight.app.widgets.quicktest_browser import QuickTestBrowser
 from ntf_insight.app.widgets.qec_case_download import QecCaseDownloadPanel
+from ntf_insight.app.widgets.fin_zip_export import FinZipExportPanel
 from ntf_insight.app.widgets.case_checkbox_delegate import CaseCheckboxDelegate
 from ntf_insight.app.widgets.autoexport_fin_workspace import AutoExportFinWorkspace
 from ntf_insight.ingestion.manual_entry import ManualCaseService, ManualEntryError
@@ -276,6 +277,7 @@ class CasePage(QWidget):
         self.case_model = CaseTableModel(case_rows)
         self.case_model.selection_changed.connect(self._update_quicktest_selection)
         self.case_model.selection_changed.connect(self._update_qec_selection)
+        self.case_model.selection_changed.connect(self._update_fin_zip_selection)
         self.case_proxy = QSortFilterProxyModel(self)
         self.case_proxy.setSourceModel(self.case_model)
         self.case_proxy.setFilterCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
@@ -411,6 +413,18 @@ class CasePage(QWidget):
             layout.addWidget(self.qec_download)
         self._refresh_qec_download_dates()
         self._update_qec_selection()
+
+        # Exporte pro FIN, nicht pro Schadteilfall: nutzt dieselben
+        # persistenten Checkboxen wie QuickTest und QEC.
+        self.fin_zip_export = None
+        if self.qec_data_dir is not None:
+            self.fin_zip_export = FinZipExportPanel(
+                self.qec_data_dir,
+                all_fins=self.case_model.all_fins,
+                selected_fins=self.case_model.selected_fins,
+            )
+            layout.addWidget(self.fin_zip_export)
+        self._update_fin_zip_selection()
 
         summary = QGridLayout()
         summary.setHorizontalSpacing(24)
@@ -744,6 +758,13 @@ class CasePage(QWidget):
             self.qec_download.set_selection_count(
                 len(self._all_qec_targets()),
                 len(self._selected_qec_targets()),
+            )
+
+    def _update_fin_zip_selection(self) -> None:
+        if self.fin_zip_export is not None:
+            self.fin_zip_export.set_selection_count(
+                len(self.case_model.all_fins()),
+                len(self.case_model.selected_fins()),
             )
 
     def _case_table_qec_link_clicked(self, index) -> None:
