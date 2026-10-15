@@ -28,7 +28,7 @@ def test_main_window_can_be_constructed(tmp_path, monkeypatch) -> None:
     assert hasattr(window.pages["cases"], "cluster_workspace")
     assert window.pages["cases"].cluster_workspace.plot is not None
     assert window.pages["cases"].detail_tabs.tabText(0) == "Clusteranalyse"
-    assert window.pages["cases"].detail_tabs.count() == 3
+    assert window.pages["cases"].detail_tabs.count() == 4
     assert window.pages["cases"].detail_tabs.tabText(1) == "FIN / Fallanalyse"
     assert window.pages["cases"].cluster_workspace is (
         window.pages["cases"].autoexport_fin_workspace
