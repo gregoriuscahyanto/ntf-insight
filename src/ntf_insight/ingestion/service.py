@@ -78,6 +78,35 @@ class SourceImportService:
         if primary:
             source_cases = QECWorkbookParser(target.sha256).parse(archive_path).cases
         original_ids = {c.case_id for c in source_cases}
+        # Make source-derived snapshots consistent before removing the file.
+        affected_cases = []
+        if not primary:
+            for case in self.store.load_cases():
+                altered = False
+                for attr in (
+                    "diagnostic_sessions", "diagnostics", "ecu_states",
+                    "repairs", "tips_observations", "replacements",
+                    "software_events", "supplier_findings",
+                ):
+                    before = getattr(case, attr)
+                    after = [
+                        event for event in before
+                        if not str(getattr(event, "source_ref", "") or "").startswith(
+                            f"raw:{sha256}"
+                        )
+                    ]
+                    if len(after) != len(before):
+                        setattr(case, attr, after)
+                        altered = True
+                if str(getattr(case, "qec_ssl_end_source_ref", "")).startswith(sha256):
+                    for field in (
+                        "qec_ssl_end_finding", "qec_ssl_end_code",
+                        "qec_ssl_end_date", "qec_ssl_end_source_ref",
+                    ):
+                        setattr(case, field, None)
+                    altered = True
+                if altered:
+                    affected_cases.append(case)
 
         # Manual edits must never be silently dropped.
         with self.store.connect() as con:
@@ -98,6 +127,11 @@ class SourceImportService:
                         con.execute("DELETE FROM case_snapshots WHERE case_id=?", [case_id])
                     con.execute("DELETE FROM qec_workflow_decisions WHERE source_sha256=?", [sha256])
                     con.execute("DELETE FROM qec_cluster_handoff WHERE source_sha256=?", [sha256])
+                for case in affected_cases:
+                    con.execute(
+                        "UPDATE case_snapshots SET payload_json=? WHERE case_id=?",
+                        [case.model_dump_json(), case.case_id],
+                    )
                 # Source-specific normalized knowledge.
                 SourceKnowledgeStore(self.store) if False else None
                 con.execute("DELETE FROM source_knowledge_rows WHERE source_sha256=?", [sha256])
