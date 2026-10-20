@@ -71,6 +71,8 @@ class QecWorkflowStore:
             return []
         from ntf_insight.ingestion.real_source_parsers import QECWorkbookParser
         cases = QECWorkbookParser(source.sha256).parse(Path(source.archived_path)).cases
+        from ntf_insight.storage.source_knowledge_store import SourceKnowledgeStore
+        tp_fins = SourceKnowledgeStore(self.store).tp_dashboard_fins()
         results = []
         for case in cases:
             reference = str(getattr(case, "qec_reference", "") or "")
@@ -86,6 +88,7 @@ class QecWorkflowStore:
                 "part_number": str(getattr(case, "qec_part_number", "") or ""),
                 "finding": finding, "report": bool(report),
                 "decision": decision, "reason": reason,
+                "tp_dashboard": case.vin in tp_fins,
             })
         return results
 
@@ -96,6 +99,8 @@ class QecWorkflowStore:
             "cases": len(rows),
             "fins": len({r["fin"] for r in rows}),
             "downloaded": len({r["fin"] for r in rows if r["report"]}),
+            "with_tp": len({r["fin"] for r in rows if r["tp_dashboard"]}),
+            "without_tp": len({r["fin"] for r in rows if not r["tp_dashboard"]}),
             "ntf": counts["NTF"],
             "not_ntf": counts["Kein NTF"],
             "open": counts["Offen"],
@@ -106,11 +111,12 @@ class QecWorkflowStore:
         with Path(destination).open("w", newline="", encoding="utf-8-sig") as handle:
             writer = csv.writer(handle, delimiter=";")
             writer.writerow(("FIN", "QEC-Fall", "Referenz", "Sachnummer",
-                             "SSL-Endbefund", "QEC-Bericht vorhanden",
+                             "TP-Dashboard", "SSL-Endbefund", "QEC-Bericht vorhanden",
                              "NTF-Bewertung", "Begründung"))
             for row in rows:
                 writer.writerow((
                     row["fin"], row["case_id"], row["reference"], row["part_number"],
+                    "Vorhanden" if row["tp_dashboard"] else "Kein TP-Dashboard-Eintrag",
                     row["finding"], "Ja" if row["report"] else "Nein",
                     row["decision"], row["reason"],
                 ))
