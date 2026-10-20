@@ -270,7 +270,11 @@ class LocalBatchImporter:
                 supplement = sheets.get("Schadteile", {})
                 supplement_headers = set(supplement.get("columns", ()))
                 if (
-                    "Schadteile QEC" not in sheets
+                    not any(
+                        {"Referenznr.", "FIN", "Rep.-Datum"} <=
+                        set(info.get("columns", ()))
+                        for info in sheets.values()
+                    )
                     and {
                         "Referenznr.", "SSL Endbefund",
                         "SSL-Endbefund Benennung",
