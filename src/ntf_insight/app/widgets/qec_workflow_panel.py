@@ -86,7 +86,7 @@ class QecWorkflowPanel(QWidget):
             if source else "Keine aktive QEC-generierte FIN-Liste. "
                            "Bitte eine QEC-Excel-Datei unter Datenquellen importieren."
         )
-        stats = self.workflow.overview(self.qec_root)
+        stats = self.workflow.summarize_rows(rows)
         self.step1.setText(f"01  QEC-generierte FIN-Liste · {stats['fins']} FINs / {stats['cases']} Fälle")
         self.step2.setText(
             f"02  QEC-Tool Befundungsberichte · {stats['downloaded']} von {stats['fins']} FINs heruntergeladen"
@@ -127,7 +127,7 @@ class QecWorkflowPanel(QWidget):
             (
                 "TP-Dashboard: Vorhanden" if row["tp_dashboard"]
                 else "TP-Dashboard: Kein Eintrag (Diagnosedaten fehlen)"
-            ) + "\\n" + f"SSL-Endbefund: {row['finding'] or 'Nicht vorhanden'}"
+            ) + "\n" + f"SSL-Endbefund: {row['finding'] or 'Nicht vorhanden'}"
             if row else "Kein Fall ausgewählt."
         )
         index = self.decision.findData(row["decision"]) if row else 0
