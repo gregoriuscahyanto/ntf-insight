@@ -39,6 +39,7 @@ from ntf_insight.ingestion.reference_source_parsers import (
 )
 from ntf_insight.ingestion.service import SourceImportService
 from ntf_insight.ingestion.source_detection import detect_source_type
+from ntf_insight.ingestion.qec_primary import validate_single_qec_list
 from ntf_insight.storage.quicktest_store import QuickTestStore
 from ntf_insight.storage.source_knowledge_store import SourceKnowledgeStore
 
@@ -178,6 +179,8 @@ class LocalBatchImporter:
                 extracted.extend(zip_members)
                 from_zip.update(zip_members)
 
+            # Validate primary QEC workbooks before any member is archived.
+            validate_single_qec_list(extracted, previously_archived_items)
             progress("Originaldateien archivieren …")
             known = previously_archived | zip_hashes
             artifacts: list[SourceArtifact] = []
@@ -219,6 +222,12 @@ class LocalBatchImporter:
                 artifacts.append(artifact)
                 label = str(source_type)
                 summary.source_counts[label] = summary.source_counts.get(label, 0) + 1
+
+            # A second QEC FIN cohort must never enter the archive/database.
+            validate_single_qec_list(
+                [Path(artifact.archived_path) for artifact in artifacts],
+                previously_archived_items,
+            )
 
             # Case lists are applied before free-floating diagnostic/repair events.
             case_artifacts = [
