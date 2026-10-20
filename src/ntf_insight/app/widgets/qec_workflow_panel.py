@@ -30,6 +30,9 @@ class QecWorkflowPanel(QWidget):
         self.progress = QProgressBar()
         self.progress.setRange(0, 100)
         body.addWidget(self.progress)
+        self.tp_coverage = QLabel(objectName="PageSubtitle")
+        self.tp_coverage.setWordWrap(True)
+        body.addWidget(self.tp_coverage)
         self.step3 = QLabel("03  Fachliche Schlussfolgerung", objectName="CardTitle")
         body.addWidget(self.step3)
         self.summary = QLabel(objectName="PageSubtitle")
@@ -89,6 +92,12 @@ class QecWorkflowPanel(QWidget):
             f"02  QEC-Tool Befundungsberichte · {stats['downloaded']} von {stats['fins']} FINs heruntergeladen"
         )
         self.progress.setValue(round(100 * stats["downloaded"] / max(stats["fins"], 1)))
+        self.tp_coverage.setText(
+            f"TP-Dashboard-Abdeckung: {stats['with_tp']} von {stats['fins']} "
+            f"QEC-FINs. Ohne TP-Dashboard-Eintrag: {stats['without_tp']} FINs. "
+            "Diese FINs bleiben in der QEC-Gesamtmenge erhalten und werden nicht "
+            "als fehlerfrei oder als NTF eingestuft."
+        )
         self.summary.setText(
             f"NTF: {stats['ntf']} · Kein NTF: {stats['not_ntf']} · "
             f"Offen: {stats['open']} (je QEC-Fall; keine automatische Lieferantenschuld-Zuordnung)"
@@ -98,6 +107,7 @@ class QecWorkflowPanel(QWidget):
         self.case_selector.clear()
         for row in rows:
             self.case_selector.addItem(
+                f"{'✓' if row['tp_dashboard'] else '⚠'} "
                 f"{row['case_id']} · {row['fin']}", row["case_id"]
             )
         index = self.case_selector.findData(old)
@@ -114,7 +124,10 @@ class QecWorkflowPanel(QWidget):
         selected = self.case_selector.currentData()
         row = next((r for r in self._rows if r["case_id"] == selected), None)
         self.finding.setText(
-            f"SSL-Endbefund: {row['finding'] or 'Nicht vorhanden'}"
+            (
+                "TP-Dashboard: Vorhanden" if row["tp_dashboard"]
+                else "TP-Dashboard: Kein Eintrag (Diagnosedaten fehlen)"
+            ) + "\\n" + f"SSL-Endbefund: {row['finding'] or 'Nicht vorhanden'}"
             if row else "Kein Fall ausgewählt."
         )
         index = self.decision.findData(row["decision"]) if row else 0
