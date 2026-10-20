@@ -53,9 +53,6 @@ class SourceImportService:
         """
         from ntf_insight.ingestion.qec_primary import active_qec_lists
         from ntf_insight.ingestion.real_source_parsers import QECWorkbookParser
-        from ntf_insight.storage.quicktest_store import QuickTestStore
-        from ntf_insight.storage.source_knowledge_store import SourceKnowledgeStore
-
         artifacts = self.list_artifacts()
         target = next((a for a in artifacts if a.sha256 == sha256), None)
         if target is None:
