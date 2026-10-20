@@ -65,6 +65,7 @@ from ntf_insight.reporting.markdown import save_case_report
 from ntf_insight.storage.reference_repositories import ReferenceRepository
 from ntf_insight.storage.repositories import CaseRepository
 from ntf_insight.storage.quicktest_store import QuickTestStore
+from ntf_insight.storage.qec_workflow_store import QecWorkflowStore
 from ntf_insight.storage.dtc_review_store import DtcReviewStore
 from ntf_insight.storage.source_knowledge_store import SourceKnowledgeStore
 
@@ -139,6 +140,10 @@ class CasePage(QWidget):
                 if self.source_knowledge is not None else {}
             ),
             review_store=review_store,
+            handed_off_fins=(
+                QecWorkflowStore(manual_service.store).handed_off_fins()
+                if manual_service is not None else ()
+            ),
             quicktest_fins=(
                 tuple(QuickTestStore(manual_service.store).list_fins())
                 if manual_service is not None else ()
