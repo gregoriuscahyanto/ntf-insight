@@ -12,7 +12,6 @@ from ntf_insight.acquisition.qec_tool import (
     _qec_url, _snapshot_data, _store_attachment, _write_result,
     parse_attachment_urls, parse_qec_targets, parse_search_hits,
     inspect_search_results, parse_attachment_listing, _validate_attachment_response_url,
-    attachment_matches_reference, _matching_previous_attachments,
 )
 
 FIN = "WDD12345678901234"
