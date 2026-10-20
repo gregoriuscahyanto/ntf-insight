@@ -79,6 +79,7 @@ class SourcesPage(QWidget):
     SOURCE_LABELS = {
         SourceType.VEHICLE_CASE_LIST: "QEC-Fall-/SSL-Endbefundliste",
         SourceType.SHORT_TEST: "Kurztest",
+        SourceType.TP_DASHBOARD: "TP-Dashboard · CPC/SAM",
         SourceType.REPLACEMENT_LIST: "Tauschliste",
         SourceType.SUPPLIER_FINDING: "Lieferantenbefund",
         SourceType.WORKSHOP_HISTORY: "Werkstatt-/Claim-Historie",
