@@ -387,6 +387,34 @@ class SourceKnowledgeStore:
             for ecu, dtc, vehicles, events, description in rows
         }
 
+    def tp_dashboard_fins(self) -> frozenset[str]:
+        """FINs evidenced by an imported TP-Dashboard CSV, not by QEC itself.
+
+        Use source provenance to avoid claiming missing TP rows from unrelated
+        AutoExport or QuickTest data; full FIN is normalized locally.
+        """
+        with self.store.connect() as con:
+            rows = con.execute(
+                """
+                SELECT DISTINCT CASE
+                    WHEN length(trim(r.fin)) = 20
+                      AND left(upper(trim(r.fin)), 3) = 'MBC'
+                    THEN substr(upper(trim(r.fin)), 4)
+                    ELSE upper(trim(r.fin))
+                END AS normalized_fin
+                FROM source_knowledge_rows r
+                JOIN source_knowledge_documents d
+                  ON r.source_sha256 = d.source_sha256
+                WHERE r.category = 'autoexport_dtc'
+                  AND d.source_kind = 'autoexport_rows'
+                  AND json_extract_string(d.metadata_json, '$.source_type') =
+                      'tp_dashboard'
+                  AND NULLIF(trim(r.fin), '') IS NOT NULL
+                ORDER BY 1
+                """
+            ).fetchall()
+        return frozenset(row[0] for row in rows)
+
     def autoexport_source_fins(self, category: str) -> frozenset[str]:
         """FIN membership for coverage metrics; only supported source types.
 
