@@ -19,11 +19,16 @@ from PySide6.QtWidgets import (
     QSizePolicy,
     QTableView,
     QVBoxLayout,
+    QScrollArea,
+    QFrame,
     QWidget,
 )
 
 from ntf_insight.app.models.simple_table_model import SimpleTableModel
 from ntf_insight.app.widgets.file_drop_zone import FileDropZone
+from ntf_insight.app.widgets.qec_workflow_panel import QecWorkflowPanel
+from ntf_insight.storage.qec_workflow_store import QecWorkflowStore
+from ntf_insight.ingestion.qec_primary import active_qec_lists
 from ntf_insight.ingestion.artifacts import ParseStatus, SourceType
 from ntf_insight.ingestion.batch_import import ImportSummary, LocalBatchImporter
 from ntf_insight.ingestion.source_detection import detect_source_type
@@ -74,6 +79,7 @@ class SourcesPage(QWidget):
     SOURCE_LABELS = {
         SourceType.VEHICLE_CASE_LIST: "QEC-Fall-/SSL-Endbefundliste",
         SourceType.SHORT_TEST: "Kurztest",
+        SourceType.TP_DASHBOARD: "TP-Dashboard · CPC/SAM",
         SourceType.REPLACEMENT_LIST: "Tauschliste",
         SourceType.SUPPLIER_FINDING: "Lieferantenbefund",
         SourceType.WORKSHOP_HISTORY: "Werkstatt-/Claim-Historie",
@@ -111,7 +117,15 @@ class SourcesPage(QWidget):
             else None
         )
 
-        layout = QVBoxLayout(self)
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
+        outer.addWidget(scroll)
+        surface = QWidget()
+        scroll.setWidget(surface)
+        layout = QVBoxLayout(surface)
         layout.setContentsMargins(32, 28, 32, 28)
         layout.setSpacing(14)
 
@@ -126,6 +140,20 @@ class SourcesPage(QWidget):
         )
         subtitle.setWordWrap(True)
         layout.addWidget(subtitle)
+
+        self.workflow_store = (
+            QecWorkflowStore(self.import_service.store)
+            if self.import_service is not None else None
+        )
+        self.qec_workflow = (
+            QecWorkflowPanel(self.workflow_store, Path(data_dir))
+            if self.workflow_store is not None and data_dir else None
+        )
+        if self.qec_workflow is not None:
+            layout.addWidget(self.qec_workflow)
+        self.active_qec_label = QLabel(objectName="PageSubtitle")
+        self.active_qec_label.setWordWrap(True)
+        layout.addWidget(self.active_qec_label)
 
         self.readiness_model = SimpleTableModel(
             ("Quelle", "Zweck", "Implementierung", "Aktuelle Daten")
@@ -224,6 +252,14 @@ class SourcesPage(QWidget):
         self.retry_button.setEnabled(False)
         self.retry_button.clicked.connect(self._retry_archived)
         archive_controls.addWidget(self.retry_button)
+        self.delete_button = QPushButton("Markierte Datei löschen…")
+        self.delete_button.setEnabled(False)
+        self.delete_button.setToolTip(
+            "Original und zugehörige importierte Datensätze lokal löschen. "
+            "QEC-Fälle mit manuellen Änderungen sind geschützt."
+        )
+        self.delete_button.clicked.connect(self._delete_archived)
+        archive_controls.addWidget(self.delete_button)
         layout.addLayout(archive_controls)
         self._visible_artifacts = []
 
@@ -262,12 +298,43 @@ class SourcesPage(QWidget):
             self._archive_paths([Path(filename) for filename in filenames])
 
     def _artifact_selected(self, index) -> None:
+        self.delete_button.setEnabled(
+            self.import_service is not None and self._worker is None
+            and index.isValid() and 0 <= index.row() < len(self._visible_artifacts)
+        )
         self.retry_button.setEnabled(
             self.import_service is not None
             and self._worker is None
             and index.isValid()
             and 0 <= index.row() < len(self._visible_artifacts)
         )
+
+    def _delete_archived(self) -> None:
+        index = self.artifact_table.currentIndex()
+        if self.import_service is None or self._worker is not None:
+            return
+        if not index.isValid() or index.row() >= len(self._visible_artifacts):
+            return
+        artifact = self._visible_artifacts[index.row()]
+        answer = QMessageBox.question(
+            self, "Quelldatei löschen?",
+            f"'{artifact.original_name}' samt zugehörigen importierten Daten "
+            "unwiderruflich aus dem lokalen Archiv entfernen? "
+            "Manuelle QEC-Änderungen sind geschützt."
+        )
+        if answer != QMessageBox.StandardButton.Yes:
+            return
+        try:
+            self.import_service.delete_artifact(artifact.sha256)
+        except (OSError, ValueError, RuntimeError) as exc:
+            QMessageBox.warning(self, "Löschen nicht möglich", str(exc))
+            return
+        self.import_status.setText(
+            "Quelldatei gelöscht. Zugehörige Quellen-Daten wurden bereinigt. "
+            "Ansichten werden neu geladen."
+        )
+        self._refresh_all()
+        self.sources_updated.emit(self.import_status.text(), 0)
 
     def _retry_archived(self) -> None:
         """Re-parse an original source already in the local immutable archive."""
@@ -310,6 +377,7 @@ class SourcesPage(QWidget):
         self.archive_button.setEnabled(False)
         self.drop_zone.setEnabled(False)
         self.retry_button.setEnabled(False)
+        self.delete_button.setEnabled(False)
         self.import_status.setText(
             f"{len(paths)} Datei(en)/ZIP-Paket(e) werden lokal geprüft und importiert …"
         )
@@ -387,6 +455,20 @@ class SourcesPage(QWidget):
         artifacts = self._artifacts()
         self._refresh_artifacts(artifacts)
         self._refresh_readiness(artifacts)
+        active = active_qec_lists(artifacts)
+        if len(active) == 1:
+            self.active_qec_label.setText(
+                f"Aktuell verwendete QEC-FIN-Liste: {active[0].original_name}"
+            )
+        elif active:
+            self.active_qec_label.setText(
+                f"Achtung: {len(active)} primäre QEC-Listen im Altbestand. "
+                "Bitte die Datenbereinigung durchführen."
+            )
+        else:
+            self.active_qec_label.setText("Aktuell keine QEC-FIN-Liste aktiv.")
+        if self.qec_workflow is not None:
+            self.qec_workflow.refresh()
 
     def _refresh_artifacts(self, artifacts) -> None:
         view = self.archive_view.currentData()
@@ -436,6 +518,7 @@ class SourcesPage(QWidget):
             )
         self.artifact_model.set_rows(rows)
         self.retry_button.setEnabled(False)
+        self.delete_button.setEnabled(False)
         self.archive_counts.setText(
             f"{processed} verarbeitet · {pending} weitere im Rohdatenarchiv. "
             "Nicht angezeigte Originale bleiben erhalten."

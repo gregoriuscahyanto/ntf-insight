@@ -238,6 +238,7 @@ class AutoExportFinWorkspace(QWidget):
         *,
         review_store: DtcReviewStore | None = None,
         quicktest_fins: tuple[str, ...] = (),
+        handed_off_fins: tuple[str, ...] = (),
     ) -> None:
         super().__init__()
         self.source = source
@@ -256,6 +257,12 @@ class AutoExportFinWorkspace(QWidget):
         self._finding_counts = finding_counts(cases)
         self._running_qec_cases = self._all_qec_cases
         self._quicktest_fins = tuple(quicktest_fins)
+        self._tp_dashboard_fins = (
+            source.tp_dashboard_fins()
+            if source is not None and hasattr(source, "tp_dashboard_fins")
+            else frozenset()
+        )
+        self._handed_off_fins = frozenset(handed_off_fins)
         self.population_metrics = population_metrics or {}
         self._task: _FinClusterTask | None = None
         self._run_results: dict[str, FinPatternResult] = {}
@@ -294,7 +301,9 @@ class AutoExportFinWorkspace(QWidget):
             (
                 f"AutoExport: {total_auto:,} FINs importiert · "
                 f"QEC-Pumpenfälle: {len(self._linked):,} FINs · "
-                "Gesamte eindeutige FIN-Zahl nach gemeinsamer Analyse."
+                f"TP-Dashboard: {len(set(self._linked) & self._tp_dashboard_fins):,} "
+                f"mit Eintrag · {len(set(self._linked) - self._tp_dashboard_fins):,} "
+                "ohne TP-Dashboard-Eintrag. Alle QEC-FINs bleiben erhalten."
             ).replace(",", "."),
             objectName="PageSubtitle",
         )
@@ -330,6 +339,15 @@ class AutoExportFinWorkspace(QWidget):
             "gesamte AutoExport+QEC-Grundgesamtheit."
         )
         scope_row.addWidget(self.only_qec)
+        self.workflow_handoff_only = QCheckBox(
+            f"Nur freigegebene NTF-FINs aus Datenquellen ({len(self._handed_off_fins)})"
+        )
+        self.workflow_handoff_only.setEnabled(bool(self._handed_off_fins))
+        self.workflow_handoff_only.setToolTip(
+            "Schränkt die QEC-Fallkohorte auf explizit bestätigte NTF-FINs "
+            "aus dem Datenquellen-Workflow ein. Ohne Freigabe deaktiviert."
+        )
+        scope_row.addWidget(self.workflow_handoff_only)
         self.qec_anchor_mode = QCheckBox(
             "QEC-Fälle als Anker für die Clusterbildung verwenden"
         )
@@ -607,6 +625,7 @@ class AutoExportFinWorkspace(QWidget):
         for control in (self.min_cluster_size, self.min_samples):
             control.valueChanged.connect(self._invalidate)
         self.only_qec.toggled.connect(self._invalidate)
+        self.workflow_handoff_only.toggled.connect(self._invalidate)
         self._update_finding_summary()
         # Keep one static plot and cached results for fast method switching.
         self._show_empty()
@@ -807,6 +826,12 @@ class AutoExportFinWorkspace(QWidget):
         self._show_empty()
         self._analysis_scoped_to_qec = self.only_qec.isChecked()
         self._running_qec_cases = self._matched_qec_cases()
+        if self.workflow_handoff_only.isChecked():
+            self._running_qec_cases = tuple(
+                case for case in self._running_qec_cases
+                if case.vin.strip().upper() in self._handed_off_fins
+            )
+            self._analysis_scoped_to_qec = True
         if self._analysis_scoped_to_qec and not self._running_qec_cases:
             self.status.setText(
                 "Kein QEC-Fall entspricht dem Endbefundfilter. "
@@ -820,6 +845,7 @@ class AutoExportFinWorkspace(QWidget):
         self.start_button.setEnabled(False)
         self.filter_button.setEnabled(False)
         self.only_qec.setEnabled(False)
+        self.workflow_handoff_only.setEnabled(False)
         self.qec_anchor_mode.setEnabled(False)
         self.min_cluster_size.setEnabled(False)
         self.min_samples.setEnabled(False)
@@ -849,6 +875,7 @@ class AutoExportFinWorkspace(QWidget):
         self.start_button.setEnabled(True)
         self.filter_button.setEnabled(True)
         self.only_qec.setEnabled(True)
+        self.workflow_handoff_only.setEnabled(bool(self._handed_off_fins))
         self.qec_anchor_mode.setEnabled(True)
         self.min_cluster_size.setEnabled(True)
         self.min_samples.setEnabled(not self.qec_anchor_mode.isChecked())
@@ -957,6 +984,9 @@ class AutoExportFinWorkspace(QWidget):
                 f"QEC: {result.qec_fin_count:,} FINs, davon "
                 f"{result.overlap_fin_count:,} bereits im AutoExport · "
                 f"QEC zusätzlich: {result.qec_only_fin_count:,}. "
+                f"TP-Dashboard in QEC-Kohorte: "
+                f"{len(set(result.qec_links) & self._tp_dashboard_fins):,} vorhanden · "
+                f"{len(set(result.qec_links) - self._tp_dashboard_fins):,} ohne Eintrag. "
                 "Kein Fahrzeug doppelt gezählt."
             ).replace(",", ".")
         )
@@ -1315,6 +1345,10 @@ class AutoExportFinWorkspace(QWidget):
             return True
         if fin in self.result.no_dtc_fins:
             self.fin_status.setText(
+                "FIN in QEC vorhanden, aber kein TP-Dashboard-Eintrag. "
+                "Die FIN bleibt in der Gesamtübersicht, ohne künstliche "
+                "Clusterzuordnung." if fin in self.result.qec_links
+                and fin not in self._tp_dashboard_fins else
                 "FIN vorhanden, aber ohne geeignete DTC-Merkmale "
                 "für diese Clusteranalyse."
             )

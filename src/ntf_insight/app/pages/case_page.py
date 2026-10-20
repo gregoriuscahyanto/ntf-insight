@@ -65,6 +65,7 @@ from ntf_insight.reporting.markdown import save_case_report
 from ntf_insight.storage.reference_repositories import ReferenceRepository
 from ntf_insight.storage.repositories import CaseRepository
 from ntf_insight.storage.quicktest_store import QuickTestStore
+from ntf_insight.storage.qec_workflow_store import QecWorkflowStore
 from ntf_insight.storage.dtc_review_store import DtcReviewStore
 from ntf_insight.storage.source_knowledge_store import SourceKnowledgeStore
 
@@ -121,6 +122,10 @@ class CasePage(QWidget):
             self.source_knowledge.autoexport_source_fins("autoexport_tips")
             if self.source_knowledge is not None else frozenset()
         )
+        self._tp_fins = (
+            self.source_knowledge.tp_dashboard_fins()
+            if self.source_knowledge is not None else frozenset()
+        )
         self._syncing_quicktest_fin = False
 
         outer_layout = QVBoxLayout(self)
@@ -139,6 +144,10 @@ class CasePage(QWidget):
                 if self.source_knowledge is not None else {}
             ),
             review_store=review_store,
+            handed_off_fins=(
+                QecWorkflowStore(manual_service.store).handed_off_fins()
+                if manual_service is not None else ()
+            ),
             quicktest_fins=(
                 tuple(QuickTestStore(manual_service.store).list_fins())
                 if manual_service is not None else ()
@@ -181,6 +190,22 @@ class CasePage(QWidget):
         )
         intro.setWordWrap(True)
         layout.addWidget(intro)
+        qec_fins = {
+            case.vin.strip().upper()
+            for case in self.real_cases
+            if case.component_profile_id == "coolant_pump"
+            and getattr(case, "qec_reference", None)
+        }
+        with_tp = len(qec_fins & self._tp_fins)
+        self.tp_coverage_note = QLabel(
+            f"QEC-Gesamtbestand: {len(qec_fins)} eindeutige FINs · "
+            f"TP-Dashboard-Diagnosedaten: {with_tp} · "
+            f"Ohne TP-Dashboard-Eintrag: {len(qec_fins) - with_tp}. "
+            "Alle QEC-FINs bleiben in der FIN-/Fallanalyse sichtbar.",
+            objectName="PageSubtitle",
+        )
+        self.tp_coverage_note.setWordWrap(True)
+        layout.addWidget(self.tp_coverage_note)
 
         self.selector = QComboBox(self)
         self.selector.setMinimumWidth(260)
@@ -271,6 +296,10 @@ class CasePage(QWidget):
                         else None
                     ),
                     tips_status=tips_status,
+                    tp_status=(
+                        "Vorhanden" if case.vin.strip().upper() in self._tp_fins
+                        else "Kein TP-Dashboard-Eintrag"
+                    ),
                 )
             )
 
@@ -309,6 +338,9 @@ class CasePage(QWidget):
         )
         self.case_table.horizontalHeader().setSectionResizeMode(
             CaseTableModel.TIPS_COLUMN, QHeaderView.ResizeMode.ResizeToContents
+        )
+        self.case_table.horizontalHeader().setSectionResizeMode(
+            CaseTableModel.TP_DASHBOARD_COLUMN, QHeaderView.ResizeMode.ResizeToContents
         )
         self.case_table.clicked.connect(self._case_clicked)
         self.case_table.clicked.connect(self._case_table_quicktest_link_clicked)

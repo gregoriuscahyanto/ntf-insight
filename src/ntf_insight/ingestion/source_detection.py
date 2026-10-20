@@ -8,6 +8,7 @@ import csv
 from pathlib import Path
 
 from ntf_insight.ingestion.artifacts import SourceType
+from ntf_insight.ingestion.qec_primary import primary_qec_sheet
 
 
 def detect_source_type(path: Path) -> SourceType:
@@ -34,6 +35,10 @@ def detect_source_type(path: Path) -> SourceType:
                 if {"Fin", "CaseId", "CreationDate", "InitialWorkshopMessageCustomerComplaint"} <= headers:
                     return SourceType.TIPS_CASE
                 if {"DiagStartDt", "EcuFaultNm", "Fin"} <= headers:
+                    if {
+                        "EcuNm", "CntXDDiagnosisHeaderSid", "LastRepairDt", "C1"
+                    } <= headers:
+                        return SourceType.TP_DASHBOARD
                     return SourceType.SHORT_TEST
                 if {"RepairDt", "Fin", "PartLetterCd"} <= headers:
                     return SourceType.WORKSHOP_HISTORY
@@ -46,15 +51,8 @@ def detect_source_type(path: Path) -> SourceType:
 
         workbook = load_workbook(path, read_only=True, data_only=True, keep_links=False)
         try:
-            if "Schadteile QEC" in workbook.sheetnames:
-                header = next(
-                    workbook["Schadteile QEC"].iter_rows(
-                        min_row=1, max_row=1, values_only=True
-                    ),
-                    (),
-                )
-                if {"Referenznr.", "FIN", "Rep.-Datum"} <= set(header):
-                    return SourceType.VEHICLE_CASE_LIST
+            if primary_qec_sheet(workbook) is not None:
+                return SourceType.VEHICLE_CASE_LIST
             # QEC export variant without VIN: SSL result can be joined only
             # to an ALREADY known QEC case with the exact reference number.
             # Recognizing the file never creates a case or guesses a FIN.
