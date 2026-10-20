@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import csv
+import json
 from collections import Counter
 from pathlib import Path
 
@@ -73,15 +74,30 @@ class QecWorkflowStore:
         cases = QECWorkbookParser(source.sha256).parse(Path(source.archived_path)).cases
         from ntf_insight.storage.source_knowledge_store import SourceKnowledgeStore
         tp_fins = SourceKnowledgeStore(self.store).tp_dashboard_fins()
+        # Avoid hundreds of DuckDB connections in a 173+ case QEC cohort.
+        with self.store.connect() as con:
+            saved = {
+                case_id: json.loads(payload)
+                for case_id, payload in con.execute(
+                    "SELECT case_id, payload_json FROM case_snapshots"
+                ).fetchall()
+            }
+            decisions = {
+                case_id: (decision, reason)
+                for case_id, decision, reason in con.execute(
+                    "SELECT case_id, decision, reason FROM qec_workflow_decisions "
+                    "WHERE source_sha256=?", [source.sha256],
+                ).fetchall()
+            }
         results = []
         for case in cases:
             reference = str(getattr(case, "qec_reference", "") or "")
             report = local_qec_archive(qec_root, case.vin, reference)
             finding = str(getattr(case, "qec_ssl_end_finding", "") or "")
-            dbcase = self.store.get_case(case.case_id)
-            if dbcase is not None and dbcase.vin == case.vin:
-                finding = str(getattr(dbcase, "qec_ssl_end_finding", "") or finding)
-            decision, reason = self.decision(source.sha256, case.case_id)
+            saved_case = saved.get(case.case_id)
+            if saved_case is not None and saved_case.get("vehicle", {}).get("vin") == case.vin:
+                finding = str(saved_case.get("qec_ssl_end_finding") or finding)
+            decision, reason = decisions.get(case.case_id, ("Offen", ""))
             results.append({
                 "case_id": case.case_id, "fin": case.vin,
                 "reference": reference,
@@ -92,8 +108,8 @@ class QecWorkflowStore:
             })
         return results
 
-    def overview(self, qec_root: Path) -> dict[str, int]:
-        rows = self.rows(qec_root)
+    @staticmethod
+    def summarize_rows(rows: list[dict]) -> dict[str, int]:
         counts = Counter(row["decision"] for row in rows)
         return {
             "cases": len(rows),
@@ -105,6 +121,9 @@ class QecWorkflowStore:
             "not_ntf": counts["Kein NTF"],
             "open": counts["Offen"],
         }
+
+    def overview(self, qec_root: Path) -> dict[str, int]:
+        return self.summarize_rows(self.rows(qec_root))
 
     def export_csv(self, destination: Path, qec_root: Path) -> int:
         rows = self.rows(qec_root)
