@@ -217,10 +217,7 @@ class SourceKnowledgeStore:
                 FROM source_knowledge_rows
                 WHERE category = 'qec_row'
                   AND NULLIF(trim(reference), '') IS NOT NULL
-                  AND (
-                      source_location LIKE 'Schadteile!%'
-                      OR source_location LIKE 'Schadteile QEC!%'
-                  )
+                  AND source_location LIKE '%!%'
                 ORDER BY reference, source_sha256, source_location
                 """
             ).fetchall()
@@ -323,13 +320,13 @@ class SourceKnowledgeStore:
                 SELECT
                     COUNT(*) AS all_rows,
                     COUNT(*) FILTER (
-                        WHERE source_location LIKE 'Schadteile QEC!%'
+                        WHERE NULLIF(trim(fin), '') IS NOT NULL
                     ) AS primary_rows,
                     COUNT(DISTINCT reference) FILTER (
-                        WHERE source_location LIKE 'Schadteile QEC!%'
+                        WHERE NULLIF(trim(fin), '') IS NOT NULL
                     ) AS primary_references,
                     COUNT(DISTINCT fin) FILTER (
-                        WHERE source_location LIKE 'Schadteile QEC!%'
+                        WHERE NULLIF(trim(fin), '') IS NOT NULL
                     ) AS primary_fins
                 FROM source_knowledge_rows
                 WHERE category = 'qec_row'
