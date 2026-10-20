@@ -27,6 +27,7 @@ from ntf_insight.domain.events import (
 )
 from ntf_insight.domain.vehicle import Vehicle
 from ntf_insight.ingestion.artifacts import SourceType
+from ntf_insight.ingestion.qec_primary import primary_qec_sheet
 
 
 VIN_RE = re.compile(r"^[A-HJ-NPR-Z0-9]{17}$", re.IGNORECASE)
@@ -146,7 +147,7 @@ def _csv_rows(path: Path):
 
 class QECWorkbookParser:
     name = "qec_workbook"
-    version = "1.0.0"
+    version = "1.1.0"
 
     def __init__(self, source_sha: str) -> None:
         self.source_sha = source_sha
@@ -159,13 +160,13 @@ class QECWorkbookParser:
             path, read_only=True, data_only=True, keep_links=False
         )
         try:
-            if "Schadteile QEC" not in workbook.sheetnames:
-                raise ValueError("QEC workbook has no primary 'Schadteile QEC' sheet.")
-            sheet = workbook["Schadteile QEC"]
-            rows = sheet.iter_rows(values_only=True)
+            sheet_name = primary_qec_sheet(workbook)
+            if sheet_name is None:
+                raise ValueError(
+                    "QEC-FIN-Liste benötigt Referenznr., FIN und Rep.-Datum."
+                )
+            rows = workbook[sheet_name].iter_rows(values_only=True)
             headers = next(rows)
-            if not {"Referenznr.", "FIN", "Rep.-Datum"} <= set(headers):
-                raise ValueError("QEC primary sheet is missing required columns.")
 
             for row_number, values in enumerate(rows, start=2):
                 record = dict(zip(headers, values))
@@ -206,7 +207,7 @@ class QECWorkbookParser:
                     qec_ssl_end_date=(
                         end_dt["occurred_at"].date().isoformat() if end_dt else None
                     ),
-                    source_ref=_ref(self.source_sha, f"Schadteile QEC!{row_number}"),
+                    source_ref=_ref(self.source_sha, f"{sheet_name}!{row_number}"),
                 )
 
                 replacement_dt = _date_event(record.get("Rep.-Datum"))
@@ -218,7 +219,7 @@ class QECWorkbookParser:
                         component_type=component,
                         old_part_number=_str(record.get("Sachnr. Teil")),
                         serial_number=_str(record.get("Lief. Seriennr.")),
-                        source_ref=_ref(self.source_sha, f"Schadteile QEC!{row_number}"),
+                        source_ref=_ref(self.source_sha, f"{sheet_name}!{row_number}"),
                         **replacement_dt,
                     )
                     case.replacements.append(replacement)
@@ -239,7 +240,7 @@ class QECWorkbookParser:
                                 vin=fin,
                                 result=result,
                                 failure_mode=finding,
-                                source_ref=_ref(self.source_sha, f"Schadteile QEC!{row_number}"),
+                                source_ref=_ref(self.source_sha, f"{sheet_name}!{row_number}"),
                                 **end_dt,
                             )
                         )
