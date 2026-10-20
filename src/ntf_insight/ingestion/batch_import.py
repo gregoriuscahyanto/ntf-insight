@@ -411,6 +411,7 @@ class LocalBatchImporter:
                         archived.sha256 not in current_shas
                         and archived.source_type in {
                             SourceType.SHORT_TEST,
+                            SourceType.TP_DASHBOARD,
                             SourceType.WORKSHOP_HISTORY,
                             SourceType.TIPS_CASE,
                         }
@@ -456,7 +457,8 @@ class LocalBatchImporter:
                     continue
 
                 if artifact.source_type in {
-                    SourceType.SHORT_TEST, SourceType.WORKSHOP_HISTORY,
+                    SourceType.SHORT_TEST,
+                            SourceType.TP_DASHBOARD, SourceType.WORKSHOP_HISTORY,
                     SourceType.TIPS_CASE,
                 } and suffix == ".csv":
                     # Store all FINs, not only those with QEC. When QEC
@@ -495,7 +497,8 @@ class LocalBatchImporter:
                             continue
                 parser = None
                 if artifact.source_type in {
-                    SourceType.SHORT_TEST, SourceType.WORKSHOP_HISTORY,
+                    SourceType.SHORT_TEST,
+                            SourceType.TP_DASHBOARD, SourceType.WORKSHOP_HISTORY,
                     SourceType.TIPS_CASE,
                 } and suffix == ".csv":
                     parser = AutoExportParser(
