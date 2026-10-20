@@ -508,9 +508,14 @@ def test_popup_inventory_is_saved_and_existing_files_not_redownloaded(tmp_path):
     from types import SimpleNamespace
 
     document = '''<html><body><table>
-      <tr><td>10.04.2026</td><td><a href="displayPruefberichtFile.qec?attachmentId=1001">Befund A</a></td></tr>
-      <tr><td>11.04.2026</td><td><a href="displayPruefberichtFile.qec?attachmentId=1002">Befund B</a></td></tr>
-      <tr><td><a href="displayPruefberichtFile.qec?attachmentId=1001">Befund A</a></td></tr>
+      <tr><th>Dateinummer</th><th>Aktuelle Version</th><th>Dateiname</th></tr>
+      <tr><td><a href="displayPruefberichtFile.qec?attachmentId=1001">1001</a></td>
+          <td>10.04.2026</td><td>900000625_A.pdf</td></tr>
+      <tr><td><a href="displayPruefberichtFile.qec?attachmentId=1002">1002</a></td>
+          <td>11.04.2026</td><td>900000625_B.pdf</td></tr>
+      <tr><td><a href="displayPruefberichtFile.qec?attachmentId=1003">1003</a></td>
+          <td>11.04.2026</td><td>900000754_C.pdf</td></tr>
+      <tr><td><a href="displayPruefberichtFile.qec?attachmentId=1001">1001</a></td></tr>
     </table></body></html>'''
     popup_url = "https://qect.mo360cp.i.mercedes-benz.com/qec-access/listAttachments.qec"
 
@@ -568,14 +573,16 @@ def test_popup_inventory_is_saved_and_existing_files_not_redownloaded(tmp_path):
     result = QecResult(FIN)
     inventory = {}
     downloader._save_popups(SimpleNamespace(), FakePage(), folder, result,
-                            lambda _msg: None, __import__("threading").Event(), inventory)
+                            lambda _msg: None, __import__("threading").Event(),
+                            inventory, reference="900000625")
     assert calls == ["1001", "1002"]
     assert len(result.files) == 2 and not result.errors
     assert sorted(inventory) == ["1001", "1002"]
     assert all(x["status"] == "Gespeichert" for x in inventory.values())
     assert not (folder.parent / "anhangliste.json").exists()
     downloader._save_popups(SimpleNamespace(), FakePage(), folder, result,
-                            lambda _msg: None, __import__("threading").Event(), inventory)
+                            lambda _msg: None, __import__("threading").Event(),
+                            inventory, reference="900000625")
     assert calls == ["1001", "1002"]
 
 
@@ -634,7 +641,7 @@ def test_one_case_contains_five_sections_and_no_reiter_or_html_files(tmp_path):
     downloader = QecDownloader(tmp_path, tmp_path / "profile", click_delay_seconds=0)
     downloader._search = lambda *_args: (page, page, _search_html(
         rows=[_row(reference=hit.reference)]), {})
-    downloader._save_popups = lambda _ctx, _page, _folder, _result, _log, _cancel, inv: inv.update({
+    downloader._save_popups = lambda _ctx, _page, _folder, _result, _log, _cancel, inv, *, reference: inv.update({
         "1001": {"anhang_id": "1001", "linktext": "Bericht", "status": "Gespeichert",
                  "datei": "1001_bericht.pdf"},
     })
