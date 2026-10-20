@@ -65,6 +65,14 @@ class SourceImportService:
         if not archive_path.is_relative_to(raw_root) or archive_path.is_symlink():
             raise ValueError("Quelldatei liegt außerhalb des sicheren Rohdatenarchivs.")
 
+        # Ensure optional derived tables exist for fresh local databases.
+        from ntf_insight.storage.quicktest_store import QuickTestStore
+        from ntf_insight.storage.source_knowledge_store import SourceKnowledgeStore
+        from ntf_insight.storage.qec_workflow_store import QecWorkflowStore
+        QuickTestStore(self.store)
+        SourceKnowledgeStore(self.store)
+        QecWorkflowStore(self.store)
+
         primary = bool(active_qec_lists([target]))
         source_cases = []
         if primary:
