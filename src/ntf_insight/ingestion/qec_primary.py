@@ -11,6 +11,28 @@ from pathlib import Path
 from ntf_insight.ingestion.artifacts import SourceArtifact, sha256_file
 
 
+def primary_qec_sheet(workbook) -> str | None:
+    """Identify real QEC FIN sheets by their header, never by an export name.
+
+    Supports original Schadteile QEC and generated filtered QEC workbooks.
+    """
+    required = {"Referenznr.", "FIN", "Rep.-Datum"}
+    matching = []
+    for sheet in workbook:
+        headers = next(
+            sheet.iter_rows(min_row=1, max_row=1, values_only=True), ()
+        )
+        if required <= {
+            str(value).strip() for value in headers if value is not None
+        }:
+            matching.append(sheet.title)
+    if "Schadteile QEC" in matching:
+        return "Schadteile QEC"
+    if len(matching) > 1:
+        raise ValueError("Mehrere QEC-FIN-Blätter erkannt. Excel-Datei prüfen.")
+    return matching[0] if matching else None
+
+
 def is_primary_qec_workbook(path: Path) -> bool:
     """True only for a primary QEC export, never for an SSL-only workbook."""
     path = Path(path)
@@ -22,14 +44,7 @@ def is_primary_qec_workbook(path: Path) -> bool:
         path, read_only=True, data_only=True, keep_links=False,
     )
     try:
-        if "Schadteile QEC" not in workbook.sheetnames:
-            return False
-        header = next(
-            workbook["Schadteile QEC"].iter_rows(
-                min_row=1, max_row=1, values_only=True,
-            ), (),
-        )
-        return {"Referenznr.", "FIN", "Rep.-Datum"} <= set(header)
+        return primary_qec_sheet(workbook) is not None
     finally:
         workbook.close()
 
