@@ -35,6 +35,10 @@ def detect_source_type(path: Path) -> SourceType:
                 if {"Fin", "CaseId", "CreationDate", "InitialWorkshopMessageCustomerComplaint"} <= headers:
                     return SourceType.TIPS_CASE
                 if {"DiagStartDt", "EcuFaultNm", "Fin"} <= headers:
+                    if {
+                        "EcuNm", "CntXDDiagnosisHeaderSid", "LastRepairDt", "C1"
+                    } <= headers:
+                        return SourceType.TP_DASHBOARD
                     return SourceType.SHORT_TEST
                 if {"RepairDt", "Fin", "PartLetterCd"} <= headers:
                     return SourceType.WORKSHOP_HISTORY
