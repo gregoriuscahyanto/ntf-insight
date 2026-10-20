@@ -169,18 +169,25 @@ class LocalBatchImporter:
                     continue
                 progress("ZIP-Archiv prüfen …")
                 self._validate_zip(path)
+                # Validate ZIP members before persisting the ZIP itself.
+                # No rejected second QEC-FIN cohort must pollute the archive.
+                from ntf_insight.ingestion.artifacts import sha256_file
+                zip_digest = sha256_file(path)
+                zip_members = self._extract_zip(path, Path(temp) / zip_digest)
+                extracted.extend(zip_members)
+                from_zip.update(zip_members)
+
+            # Validate primary QEC workbooks before any member is archived.
+            validate_single_qec_list(extracted, previously_archived_items)
+            for path in paths:
+                if path.suffix.casefold() != ".zip":
+                    continue
                 package_artifact = self.sources.import_raw(
                     path, SourceType.OTHER, source_system=source_system
                 )
                 zip_hashes.add(package_artifact.sha256)
                 if package_artifact.sha256 not in previously_archived:
                     summary.files_archived += 1
-                zip_members = self._extract_zip(path, Path(temp) / package_artifact.sha256)
-                extracted.extend(zip_members)
-                from_zip.update(zip_members)
-
-            # Validate primary QEC workbooks before any member is archived.
-            validate_single_qec_list(extracted, previously_archived_items)
             progress("Originaldateien archivieren …")
             known = previously_archived | zip_hashes
             artifacts: list[SourceArtifact] = []
