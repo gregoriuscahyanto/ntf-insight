@@ -295,7 +295,7 @@ class AutoExportParser:
                 output.skipped_rows += 1
                 continue
 
-            if self.source_type == SourceType.SHORT_TEST:
+            if self.source_type in {SourceType.SHORT_TEST, SourceType.TP_DASHBOARD}:
                 # The real export has both a date and an exact timestamp
                 # (2026-01-02T08:09:10.123Z). Preserve the exact source clock;
                 # do not invent local time-zone conversion from a QuickTest PDF.
@@ -318,7 +318,7 @@ class AutoExportParser:
                 continue
 
             source_ref = _ref(self.source_sha, f"csv:{row_number}")
-            if self.source_type == SourceType.SHORT_TEST:
+            if self.source_type in {SourceType.SHORT_TEST, SourceType.TP_DASHBOARD}:
                 ecu = _str(row.get("EcuNm"))
                 dtc = _str(row.get("EcuFaultNm"))
                 if not ecu or not dtc:
