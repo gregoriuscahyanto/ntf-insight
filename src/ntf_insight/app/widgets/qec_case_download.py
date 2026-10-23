@@ -194,7 +194,10 @@ class QecCaseDownloadPanel(QWidget):
         )
         self.downloads_completed.emit(results)
         # Import only after QThread is finished: the importer may rebuild CasePage.
-        self._pending_import = [*reports, *attachments]
+        # QEC attachments are source files, NOT parsed repair/supplier evidence.
+        # They remain in qec/<FIN>/ref_<REF>/anhaenge/ and in .ntfbackup.
+        # Only the structured qec.json is forwarded to the source importer.
+        self._pending_import = reports
 
     def _failed(self, message: str) -> None:
         self._progress("QEC-Abruf fehlgeschlagen: " + message)
