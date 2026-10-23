@@ -286,6 +286,7 @@ def run_smrd2xml(
         report = offline_convert(
             source, xml_files=xml_sources, data_dir=data_dir, remember=remember,
             xml_origin="smrd2xml_local_vendor_export",
+            output=export_root / "offline_bundle.json",
         )
         summary["bundle"] = report["bundle"]
         summary["counts"] = report["counts"]
