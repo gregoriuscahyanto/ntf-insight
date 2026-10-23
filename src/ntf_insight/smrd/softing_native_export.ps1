@@ -36,7 +36,16 @@ if (-not $ProbeOnly) {
 
 function Read-Prop($obj, [string] $name) {
     if ($null -eq $obj) { return $null }
-    $property = $obj.GetType().GetProperty($name)
+    $type = $obj.GetType()
+    $property = $type.GetProperty($name)
+    if ($null -eq $property) {
+        # The Softing managed API exposes some members through inherited
+        # interfaces rather than on the concrete runtime proxy type.
+        foreach ($interface in $type.GetInterfaces()) {
+            $property = $interface.GetProperty($name)
+            if ($null -ne $property) { break }
+        }
+    }
     if ($null -eq $property) { return $null }
     return $property.GetValue($obj, $null)
 }
@@ -96,13 +105,23 @@ try {
     Add-Type -Path $dll -ErrorAction Stop
     if ($ProbeOnly) {
         $systemType = [Softing.Dts.DtsSystem]
-        foreach ($name in @('Initialize', 'SelectDynamicProject', 'DeselectProject')) {
+        foreach ($name in @('Initialize', 'SelectDynamicProject', 'Uninitialize')) {
             if (-not ($systemType.GetMethod($name))) {
                 throw "DTS runtime incompatible; missing method: $name"
             }
         }
-        if (-not ([Softing.Dts.DtsProject].GetProperty('DbProject'))) {
-            throw 'Dynamic DTS project has no DbProject property.'
+        # DbProject may be declared on a base/interface, not directly on
+        # DtsProject. A direct GetProperty() check can be a false negative.
+        $projectType = [Softing.Dts.DtsProject]
+        $dbProjectProperty = $projectType.GetProperty('DbProject')
+        if ($null -eq $dbProjectProperty) {
+            foreach ($interface in $projectType.GetInterfaces()) {
+                $dbProjectProperty = $interface.GetProperty('DbProject')
+                if ($null -ne $dbProjectProperty) { break }
+            }
+        }
+        if ($null -eq $dbProjectProperty) {
+            throw 'Dynamic DTS project has no accessible DbProject property.'
         }
         if (-not ([Softing.Dts.Statics].GetMethod('getSystem'))) {
             throw 'DTS factory method getSystem is missing.'
@@ -260,8 +279,15 @@ try {
         Write-Output ("SOFTING_DTS_DTC_EXPORT_OK count={0}" -f $found.Count)
     }
 } finally {
-    if ($selected -and $null -ne $system) {
-        try { $system.DeselectProject() } catch { }
+    # DtsSystem.DeselectProject() is NOT exposed by this managed assembly,
+    # even though CSWrap.dll has a similarly named native export. Do not
+    # attempt to call it through an unsupported managed method.
+    # Release an IDisposable project proxy if the runtime provides one;
+    # Uninitialize() and process exit handle the remaining native lifetime.
+    if ($selected -and $null -ne $project) {
+        if ($project -is [System.IDisposable]) {
+            try { $project.Dispose() } catch { }
+        }
     }
     if ($initialized -and $null -ne $system) {
         try { $system.Uninitialize() } catch { }
