@@ -299,3 +299,39 @@ def test_pseudonymous_qec_form_field_is_comparable_across_reports(tmp_path):
         assert matching[0]["feld_id"] == matching[1]["feld_id"]
         assert all(r["uebergreifend_vergleichbar"] == "1" for r in matching)
         assert matching[0]["qec_bericht_id"] != matching[1]["qec_bericht_id"]
+
+
+
+def test_excel_formula_injection_cannot_execute_from_untrusted_qec_text(tmp_path):
+    source = _set_up(tmp_path)
+    knowledge = SourceKnowledgeStore(source.store)
+    knowledge.save_records(
+        "f" * 64, "qec_live_report", [{
+            "category": "qec_field",
+            "source_location": "QEC/01-WE-Daten/feld:1",
+            "fin": FIN,
+            "reference": REAL_REFERENCE,
+            "label": "=1+1",
+            "data": {
+                "bereich": "WE-Daten", "name": "formel",
+                "typ": "text", "wert": "=HYPERLINK(\"example.invalid\")",
+            },
+        }], metadata={
+            "fin": FIN, "reference": REAL_REFERENCE,
+            "part_number": "A-EXAMPLE-001",
+        },
+    )
+    result = export_ki_analysepaket(
+        source, tmp_path / "formel.zip", mit_freitext=True,
+    )
+    with ZipFile(result.pfad) as package:
+        fields = _csv(package, "qec_felder.csv")
+        dangerous = next(row for row in fields if "HYPERLINK" in row["original_wert"])
+        assert dangerous["original_wert"].startswith("'=")
+        assert dangerous["original_bezeichnung"].startswith("'=")
+        workbook = load_workbook(
+            io.BytesIO(package.read("Auswertung.xlsx")), read_only=True,
+        )
+        cells = [cell for row in workbook["Belege"].iter_rows() for cell in row]
+        assert not any(cell.data_type == "f" for cell in cells)
+        workbook.close()
