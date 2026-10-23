@@ -178,12 +178,12 @@ try {
                         $directFailed = $null
                     } catch {
                         $errors.Add(
-                            "DTCs $variantName/$locationName: " + $_.Exception.Message
+                            "DTCs ${variantName}/${locationName}: " + $_.Exception.Message
                         )
                     }
                 }
                 if ($null -ne $directFailed) {
-                    $errors.Add("DTCs $variantName/$locationName: $directFailed")
+                    $errors.Add("DTCs ${variantName}/${locationName}: $directFailed")
                 }
 
                 foreach ($dtc in $dtcs) {
@@ -212,7 +212,7 @@ try {
                         })
                     } catch {
                         $errors.Add(
-                            "DTC $variantName/$locationName/$code: " +
+                            "DTC ${variantName}/${locationName}/${code}: " +
                             $_.Exception.Message
                         )
                     }
