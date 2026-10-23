@@ -74,6 +74,8 @@ def test_powershell_backend_uses_supported_dynamic_project_api():
     )
     assert ".SelectDynamicProject(" in source
     assert "Read-Prop $project 'DbProject'" in source
-    assert ".DeselectProject()" in source
+    assert "$system.DeselectProject(" not in source
+    assert "'Initialize', 'SelectDynamicProject', 'Uninitialize'" in source
+    assert "try { $project.Dispose() } catch { }" in source
     assert ".LoadViewerProject(" not in source
     assert ".UnloadViewerProject(" not in source
