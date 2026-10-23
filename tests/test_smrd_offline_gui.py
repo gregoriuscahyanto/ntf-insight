@@ -45,3 +45,34 @@ def test_standalone_window_does_not_use_main_app_navigation(tmp_path):
     assert not hasattr(page, "navigation")
     window.close()
     application.processEvents()
+
+
+def test_vendor_converter_controls_are_opt_in_and_explain_license(tmp_path):
+    application = QApplication.instance() or QApplication([])
+    page = SmrdOfflinePage(tmp_path)
+    assert page.vendor_button.isEnabled()
+    assert page.export_ecu.isChecked()
+    assert page.export_dtcs.isChecked()
+    assert not page.export_compar.isChecked()
+    assert not page.export_canmodel.isChecked()
+    assert "Lizenz" in page.vendor_note.text()
+    assert page.vendor_runtime.text().endswith(
+        str(tmp_path / "smrd" / "runtime" / "SMRxView")
+    )
+    page.close()
+    application.processEvents()
+
+
+def test_vendor_button_requires_real_external_executable(tmp_path):
+    application = QApplication.instance() or QApplication([])
+    root = tmp_path / "smrd" / "originale"
+    root.mkdir(parents=True)
+    (root / "CPC3_24.01.00.smr-d").write_bytes(b"synthetic file")
+    page = SmrdOfflinePage(tmp_path)
+    assert page.ecu_name.text() == "CPC3"
+    page.vendor_button.click()
+    assert "Smrd2Xml.exe fehlt" in page.status.text()
+    assert page._worker is None
+    assert page._bundle is None
+    page.close()
+    application.processEvents()
