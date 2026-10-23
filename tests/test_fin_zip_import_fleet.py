@@ -124,3 +124,47 @@ def test_local_quicktest_scan_does_not_infer_fin_or_follow_invalid_folders(tmp_p
     _write(tmp_path, "quicktests/not-a-fin/wrong.pdf", b"%PDF-private")
     _write(tmp_path, f"quicktests/{FIN}/nested/not-scanned.pdf", b"%PDF-nested")
     assert list_downloaded_quicktests(tmp_path) == [first, second]
+
+
+def test_fleet_dtc_counts_are_report_observations_not_new_cases(tmp_path):
+    from datetime import datetime
+
+    from ntf_insight.analysis.quicktest_fleet import analyze_quicktest_fleet
+    from ntf_insight.storage.duckdb_store import DuckDBStore
+    from ntf_insight.storage.quicktest_store import QuickTestStore
+
+    other_fin = WRONG
+    store = QuickTestStore(DuckDBStore(tmp_path / "fleet.duckdb"))
+    with store.store.connect() as con:
+        for report, fin, moment, dtcs in (
+            ("report1", FIN, datetime(2026, 1, 1), 1),
+            ("report2", FIN, datetime(2026, 1, 2), 0),
+            ("report3", other_fin, datetime(2026, 1, 3), 1),
+        ):
+            con.execute(
+                "INSERT INTO quicktest_reports VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                [report, fin, fin, moment, 12345, 1, dtcs, "{}", "a" * 64, moment],
+            )
+            con.execute(
+                "INSERT INTO quicktest_ecus VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                [report, 1, "CPC3", "N127", "Control", json.dumps({
+                    "software_version": "S1" if report != "report3" else "S2"
+                }), dtcs, 1, 1, "synthetic"],
+            )
+            if dtcs:
+                con.execute(
+                    "INSERT INTO quicktest_dtcs VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    [report, 1, 1, "CPC3", "FC", "P260000", "Synthetic fault",
+                     "S", 1, 12340, 12345, 1, 1, 1, "synthetic"],
+                )
+    full = analyze_quicktest_fleet(store)
+    assert (full.reports, full.fins, full.ecus, full.dtc_observations, full.clean_reports) == (
+        3, 2, 3, 2, 1,
+    )
+    assert full.dtc_rows[0][:5] == ("CPC3", "P260000", 2, 2, 2)
+    assert len(full.software_rows) == 2
+    assert sum(row[2] for row in full.software_rows) == 2
+    assert analyze_quicktest_fleet(store, ecu_filter="SAM").dtc_rows == ()
+    assert analyze_quicktest_fleet(store, dtc_filter="P999").dtc_rows == ()
+    # Filtered DTCs never turn a report with a DTC into a clean test.
+    assert analyze_quicktest_fleet(store, dtc_filter="P999").clean_reports == 1
