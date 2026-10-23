@@ -27,6 +27,16 @@ kein Komplett-Backup eines PCs. Die ZIPs können auch FINs ohne QEC-Fall
 enthalten. QEC-JSONs bleiben unverändert in ihrer referenzierten lokalen
 Ablage, werden aber nicht automatisch als neue Fälle erfunden.
 
+## Bereits heruntergeladene QuickTests nachimportieren
+
+Auch ältere, lokal vorhandene PDFs können ohne erneuten Webabruf übernommen
+werden: unter **Datenquellen** auf
+**Alle bereits heruntergeladenen QuickTests einlesen** klicken.
+Die App durchsucht ausschließlich lokale FIN-Unterordner unter
+`quicktests/<FIN>/`; bekannte Dokumente werden nicht doppelt gezählt.
+Die tatsächlich im PDF enthaltene FIN wird durch den Parser überprüft;
+Dateinamen gelten niemals allein als Beweis für eine FIN-Zuordnung.
+
 ## QuickTest-Gesamtauswertung
 
 Unter **Fälle / FIN → QuickTest-Gesamtauswertung**:
