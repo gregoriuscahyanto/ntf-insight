@@ -15,6 +15,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import uuid
 from xml.etree import ElementTree as ET
 
 from ntf_insight.smrd.library import SmrdLocalLibrary, digest
@@ -138,7 +139,11 @@ def run_smrd2xml(
     if timeout < 5 or timeout > 1800:
         raise ValueError("Timeout muss zwischen 5 und 1800 Sekunden liegen")
     checksum = digest(source)
-    export_root = library.exports / "smrd2xml" / checksum
+    run_id = (
+        datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+        + "-" + uuid.uuid4().hex[:10]
+    )
+    export_root = library.exports / "smrd2xml" / checksum / run_id
     plan = {
         "source_smrd_sha256": checksum,
         "runtime_dir": str(runtime),
@@ -171,6 +176,8 @@ def run_smrd2xml(
             raise ValueError("Kopie der SMR-D hat eine abweichende Pruefsumme")
         for mode in modes:
             mode_dir = export_root / mode
+            if mode_dir.is_symlink():
+                raise ValueError("Symlink als Modus-Ausgabeordner verboten")
             mode_dir.mkdir(parents=True, exist_ok=True)
             folders = [working, runtime, mode_dir]
             before = _xml_snapshots(folders)
