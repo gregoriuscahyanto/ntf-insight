@@ -99,6 +99,10 @@ class MainWindow(QMainWindow):
             transfer.set_guard(self._portable_transfer_ready)
             transfer.transfer_busy.connect(self._portable_transfer_busy)
             transfer.restored.connect(self._portable_restored)
+        analysis_export = pages["sources"].ki_analyse_panel
+        if analysis_export is not None:
+            analysis_export.set_guard(self._portable_transfer_ready)
+            analysis_export.transfer_busy.connect(self._portable_transfer_busy)
         return pages
 
     def _import_downloaded_case_quicktests(self, paths: list) -> None:
@@ -133,6 +137,11 @@ class MainWindow(QMainWindow):
         exporter = cases.fin_zip_export
         return (
             source._worker is None
+            and source._diagnostics_worker is None
+            and (
+                source.ki_analyse_panel is None
+                or source.ki_analyse_panel.worker is None
+            )
             and not self._case_quicktest_import_pending
             and cases._quicktest_worker is None
             and (qec is None or qec.worker is None)
