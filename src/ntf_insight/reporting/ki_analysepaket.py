@@ -50,13 +50,20 @@ class AnalysepaketErgebnis:
     freitexte: bool
 
 
+def _safe_tabular(value):
+    """Keep untrusted source text literal in Excel AND spreadsheet-opened CSV."""
+    if isinstance(value, str) and value.lstrip().startswith(("=", "+", "-", "@")):
+        return "'" + value
+    return value
+
+
 def _csv_file(headers: tuple[str, ...], rows: list[dict]) -> bytes:
     stream = io.StringIO(newline="")
     writer = csv.DictWriter(stream, fieldnames=headers, extrasaction="ignore", lineterminator="\n")
     writer.writeheader()
     for item in rows:
         writer.writerow({
-            name: "" if item.get(name) is None else item.get(name)
+            name: "" if item.get(name) is None else _safe_tabular(item.get(name))
             for name in headers
         })
     return ("\ufeff" + stream.getvalue()).encode("utf-8")
@@ -139,8 +146,8 @@ def _excel_summary(tables: dict[str, tuple[tuple[str, ...], list[dict]]], stats:
         # Compact workbook is a human-readable companion; CSV is complete.
         for row in rows[:5000]:
             sheet.append([
-                str(row.get(header) or "")[:30000] if not isinstance(row.get(header), (int, float))
-                else row[header]
+                str(_safe_tabular(row.get(header) or ""))[:30000]
+                if not isinstance(row.get(header), (int, float)) else row[header]
                 for header in headers
             ])
         sheet.freeze_panes = "B2"
