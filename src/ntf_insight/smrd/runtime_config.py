@@ -10,6 +10,7 @@ import ntpath
 import os
 import tempfile
 import xml.etree.ElementTree as ET
+import zipfile
 from pathlib import Path
 
 from ntf_insight.smrd.library import SmrdLocalLibrary
@@ -114,12 +115,14 @@ def diagnose_native_runtime(runtime_dir: Path) -> dict:
     return report
 
 
-def _atomic_write_with_backup(path: Path, new_bytes: bytes) -> Path | None:
+def _atomic_write_with_backup(
+    path: Path, new_bytes: bytes, *, reason: str = "paths"
+) -> Path | None:
     old = path.read_bytes()
     if old == new_bytes:
         return None
     sha = hashlib.sha256(old).hexdigest()[:16]
-    backup = path.with_name(path.name + f".before_smrd_paths_{sha}.bak")
+    backup = path.with_name(path.name + f".before_smrd_{reason}_{sha}.bak")
     if backup.exists():
         if backup.read_bytes() != old:
             raise FileExistsError(f"Backup-Kollision: {backup}")
@@ -200,3 +203,144 @@ def prepare_native_runtime(
     final["applied"] = True
     final["backups"] = report["backups"]
     return final
+
+
+def _archive_member(
+    archive: zipfile.ZipFile, suffix: str, *, maximum_bytes: int
+) -> zipfile.ZipInfo:
+    """Find one fixed member name without extracting the zip or following paths."""
+    suffix = "/" + suffix.lower().replace("\\", "/")
+    found: list[zipfile.ZipInfo] = []
+    for info in archive.infolist():
+        name = info.filename.replace("\\", "/")
+        parts = name.split("/")
+        if name.startswith("/") or ".." in parts or "." in parts:
+            raise ValueError("Unsicherer Pfad im Originalarchiv")
+        if not info.is_dir() and ("/" + name.lower()).endswith(suffix):
+            found.append(info)
+    if len(found) != 1:
+        raise ValueError(
+            f"Originalarchiv enthaelt nicht exakt eine Datei {suffix}: {len(found)}"
+        )
+    info = found[0]
+    if not 0 < info.file_size <= maximum_bytes:
+        raise ValueError(f"Unplausible Dateigroesse in Originalarchiv: {suffix}")
+    if info.flag_bits & 0x1:
+        raise ValueError("Verschluesselte ZIP-Eintraege nicht unterstuetzt")
+    return info
+
+
+def _zip_bytes(
+    archive: zipfile.ZipFile, member: zipfile.ZipInfo, maximum_bytes: int
+) -> bytes:
+    with archive.open(member, "r") as handle:
+        data = handle.read(maximum_bytes + 1)
+    if len(data) > maximum_bytes or len(data) != member.file_size:
+        raise ValueError(f"ZIP-Eintrag ausserhalb der Groessengrenze: {member.filename}")
+    return data
+
+
+def recover_native_runtime_configs(
+    runtime_dir: Path,
+    source_zip: Path,
+    *,
+    data_dir: Path | None = None,
+    apply: bool = False,
+) -> dict:
+    """Restore ONLY malformed XML config files from the user's matching vendor ZIP.
+
+    The archive's native DLL hashes must match the local runtime. Only
+    non-well-formed configs are eligible; valid user customization is preserved.
+    Dry-run by default. Explicit apply produces byte-exact, SHA-named backups.
+    """
+    library = SmrdLocalLibrary(data_dir=data_dir)
+    given = Path(runtime_dir).expanduser()
+    allowed = (library.root / "runtime").resolve()
+    runtime = given.resolve()
+    if runtime == allowed or not runtime.is_relative_to(allowed):
+        raise ValueError("Wiederherstellung nur unter .ntf-insight/smrd/runtime erlaubt")
+    for candidate in (
+        library.root, library.root / "runtime", given,
+        given / "mvci", given / "mvci" / "bin", given / "mvci" / "config",
+    ):
+        if candidate.is_symlink():
+            raise ValueError("Symbolischer Link in Runtime-Kopie nicht erlaubt")
+    zip_path = Path(source_zip).expanduser().resolve()
+    if not zip_path.is_file() or zip_path.suffix.lower() != ".zip":
+        raise ValueError("Original-SMRxView-ZIP fehlt")
+    report: dict = {
+        "runtime": str(runtime),
+        "source_archive": str(zip_path),
+        "dll_hashes_match": False,
+        "malformed_configurations": [],
+        "preserved_valid_configurations": [],
+        "restorable_count": 0,
+        "applied": False,
+        "backups": [],
+        "note": "Keine Hersteller-Binaries, Lizenzen oder SMR-D-Dateien werden veraendert.",
+    }
+    updates: list[tuple[Path, bytes]] = []
+    with zipfile.ZipFile(zip_path, "r") as archive:
+        if len(archive.infolist()) > 5000:
+            raise ValueError("Originalarchiv enthaelt zu viele ZIP-Eintraege")
+        # Check the provenance of the original archive against all four
+        # native components so we cannot mix different DTS distributions.
+        for binary in ("Softing.Dts.dll", "csWrap.dll", "cppApi.dll", "DtsKrnl.dll"):
+            member = _archive_member(
+                archive, f"mvci/bin/{binary}", maximum_bytes=64_000_000
+            )
+            old_bytes = _zip_bytes(archive, member, 64_000_000)
+            installed = runtime / "mvci" / "bin" / binary
+            if not installed.is_file() or installed.is_symlink():
+                raise ValueError(f"Lokale Softing-Binaerdatei fehlt: {binary}")
+            actual = hashlib.sha256(installed.read_bytes()).digest()
+            expected = hashlib.sha256(old_bytes).digest()
+            if actual != expected:
+                raise ValueError(
+                    f"ZIP gehoert nicht zur lokalen Softing-Runtime ({binary} abweichend)."
+                )
+        report["dll_hashes_match"] = True
+        for relative, root in _CONFIGS:
+            path = runtime / Path(relative)
+            vendor_member = _archive_member(
+                archive, relative, maximum_bytes=2_000_000
+            )
+            known_good = _zip_bytes(archive, vendor_member, 2_000_000)
+            # Verify the archived config before permitting any local changes.
+            upper = known_good.upper()
+            if b"<!DOCTYPE" in upper or b"<!ENTITY" in upper:
+                raise ValueError(f"Originalarchiv enthaelt DTD/ENTITY: {relative}")
+            if ET.fromstring(known_good).tag != root:
+                raise ValueError(f"Originalarchiv enthaelt falsches XML: {relative}")
+            if not path.is_file() or path.is_symlink():
+                raise ValueError(f"Lokale Runtime-Konfiguration fehlt: {relative}")
+            try:
+                _read_xml(path, root)
+            except (ValueError, ET.ParseError, UnicodeError) as exc:
+                report["malformed_configurations"].append({
+                    "file": relative,
+                    "parser_error": str(exc)[:240],
+                    "zip_member": vendor_member.filename,
+                })
+                updates.append((path, known_good))
+            else:
+                report["preserved_valid_configurations"].append(relative)
+        report["restorable_count"] = len(updates)
+    if not apply or not updates:
+        return report
+    # Preflight ALL backups before overwriting any XML file.
+    for path, _ in updates:
+        previous = path.read_bytes()
+        short_sha = hashlib.sha256(previous).hexdigest()[:16]
+        backup = path.with_name(path.name + f".before_smrd_restore_{short_sha}.bak")
+        if backup.exists() and backup.read_bytes() != previous:
+            raise FileExistsError(f"Backup-Kollision: {backup}")
+    for path, known_good in updates:
+        original = _atomic_write_with_backup(path, known_good, reason="restore")
+        if original is not None:
+            report["backups"].append(str(original))
+    # Do not claim runtime readiness: the XML now contains its original
+    # installation paths and still needs a separate checked relocation.
+    report["applied"] = True
+    report["doctor_after_restore"] = diagnose_native_runtime(runtime)
+    return report
