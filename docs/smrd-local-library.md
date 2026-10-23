@@ -70,6 +70,33 @@ ECUs, Varianten, DTCs, Services, Parameter und SDGs als portables
 JSON-Referenzpaket exportieren. Fehlende Felder wie `REPAIR_ACTION`,
 `POSSIBLE_CAUSES` und `ERROR_LEVEL` werden **nicht hinzuerfunden**.
 
+### Grafische Offline-Oberflaeche in NTF Insight
+
+Die SMR-D-Verarbeitung kann ohne Terminal in einem separaten,
+lizenzfreien PySide6-Fenster gestartet werden:
+
+```powershell
+cd "C:\Users\Cahyanto\Documents\GitHub\ntf-insight"
+python -m ntf_insight.smrd gui
+
+# Alternative: direktes Modul
+python -m ntf_insight.smrd.offline_gui
+```
+
+Die Oberflaeche zeigt die bereits im lokalen Ordner
+`.ntf-insight/smrd/originale` vorhandenen Dateien, laesst optional
+mehrere XML-Referenzen auswaehlen und zeigt die Ausgabe-/Datenabdeckung
+an. Zunaechst wird **nur** eine Offline-JSON-Datei erstellt; der
+Datenbankimport erfolgt erst nach einem separaten Knopfdruck.
+Die GUI verwendet einen eigenen lokalen Worker-Thread und keine
+Softing-DTS-API.
+
+Die Hauptanwendung wird hierbei nicht umgebaut. Nach einem optionalen
+Offline-Import sind die referenzierten DTCs, Services, Parameter, ECU-
+Varianten und SDGs unter **Quellenwissen** als separate SMR-D/XML-Typen
+filterbar. Ein echter Fahrzeug-DTC oder eine Fehlerschwelle wird dabei
+nicht behauptet.
+
 ### Portable Befehle
 
 ```powershell
