@@ -68,6 +68,10 @@ def _make_data(tmp_path: Path) -> tuple[Path, Path]:
         "fin": FIN, "referenznummer": REFERENCE,
         "abschnitte": [{"bereich": "Stellungnahme Lieferant", "sichtbarer_text": "NTF"}],
     }), encoding="utf-8")
+    (qec / "ansicht.html").write_text(
+        "<html><body>Historische QEC-Ansicht (synthetisch)</body></html>",
+        encoding="utf-8",
+    )
     (qec / "anhaenge" / "bericht.pdf").write_bytes(b"%PDF-1.4\nQEC SYNTHETIC\n")
     tips = root / "tips" / FIN / "fall_12345678"
     tips.mkdir(parents=True)
@@ -97,6 +101,7 @@ def test_single_file_roundtrip_preserves_parsed_state_and_raw_paths(tmp_path):
         assert any(name.startswith("files/raw/") for name in members)
         assert f"files/quicktests/{FIN}/test.pdf" in members
         assert f"files/qec/{FIN}/ref_{REFERENCE}/qec.json" in members
+        assert f"files/qec/{FIN}/ref_{REFERENCE}/ansicht.html" in members
         assert f"files/tips/{FIN}/fall_12345678/tips.json" in members
         assert not any("edge-" in item or "Cookies" in item for item in members)
 
@@ -122,6 +127,16 @@ def test_single_file_roundtrip_preserves_parsed_state_and_raw_paths(tmp_path):
     assert (dest / "qec" / FIN / f"ref_{REFERENCE}" / "qec.json").is_file()
     assert (dest / "tips" / FIN / "fall_12345678" / "tips.json").is_file()
     assert not (dest / "edge-qec-profile").exists()
+
+    # A restored machine can become the exporter for a third machine as well.
+    second_package = tmp_path / "second-transfer.ntfbackup"
+    export_portable_backup(dest, second_package)
+    third = tmp_path / "pc-c"
+    restored = restore_portable_backup(second_package, third)
+    assert restored.quicktest_count == 1
+    assert Path(
+        DuckDBStore(third / DATABASE_NAME).load_artifacts()[0].archived_path
+    ).is_relative_to(third)
 
 
 def test_import_does_not_rerun_any_source_parser(tmp_path, monkeypatch):
