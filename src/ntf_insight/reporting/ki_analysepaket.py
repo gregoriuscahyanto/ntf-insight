@@ -125,7 +125,7 @@ def _excel_summary(tables: dict[str, tuple[tuple[str, ...], list[dict]]], stats:
     summary.append(["DTC-Beobachtungen", stats["dtcs"]])
     summary.append(["QEC-JSON-Berichte", stats["qec_berichte"]])
     summary.append(["Freitext aus QEC/TIPS", "Enthalten" if stats["freitexte"] else "Nicht enthalten"])
-    summary.append(["Hinweis", "FIN- und Referenzzuordnung verbleibt ausschließlich lokal."])
+    summary.append(["Hinweis", "Private Zuordnung bleibt lokal; Freitext kann echte Identifikatoren enthalten."])
     summary.append(["Methodik", "Clustermerkmale vor Tausch; spätere Befunde/Bewertungen separat."])
     for sheet_name, table_name in (
         ("Fallliste", "faelle"),
@@ -277,14 +277,21 @@ def export_ki_analysepaket(
     for case in cases:
         by_fin[case.vin].append(case)
     docs_by_fin_ref: dict[tuple[str, str], list[dict]] = defaultdict(list)
+    docs_by_sha = {doc["source_sha256"]: doc for doc in documents}
     for doc in documents:
         m = doc["metadata"]
         docs_by_fin_ref[(str(m.get("fin") or ""), str(m.get("reference") or ""))].append(doc)
 
-    def linked_cases(fin: str, reference: str) -> list[NTFCase]:
+    def same_part(left: object, right: object) -> bool:
+        a = "".join(c for c in str(left or "").upper() if c.isalnum())
+        b = "".join(c for c in str(right or "").upper() if c.isalnum())
+        return not a or not b or a == b
+
+    def linked_cases(fin: str, reference: str, part_number: object = "") -> list[NTFCase]:
         return [
             c for c in by_fin.get(fin, ())
             if str(getattr(c, "qec_reference", "") or "") == reference
+            and same_part(getattr(c, "qec_part_number", ""), part_number)
         ]
 
     advance("QuickTests, CPC3-DTCs und Tauschzeitbezug extrahieren …")
@@ -350,9 +357,14 @@ def export_ki_analysepaket(
                 ),
             })
         qa = [d["metadata"] for d in doc_matches]
-        komplett = any(m.get("fresh_complete") is True for m in qa)
+        part_conflict = any(
+            not same_part(getattr(case, "qec_part_number", ""), m.get("part_number"))
+            for m in qa
+        )
+        komplett = any(m.get("fresh_complete") is True for m in qa) and not part_conflict
         missing = min((len(m.get("missing_sections") or []) for m in qa), default=5)
         qa_status = (
+            "pruefbedarf" if part_conflict else
             "vollstaendig" if komplett else "teilweise" if doc_matches else "nicht_erfasst"
         )
         faelle.append({
@@ -442,7 +454,7 @@ def export_ki_analysepaket(
         m = doc["metadata"]
         reference = str(m.get("reference") or "")
         fin = str(m.get("fin") or "")
-        affected = linked_cases(fin, reference)
+        affected = linked_cases(fin, reference, m.get("part_number"))
         qec_reports.append({
             "qec_bericht_id": qec_aliases[doc["source_sha256"]],
             "fahrzeug_id": aliases.get(fin, ""),
@@ -470,7 +482,7 @@ def export_ki_analysepaket(
             continue
         if not isinstance(value, dict):
             continue
-        doc = next((d for d in documents if d["source_sha256"] == sha), None)
+        doc = docs_by_sha.get(sha)
         if doc is None:
             continue
         field_numbers[sha] += 1
@@ -484,6 +496,7 @@ def export_ki_analysepaket(
                 case_aliases[c.case_id] for c in linked_cases(
                     str(doc["metadata"].get("fin") or ""),
                     str(doc["metadata"].get("reference") or ""),
+                    doc["metadata"].get("part_number"),
                 )
             ),
             "reiter": str(value.get("bereich") or ""),
@@ -587,8 +600,10 @@ def export_ki_analysepaket(
     files["README.txt"] = (
         "NTF INSIGHT · KI-ANALYSEPAKET\n\n"
         "Dieses ZIP enthält strukturierte CSV-Tabellen und eine Excel-Übersicht.\n"
-        "Es enthält KEINE Originaldateien, FINs, QEC-Referenzen, Dateipfade,\n"
-        "Quell-SHA-256, Anmeldedaten oder Browserprofile.\n"
+        "Es enthält KEINE Originaldateien, Quellpfade, Roh-SHA-256,\n"
+        "Anmeldedaten oder Browserprofile. FINs und QEC-Referenzen wurden\n"
+        "in den strukturierten Schlüsselfeldern durch Pseudonyme ersetzt.\n"
+        "ACHTUNG: Opt-in-Freitext kann dennoch echte FINs und Namen enthalten.\n"
         "Fahrzeug- und Fallpseudonyme verbinden alle Tabellen innerhalb der ZIP.\n"
         "Die NICHT_HOCHLADEN-Zuordnung wird SEPARAT auf dem lokalen PC abgelegt.\n\n"
         "REIHENFOLGE FÜR DIE ANALYSE:\n"
@@ -610,7 +625,7 @@ def export_ki_analysepaket(
     files["manifest.json"] = json.dumps({
         "schema_version": EXPORT_VERSION,
         "generiert": "NTF Insight (lokal)",
-        "pseudonymisiert": True,
+        "pseudonymisiert": not mit_freitext,
         "anonymisiert_garantiert": False,
         "fachfreitexte_enthalten": mit_freitext,
         "datenreihen": stats,
