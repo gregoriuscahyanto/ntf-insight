@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QHBoxLayout, QMainWindow, QStackedWidget, QWidget
+from PySide6.QtWidgets import QHBoxLayout, QMainWindow, QMessageBox, QStackedWidget, QWidget
 
 from ntf_insight.app.bootstrap import load_application_data
 from ntf_insight.app.pages.case_page import CasePage
@@ -94,6 +94,11 @@ class MainWindow(QMainWindow):
         pages["cases"].quicktests_downloaded.connect(self._import_downloaded_case_quicktests)
         pages["cases"].qec_reports_downloaded.connect(self._import_downloaded_case_quicktests)
         pages["sources"].sources_updated.connect(self._reload_after_source_import)
+        transfer = pages["sources"].portable_backup_panel
+        if transfer is not None:
+            transfer.set_guard(self._portable_transfer_ready)
+            transfer.transfer_busy.connect(self._portable_transfer_busy)
+            transfer.restored.connect(self._portable_restored)
         return pages
 
     def _import_downloaded_case_quicktests(self, paths: list) -> None:
@@ -101,7 +106,13 @@ class MainWindow(QMainWindow):
         if not paths:
             return
         source_page = self.pages["sources"]
-        if source_page._worker is not None:
+        if (
+            source_page._worker is not None
+            or (
+                source_page.portable_backup_panel is not None
+                and source_page.portable_backup_panel.worker is not None
+            )
+        ):
             # PDFs remain safely on disk and can be imported through Datenquellen.
             from PySide6.QtWidgets import QMessageBox
             QMessageBox.warning(
@@ -112,6 +123,40 @@ class MainWindow(QMainWindow):
             return
         self._case_quicktest_import_pending = True
         source_page._archive_paths(paths)
+
+    def _portable_transfer_ready(self) -> bool:
+        """Never replace data while a source import or background download runs."""
+        source = self.pages["sources"]
+        cases = self.pages["cases"]
+        qec = cases.qec_download
+        tips = getattr(cases, 'tips_download', None)
+        exporter = cases.fin_zip_export
+        return (
+            source._worker is None
+            and not self._case_quicktest_import_pending
+            and cases._quicktest_worker is None
+            and (qec is None or qec.worker is None)
+            and (tips is None or tips.worker is None)
+            and (exporter is None or exporter.worker is None)
+        )
+
+    def _portable_transfer_busy(self, busy: bool) -> None:
+        """Avoid any GUI-driven writes during DuckDB snapshot/restore."""
+        self.stack.setEnabled(not busy)
+        self.navigation.setEnabled(not busy)
+
+    def _portable_restored(self, result: object) -> None:
+        """Build fresh repositories directly from the transferred DuckDB."""
+        self._case_quicktest_import_pending = False
+        self._reload_data()
+        self.navigation.select_page("cases")
+        QMessageBox.information(
+            self, "Gesamtdatenstand wiederhergestellt",
+            f"{result.case_count} Fall/Fälle und {result.quicktest_count} "
+            "bereits geparste QuickTests sind sofort verfügbar. "
+            "Originale, manuelle Änderungen und weitere Analysewerte wurden "
+            "aus demselben Paket übernommen. Kein erneutes Parsen nötig.",
+        )
 
     def _reload_after_source_import(self, summary: str, quicktests_saved: int = 0) -> None:
         """Refresh all views while preserving case analysis after case-led downloads."""

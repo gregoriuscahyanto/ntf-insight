@@ -77,7 +77,9 @@ def test_cluster_workspace_replaces_scatter_tab_and_synchronizes_case_selection(
     assert cases.detail_tabs.tabText(0) == "Clusteranalyse"
     assert cases.detail_tabs.widget(1) is cases.analysis_tab
     assert cases.detail_tabs.widget(2) is cases.quicktest_browser
-    assert cases.detail_tabs.count() == 3
+    assert cases.detail_tabs.count() == 5
+    assert cases.detail_tabs.tabText(3) == "QuickTest-Gesamtauswertung"
+    assert cases.detail_tabs.tabText(4) == "ECU · SW-Übersicht"
     assert cluster is cases.autoexport_fin_workspace
     assert cluster.plot is not None
     assert cluster.start_button.text() == "Clusteranalyse starten"

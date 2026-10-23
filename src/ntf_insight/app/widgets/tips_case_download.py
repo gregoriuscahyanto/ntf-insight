@@ -101,9 +101,10 @@ class TipsCaseDownloadPanel(QWidget):
         layout.addLayout(controls)
 
         self.status = QLabel(
-            "TIPS Writer nutzt die vorhandene Mercedes-SSO-Anmeldung. "
-            "PING ID gegebenenfalls in Edge bestätigen. "
-            "Daten werden lokal unter tips/<FIN>/fall_<Nummer>/ gespeichert.",
+            "Pilotfunktion: Live-Navigation und Anhangsformate müssen im "
+            "berechtigten Unternehmensnetz validiert werden. "
+            "TIPS Writer nutzt Mercedes-SSO mit manueller PING-ID in Edge. "
+            "Daten bleiben lokal unter tips/<FIN>/fall_<Nummer>/.",
             objectName="PageSubtitle",
         )
         self.status.setWordWrap(True)

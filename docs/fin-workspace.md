@@ -1,14 +1,18 @@
 # Gemeinsamer Arbeitsbereich „Fälle / FIN“ und mathematische 2D-Erklärung
 
 Die Desktop-App hat **nur einen** Arbeitsbereich für den untersuchten Schadteilfall,
-seine FIN und die QuickTests. Unter **Fälle / FIN** liegen drei Register:
+seine FIN und die QuickTests. Unter **Fälle / FIN** liegen fünf Register:
 
-1. **2D-Streudiagramm** – explorative Lage der echten Fälle, numerische
-   Erklärungen und eine Vergleichstabelle.
+1. **Clusteranalyse** – Cluster, FIN-Punktwolke und Vergleichs-/Erklärungstabellen.
 2. **FIN / Fallanalyse** – Ereignisse, Vorher/Nachher-DTCs, Reparaturen,
    Tauschanker, QEC-SSL-Endbefund und technische Evidenz.
 3. **QuickTests nach FIN** – unabhängig von einem QEC-Fall archivierte
    PDF-Reports einschließlich aller ECUs, Snapshot-Werte und Quellseiten.
+4. **QuickTest-Gesamtauswertung** – alle lokalen QuickTests, ECU-/DTC-Muster
+   und Softwarestände fahrzeugübergreifend.
+5. **ECU · SW-Übersicht** – alle Pumpenfälle mit SW-Ständen vor, am und nach
+   dem Tausch, dokumentierten SW-Eingriffen, DTC-Verläufen und Excel-Export.
+   [Bewertungsregeln](cpc3-softwareanalyse.md).
 
 Der bisherige separate Menüeintrag für Cluster, DTC-Netzwerk und Paarvergleich
 wurde entfernt. **Die bestehenden Complete-Link-Cluster werden weiterhin

@@ -28,6 +28,7 @@ class CaseRow:
     tips_status: str = "—"
     qec_date: str = ""
     qec_folder: Path | None = None
+    tp_status: str = "Kein TP-Dashboard-Eintrag"
 
 
 class CaseTableModel(QAbstractTableModel):
@@ -37,9 +38,10 @@ class CaseTableModel(QAbstractTableModel):
 
     CHECK_COLUMN = 0
     TIPS_COLUMN = 8
-    QEC_DATE_COLUMN = 9
+    TP_DASHBOARD_COLUMN = 9
+    QEC_DATE_COLUMN = 10
     QEC_COLUMN = QEC_DATE_COLUMN
-    QUICKTEST_DATE_COLUMN = 10
+    QUICKTEST_DATE_COLUMN = 11
     HEADERS = (
         "Auswahl",
         "Fall",
@@ -50,6 +52,7 @@ class CaseTableModel(QAbstractTableModel):
         "Wiederauftreten",
         "Bewertung",
         "TIPS-Fall",
+        "TP-Dashboard",
         "QEC-Abrufdatum",
         "QuickTest-Abruf-Datum",
     )
@@ -101,6 +104,17 @@ class CaseTableModel(QAbstractTableModel):
                 if row.tips_status == "FIN-Hinweis":
                     return "TIPS zur FIN gefunden, aber keinem Schadteilfall sicher zugeordnet."
                 return "Kein TIPS-Bezug dokumentiert."
+        if column == self.TP_DASHBOARD_COLUMN:
+            if role == Qt.ItemDataRole.DisplayRole:
+                return row.tp_status
+            if role == Qt.ItemDataRole.ToolTipRole:
+                return (
+                    "Die FIN hat importierte TP-Dashboard-Diagnosezeilen."
+                    if row.tp_status == "Vorhanden"
+                    else "Die FIN ist im QEC-Fallbestand, aber im TP-Dashboard "
+                         "nicht enthalten. Keine Daten ist kein Nachweis "
+                         "für Fehlerfreiheit."
+                )
         if column == self.QEC_DATE_COLUMN:
             if role == Qt.ItemDataRole.DisplayRole:
                 return row.qec_date or "n.a."

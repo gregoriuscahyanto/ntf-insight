@@ -19,14 +19,21 @@ from PySide6.QtWidgets import (
     QSizePolicy,
     QTableView,
     QVBoxLayout,
+    QScrollArea,
+    QFrame,
     QWidget,
 )
 
 from ntf_insight.app.models.simple_table_model import SimpleTableModel
 from ntf_insight.app.widgets.file_drop_zone import FileDropZone
+from ntf_insight.app.widgets.qec_workflow_panel import QecWorkflowPanel
+from ntf_insight.app.widgets.portable_backup_panel import PortableBackupPanel
+from ntf_insight.storage.qec_workflow_store import QecWorkflowStore
+from ntf_insight.ingestion.qec_primary import active_qec_lists
 from ntf_insight.ingestion.artifacts import ParseStatus, SourceType
 from ntf_insight.ingestion.batch_import import ImportSummary, LocalBatchImporter
 from ntf_insight.ingestion.source_detection import detect_source_type
+from ntf_insight.ingestion.downloaded_quicktests import list_downloaded_quicktests
 from ntf_insight.ingestion.service import SourceImportService
 from ntf_insight.storage.reference_repositories import ReferenceRepository
 from ntf_insight.storage.repositories import CaseRepository
@@ -74,6 +81,7 @@ class SourcesPage(QWidget):
     SOURCE_LABELS = {
         SourceType.VEHICLE_CASE_LIST: "QEC-Fall-/SSL-Endbefundliste",
         SourceType.SHORT_TEST: "Kurztest",
+        SourceType.TP_DASHBOARD: "TP-Dashboard · CPC/SAM",
         SourceType.REPLACEMENT_LIST: "Tauschliste",
         SourceType.SUPPLIER_FINDING: "Lieferantenbefund",
         SourceType.WORKSHOP_HISTORY: "Werkstatt-/Claim-Historie",
@@ -102,6 +110,7 @@ class SourcesPage(QWidget):
         self.cases = cases
         self.references = references
         self.mode = mode
+        self.data_dir = Path(data_dir) if data_dir else None
         self._worker: _SourceImportWorker | None = None
         self._pending_reload = False
         self._quicktests_added = 0
@@ -111,7 +120,15 @@ class SourcesPage(QWidget):
             else None
         )
 
-        layout = QVBoxLayout(self)
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
+        outer.addWidget(scroll)
+        surface = QWidget()
+        scroll.setWidget(surface)
+        layout = QVBoxLayout(surface)
         layout.setContentsMargins(32, 28, 32, 28)
         layout.setSpacing(14)
 
@@ -126,6 +143,26 @@ class SourcesPage(QWidget):
         )
         subtitle.setWordWrap(True)
         layout.addWidget(subtitle)
+
+        self.portable_backup_panel = (
+            PortableBackupPanel(Path(data_dir)) if data_dir and self.import_service else None
+        )
+        if self.portable_backup_panel is not None:
+            layout.addWidget(self.portable_backup_panel)
+
+        self.workflow_store = (
+            QecWorkflowStore(self.import_service.store)
+            if self.import_service is not None else None
+        )
+        self.qec_workflow = (
+            QecWorkflowPanel(self.workflow_store, Path(data_dir))
+            if self.workflow_store is not None and data_dir else None
+        )
+        if self.qec_workflow is not None:
+            layout.addWidget(self.qec_workflow)
+        self.active_qec_label = QLabel(objectName="PageSubtitle")
+        self.active_qec_label.setWordWrap(True)
+        layout.addWidget(self.active_qec_label)
 
         self.readiness_model = SimpleTableModel(
             ("Quelle", "Zweck", "Implementierung", "Aktuelle Daten")
@@ -182,6 +219,23 @@ class SourcesPage(QWidget):
         controls.addWidget(self.archive_button)
         layout.addLayout(controls)
 
+        local_row = QHBoxLayout()
+        self.local_quicktests_button = QPushButton(
+            "Alle bereits heruntergeladenen QuickTests einlesen"
+        )
+        self.local_quicktests_button.setToolTip(
+            "Sucht lokale PDFs unter quicktests/<FIN>/ und archiviert sie mit "
+            "FIN-Prüfung durch den bestehenden QuickTest-Parser. "
+            "Bereits bekannte Berichte werden nicht doppelt gezählt."
+        )
+        self.local_quicktests_button.setEnabled(
+            self.data_dir is not None and self.import_service is not None
+        )
+        self.local_quicktests_button.clicked.connect(self._import_existing_quicktests)
+        local_row.addWidget(self.local_quicktests_button)
+        local_row.addStretch(1)
+        layout.addLayout(local_row)
+
         self.drop_zone = FileDropZone()
         self.drop_zone.setEnabled(self.import_service is not None)
         self.drop_zone.files_dropped.connect(self._archive_paths)
@@ -224,6 +278,14 @@ class SourcesPage(QWidget):
         self.retry_button.setEnabled(False)
         self.retry_button.clicked.connect(self._retry_archived)
         archive_controls.addWidget(self.retry_button)
+        self.delete_button = QPushButton("Markierte Datei löschen…")
+        self.delete_button.setEnabled(False)
+        self.delete_button.setToolTip(
+            "Original und zugehörige importierte Datensätze lokal löschen. "
+            "QEC-Fälle mit manuellen Änderungen sind geschützt."
+        )
+        self.delete_button.clicked.connect(self._delete_archived)
+        archive_controls.addWidget(self.delete_button)
         layout.addLayout(archive_controls)
         self._visible_artifacts = []
 
@@ -261,13 +323,57 @@ class SourcesPage(QWidget):
         if filenames:
             self._archive_paths([Path(filename) for filename in filenames])
 
+    def _import_existing_quicktests(self) -> None:
+        if self.data_dir is None or self._worker is not None:
+            return
+        paths = list_downloaded_quicktests(self.data_dir)
+        if not paths:
+            self.import_status.setText(
+                "Keine lokalen QuickTest-PDFs unter quicktests/<FIN>/ gefunden."
+            )
+            return
+        # This dedicated action always uses safe content recognition.
+        self.source_type.setCurrentIndex(0)
+        self._archive_paths(paths)
+
     def _artifact_selected(self, index) -> None:
+        self.delete_button.setEnabled(
+            self.import_service is not None and self._worker is None
+            and index.isValid() and 0 <= index.row() < len(self._visible_artifacts)
+        )
         self.retry_button.setEnabled(
             self.import_service is not None
             and self._worker is None
             and index.isValid()
             and 0 <= index.row() < len(self._visible_artifacts)
         )
+
+    def _delete_archived(self) -> None:
+        index = self.artifact_table.currentIndex()
+        if self.import_service is None or self._worker is not None:
+            return
+        if not index.isValid() or index.row() >= len(self._visible_artifacts):
+            return
+        artifact = self._visible_artifacts[index.row()]
+        answer = QMessageBox.question(
+            self, "Quelldatei löschen?",
+            f"'{artifact.original_name}' samt zugehörigen importierten Daten "
+            "unwiderruflich aus dem lokalen Archiv entfernen? "
+            "Manuelle QEC-Änderungen sind geschützt."
+        )
+        if answer != QMessageBox.StandardButton.Yes:
+            return
+        try:
+            self.import_service.delete_artifact(artifact.sha256)
+        except (OSError, ValueError, RuntimeError) as exc:
+            QMessageBox.warning(self, "Löschen nicht möglich", str(exc))
+            return
+        self.import_status.setText(
+            "Quelldatei gelöscht. Zugehörige Quellen-Daten wurden bereinigt. "
+            "Ansichten werden neu geladen."
+        )
+        self._refresh_all()
+        self.sources_updated.emit(self.import_status.text(), 0)
 
     def _retry_archived(self) -> None:
         """Re-parse an original source already in the local immutable archive."""
@@ -302,14 +408,22 @@ class SourcesPage(QWidget):
         return detect_source_type(path)
 
     def _archive_paths(self, paths: list[Path]) -> None:
-        if self.import_service is None or not paths or self._worker is not None:
+        if (
+            self.import_service is None or not paths or self._worker is not None
+            or (
+                self.portable_backup_panel is not None
+                and self.portable_backup_panel.worker is not None
+            )
+        ):
             return
 
         forced = self.source_type.currentData()
         forced_type = forced if isinstance(forced, SourceType) else None
         self.archive_button.setEnabled(False)
+        self.local_quicktests_button.setEnabled(False)
         self.drop_zone.setEnabled(False)
         self.retry_button.setEnabled(False)
+        self.delete_button.setEnabled(False)
         self.import_status.setText(
             f"{len(paths)} Datei(en)/ZIP-Paket(e) werden lokal geprüft und importiert …"
         )
@@ -336,6 +450,9 @@ class SourcesPage(QWidget):
             f"{summary.qec_findings_linked} QEC-Fälle mit SSL-Endbefunden ergänzt, "
             f"{summary.qec_findings_conflicted} Referenzkonflikte, "
             f"{summary.quicktests_saved} QuickTest(s) dauerhaft nach FIN gespeichert, "
+            f"{summary.fin_zips_imported} FIN-ZIP(s) übertragen, "
+            f"{summary.fin_files_installed} neue QuickTest-/QEC-/TIPS-Dateien, "
+            f"{summary.fin_file_conflicts} unveränderte Konfliktdateien · "
             f"{summary.events_linked} zugeordnete Ereignisse · "
             f"{summary.events_unassigned} Ereignisse ohne eindeutige QEC-Zuordnung · "
             f"{summary.rows_scanned} gepruefte CSV-Zeilen, "
@@ -357,6 +474,7 @@ class SourcesPage(QWidget):
         self._pending_reload = bool(
             summary.cases_created or summary.events_linked or summary.quicktests_saved
             or summary.reference_sources or summary.qec_findings_linked
+            or summary.fin_files_installed
         )
         self._refresh_all()
 
@@ -369,6 +487,9 @@ class SourcesPage(QWidget):
 
     def _import_worker_finished(self) -> None:
         self.archive_button.setEnabled(self.import_service is not None)
+        self.local_quicktests_button.setEnabled(
+            self.import_service is not None and self.data_dir is not None
+        )
         self.drop_zone.setEnabled(self.import_service is not None)
         worker = self._worker
         self._worker = None
@@ -387,6 +508,20 @@ class SourcesPage(QWidget):
         artifacts = self._artifacts()
         self._refresh_artifacts(artifacts)
         self._refresh_readiness(artifacts)
+        active = active_qec_lists(artifacts)
+        if len(active) == 1:
+            self.active_qec_label.setText(
+                f"Aktuell verwendete QEC-FIN-Liste: {active[0].original_name}"
+            )
+        elif active:
+            self.active_qec_label.setText(
+                f"Achtung: {len(active)} primäre QEC-Listen im Altbestand. "
+                "Bitte die Datenbereinigung durchführen."
+            )
+        else:
+            self.active_qec_label.setText("Aktuell keine QEC-FIN-Liste aktiv.")
+        if self.qec_workflow is not None:
+            self.qec_workflow.refresh()
 
     def _refresh_artifacts(self, artifacts) -> None:
         view = self.archive_view.currentData()
@@ -436,6 +571,7 @@ class SourcesPage(QWidget):
             )
         self.artifact_model.set_rows(rows)
         self.retry_button.setEnabled(False)
+        self.delete_button.setEnabled(False)
         self.archive_counts.setText(
             f"{processed} verarbeitet · {pending} weitere im Rohdatenarchiv. "
             "Nicht angezeigte Originale bleiben erhalten."

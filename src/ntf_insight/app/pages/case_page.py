@@ -53,7 +53,10 @@ from ntf_insight.app.models.case_table_model import CaseRow, CaseTableModel
 from ntf_insight.app.models.simple_table_model import SimpleTableModel
 from ntf_insight.app.models.timeline_table_model import TimelineTableModel
 from ntf_insight.app.widgets.event_time_plot import EventTimePlot
+from ntf_insight.app.widgets.cpc3_software_panel import CPC3SoftwarePanel
+from ntf_insight.app.widgets.cpc3_pump_overview_panel import CPC3PumpOverviewPanel
 from ntf_insight.app.widgets.quicktest_browser import QuickTestBrowser
+from ntf_insight.app.widgets.quicktest_fleet_panel import QuickTestFleetPanel
 from ntf_insight.app.widgets.qec_case_download import QecCaseDownloadPanel
 from ntf_insight.app.widgets.tips_case_download import TipsCaseDownloadPanel
 from ntf_insight.acquisition.tips_archive import local_tips_cases
@@ -67,6 +70,7 @@ from ntf_insight.reporting.markdown import save_case_report
 from ntf_insight.storage.reference_repositories import ReferenceRepository
 from ntf_insight.storage.repositories import CaseRepository
 from ntf_insight.storage.quicktest_store import QuickTestStore
+from ntf_insight.storage.qec_workflow_store import QecWorkflowStore
 from ntf_insight.storage.dtc_review_store import DtcReviewStore
 from ntf_insight.storage.source_knowledge_store import SourceKnowledgeStore
 
@@ -123,6 +127,10 @@ class CasePage(QWidget):
             self.source_knowledge.autoexport_source_fins("autoexport_tips")
             if self.source_knowledge is not None else frozenset()
         )
+        self._tp_fins = (
+            self.source_knowledge.tp_dashboard_fins()
+            if self.source_knowledge is not None else frozenset()
+        )
         self._syncing_quicktest_fin = False
 
         outer_layout = QVBoxLayout(self)
@@ -141,6 +149,10 @@ class CasePage(QWidget):
                 if self.source_knowledge is not None else {}
             ),
             review_store=review_store,
+            handed_off_fins=(
+                QecWorkflowStore(manual_service.store).handed_off_fins()
+                if manual_service is not None else ()
+            ),
             quicktest_fins=(
                 tuple(QuickTestStore(manual_service.store).list_fins())
                 if manual_service is not None else ()
@@ -167,8 +179,29 @@ class CasePage(QWidget):
                 QuickTestStore(manual_service.store)
             )
             self.detail_tabs.addTab(self.quicktest_browser, "QuickTests nach FIN")
+            self.quicktest_fleet = QuickTestFleetPanel(
+                QuickTestStore(manual_service.store)
+            )
+            self.detail_tabs.addTab(self.quicktest_fleet, "QuickTest-Gesamtauswertung")
+            self.quicktest_fleet.fin_requested.connect(self.show_quicktests)
         else:
             self.quicktest_browser = None
+            self.quicktest_fleet = None
+
+        # Fallbezogene Software- und DTC-Evidenz für den Pumpentausch.
+        # Teure AutoExport-Auswertungen erst bei geöffnetem Register berechnen.
+        self.cpc3_overview = CPC3PumpOverviewPanel(
+            self.real_cases, self.source_knowledge,
+        )
+        self.detail_tabs.addTab(self.cpc3_overview, "ECU · SW-Übersicht")
+        self.cpc3_overview.case_requested.connect(self.select_case)
+        self.detail_tabs.currentChanged.connect(
+            lambda _index: (
+                self.cpc3_overview.ensure_loaded()
+                if self.detail_tabs.currentWidget() is self.cpc3_overview
+                else None
+            )
+        )
 
         layout = QVBoxLayout(content)
         layout.setContentsMargins(32, 28, 32, 28)
@@ -183,6 +216,22 @@ class CasePage(QWidget):
         )
         intro.setWordWrap(True)
         layout.addWidget(intro)
+        qec_fins = {
+            case.vin.strip().upper()
+            for case in self.real_cases
+            if case.component_profile_id == "coolant_pump"
+            and getattr(case, "qec_reference", None)
+        }
+        with_tp = len(qec_fins & self._tp_fins)
+        self.tp_coverage_note = QLabel(
+            f"QEC-Gesamtbestand: {len(qec_fins)} eindeutige FINs · "
+            f"TP-Dashboard-Diagnosedaten: {with_tp} · "
+            f"Ohne TP-Dashboard-Eintrag: {len(qec_fins) - with_tp}. "
+            "Alle QEC-FINs bleiben in der FIN-/Fallanalyse sichtbar.",
+            objectName="PageSubtitle",
+        )
+        self.tp_coverage_note.setWordWrap(True)
+        layout.addWidget(self.tp_coverage_note)
 
         self.selector = QComboBox(self)
         self.selector.setMinimumWidth(260)
@@ -273,6 +322,10 @@ class CasePage(QWidget):
                         else None
                     ),
                     tips_status=tips_status,
+                    tp_status=(
+                        "Vorhanden" if case.vin.strip().upper() in self._tp_fins
+                        else "Kein TP-Dashboard-Eintrag"
+                    ),
                 )
             )
 
@@ -312,6 +365,9 @@ class CasePage(QWidget):
         )
         self.case_table.horizontalHeader().setSectionResizeMode(
             CaseTableModel.TIPS_COLUMN, QHeaderView.ResizeMode.ResizeToContents
+        )
+        self.case_table.horizontalHeader().setSectionResizeMode(
+            CaseTableModel.TP_DASHBOARD_COLUMN, QHeaderView.ResizeMode.ResizeToContents
         )
         self.case_table.clicked.connect(self._case_clicked)
         self.case_table.clicked.connect(self._case_table_quicktest_link_clicked)
@@ -417,6 +473,8 @@ class CasePage(QWidget):
         self._refresh_qec_download_dates()
         self._update_qec_selection()
 
+        # Pilotabruf aus TIPS Writer. Eigenes Edge-Profil und manuelle PING-ID;
+        # fachliche Live-Freigabe im Unternehmensnetz steht noch aus.
         self.tips_download = None
         if self.qec_data_dir is not None:
             self.tips_download = TipsCaseDownloadPanel(
@@ -554,6 +612,10 @@ class CasePage(QWidget):
             )
         )
         layout.addWidget(self.time_plot)
+
+        self.cpc3_panel = CPC3SoftwarePanel(self.source_knowledge)
+        self.cpc3_overview.ecu_selected.connect(self.cpc3_panel.set_ecu)
+        layout.addWidget(self.cpc3_panel)
 
         layout.addWidget(QLabel(
             "Erkannte HW-/SW-Standabweichungen", objectName="CardTitle"
@@ -1085,6 +1147,7 @@ class CasePage(QWidget):
         self.time_plot.set_entries([])
         self.version_change_model.set_rows([])
         self.version_change_summary.setText("Keine FIN / kein Fall ausgewählt.")
+        self.cpc3_panel.clear()
         self.autoexport_history_model.set_rows([])
         self.autoexport_history_note.setText("Keine FIN ausgewählt.")
         self.autoexport_history_count.setText("—")
@@ -1287,6 +1350,7 @@ class CasePage(QWidget):
                 self._syncing_quicktest_fin = False
 
         self._display_version_changes(case)
+        self.cpc3_panel.show_case(case)
         # Case change refreshes the corresponding VIN-wide history; an
         # independent direct FIN lookup remains possible without a case.
         self.autoexport_fin_lookup.setText(case.vin)

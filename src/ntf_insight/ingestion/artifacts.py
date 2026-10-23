@@ -15,6 +15,7 @@ from pydantic import BaseModel, ConfigDict, Field
 class SourceType(StrEnum):
     VEHICLE_CASE_LIST = "vehicle_case_list"
     SHORT_TEST = "short_test"
+    TP_DASHBOARD = "tp_dashboard"
     REPLACEMENT_LIST = "replacement_list"
     SUPPLIER_FINDING = "supplier_finding"
     WORKSHOP_HISTORY = "workshop_history"

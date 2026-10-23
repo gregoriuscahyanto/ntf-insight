@@ -1,0 +1,166 @@
+"""Local Excel review list: selected-ECU SW observations versus pump replacements.
+
+This workbook includes FINs and must never be sent to GitHub or CI artifacts.
+"""
+from __future__ import annotations
+
+from pathlib import Path
+from typing import Sequence
+
+from openpyxl import Workbook
+from openpyxl.styles import Alignment, Font, PatternFill
+from openpyxl.utils import get_column_letter
+
+from ntf_insight.analysis.cpc3_pump_overview import CPC3PumpOverviewCase
+
+
+def _safe(value: object) -> str:
+    """Imported text must not become an Excel formula or external link."""
+    result = str(value if value is not None else "")
+    if result.lstrip().startswith(("=", "+", "-", "@", "\t", "\r", "\n")):
+        return "'" + result
+    return result
+
+
+_HEADERS = (
+    "Fall-ID", "FIN", "Bauteil", "Pumpentauschdatum",
+    "ECU-SW vor Tausch", "ECU-SW nach Tausch",
+    "SW-Maßnahme / Versionswechsel", "Änderungskategorie",
+    "Zeitintervall der SW-Beobachtungen",
+    "ECU-DTCs im letzten vollständigen Vortest",
+    "ECU-DTCs in vollständigen Nachtests",
+    "DTCs erneut beobachtet", "DTC-Verlauf", "SW-Wirkung",
+    "Vollständige ECU-QuickTests davor",
+    "Vollständige ECU-QuickTests danach",
+    "Vollständige ECU-QuickTests vor SW-Maßnahme",
+    "Vollständige ECU-QuickTests nach SW-Maßnahme",
+    "DTCs erneut nach SW-Maßnahme",
+    "Dokumentierte SW-Maßnahmen", "Quellbeleg SW vor",
+    "Quellbeleg SW nach", "Datenlücken", "AutoExport-Begrenzung",
+    "Befundungsbericht prüfen", "SW-Releasenotes prüfen", "Fachliche Notiz",
+    "Steuergerät", "Alle beobachteten SW-Stände (EcuSwVersionTxt)",
+    "Chronologischer SW-Verlauf", "Anzahl unterschiedlicher SW-Stände",
+    "ECU-DTC-Status vor Tausch", "ECU-DTC-Status nach Tausch",
+    "Positiv belegte ECU-DTCs vor Tausch",
+    "Positiv belegte ECU-DTCs nach Tausch",
+    "SW-Beobachtungen am Tauschtag",
+    "SW-Zeitlage zum Pumpentausch",
+    "Quellbelege SW am Tauschtag",
+)
+
+
+def export_cpc3_pump_overview(
+    path: str | Path,
+    cases: Sequence[CPC3PumpOverviewCase],
+) -> int:
+    """Write the currently selected true case rows, no guessed conclusions."""
+    workbook = Workbook()
+    ws = workbook.active
+    ws.title = "ECU-Pumpenfälle"
+    ws.append(_HEADERS)
+    for case in cases:
+        ws.append((
+            _safe(case.case_id),
+            _safe(case.fin), _safe(case.component),
+            case.swap_day.isoformat() if case.swap_day else "",
+            _safe(case.before_sw),
+            _safe(case.after_sw),
+            _safe(case.update_status), _safe(case.update_group),
+            _safe(case.interval_description),
+            _safe("; ".join(case.pre_cpc3_dtcs)),
+            _safe("; ".join(case.post_cpc3_dtcs)),
+            _safe("; ".join(case.returned_dtcs)),
+            _safe(case.dtc_status), _safe(case.sw_effect),
+            case.pre_complete_tests, case.post_complete_tests,
+            case.sw_pre_complete_tests, case.sw_post_complete_tests,
+            _safe("; ".join(case.sw_post_returned_dtcs)),
+            _safe(" | ".join(case.update_events)),
+            _safe(case.before_source), _safe(case.after_source),
+            _safe(case.note), "Ja" if case.truncated else "Nein",
+            "Offen", "Offen", "",
+            _safe(case.ecu),
+            _safe("; ".join(case.sw_versions)),
+            _safe(" → ".join(case.sw_history)),
+            len(case.sw_versions),
+            _safe(case.pre_dtc_evidence),
+            _safe(case.post_dtc_evidence),
+            _safe("; ".join(case.pre_dtc_observed)),
+            _safe("; ".join(case.post_dtc_observed)),
+            _safe("; ".join(case.swap_day_sw)),
+            _safe(case.swap_context_kind),
+            _safe("; ".join(case.swap_day_sources)),
+        ))
+    ws.freeze_panes = "D2"
+    ws.auto_filter.ref = (
+        f"A1:{get_column_letter(len(_HEADERS))}{max(1, ws.max_row)}"
+    )
+    ws.sheet_view.showGridLines = False
+    widths = (22, 25, 22, 19, 24, 24, 49, 22, 27, 48, 48, 33,
+              44, 57, 26, 26, 27, 28, 30, 56, 60, 60, 60, 21, 26, 27, 38)
+    widths = (
+        *widths, 20, 48, 80, 20, 25, 25, 46, 46,
+        46, 34, 70,
+    )
+    for index, width in enumerate(widths, 1):
+        ws.column_dimensions[get_column_letter(index)].width = width
+    ws.row_dimensions[1].height = 44
+    for cell in ws[1]:
+        cell.fill = PatternFill("solid", fgColor="22252A")
+        cell.font = Font(name="Arial", size=10, color="FFFFFF", bold=True)
+        cell.alignment = Alignment(wrap_text=True, vertical="center")
+    for row in ws.iter_rows(min_row=2):
+        for cell in row:
+            cell.font = Font(name="Arial", size=10, color="333333")
+            cell.alignment = Alignment(vertical="top", wrap_text=True)
+        for col in (25, 26, 27):
+            row[col - 1].font = Font(name="Arial", size=10, color="2456A6")
+
+    history = workbook.create_sheet("SW-Messhistorie")
+    history.append((
+        "Fall-ID", "FIN", "Steuergerät", "Diagnosezeit",
+        "EcuSwVersionTxt (original)", "Tauschbezug", "Quellbeleg",
+    ))
+    for case in cases:
+        for observed_at, sw, relation, source in case.sw_observations:
+            history.append((
+                _safe(case.case_id), _safe(case.fin), _safe(case.ecu),
+                _safe(observed_at), _safe(sw), _safe(relation),
+                _safe(source),
+            ))
+    history.freeze_panes = "D2"
+    history.auto_filter.ref = (
+        f"A1:G{max(1, history.max_row)}"
+    )
+    for col, width in enumerate((22, 25, 18, 25, 26, 35, 75), 1):
+        history.column_dimensions[get_column_letter(col)].width = width
+    for cell in history[1]:
+        cell.fill = PatternFill("solid", fgColor="22252A")
+        cell.font = Font(color="FFFFFF", bold=True)
+
+    info = workbook.create_sheet("Bewertungsregeln")
+    info.append(("Hinweis", "Bedeutung"))
+    for heading, value in (
+        ("Analyseobjekt", "Eine Zeile je Pumpenfall; gleiche FIN kann mehrfach vorkommen."),
+        ("Anker", "Pumpentauschdatum aus dokumentierter Quelle; nicht automatisch Ausfalldatum."),
+        ("SW-Maßnahme am Tauschtag", "Explizit dokumentierter Softwareeingriff am selben Kalendertag."),
+        ("SW-Messung am Tauschtag", "SW aus AutoExport/QT am Tauschtag belegt; die Uhrzeit der mechanischen Reparatur ist unbekannt. Kein sicherer Vorher- oder Nachher-Stand."),
+        ("SW zeitnah", "SW-Maßnahme im offengelegten Zeitfenster von 14 Tagen um den Tauschtag."),
+        ("SW-Versionen", "Ein Unterschied vor/nach dem Tausch beweist kein Update am Tauschtag."),
+        ("Diagnose", "Positive AutoExport-DTCs sind Belege, aber nur vollständige ECU-QuickTests begründen ein 0-DTC-Ergebnis."),
+        ("DTC nicht erneut", "Im vollständigen ECU-Nachtest kein DTC; ohne ECU-Test unbekannt, keine Heilungsbestätigung."),
+        ("Ursache", "Pumpe und Software können gleichzeitig verändert worden sein; SW-Heilung ist nicht isoliert bewiesen."),
+        ("Datenlücken", "Fehlende/mehrdeutige Beobachtungen bleiben explizit unbekannt."),
+        ("SW-Standhäufigkeit", "Donut: sicher vorher gemessene SW getrennt von ausschließlich am Tauschtag beobachteter SW; keine Flotten-Ausfallquote."),
+        ("SW-Zeitlage", "Nur am Tauschtag / erst danach / überhaupt keine SW sind unterschiedliche Kategorien."),
+        ("Fachprüfung", "Softwareänderungen brauchen freigegebene Release-/Kalibrierungsunterlagen."),
+        ("Datenschutz", "Enthält FINs und Werkstattbelege; nur auf freigegebenen lokalen Ablagen speichern."),
+    ):
+        info.append((_safe(heading), _safe(value)))
+    info.column_dimensions["A"].width = 28
+    info.column_dimensions["B"].width = 115
+    for cell in info[1]:
+        cell.fill = PatternFill("solid", fgColor="22252A")
+        cell.font = Font(color="FFFFFF", bold=True)
+    info.freeze_panes = "B2"
+    workbook.save(path)
+    return len(cases)

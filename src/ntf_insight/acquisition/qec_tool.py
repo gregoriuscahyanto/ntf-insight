@@ -269,12 +269,77 @@ def parse_attachment_listing(document: str) -> list[dict[str, str]]:
         seen.add(ids[0])
         rows = anchor.xpath("ancestor::tr[1]")
         columns = [" ".join(c.text_content().split()) for c in rows[0].xpath("./td|./th")] if rows else []
+        linktext = " ".join(anchor.text_content().split())
         items.append({
             "anhang_id": ids[0],
-            "linktext": " ".join(anchor.text_content().split()),
+            "linktext": linktext,
             "spalten": columns,
+            # The download link is often on "Dateinummer", whereas the
+            # actual file name is plain text in the last "Dateiname" cell.
+            "dateiname": _popup_attachment_filename(columns, linktext),
         })
     return items
+
+
+def _popup_attachment_filename(columns: list[str], linktext: str = "") -> str:
+    """Extract a verifiable file name from QEC's attachment-list row.
+
+    Do not substitute the link ID, date or response header for a missing
+    visible name: such an attachment cannot be safely reference-scoped.
+    """
+    for candidate in [*reversed(columns), linktext]:
+        name = str(candidate).strip()
+        if Path(name).suffix.casefold() in _ALLOWED_SUFFIXES:
+            return name
+    return ""
+
+
+def attachment_matches_reference(filename: str, reference: str) -> bool:
+    """Require the exact numeric QEC reference token in the visible file name.
+
+    '900000625_bericht.pdf' matches 900000625; '9000006250.pdf' and
+    '1900000625.pdf' do not. No filename means fail closed.
+    """
+    if not re.fullmatch(r"[0-9]{1,14}", reference):
+        raise ValueError("Ungueltige QEC-Referenznummer fuer Anhangabgleich.")
+    name = str(filename or "").strip().replace("\\", "/").rsplit("/", 1)[-1]
+    return bool(
+        Path(name).suffix.casefold() in _ALLOWED_SUFFIXES
+        and re.search(r"(?<![0-9])" + re.escape(reference) + r"(?![0-9])", name)
+    )
+
+
+def _matching_previous_attachments(
+    previous: object, reference: str,
+) -> dict[str, dict]:
+    """Do not re-associate foreign legacy attachments with this QEC case.
+
+    Old downloads remain on disk (no destructive migration), but are not
+    advertised in the current case JSON/manifest without reference evidence.
+    """
+    selected: dict[str, dict] = {}
+    if not isinstance(previous, list):
+        return selected
+    for item in previous:
+        if not isinstance(item, dict):
+            continue
+        identifier = str(item.get("anhang_id", ""))
+        if not identifier.isdigit():
+            continue
+        columns = item.get("spalten", [])
+        if not isinstance(columns, list):
+            columns = []
+        filename = (
+            str(item.get("dateiname") or "").strip()
+            or _popup_attachment_filename(
+                [str(column) for column in columns],
+                str(item.get("linktext") or ""),
+            )
+            or str(item.get("datei") or "")
+        )
+        if attachment_matches_reference(filename, reference):
+            selected[identifier] = dict(item)
+    return selected
 
 
 def _filename_from_headers(headers: dict, attachment_id: str, data: bytes) -> str:
@@ -721,8 +786,9 @@ class QecDownloader:
 
     def _save_popups(self, context, page, folder: Path, result: QecResult,
                      progress: Progress, cancel: Event,
-                     inventory: dict[str, dict[str, str]]) -> None:
-        """Collect all popup metadata in memory for the single QEC case JSON."""
+                     inventory: dict[str, dict[str, str]], *,
+                     reference: str) -> None:
+        """Download only popup files matching the selected QEC case reference."""
         buttons = page.locator('input[type="button"][value="Dateianhänge"], button:has-text("Dateianhänge")')
         for index in range(buttons.count()):
             self._check_cancel(cancel)
@@ -740,16 +806,38 @@ class QecDownloader:
                     document = popup.content()
                     attachments = parse_attachment_urls(document)
                     listing = parse_attachment_listing(document)
-                    for item in listing:
+                    matching = {
+                        item["anhang_id"]: item for item in listing
+                        if attachment_matches_reference(
+                            item.get("dateiname", ""), reference
+                        )
+                    }
+                    # The QEC popup may list PDFs for several references.
+                    # All foreign/unnamed items are rejected before even
+                    # issuing an authenticated HTTP request or Edge click.
+                    selected = [
+                        (identifier, url) for identifier, url in attachments
+                        if identifier in matching
+                    ]
+                    for item in matching.values():
                         inventory.setdefault(item["anhang_id"], {}).update({
                             key: value for key, value in item.items()
-                            if key in {"anhang_id", "linktext", "spalten"}
+                            if key in {"anhang_id", "linktext", "spalten", "dateiname"}
                         })
+                    skipped = len(attachments) - len(selected)
+                    if skipped:
+                        progress(
+                            f"{result.fin}: Referenz {reference}: {skipped} "
+                            "fremde oder nicht zuordenbare Anhaenge uebersprungen."
+                        )
                     if not attachments:
                         result.warnings.append("Anhang-Fenster ohne erkennbare Dateien.")
-                    for number, (attachment_id, url) in enumerate(attachments, 1):
+                    for number, (attachment_id, url) in enumerate(selected, 1):
                         self._check_cancel(cancel)
-                        progress(f"{result.fin}: Anhang {number}/{len(attachments)} wird geladen …")
+                        progress(
+                            f"{result.fin}: Referenz {reference}: "
+                            f"passender Anhang {number}/{len(selected)} wird geladen …"
+                        )
                         entry = inventory.setdefault(attachment_id, {"anhang_id": attachment_id})
                         existing = next(
                             (item for item in folder.glob(f"{attachment_id}_*") if item.is_file()),
@@ -838,10 +926,9 @@ class QecDownloader:
                 if (previous.get("fin") == target.fin
                         and previous.get("referenznummer") == hit.reference):
                     previous_case = previous
-                    for item in previous.get("anhaenge", []):
-                        if (isinstance(item, dict) and
-                                str(item.get("anhang_id", "")).isdigit()):
-                            inventory[str(item["anhang_id"])] = dict(item)
+                    inventory.update(_matching_previous_attachments(
+                        previous.get("anhaenge", []), hit.reference,
+                    ))
             except (OSError, ValueError, TypeError, AttributeError):
                 result.warnings.append(
                     f"{hit.reference}: Vorherige Fall-JSON nicht lesbar; Original bleibt erhalten."
@@ -869,6 +956,7 @@ class QecDownloader:
                 self._save_popups(
                     context, page, reference_folder / "anhaenge",
                     result, progress, cancel, inventory,
+                    reference=hit.reference,
                 )
         finally:
             # Keep missing previously captured tabs, marked as *older* evidence.

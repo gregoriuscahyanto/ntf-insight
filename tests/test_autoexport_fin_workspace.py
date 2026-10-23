@@ -131,7 +131,9 @@ def test_one_clusteranalyse_tab_includes_autoexport_and_qec(tmp_path, monkeypatc
     app = QApplication.instance() or QApplication([])
     window = MainWindow()
     case_page = window.pages["cases"]
-    assert case_page.detail_tabs.count() == 3
+    assert case_page.detail_tabs.count() == 5
+    assert case_page.detail_tabs.tabText(3) == "QuickTest-Gesamtauswertung"
+    assert case_page.detail_tabs.tabText(4) == "ECU · SW-Übersicht"
     assert case_page.detail_tabs.indexOf(
         case_page.autoexport_fin_workspace
     ) == 0
