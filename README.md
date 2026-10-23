@@ -101,5 +101,6 @@ Importierte Daten und Berichte bleiben auf dem jeweiligen Rechner. Standardmäß
 
 - [Daten importieren](docs/real-data-import.md)
 - [FIN- und Fallanalyse bedienen](docs/fin-workspace.md)
+- [CPC3-Softwarestand und Pumpentausch bewerten](docs/cpc3-softwareanalyse.md)
 - [Technischer Aufbau](docs/architecture.md)
 - [Entwicklungsplan](ROADMAP.md)

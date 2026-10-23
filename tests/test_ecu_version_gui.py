@@ -91,6 +91,11 @@ def test_imported_quicktests_highlight_changed_ecu_hw_sw_and_case_plot(
         assert window.repository.list_cases() == []
         page = window.pages["cases"]
         assert page.version_change_model.rowCount() == 2
+        assert page.cpc3_panel.version_model.rowCount() == 2
+        assert page.cpc3_panel.change_model.rowCount() == 1
+        assert "Kein dokumentierter Pumpentauschanker" in (
+            page.cpc3_panel.swap_summary.text()
+        )
         kinds = [
             page.version_change_model.data(
                 page.version_change_model.index(row, 1)

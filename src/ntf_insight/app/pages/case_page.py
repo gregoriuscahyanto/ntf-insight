@@ -53,6 +53,8 @@ from ntf_insight.app.models.case_table_model import CaseRow, CaseTableModel
 from ntf_insight.app.models.simple_table_model import SimpleTableModel
 from ntf_insight.app.models.timeline_table_model import TimelineTableModel
 from ntf_insight.app.widgets.event_time_plot import EventTimePlot
+from ntf_insight.app.widgets.cpc3_software_panel import CPC3SoftwarePanel
+from ntf_insight.app.widgets.cpc3_pump_overview_panel import CPC3PumpOverviewPanel
 from ntf_insight.app.widgets.quicktest_browser import QuickTestBrowser
 from ntf_insight.app.widgets.quicktest_fleet_panel import QuickTestFleetPanel
 from ntf_insight.app.widgets.qec_case_download import QecCaseDownloadPanel
@@ -183,6 +185,21 @@ class CasePage(QWidget):
         else:
             self.quicktest_browser = None
             self.quicktest_fleet = None
+
+        # Fallbezogene Software- und DTC-Evidenz für den Pumpentausch.
+        # Teure AutoExport-Auswertungen erst bei geöffnetem Register berechnen.
+        self.cpc3_overview = CPC3PumpOverviewPanel(
+            self.real_cases, self.source_knowledge,
+        )
+        self.detail_tabs.addTab(self.cpc3_overview, "ECU · SW-Übersicht")
+        self.cpc3_overview.case_requested.connect(self.select_case)
+        self.detail_tabs.currentChanged.connect(
+            lambda _index: (
+                self.cpc3_overview.ensure_loaded()
+                if self.detail_tabs.currentWidget() is self.cpc3_overview
+                else None
+            )
+        )
 
         layout = QVBoxLayout(content)
         layout.setContentsMargins(32, 28, 32, 28)
@@ -575,6 +592,10 @@ class CasePage(QWidget):
             )
         )
         layout.addWidget(self.time_plot)
+
+        self.cpc3_panel = CPC3SoftwarePanel(self.source_knowledge)
+        self.cpc3_overview.ecu_selected.connect(self.cpc3_panel.set_ecu)
+        layout.addWidget(self.cpc3_panel)
 
         layout.addWidget(QLabel(
             "Erkannte HW-/SW-Standabweichungen", objectName="CardTitle"
@@ -1090,6 +1111,7 @@ class CasePage(QWidget):
         self.time_plot.set_entries([])
         self.version_change_model.set_rows([])
         self.version_change_summary.setText("Keine FIN / kein Fall ausgewählt.")
+        self.cpc3_panel.clear()
         self.autoexport_history_model.set_rows([])
         self.autoexport_history_note.setText("Keine FIN ausgewählt.")
         self.autoexport_history_count.setText("—")
@@ -1292,6 +1314,7 @@ class CasePage(QWidget):
                 self._syncing_quicktest_fin = False
 
         self._display_version_changes(case)
+        self.cpc3_panel.show_case(case)
         # Case change refreshes the corresponding VIN-wide history; an
         # independent direct FIN lookup remains possible without a case.
         self.autoexport_fin_lookup.setText(case.vin)
