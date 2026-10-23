@@ -36,6 +36,7 @@ from ntf_insight.ingestion.batch_import import ImportSummary, LocalBatchImporter
 from ntf_insight.ingestion.source_detection import detect_source_type
 from ntf_insight.ingestion.downloaded_quicktests import list_downloaded_quicktests
 from ntf_insight.ingestion.qec_json import list_downloaded_qec_reports
+from ntf_insight.ingestion.parser_diagnostics import export_parser_diagnostics
 from ntf_insight.ingestion.service import SourceImportService
 from ntf_insight.storage.reference_repositories import ReferenceRepository
 from ntf_insight.storage.repositories import CaseRepository
@@ -90,6 +91,34 @@ class _SourceImportWorker(QThread):
         self.imported.emit(summary)
 
 
+class _ParserDiagnosticsWorker(QThread):
+    completed = Signal(object)
+    failed = Signal(str)
+    progress = Signal(str)
+
+    def __init__(
+        self, sources: SourceImportService, data_dir: Path,
+        destination: Path, *, include_originals: bool,
+    ) -> None:
+        super().__init__()
+        self.sources = sources
+        self.data_dir = data_dir
+        self.destination = destination
+        self.include_originals = include_originals
+
+    def run(self) -> None:
+        try:
+            result = export_parser_diagnostics(
+                self.sources, self.data_dir, self.destination,
+                include_originals=self.include_originals,
+                progress=self.progress.emit,
+            )
+        except Exception as exc:
+            self.failed.emit(f"{type(exc).__name__}: {exc}")
+            return
+        self.completed.emit(result)
+
+
 class SourcesPage(QWidget):
     sources_updated = Signal(str, int)
     SOURCE_LABELS = {
@@ -127,6 +156,7 @@ class SourcesPage(QWidget):
         self.mode = mode
         self.data_dir = Path(data_dir) if data_dir else None
         self._worker: _SourceImportWorker | None = None
+        self._diagnostics_worker: _ParserDiagnosticsWorker | None = None
         self._resume_kind: str | None = None
         self._pending_reload = False
         self._quicktests_added = 0
@@ -292,6 +322,24 @@ class SourcesPage(QWidget):
         self.import_status.setWordWrap(True)
         layout.addWidget(self.import_status)
 
+        diagnostics_row = QHBoxLayout()
+        self.problem_zip_button = QPushButton("Nicht parsebare QuickTests/QEC als ZIP exportieren…")
+        self.problem_zip_button.setEnabled(self.data_dir is not None and self.import_service is not None)
+        self.problem_zip_button.setToolTip(
+            "Erstellt lokal ein ZIP mit technischen Parser-Fehlerdaten. "
+            "Echte Original-PDFs und QEC-JSONs werden nur nach gesonderter "
+            "Bestätigung mitgegeben. Keine automatische Anonymisierung oder Übertragung."
+        )
+        self.problem_zip_button.clicked.connect(self._export_parser_problems)
+        diagnostics_row.addWidget(self.problem_zip_button)
+        diagnostics_note = QLabel(
+            "Standard: Metadaten ohne Originale · interne Freigabe vor Weitergabe",
+            objectName="PageSubtitle",
+        )
+        diagnostics_note.setWordWrap(True)
+        diagnostics_row.addWidget(diagnostics_note, 1)
+        layout.addLayout(diagnostics_row)
+
         self.archive_empty = QLabel(
             "Noch keine Originaldateien archiviert.\n"
             "Die Demo-Fälle sind interne Test-Fixtures und erscheinen bewusst nicht im Rohdatenarchiv.",
@@ -405,6 +453,101 @@ class SourcesPage(QWidget):
         elif self._resume_kind == "qec":
             self._import_existing_qec()
 
+    def _export_parser_problems(self) -> None:
+        if (
+            self.import_service is None or self.data_dir is None
+            or self._worker is not None or self._diagnostics_worker is not None
+            or (
+                self.portable_backup_panel is not None
+                and self.portable_backup_panel.worker is not None
+            )
+        ):
+            return
+        choice = QMessageBox(self)
+        choice.setWindowTitle("Vertrauliche Parser-Proben exportieren?")
+        choice.setIcon(QMessageBox.Icon.Warning)
+        choice.setText(
+            "Es werden ausschließlich problematische, bereits archivierte "
+            "QuickTest-/QEC-Dateien ermittelt. Wähle ein Diagnose-ZIP ohne "
+            "Originaldaten oder ein ZIP mit unveränderten Dateien.\n\n"
+            "Originaldateien können echte FINs, Diagnose- und Lieferanteninformationen "
+            "enthalten. Das ZIP ist nicht verschlüsselt; eine Anonymisierung "
+            "erfolgt NICHT. Kein ungeprüfter Upload an ChatGPT oder GitHub."
+        )
+        safe_button = choice.addButton(
+            "Nur technisches Fehlerprotokoll", QMessageBox.ButtonRole.AcceptRole
+        )
+        raw_button = choice.addButton(
+            "Mit Originaldateien (vertraulich)", QMessageBox.ButtonRole.DestructiveRole
+        )
+        choice.addButton(QMessageBox.StandardButton.Cancel)
+        choice.setDefaultButton(safe_button)
+        choice.exec()
+        selected = choice.clickedButton()
+        if selected not in {safe_button, raw_button}:
+            return
+        include_originals = selected == raw_button
+        if include_originals:
+            confirmation = QMessageBox.warning(
+                self, "Unveränderte Quelldateien enthalten vertrauliche Daten",
+                "Mit diesem Export werden die Originalinhalte ohne Anonymisierung "
+                "in eine unverschlüsselte ZIP-Datei kopiert.\n\n"
+                "Die Datei ausschließlich lokal prüfen und erst nach "
+                "fachgerechter Anonymisierung und Unternehmensfreigabe weitergeben. "
+                "Wirklich mit Originalen exportieren?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No,
+            )
+            if confirmation != QMessageBox.StandardButton.Yes:
+                return
+        destination, _ = QFileDialog.getSaveFileName(
+            self, "Lokales QEC-/QuickTest-Parser-Diagnosepaket",
+            str(Path.home() / "ntf-parser-diagnose.zip"),
+            "ZIP-Diagnosepaket (*.zip)",
+        )
+        if not destination:
+            return
+        target = Path(destination)
+        if target.suffix.lower() != ".zip":
+            target = target.with_suffix(".zip")
+        self.problem_zip_button.setEnabled(False)
+        self.archive_button.setEnabled(False)
+        self.local_quicktests_button.setEnabled(False)
+        self.local_qec_button.setEnabled(False)
+        self.resume_import_button.setEnabled(False)
+        self.import_status.setText("Lokale Parser-Probleme sammeln und ZIP erstellen …")
+        self._diagnostics_worker = _ParserDiagnosticsWorker(
+            self.import_service, self.data_dir, target,
+            include_originals=include_originals,
+        )
+        self._diagnostics_worker.progress.connect(self.import_status.setText)
+        self._diagnostics_worker.completed.connect(self._diagnostics_completed)
+        self._diagnostics_worker.failed.connect(self._diagnostics_failed)
+        self._diagnostics_worker.finished.connect(self._diagnostics_finished)
+        self._diagnostics_worker.start()
+
+    def _diagnostics_completed(self, result) -> None:
+        self.import_status.setText(
+            f"Parser-Diagnose-ZIP gespeichert: {result.path.name} · "
+            f"{result.problems_found} Problemdatei(en) gefunden, "
+            f"{result.entries_documented} dokumentiert, "
+            f"{result.original_files} Originale beigefügt. "
+            "Keine Übertragung erfolgt. Vor Weitergabe Freigabe prüfen."
+        )
+
+    def _diagnostics_failed(self, message: str) -> None:
+        self.import_status.setText("Parser-Diagnose fehlgeschlagen: " + message)
+
+    def _diagnostics_finished(self) -> None:
+        worker, self._diagnostics_worker = self._diagnostics_worker, None
+        if worker is not None:
+            worker.deleteLater()
+        self.problem_zip_button.setEnabled(self.import_service is not None and self.data_dir is not None)
+        self.archive_button.setEnabled(self.import_service is not None)
+        self.local_quicktests_button.setEnabled(self.import_service is not None and self.data_dir is not None)
+        self.local_qec_button.setEnabled(self.import_service is not None and self.data_dir is not None)
+        self.resume_import_button.setEnabled(self._resume_kind is not None)
+
     def _artifact_selected(self, index) -> None:
         self.delete_button.setEnabled(
             self.import_service is not None and self._worker is None
@@ -482,6 +625,7 @@ class SourcesPage(QWidget):
     ) -> None:
         if (
             self.import_service is None or not paths or self._worker is not None
+            or self._diagnostics_worker is not None
             or (
                 self.portable_backup_panel is not None
                 and self.portable_backup_panel.worker is not None
@@ -495,6 +639,7 @@ class SourcesPage(QWidget):
             self._resume_kind = local_kind
         self.cancel_import_button.setEnabled(True)
         self.resume_import_button.setEnabled(False)
+        self.problem_zip_button.setEnabled(False)
         self.archive_button.setEnabled(False)
         self.local_quicktests_button.setEnabled(False)
         self.local_qec_button.setEnabled(False)
@@ -570,6 +715,9 @@ class SourcesPage(QWidget):
 
     def _import_worker_finished(self) -> None:
         self.cancel_import_button.setEnabled(False)
+        self.problem_zip_button.setEnabled(
+            self.import_service is not None and self.data_dir is not None
+        )
         self.resume_import_button.setEnabled(
             self.import_service is not None and self.data_dir is not None
             and self._resume_kind in {"quicktests", "qec"}
