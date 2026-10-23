@@ -159,11 +159,60 @@ Exportversuche nicht wiederholen: zuerst vollständige DTS-Installation,
 Laufzeit-/DLL-Versionen und lizenzierte Initialisierungsumgebung klären.
 Das Aufrufverfahren kann sich zwischen Softing-Versionen unterscheiden.
 
+### CSWrap.dll: fehlender Viewer-Einstiegspunkt
+
+Bei der echten Windows-Ausfuehrung war `getSystem()` nach Korrektur
+der Runtime-Konfiguration erfolgreich; der Aufruf `LoadViewerProject()`
+scheiterte mit `EntryPointNotFoundException`:
+`CSNIDTS_DtsSystem_loadViewerProject` fehlt in `csWrap.dll`.
+
+Die urspruenglich mitgelieferte Hersteller-DLL wurde deshalb statisch
+auf ihre **tatsaechlich exportierten Funktionen** untersucht. Der
+`LoadViewerProject`-Einstiegspunkt ist in der nativen DLL nicht vorhanden,
+obwohl die .NET-Assembly eine entsprechend benannte Methode anbietet.
+Vorhanden sind hingegen `selectDynamicProject`,
+`DtsProject_getDbProject` und `deselectProject` sowie die
+DTC-Level- und SDG-Lesemethoden.
+
+Der Exporter verwendet jetzt `SelectDynamicProject(..., string[])`
+und `DtsProject.DbProject` in einer Offline-DTS-Projektauswahl und
+`DeselectProject()` zur Freigabe. Das ist eine **alternative API-Route**,
+kein bereits nachgewiesener vollständiger Export. Die genaue Laufzeit-
+Semantik und alle notwendigen globalen Verweise muessen noch auf dem
+Windows-PC mit einer echten SMR-D verifiziert werden.
+
+```powershell
+$runtime = "$env:USERPROFILE\.ntf-insight\smrd\runtime\SMRxView"
+
+# Nur DLL-Exporte lesen, ohne Hersteller-DLL auszufuehren
+python -m ntf_insight.smrd native-capabilities --runtime-dir $runtime
+
+# .NET-Methoden und native Exportvoraussetzungen pruefen
+python -m ntf_insight.smrd native-probe --runtime-dir $runtime
+```
+
+`native-capabilities` liest nur die PE-Exporttabelle und laedt bzw.
+startet keine proprietaere DLL. Es erwartet:
+`native_api_ready: true` und `has_dynamic_project_api: true`;
+`managed_only_viewer_api: true` bedeutet, dass der alte
+`LoadViewerProject`-Einstiegspunkt **fehlt**, nicht dass die neue
+Projektmethode unbrauchbar ist.
+
+Der nachfolgende `native-export` laeuft weiterhin in einem separaten
+Windows-PowerShell-Prozess. Bei einem Fehler wird weder die produktive
+NTF-DuckDB beschrieben noch ein unvollstaendiger JSON-Export gespeichert.
+Es findet keine Fahrzeugkommunikation statt. Ein weiterer nativer
+Laufzeitfehler darf nicht mit angeblich erfolgreicher DTC-Extraktion
+verwechselt werden.
+
 ### Befehle
 
 ```powershell
 $smrd = "$env:USERPROFILE\.ntf-insight\smrd\originale\CPC3_24.01.00.smr-d"
 $runtime = "$env:USERPROFILE\.ntf-insight\smrd\runtime\SMRxView"
+
+# Prueft zuerst native DLL-Exporte ohne die Softing-Engine zu starten
+python -m ntf_insight.smrd native-capabilities --runtime-dir $runtime
 
 # Prüft lediglich die öffentliche .NET-API, ohne SMR-D zu öffnen
 python -m ntf_insight.smrd native-probe --runtime-dir $runtime
