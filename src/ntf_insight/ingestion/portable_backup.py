@@ -41,7 +41,8 @@ _SHA = re.compile(r"[a-f0-9]{64}\Z")
 _RESERVED = re.compile(r"(CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])(\..*)?\Z", re.I)
 _ALLOWED_LOCAL_SUFFIXES = {
     "quicktests": {".pdf", ".json"},
-    "qec": {".pdf", ".json"},
+    "qec": {".pdf", ".json", ".html", ".htm", ".txt", ".csv", ".xml",
+            ".jpg", ".jpeg", ".png", ".xlsx", ".docx", ".zip"},
     "tips": {
         ".pdf", ".json", ".jpg", ".jpeg", ".png", ".bmp", ".tif",
         ".tiff", ".webp", ".gif", ".csv", ".xlsx", ".xls", ".doc",
@@ -201,6 +202,7 @@ def export_portable_backup(
         sources, artifact_files = _export_sources(root, snapshot)
         if len(sources) + 1 > MAX_ENTRIES:
             raise ValueError("Zu viele lokale Dateien für ein Transferpaket.")
+        raw_shas = {"files/" + relative: sha for sha, relative in artifact_files.items()}
 
         fd, temp_name = tempfile.mkstemp(prefix=".ntf-export-", suffix=".partial",
                                          dir=destination.parent)
@@ -214,10 +216,8 @@ def export_portable_backup(
                 total_size = entries[0]["bytes"]
                 for index, (name, path) in enumerate(sorted(sources.items()), 1):
                     item = _write_member(archive, name, path)
-                    if name.startswith("files/raw/"):
-                        for sha, relative in artifact_files.items():
-                            if name == "files/" + relative and item["sha256"] != sha:
-                                raise ValueError("Rohdatei weicht von ihrer Datenbank-Prüfsumme ab.")
+                    if name in raw_shas and item["sha256"] != raw_shas[name]:
+                        raise ValueError("Rohdatei weicht von ihrer Datenbank-Prüfsumme ab.")
                     entries.append(item)
                     total_size += item["bytes"]
                     if total_size > MAX_TOTAL_BYTES:
@@ -359,6 +359,8 @@ def _validate_and_rebase_database(
             con.execute("SELECT COUNT(*) FROM quicktest_reports").fetchone()[0]
             if "quicktest_reports" in tables else 0
         )
+        # Ensure new machine can use the single database file without a WAL sidecar.
+        con.execute("CHECKPOINT")
     return int(case_count), int(quicktests)
 
 
@@ -393,6 +395,10 @@ def has_local_dataset(data_dir: Path) -> bool:
         )
 
 
+class _IncompleteRollback(RuntimeError):
+    """The staging directory must remain available for manual recovery."""
+
+
 def _replace_dataset(stage: Path, root: Path) -> None:
     """Same-filesystem install with rollback on rename/permission failure."""
     before = stage / "_vorher"
@@ -415,15 +421,27 @@ def _replace_dataset(stage: Path, root: Path) -> None:
             installed.append(folder)
         os.replace(stage / DATABASE_ENTRY, root / DATABASE_NAME)
         installed.append(DATABASE_NAME)
-    except Exception:
+    except Exception as original:
+        errors = []
         for name in reversed(installed):
             path = root / name
-            if path.is_dir():
-                shutil.rmtree(path)
-            else:
-                path.unlink(missing_ok=True)
+            try:
+                if path.is_dir():
+                    shutil.rmtree(path)
+                else:
+                    path.unlink(missing_ok=True)
+            except OSError as exc:
+                errors.append(f"{name}: {type(exc).__name__}")
         for name in reversed(moved_old):
-            os.replace(before / name, root / name)
+            try:
+                os.replace(before / name, root / name)
+            except OSError as exc:
+                errors.append(f"{name}: {type(exc).__name__}")
+        if errors:
+            raise _IncompleteRollback(
+                "Rücksetzung nicht vollständig; alte Daten zur manuellen "
+                f"Wiederherstellung erhalten unter {before}."
+            ) from original
         raise
 
 
@@ -447,8 +465,9 @@ def restore_portable_backup(
             "Auf diesem PC existieren bereits Daten. "
             "Vor dem Ersetzen bitte deren vollständiges Paket exportieren."
         )
-    with tempfile.TemporaryDirectory(prefix=".ntf-restore-", dir=root.parent) as temp:
-        stage = Path(temp)
+    stage = Path(tempfile.mkdtemp(prefix=".ntf-restore-", dir=root.parent))
+    preserve_stage = False
+    try:
         with ZipFile(package) as archive:
             entries, artifact_files = _inspect_backup(archive)
             _message(progress, "Paket und alle Prüfsummen überprüfen …")
@@ -476,12 +495,17 @@ def restore_portable_backup(
         case_count, quicktests = _validate_and_rebase_database(
             stage / DATABASE_ENTRY, artifact_files, root,
         )
-        # Optional race check: a second local import might have started
-        # after the initial confirmation; this is also guarded by the GUI.
         if has_local_dataset(root) and not replace_existing:
             raise ValueError("Zieldaten wurden zwischenzeitlich verändert.")
         _message(progress, "Geprüften Gesamtdatenstand ohne Neuparsen wiederherstellen …")
         _replace_dataset(stage, root)
+    except _IncompleteRollback:
+        # Never delete original files that could not be moved back.
+        preserve_stage = True
+        raise
+    finally:
+        if not preserve_stage:
+            shutil.rmtree(stage, ignore_errors=True)
     return PortableRestoreResult(
         file_count=len(entries), case_count=case_count, quicktest_count=quicktests,
     )
