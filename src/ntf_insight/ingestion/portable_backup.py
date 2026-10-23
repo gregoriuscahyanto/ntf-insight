@@ -242,7 +242,7 @@ def export_portable_backup(
         finally:
             partial.unlink(missing_ok=True)
     _message(progress, "Gesamtdatenstand vollständig in einer Datei gesichert.")
-    return PortableBackupResult(destination, len(entries), snapshot_size := int(entries[0]["bytes"]))
+    return PortableBackupResult(destination, len(entries), int(entries[0]["bytes"]))
 
 
 def _inspect_backup(archive: ZipFile) -> tuple[list[dict], dict[str, str]]:
