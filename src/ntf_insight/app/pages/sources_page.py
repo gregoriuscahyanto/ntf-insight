@@ -768,14 +768,18 @@ class SourcesPage(QWidget):
         self._visible_artifacts = []
         processed = 0
         pending = 0
+        # One DuckDB scan instead of thousands of connections for large
+        # QuickTest batches (e.g. >2,000 source PDFs).
+        latest_by_sha = {}
+        if self.import_service is not None:
+            for run in self.import_service.store.load_parse_runs():
+                previous = latest_by_sha.get(run.artifact_sha256)
+                if previous is None or (run.completed_at or run.started_at) >= (
+                    previous.completed_at or previous.started_at
+                ):
+                    latest_by_sha[run.artifact_sha256] = run
         for artifact in artifacts:
-            runs = self.import_service.store.load_parse_runs(
-                artifact.sha256
-            ) if self.import_service else []
-            latest = max(
-                runs, key=lambda run: run.completed_at or run.started_at,
-                default=None,
-            )
+            latest = latest_by_sha.get(artifact.sha256)
             is_processed = bool(
                 latest is not None
                 and latest.status in {ParseStatus.SUCCESS, ParseStatus.PARTIAL}
