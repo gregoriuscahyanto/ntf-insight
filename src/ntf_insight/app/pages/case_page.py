@@ -58,6 +58,7 @@ from ntf_insight.app.widgets.cpc3_pump_overview_panel import CPC3PumpOverviewPan
 from ntf_insight.app.widgets.quicktest_browser import QuickTestBrowser
 from ntf_insight.app.widgets.quicktest_fleet_panel import QuickTestFleetPanel
 from ntf_insight.app.widgets.qec_case_download import QecCaseDownloadPanel
+from ntf_insight.app.widgets.qec_structured_panel import QECStructuredPanel
 from ntf_insight.app.widgets.tips_case_download import TipsCaseDownloadPanel
 from ntf_insight.acquisition.tips_archive import local_tips_cases
 from ntf_insight.app.widgets.fin_zip_export import FinZipExportPanel
@@ -568,6 +569,11 @@ class CasePage(QWidget):
         self.recurrence_text = QLabel("—", objectName="PageSubtitle")
         self.recurrence_text.setWordWrap(True)
         layout.addWidget(self.recurrence_text)
+
+        self.qec_structured_panel = QECStructuredPanel(
+            self.source_knowledge, data_dir=self.qec_data_dir,
+        )
+        layout.addWidget(self.qec_structured_panel)
 
         layout.addWidget(QLabel("Zeitliches Auftreten", objectName="CardTitle"))
         time_hint = QLabel(
@@ -1148,6 +1154,7 @@ class CasePage(QWidget):
         self.version_change_model.set_rows([])
         self.version_change_summary.setText("Keine FIN / kein Fall ausgewählt.")
         self.cpc3_panel.clear()
+        self.qec_structured_panel.clear()
         self.autoexport_history_model.set_rows([])
         self.autoexport_history_note.setText("Keine FIN ausgewählt.")
         self.autoexport_history_count.setText("—")
@@ -1351,6 +1358,7 @@ class CasePage(QWidget):
 
         self._display_version_changes(case)
         self.cpc3_panel.show_case(case)
+        self.qec_structured_panel.show_case(case)
         # Case change refreshes the corresponding VIN-wide history; an
         # independent direct FIN lookup remains possible without a case.
         self.autoexport_fin_lookup.setText(case.vin)
