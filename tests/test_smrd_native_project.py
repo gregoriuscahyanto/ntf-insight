@@ -79,7 +79,7 @@ def test_project_test_rejects_missing_success_marker(tmp_path, monkeypatch):
             args=[], returncode=0, stdout="Unexpected response", stderr="",
         ),
     )
-    with pytest.raises(native_export.NativeRuntimeError, match="Keine Datenbank"):
+    with pytest.raises(native_export.NativeRuntimeError, match="keine Datenbank"):
         native_export.native_project_test(smrd, data_dir=tmp_path)
 
 
