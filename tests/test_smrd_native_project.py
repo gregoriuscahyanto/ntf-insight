@@ -83,6 +83,47 @@ def test_project_test_rejects_missing_success_marker(tmp_path, monkeypatch):
         native_export.native_project_test(smrd, data_dir=tmp_path)
 
 
+def test_project_test_explains_missing_basesystem_license(
+    tmp_path, monkeypatch,
+):
+    smrd = tmp_path / "ECU.smr-d"
+    smrd.write_bytes(b"synthetic test")
+    _setup_preflight(monkeypatch, tmp_path)
+    vendor_error = (
+        "eSYSTEM_LICENSE_ERROR (code = 58679)\n"
+        "Severity = eFATAL_ERROR\n"
+        "VendorCodeDescription = No BaseSystem license was found. "
+        "Add license in Configurator under General Settings! (code = 59075)"
+    )
+    monkeypatch.setattr(
+        native_export, "_run_script",
+        lambda *args, **kwargs: subprocess.CompletedProcess(
+            args=[], returncode=1, stdout="", stderr=vendor_error,
+        ),
+    )
+    with pytest.raises(native_export.NativeLicenseError) as caught:
+        native_export.native_project_test(smrd, data_dir=tmp_path)
+    message = str(caught.value)
+    assert "BaseSystem" in message
+    assert "58679" in message
+    assert "59075" in message
+    assert "System Configurator" in message
+    assert "nicht erneut starten" in message
+    assert not (tmp_path / "ntf-insight.duckdb").exists()
+
+
+def test_unrelated_vendor_exception_is_not_misclassified_as_license_error():
+    native_result = subprocess.CompletedProcess(
+        args=[], returncode=1, stdout="", stderr="Project not recognized",
+    )
+    failure = native_export._native_process_failure(
+        native_result, context="Native project failed",
+    )
+    assert isinstance(failure, native_export.NativeRuntimeError)
+    assert not isinstance(failure, native_export.NativeLicenseError)
+    assert "Project not recognized" in str(failure)
+
+
 def test_project_test_blocks_unready_runtime_before_any_native_call(
     tmp_path, monkeypatch,
 ):
