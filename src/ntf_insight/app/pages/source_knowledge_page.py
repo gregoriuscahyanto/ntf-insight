@@ -29,7 +29,8 @@ class SourceKnowledgePage(QWidget):
     CATEGORY_CHOICES = (
         ("Alle strukturierten Quellen", None),
         ("SMR-D · DTC-Referenzen (XML)", "smrd_xml_dtc"),
-        ("SMR-D · ECU und Varianten", "smrd_xml_ecu"),
+        ("SMR-D · ECU", "smrd_xml_ecu"),
+        ("SMR-D · Varianten", "smrd_xml_variant"),
         ("SMR-D · Services", "smrd_xml_service"),
         ("SMR-D · Parameter", "smrd_xml_parameter"),
         ("SMR-D · SDGs", "smrd_xml_sdg"),
