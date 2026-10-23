@@ -392,14 +392,15 @@ class ChatGPTAnalyseStore:
                         datetime.now(), content.decode("utf-8-sig"),
                     ],
                 )
-                con.executemany(
-                    "INSERT INTO chatgpt_cluster VALUES (?,?,?)",
-                    [
-                        (data.analyse_id, cluster.cluster_id,
-                         cluster.model_dump_json(exclude_none=True))
-                        for cluster in data.cluster
-                    ],
-                ) if data.cluster else None
+                if data.cluster:
+                    con.executemany(
+                        "INSERT INTO chatgpt_cluster VALUES (?,?,?)",
+                        [
+                            (data.analyse_id, cluster.cluster_id,
+                             cluster.model_dump_json(exclude_none=True))
+                            for cluster in data.cluster
+                        ],
+                    )
                 con.executemany(
                     "INSERT INTO chatgpt_fallanalysen "
                     "(analyse_id,case_id,fall_pseudonym,cluster_id,payload_json,review_status) "
