@@ -1,4 +1,3 @@
-from pathlib import Path
 from ntf_insight.smrd.library import SmrdLocalLibrary
 from ntf_insight.smrd.xml_reference import parse_xml
 
@@ -23,3 +22,36 @@ def test_generic_dtc_and_extra_fields(tmp_path):
     assert dtc["data"]["repair_action"] == "Inspect wiring"
     assert dtc["data"]["possible_causes"] == "Connector"
     assert dtc["data"]["error_level"] == "2: error"
+
+
+def test_ecu_export_is_generic_and_dtc_skip_works(tmp_path):
+    xml = tmp_path / "ecu.xml"
+    xml.write_text(
+        '<Smrd2Xml EcuName="OTHER_ECU" Version="7">'
+        '<Variants name="OTHER_R1">'
+        '<Services name="ReadData">'
+        '<OutParams name="Temperature" Type="Float" Unit="degC" Min="-40" Max="150"/>'
+        '</Services>'
+        '<DTCs name="U123456" codeNr="7">Monitor: Communication problem</DTCs>'
+        '</Variants></Smrd2Xml>',
+        encoding="utf-8",
+    )
+    metadata, rows = parse_xml(xml, include_dtcs=False)
+    assert metadata["counts"] == {
+        "smrd_xml_ecu": 1,
+        "smrd_xml_variant": 1,
+        "smrd_xml_service": 1,
+        "smrd_xml_parameter": 1,
+    }
+    assert len(rows) == 4
+    assert any(row["reference"] == "Temperature" for row in rows)
+    assert not any(row["category"] == "smrd_xml_dtc" for row in rows)
+
+
+def test_reject_dtd_in_untrusted_xml(tmp_path):
+    import pytest
+
+    xml = tmp_path / "untrusted.xml"
+    xml.write_text('<!DOCTYPE x [<!ENTITY y "x">]><ECUS/>', encoding="utf-8")
+    with pytest.raises(ValueError, match="DOCTYPE"):
+        parse_xml(xml)
