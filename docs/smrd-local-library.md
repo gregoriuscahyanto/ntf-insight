@@ -212,6 +212,30 @@ Es findet keine Fahrzeugkommunikation statt. Ein weiterer nativer
 Laufzeitfehler darf nicht mit angeblich erfolgreicher DTC-Extraktion
 verwechselt werden.
 
+### Gezielte dynamische Projektauswahl (ohne DTC-Export)
+
+Wenn `native-probe` erfolgreich ist, sollte zunaechst nur die native
+Projektauswahl geprueft werden. Das ist getrennt vom kompletten DTC- und
+SDG-Durchlauf. Der neue Befehl startet Windows PowerShell in einem eigenen
+Prozess, initialisiert die konfigurierte DTS-Laufzeit, ruft
+`SelectDynamicProject` mit einer lokal vorhandenen SMR-D auf und prueft,
+ob die `DbProject`-Eigenschaft ein Objekt zurueckgibt.
+
+```powershell
+$runtime = "$env:USERPROFILE\.ntf-insight\smrd\runtime\SMRxView"
+$smrd = "$env:USERPROFILE\.ntf-insight\smrd\originale\CPC3_24.01.00.smr-d"
+python -m ntf_insight.smrd native-project-test $smrd --runtime-dir $runtime --timeout 120
+```
+
+Bei Erfolg erscheint eine Zeile beginnend mit
+`SOFTING_DTS_PROJECT_OPEN_OK`. Ein Erfolg bedeutet ausschliesslich,
+dass die native Projektauswahl und die Datenbankobjekt-Abfrage funktioniert
+haben. **Es werden weder DTCs enumeriert noch JSON-Dateien exportiert
+oder Datenbankeintraege geschrieben.** Die Softing-Laufzeit kann allerdings
+lokale Cache-/Projektdateien erzeugen. Der vollstaendige native DTC-Exporter
+ist erst im naechsten Schritt zu testen. Auch dieser Schritt kann bei einer
+inkompatiblen Hersteller-Runtime fehlschlagen oder abstuerzen.
+
 ### Befehle
 
 ```powershell
