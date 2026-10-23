@@ -9,7 +9,7 @@ from typing import Callable
 from PySide6.QtCore import QThread, Signal
 from PySide6.QtWidgets import (
     QAbstractItemView, QCheckBox, QFileDialog, QHBoxLayout, QHeaderView,
-    QLabel, QMessageBox, QPushButton, QTableView, QVBoxLayout, QWidget,
+    QLabel, QMessageBox, QPlainTextEdit, QPushButton, QTableView, QVBoxLayout, QWidget,
 )
 
 from ntf_insight.app.models.simple_table_model import SimpleTableModel
@@ -210,6 +210,15 @@ class KIAnalysepaketPanel(QWidget):
             lambda *_args: self._review_enabled(),
         )
         layout.addWidget(self.review_table)
+        self.review_details = QPlainTextEdit()
+        self.review_details.setReadOnly(True)
+        self.review_details.setMinimumHeight(80)
+        self.review_details.setMaximumHeight(155)
+        self.review_details.setPlaceholderText(
+            "Eine importierte ChatGPT-Fallanalyse auswählen, um alle "
+            "Begründungen, Prüfgrenzen, Empfehlungen und Belege zu lesen."
+        )
+        layout.addWidget(self.review_details)
         self.review_note = QLabel(
             "Review-Status ändert nur den Prüfvermerk der ChatGPT-Analyse. "
             "QEC-Entscheidung, Lieferantenursache und bestehende Fallbewertung "
@@ -409,6 +418,13 @@ class KIAnalysepaketPanel(QWidget):
         enabled = bool(active) and self.worker is None and self.import_worker is None
         self.review_confirm.setEnabled(enabled)
         self.review_reject.setEnabled(enabled)
+        if enabled and len(active) == 1 and active[0].row() < len(self._visible):
+            finding = self._visible[active[0].row()]
+            self.review_details.setPlainText(
+                json.dumps(finding["bewertung"], ensure_ascii=False, indent=2)[:20000]
+            )
+        else:
+            self.review_details.clear()
 
     def _review(self, status: str) -> None:
         if not self._can_start():
