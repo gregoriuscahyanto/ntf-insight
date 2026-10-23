@@ -22,6 +22,39 @@ class NativeRuntimeError(RuntimeError):
     """Native Softing runtime is missing, incompatible or returned an error."""
 
 
+class NativeLicenseError(NativeRuntimeError):
+    """The vendor reports an unavailable required DTS BaseSystem license."""
+
+
+def _native_process_failure(
+    result: subprocess.CompletedProcess, *, context: str
+) -> NativeRuntimeError:
+    """Preserve the actual vendor diagnostic, distinguishing licensing errors."""
+    diagnostic = "\n".join(
+        part for part in (result.stderr or "", result.stdout or "") if part.strip()
+    )
+    if not diagnostic:
+        diagnostic = "Keine Fehlermeldung von Softing DTS empfangen."
+    normalized = diagnostic.casefold()
+    if (
+        "esystem_license_error" in normalized
+        or "no basesystem license was found" in normalized
+    ):
+        return NativeLicenseError(
+            "Softing DTS: Keine BaseSystem-Lizenz erkannt "
+            "(eSYSTEM_LICENSE_ERROR, Code 58679 / 59075). "
+            "DTS System Configurator > General Settings: gueltige, "
+            "fuer diese Version und diesen Rechner berechtigte Lizenz "
+            "pruefen oder beim Lizenzverantwortlichen / Softing klaeren. "
+            "Eine vorhandene license.bin oder der erfolgreiche native-probe "
+            "sind kein Nachweis einer aktivierten BaseSystem-Lizenz. "
+            "Bis zur Klaerung native-project-test und native-export nicht "
+            "erneut starten. Keine SMR-D/NTF-Insight-Datenbank geaendert.\n"
+            + diagnostic[-4000:]
+        )
+    return NativeRuntimeError(context + "\n" + diagnostic[-6000:])
+
+
 def resolve_runtime_dir(runtime_dir: Path | None, library: SmrdLocalLibrary) -> tuple[Path, Path]:
     """Find the user's locally installed licensed runtime, never repo binaries."""
     base = (
@@ -166,10 +199,12 @@ def native_project_test(
         timeout=timeout, probe_only=False, project_only=True,
     )
     if result.returncode or "SOFTING_DTS_PROJECT_OPEN_OK" not in result.stdout:
-        raise NativeRuntimeError(
-            "DTS-Projektpruefung fehlgeschlagen; keine DTCs exportiert "
-            "und keine Datenbank veraendert.\n"
-            + (result.stderr or result.stdout or "Keine gueltige Erfolgsmeldung")[-6000:]
+        raise _native_process_failure(
+            result,
+            context=(
+                "DTS-Projektpruefung fehlgeschlagen; keine DTCs exportiert "
+                "und keine Datenbank veraendert."
+            ),
         )
     return result.stdout.strip()
 
@@ -224,9 +259,8 @@ def export_native_dtcs(
             timeout=timeout, probe_only=False,
         )
         if result.returncode:
-            raise NativeRuntimeError(
-                "Softing-DTS-Exporter fehlgeschlagen. Keine Datenbank veraendert.\n"
-                + (result.stderr or result.stdout or "DTS gab keine Details zurueck")[-6000:]
+            raise _native_process_failure(
+                result, context="Softing-DTS-Exporter fehlgeschlagen. Keine Datenbank veraendert."
             )
         try:
             metadata, rows = parse_native_details(intermediate)
