@@ -1,7 +1,7 @@
 # Offline, read-only SMR-D metadata browser via the user's licensed
 # Softing DTS managed API. No vehicle connection and no ECU service execution.
-# API members inspected statically in Softing.Dts.dll 9.02.019.
-# The database-opening sequence still needs Windows runtime validation.
+# Available native exports checked against the user's CSWrap.dll. The
+# dynamic-project opening sequence still requires Windows runtime validation.
 [CmdletBinding()]
 param(
     [Parameter(Mandatory = $true)][string] $RuntimeDir,
@@ -88,16 +88,21 @@ $oldPath = $env:Path
 $env:Path = "$bin;$oldPath"
 $system = $null
 $dbProject = $null
+$project = $null
+$selected = $false
 $initialized = $false
 Push-Location -LiteralPath $runtime
 try {
     Add-Type -Path $dll -ErrorAction Stop
     if ($ProbeOnly) {
         $systemType = [Softing.Dts.DtsSystem]
-        foreach ($name in @('Initialize', 'LoadViewerProject', 'UnloadViewerProject')) {
+        foreach ($name in @('Initialize', 'SelectDynamicProject', 'DeselectProject')) {
             if (-not ($systemType.GetMethod($name))) {
                 throw "DTS runtime incompatible; missing method: $name"
             }
+        }
+        if (-not ([Softing.Dts.DtsProject].GetProperty('DbProject'))) {
+            throw 'Dynamic DTS project has no DbProject property.'
         }
         if (-not ([Softing.Dts.Statics].GetMethod('getSystem'))) {
             throw 'DTS factory method getSystem is missing.'
@@ -112,8 +117,16 @@ try {
         if ($null -eq $system) { throw 'DTS system factory returned null.' }
         $system.Initialize()
         $initialized = $true
-        $dbProject = $system.LoadViewerProject([string[]] @($SmrdFile))
-        if ($null -eq $dbProject) { throw 'LoadViewerProject returned null.' }
+        # The managed LoadViewerProject method has no matching export in
+        # this vendor's CSWrap.dll. SelectDynamicProject has a native export
+        # and accepts an ECU-independent array of offline SMR-D files.
+        $project = $system.SelectDynamicProject(
+            'NTFInsight_Offline', [string[]] @($SmrdFile)
+        )
+        if ($null -eq $project) { throw 'SelectDynamicProject returned null.' }
+        $selected = $true
+        $dbProject = Read-Prop $project 'DbProject'
+        if ($null -eq $dbProject) { throw 'DtsProject.DbProject returned null.' }
 
         $found = New-Object 'System.Collections.Generic.List[object]'
         $seen = New-Object 'System.Collections.Generic.HashSet[string]'
@@ -247,8 +260,8 @@ try {
         Write-Output ("SOFTING_DTS_DTC_EXPORT_OK count={0}" -f $found.Count)
     }
 } finally {
-    if ($null -ne $dbProject -and $null -ne $system) {
-        try { $system.UnloadViewerProject($dbProject) } catch { }
+    if ($selected -and $null -ne $system) {
+        try { $system.DeselectProject() } catch { }
     }
     if ($initialized -and $null -ne $system) {
         try { $system.Uninitialize() } catch { }
