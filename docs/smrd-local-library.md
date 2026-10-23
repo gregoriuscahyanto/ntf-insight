@@ -70,6 +70,79 @@ ECUs, Varianten, DTCs, Services, Parameter und SDGs als portables
 JSON-Referenzpaket exportieren. Fehlende Felder wie `REPAIR_ACTION`,
 `POSSIBLE_CAUSES` und `ERROR_LEVEL` werden **nicht hinzuerfunden**.
 
+### Originales Smrd2Xml.exe direkt verwenden (optional)
+
+Das urspruenglich bereitgestellte `SMRxView.zip` enthaelt
+`SMRxView/Smrd2Xml.exe`. Aus der Windows-EXE gehen vier
+dokumentierte Aufrufvarianten hervor:
+
+- `Smrd2Xml.exe <ECU> <datei.smr-d> <ausgabeordner> <ignorierteVarianten>`
+- `Smrd2Xml.exe DTCSXML <datei.smr-d>`
+- `Smrd2Xml.exe COMPAR <datei.smr-d>`
+- `Smrd2Xml.exe CANMODEL <datei.smr-d>`
+
+Dafuer gibt es nun das **optionale** Backend `smrd2xml`. Die EXE muss
+unter `.ntf-insight/smrd/runtime/SMRxView/Smrd2Xml.exe` liegen und
+vom Benutzer aus seiner eigenen vertrauenswuerdigen Installation
+bereitgestellt werden. Es werden **keine** Original-EXE, keine DLL,
+keine Lizenzdateien und keine SMR-D-Dateien ins Repository aufgenommen.
+
+```powershell
+$smrd = "$env:USERPROFILE\.ntf-insight\smrd\originale\CPC3_24.01.00.smr-d"
+$runtime = "$env:USERPROFILE\.ntf-insight\smrd\runtime\SMRxView"
+
+# Exakten geplanten Aufruf ohne Ausfuehrung pruefen
+python -m ntf_insight.smrd smrd2xml $smrd --runtime-dir $runtime --dry-run
+
+# Zunaechst ECU-Export testen
+python -m ntf_insight.smrd smrd2xml $smrd --runtime-dir $runtime --ecu CPC3 --mode ECU
+
+# Nach Erfolg DTC-XML hinzufuegen und Verknuepfungen merken
+python -m ntf_insight.smrd smrd2xml $smrd --runtime-dir $runtime --ecu CPC3 --mode ECU --mode DTCSXML --remember
+
+# Weitere dokumentierte Modi (experimentell: XML-Schema kann unbekannt sein)
+python -m ntf_insight.smrd smrd2xml $smrd --runtime-dir $runtime --mode COMPAR
+python -m ntf_insight.smrd smrd2xml $smrd --runtime-dir $runtime --mode CANMODEL
+```
+
+Ohne `--mode` werden `ECU` und `DTCSXML` ausgefuehrt. ECU-Namen
+werden aus Dateinamen wie `CPC3_24.01.00.smr-d` vorgeschlagen,
+sind aber nicht authentifiziert und mit `--ecu` ueberschreibbar.
+
+Die Original-SMR-D wird nicht an das Programm uebergeben; stattdessen
+verwendet NTF Insight eine bytegleich gepruefte, temporaere Kopie.
+Das Programm laeuft lokal mit `cwd` gleich seinem Runtime-Ordner.
+Ergebnis-XMLs werden aus Ausgabeordner, temporarem Quellenordner und
+neuen XML-Dateien im Runtime-Wurzelordner gesammelt. Alle Erzeugnisse
+werden nur unter `.ntf-insight/smrd/exporte/smrd2xml/<SHA-256>/`
+dauerhaft aufbewahrt, mit Log pro Modus und SHA-256-Provenienz. In
+`ECUS` oder `Smrd2Xml` erkannte XML-Formate werden mit dem
+existierenden Parser katalogisiert und zu einem Offline-JSON-Paket
+zusammengefuehrt. `COMPAR` und `CANMODEL` koennen andere XML-Formate
+verwenden: diese bleiben als **nicht indexierte Original-XML** erhalten.
+
+Danach kann das erzeugte Referenzpaket wie gewohnt **optional** mit
+`offline-import` in lokale Quellenwissen-Tabellen importiert werden.
+Dies ist kein Fahrzeug-DTC-Ereignis und kein Nachweis echter
+Ausloesebedingungen. Ohne expliziten Import wird DuckDB nicht veraendert.
+
+**Offline heisst nicht automatisch lizenzfrei.** Die statische
+Untersuchung der bereitgestellten `Smrd2Xml.exe` zeigt DTS/MVCI-
+Konfigurationszugriffe. Ob dieses Tool in einer konkreten Installation
+ohne aktive BaseSystem-Lizenz laeuft, ist **nicht nachgewiesen**.
+Bei `eSYSTEM_LICENSE_ERROR` wird der Lauf mit einer klaren
+`Smrd2XmlLicenseError`-Meldung abgebrochen; NTF Insight implementiert
+weder einen Lizenz-Bypass noch eine Entschluesselung des geschuetzten
+Payloads. Bereits vorhandene XML-Exporte sind auch danach ohne
+lizenzierte DTS-Laufzeit mit `offline-convert` und der GUI nutzbar.
+
+In der GUI gibt es jetzt zwei getrennte Aktionen:
+`Offline konvertieren` (keine Hersteller-EXE) und
+`Smrd2Xml.exe lokal ausfuehren` (externe Windows-EXE; Moduswahl
+ECU/XML, DTCSXML, COMPAR, CANMODEL). Eine erfolgreiche Ausfuehrung
+stellt die tatsaechlich erzeugten XML-Dateien und deren Abdeckung dar.
+Wurde kein auswertbares XML erzeugt, erscheint keine erfundene DTC-Liste.
+
 ### Grafische Offline-Oberflaeche in NTF Insight
 
 Die SMR-D-Verarbeitung kann ohne Terminal in einem separaten,
