@@ -24,9 +24,10 @@ der QEC-FIN-Excel-Liste strukturiert in DuckDB aufgenommen.
 
 ## Anwendung
 
-1. Beim normalen QEC-Download wird `qec.json` automatisch an den
-   bestehenden Import übergeben. Anhänge können im Rohdatenarchiv
-   verbleiben und werden fachlich **nicht** analysiert.
+1. Beim normalen QEC-Download wird **nur `qec.json`** automatisch an den
+   strukturierten Import übergeben. Anhänge bleiben als unveränderte
+   Dateien im lokalen QEC-Verzeichnis (`anhaenge/`) und werden **nicht** an
+   die fachlichen Parser weitergereicht.
 2. **Datenquellen → Bereits heruntergeladene QEC-Berichte einlesen** durchsucht
    die lokalen QEC-Referenzordner nach `qec.json` und liest Altbestände nach.
    Der Vorgang benötigt keine Netzwerkverbindung oder erneuten QEC-Abruf.
@@ -34,6 +35,30 @@ der QEC-FIN-Excel-Liste strukturiert in DuckDB aufgenommen.
    Anzahl eingelesener QEC-Berichte, der vollständig erfassten Berichte und
    ihrer strukturierten Datensätze. Im Rohdatenarchiv sind Parse-Status und
    Originaldatei nachvollziehbar.
+
+## QEC-Daten in der FIN-/Fallanalyse
+
+In der **FIN-/Fallanalyse** zeigt das Panel
+**„QEC-Befundbericht · strukturierte Originaldaten“** die QEC-Daten
+für die ausgewählte Fall-FIN und **exakt passende QEC-Referenznummer**.
+
+- Sachnummernkonflikte oder mehrere unterschiedliche Berichte mit
+  identischem aktuellstem Abrufzeitpunkt werden als **Prüfbedarf**
+  gekennzeichnet; die vermeintlich passenden Felder werden dann
+  nicht als zugeordnet angezeigt.
+- Bei mehreren eindeutig datierten Versionen wird die neueste
+  anhand des im JSON gespeicherten Abrufzeitpunkts angezeigt.
+  Frühere Versionen bleiben mit SHA-256 im Roharchiv erhalten.
+- Die Ansicht erlaubt Filter nach QEC-Reiter, Formularen, Tabellen,
+  Dateianhangverweisen und Freitext. Zusätzlich lässt sich der sichtbare
+  Originaltext des gewählten Reiters einsehen.
+- Die **CPC3-DTC-Beobachtungen** werden als Vorher-/Nachher-Kontext am
+  dokumentierten Pumpentauschanker eingeblendet. Die bestehende
+  Zeitachse und Wiederkehranalyse liefern den fachlichen Verlauf.
+  Fehlende DTC-Beobachtungen sind **kein** Fehlerfrei-Nachweis.
+
+Ohne eingelesenen Bericht zeigt das Panel den Status
+**„Nicht erfasst“** und verweist auf den Offline-Nachimport.
 
 ## Vollständigkeit und Auswertung
 
