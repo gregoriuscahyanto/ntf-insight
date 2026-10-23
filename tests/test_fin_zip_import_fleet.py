@@ -69,7 +69,7 @@ def test_manifest_hash_tampering_rejected_before_install(tmp_path):
         for item in src.infolist():
             payload = src.read(item)
             if item.filename == "qec/ref_022301658/qec.json":
-                payload = b'{"fin":"wrong"}'
+                payload = bytes([payload[0] ^ 1]) + payload[1:]
             dest.writestr(item.filename, payload)
     with pytest.raises(ValueError, match="Prüfsumme"):
         prepare_fin_export(corrupted, tmp_path / "stage")
