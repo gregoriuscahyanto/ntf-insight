@@ -31,6 +31,8 @@ from ntf_insight.ingestion.artifacts import SourceType
 from ntf_insight.ingestion.service import SourceImportService
 from ntf_insight.storage.quicktest_store import QuickTestStore
 from ntf_insight.storage.source_knowledge_store import SourceKnowledgeStore
+from ntf_insight.ingestion.qec_json import list_downloaded_qec_reports
+from ntf_insight.ingestion.artifacts import sha256_file
 from ntf_insight.reporting.chatgpt_exchange import (
     ChatGPTAnalyseStore, ergebnis_schema, ergebnis_vorlage,
 )
@@ -219,6 +221,53 @@ def export_ki_analysepaket(
         if doc["source_kind"] == "qec_live_report"
     ]
     artifacts = service.list_artifacts()
+    if mit_qec_originalen:
+        # Important: original QEC downloads not yet processed into DuckDB
+        # must not disappear from an explicitly requested evidence package.
+        # Only exact FIN+reference-bound schema-v2 JSON is accepted.
+        known = {doc["source_sha256"] for doc in documents}
+        unreadable = 0
+        for report_path in list_downloaded_qec_reports(service.archive.root.parent):
+            if report_path.stat().st_size > 32 * 1024 * 1024:
+                unreadable += 1
+                continue
+            digest = sha256_file(report_path)
+            if digest in known:
+                continue
+            try:
+                raw = json.loads(report_path.read_text(encoding="utf-8-sig"))
+            except (OSError, ValueError, UnicodeError):
+                unreadable += 1
+                continue
+            fin = report_path.parent.parent.name
+            reference = report_path.parent.name.removeprefix("ref_")
+            if (
+                not isinstance(raw, dict) or raw.get("schema_version") != 2
+                or raw.get("fin") != fin
+                or str(raw.get("referenznummer") or "") != reference
+            ):
+                unreadable += 1
+                continue
+            documents.append({
+                "source_sha256": digest,
+                "source_kind": "qec_local_unparsed",
+                "metadata": {
+                    "fin": fin, "reference": reference,
+                    "part_number": str(raw.get("sachnummer") or ""),
+                    "fresh_complete": False,
+                    "sections": len(raw.get("abschnitte") or []),
+                    "fresh_sections": 0,
+                    "fields": 0, "values": 0, "table_rows": 0,
+                    "attachments": len(raw.get("anhaenge") or []),
+                },
+            })
+            known.add(digest)
+        if unreadable:
+            raise ValueError(
+                f"{unreadable} lokale QEC-Originaldatei(en) können keinem "
+                "gültigen Fall zugeordnet werden. Bitte unter Datenquellen "
+                "prüfen und gegebenenfalls mit dem Parser-Diagnose-ZIP untersuchen."
+            )
 
     with service.store.connect() as con:
         reports = con.execute(
@@ -393,6 +442,9 @@ def export_ki_analysepaket(
                 ),
             })
         qa = [d["metadata"] for d in doc_matches]
+        all_unparsed = bool(doc_matches) and not any(
+            d["source_kind"] == "qec_live_report" for d in doc_matches
+        )
         part_conflict = any(
             not same_part(getattr(case, "qec_part_number", ""), m.get("part_number"))
             for m in qa
@@ -401,6 +453,7 @@ def export_ki_analysepaket(
         missing = min((len(m.get("missing_sections") or []) for m in qa), default=5)
         qa_status = (
             "pruefbedarf" if part_conflict else
+            "nicht_geparst" if all_unparsed else
             "vollstaendig" if komplett else "teilweise" if doc_matches else "nicht_erfasst"
         )
         faelle.append({
@@ -502,6 +555,7 @@ def export_ki_analysepaket(
             "fall_ids": ";".join(case_aliases[c.case_id] for c in affected),
             "teilegruppe": part_aliases.get(str(m.get("part_number") or "").strip(), ""),
             "erfassungsstand": (
+                "nicht_geparst" if doc.get("source_kind") == "qec_local_unparsed" else
                 "vollstaendig" if m.get("fresh_complete") else "teilweise"
             ),
             "reiter_gesamt": m.get("sections"),
@@ -655,6 +709,9 @@ def export_ki_analysepaket(
         "smrd_originalquellen_nur_inventar": len(smrd_rows),
         "datenstand": "lokale DuckDB",
         "qec_originale_angefordert": mit_qec_originalen,
+        "qec_nur_original_nicht_geparst": sum(
+            doc.get("source_kind") == "qec_local_unparsed" for doc in documents
+        ),
     }
     advance("Kompakte CSV-Dateien und Excel-Fallübersicht erstellen …")
     files: dict[str, bytes] = {}
