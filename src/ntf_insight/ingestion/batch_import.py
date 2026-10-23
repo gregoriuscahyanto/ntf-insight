@@ -39,6 +39,8 @@ from ntf_insight.ingestion.reference_source_parsers import (
 )
 from ntf_insight.ingestion.service import SourceImportService
 from ntf_insight.ingestion.source_detection import detect_source_type
+from ntf_insight.ingestion.fin_zip_import import is_fin_export, prepare_fin_export, install_fin_export
+from ntf_insight.ingestion.qec_primary import validate_single_qec_list
 from ntf_insight.storage.quicktest_store import QuickTestStore
 from ntf_insight.storage.source_knowledge_store import SourceKnowledgeStore
 
@@ -66,6 +68,9 @@ class ImportSummary:
     tips_unassigned: int = 0
     duplicates: int = 0
     quicktests_saved: int = 0
+    fin_zips_imported: int = 0
+    fin_files_installed: int = 0
+    fin_file_conflicts: int = 0
     quicktests_without_case: int = 0
     reference_sources: int = 0
     reference_rows: int = 0
@@ -168,16 +173,39 @@ class LocalBatchImporter:
                     continue
                 progress("ZIP-Archiv prüfen …")
                 self._validate_zip(path)
+                # Validate ZIP members before persisting the ZIP itself.
+                # No rejected second QEC-FIN cohort must pollute the archive.
+                from ntf_insight.ingestion.artifacts import sha256_file
+                zip_digest = sha256_file(path)
+                if is_fin_export(path):
+                    plan = prepare_fin_export(path, Path(temp) / ("fin_" + zip_digest))
+                    outcome = install_fin_export(plan, self.sources.archive.root.parent)
+                    extracted.extend(outcome.quicktest_paths)
+                    from_zip.update(outcome.quicktest_paths)
+                    summary.fin_zips_imported += 1
+                    summary.fin_files_installed += sum(outcome.counts.values())
+                    summary.fin_file_conflicts += len(outcome.conflicts)
+                    if outcome.conflicts:
+                        summary.issues.append(
+                            f"FIN {plan.fin}: {len(outcome.conflicts)} unterschiedliche QEC-/TIPS-Dateien "
+                            "nicht überschrieben. Konflikte bitte im Zielverzeichnis prüfen."
+                        )
+                else:
+                    zip_members = self._extract_zip(path, Path(temp) / zip_digest)
+                    extracted.extend(zip_members)
+                    from_zip.update(zip_members)
+
+            # Validate primary QEC workbooks before any member is archived.
+            validate_single_qec_list(extracted, previously_archived_items)
+            for path in paths:
+                if path.suffix.casefold() != ".zip":
+                    continue
                 package_artifact = self.sources.import_raw(
                     path, SourceType.OTHER, source_system=source_system
                 )
                 zip_hashes.add(package_artifact.sha256)
                 if package_artifact.sha256 not in previously_archived:
                     summary.files_archived += 1
-                zip_members = self._extract_zip(path, Path(temp) / package_artifact.sha256)
-                extracted.extend(zip_members)
-                from_zip.update(zip_members)
-
             progress("Originaldateien archivieren …")
             known = previously_archived | zip_hashes
             artifacts: list[SourceArtifact] = []
@@ -220,6 +248,12 @@ class LocalBatchImporter:
                 label = str(source_type)
                 summary.source_counts[label] = summary.source_counts.get(label, 0) + 1
 
+            # A second QEC FIN cohort must never enter the archive/database.
+            validate_single_qec_list(
+                [Path(artifact.archived_path) for artifact in artifacts],
+                previously_archived_items,
+            )
+
             # Case lists are applied before free-floating diagnostic/repair events.
             case_artifacts = [
                 a for a in artifacts
@@ -254,7 +288,11 @@ class LocalBatchImporter:
                 supplement = sheets.get("Schadteile", {})
                 supplement_headers = set(supplement.get("columns", ()))
                 if (
-                    "Schadteile QEC" not in sheets
+                    not any(
+                        {"Referenznr.", "FIN", "Rep.-Datum"} <=
+                        set(info.get("columns", ()))
+                        for info in sheets.values()
+                    )
                     and {
                         "Referenznr.", "SSL Endbefund",
                         "SSL-Endbefund Benennung",
@@ -391,6 +429,7 @@ class LocalBatchImporter:
                         archived.sha256 not in current_shas
                         and archived.source_type in {
                             SourceType.SHORT_TEST,
+                            SourceType.TP_DASHBOARD,
                             SourceType.WORKSHOP_HISTORY,
                             SourceType.TIPS_CASE,
                         }
@@ -436,7 +475,8 @@ class LocalBatchImporter:
                     continue
 
                 if artifact.source_type in {
-                    SourceType.SHORT_TEST, SourceType.WORKSHOP_HISTORY,
+                    SourceType.SHORT_TEST,
+                            SourceType.TP_DASHBOARD, SourceType.WORKSHOP_HISTORY,
                     SourceType.TIPS_CASE,
                 } and suffix == ".csv":
                     # Store all FINs, not only those with QEC. When QEC
@@ -475,7 +515,8 @@ class LocalBatchImporter:
                             continue
                 parser = None
                 if artifact.source_type in {
-                    SourceType.SHORT_TEST, SourceType.WORKSHOP_HISTORY,
+                    SourceType.SHORT_TEST,
+                            SourceType.TP_DASHBOARD, SourceType.WORKSHOP_HISTORY,
                     SourceType.TIPS_CASE,
                 } and suffix == ".csv":
                     parser = AutoExportParser(

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import logging
 
 from ntf_insight.app.settings import AppPaths
 from ntf_insight.demo.synthetic_cases import build_demo_repository
@@ -27,6 +28,21 @@ def load_application_data(paths: AppPaths | None = None) -> ApplicationData:
     paths.ensure()
 
     store = DuckDBStore(paths.database_path)
+    # Repair previously archived generated QEC/TP sources in place.
+    # Never transmit source documents, FINs or exception details to logs.
+    try:
+        from ntf_insight.ingestion.archived_recovery import recover_archived_qec_tp
+        recovered = recover_archived_qec_tp(paths.raw_dir, paths.database_path)
+        if recovered:
+            logging.getLogger(__name__).info(
+                "%s archivierte QEC-/TP-Quellen nachverarbeitet.", recovered
+            )
+    except Exception as exc:
+        logging.getLogger(__name__).warning(
+            "Automatische Nachverarbeitung nicht möglich (%s); "
+            "Quellen können unter Datenquellen erneut geprüft werden.",
+            type(exc).__name__,
+        )
     persisted_cases = store.load_cases()
     persisted_triggers = store.load_triggers()
     persisted_changes = store.load_changes()

@@ -217,10 +217,7 @@ class SourceKnowledgeStore:
                 FROM source_knowledge_rows
                 WHERE category = 'qec_row'
                   AND NULLIF(trim(reference), '') IS NOT NULL
-                  AND (
-                      source_location LIKE 'Schadteile!%'
-                      OR source_location LIKE 'Schadteile QEC!%'
-                  )
+                  AND source_location LIKE '%!%'
                 ORDER BY reference, source_sha256, source_location
                 """
             ).fetchall()
@@ -485,6 +482,25 @@ class SourceKnowledgeStore:
         rows or customer text in Python. A TIPS record is a workshop case
         record; an AutoExport DTC row is not a failed-part case.
         """
+        # Detect the primary sheet from the archived document's header metadata.
+        # A second sheet containing copied FINs must not inflate QEC counts.
+        required = {"Referenznr.", "FIN", "Rep.-Datum"}
+        primary_pairs = []
+        for document in self.documents():
+            if document["source_kind"] != "qec_details":
+                continue
+            sheets = document["metadata"].get("sheets") or {}
+            accepted = (
+                [
+                    name for name, info in sheets.items()
+                    if required <= set(info.get("columns", ()))
+                ]
+                if sheets else ["Schadteile QEC"]
+            )
+            primary_pairs.extend(
+                (document["source_sha256"], name) for name in accepted
+            )
+
         with self.store.connect() as con:
             rows = con.execute(
                 """
@@ -515,31 +531,37 @@ class SourceKnowledgeStore:
                 WHERE category = 'autoexport_tips'
                 """
             ).fetchone()[0]
-            qec = con.execute(
-                """
-                SELECT
-                    COUNT(*) AS all_rows,
-                    COUNT(*) FILTER (
-                        WHERE source_location LIKE 'Schadteile QEC!%'
-                    ) AS primary_rows,
-                    COUNT(DISTINCT reference) FILTER (
-                        WHERE source_location LIKE 'Schadteile QEC!%'
-                    ) AS primary_references,
-                    COUNT(DISTINCT fin) FILTER (
-                        WHERE source_location LIKE 'Schadteile QEC!%'
-                    ) AS primary_fins
-                FROM source_knowledge_rows
-                WHERE category = 'qec_row'
-                """
-            ).fetchone()
+            qec_original = con.execute(
+                "SELECT COUNT(*) FROM source_knowledge_rows WHERE category = 'qec_row'"
+            ).fetchone()[0]
+            if primary_pairs:
+                placeholders = ", ".join("(?, ?)" for _ in primary_pairs)
+                parameters = [
+                    value for pair in primary_pairs for value in pair
+                ]
+                qec_primary = con.execute(
+                    f"""
+                    SELECT COUNT(*),
+                           COUNT(DISTINCT NULLIF(trim(r.reference), '')),
+                           COUNT(DISTINCT NULLIF(trim(r.fin), ''))
+                    FROM source_knowledge_rows AS r
+                    JOIN (VALUES {placeholders}) AS p(source_sha256, sheet_name)
+                      ON r.source_sha256 = p.source_sha256
+                     AND split_part(r.source_location, '!', 1) = p.sheet_name
+                    WHERE r.category = 'qec_row'
+                    """,
+                    parameters,
+                ).fetchone()
+            else:
+                qec_primary = (0, 0, 0)
         results: dict[str, int] = {
             "autoexport_unique_fins": int(overall_fins or 0),
             "autoexport_total_rows": sum(int(row_count) for _, row_count, _ in rows),
             "tips_distinct_case_ids": int(tips_ids or 0),
-            "qec_original_rows": int(qec[0]),
-            "qec_primary_rows": int(qec[1]),
-            "qec_primary_references": int(qec[2]),
-            "qec_primary_fins": int(qec[3]),
+            "qec_original_rows": int(qec_original),
+            "qec_primary_rows": int(qec_primary[0]),
+            "qec_primary_references": int(qec_primary[1]),
+            "qec_primary_fins": int(qec_primary[2]),
         }
         for category, row_count, fin_count in rows:
             results[f"{category}_rows"] = int(row_count)
@@ -586,6 +608,34 @@ class SourceKnowledgeStore:
             (ecu, dtc): (int(vehicles), int(events), description or "")
             for ecu, dtc, vehicles, events, description in rows
         }
+
+    def tp_dashboard_fins(self) -> frozenset[str]:
+        """FINs evidenced by an imported TP-Dashboard CSV, not by QEC itself.
+
+        Use source provenance to avoid claiming missing TP rows from unrelated
+        AutoExport or QuickTest data; full FIN is normalized locally.
+        """
+        with self.store.connect() as con:
+            rows = con.execute(
+                """
+                SELECT DISTINCT CASE
+                    WHEN length(trim(r.fin)) = 20
+                      AND left(upper(trim(r.fin)), 3) = 'MBC'
+                    THEN substr(upper(trim(r.fin)), 4)
+                    ELSE upper(trim(r.fin))
+                END AS normalized_fin
+                FROM source_knowledge_rows r
+                JOIN source_knowledge_documents d
+                  ON r.source_sha256 = d.source_sha256
+                WHERE r.category = 'autoexport_dtc'
+                  AND d.source_kind = 'autoexport_rows'
+                  AND json_extract_string(d.metadata_json, '$.source_type') =
+                      'tp_dashboard'
+                  AND NULLIF(trim(r.fin), '') IS NOT NULL
+                ORDER BY 1
+                """
+            ).fetchall()
+        return frozenset(row[0] for row in rows)
 
     def autoexport_source_fins(self, category: str) -> frozenset[str]:
         """FIN membership for coverage metrics; only supported source types.

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QHBoxLayout, QMainWindow, QStackedWidget, QWidget
+from PySide6.QtWidgets import QHBoxLayout, QMainWindow, QMessageBox, QStackedWidget, QWidget
 
 from ntf_insight.app.bootstrap import load_application_data
 from ntf_insight.app.pages.case_page import CasePage
@@ -37,6 +37,7 @@ class MainWindow(QMainWindow):
         self.manual_service = ManualCaseService(
             DuckDBStore(self.application_data.paths.database_path)
         )
+        self._case_quicktest_import_pending = False
 
         root = QWidget(objectName="AppRoot")
         layout = QHBoxLayout(root)
@@ -79,6 +80,7 @@ class MainWindow(QMainWindow):
             "cases": CasePage(
                 self.repository, self.reference_repository, self.manual_service,
                 review_store=review_store,
+                download_root=self.application_data.paths.data_dir / "quicktests",
             ),
             "dtcs": DTCExplorerPage(
                 self.repository, self.reference_repository,
@@ -89,12 +91,84 @@ class MainWindow(QMainWindow):
             "quality": DataQualityPage(self.repository, self.reference_repository),
         }
         pages["cases"].case_saved.connect(self._reload_after_manual_change)
+        pages["cases"].quicktests_downloaded.connect(self._import_downloaded_case_quicktests)
+        pages["cases"].qec_reports_downloaded.connect(self._import_downloaded_case_quicktests)
         pages["sources"].sources_updated.connect(self._reload_after_source_import)
+        transfer = pages["sources"].portable_backup_panel
+        if transfer is not None:
+            transfer.set_guard(self._portable_transfer_ready)
+            transfer.transfer_busy.connect(self._portable_transfer_busy)
+            transfer.restored.connect(self._portable_restored)
         return pages
 
-    def _reload_after_source_import(self, summary: str, quicktests_saved: int = 0) -> None:
-        """Refresh all views after an archived ZIP created or updated real cases."""
+    def _import_downloaded_case_quicktests(self, paths: list) -> None:
+        """Archive QuickTest/QEC files from the case table with source provenance."""
+        if not paths:
+            return
+        source_page = self.pages["sources"]
+        if (
+            source_page._worker is not None
+            or (
+                source_page.portable_backup_panel is not None
+                and source_page.portable_backup_panel.worker is not None
+            )
+        ):
+            # PDFs remain safely on disk and can be imported through Datenquellen.
+            from PySide6.QtWidgets import QMessageBox
+            QMessageBox.warning(
+                self, "Quellenimport ist beschäftigt",
+                "Die QEC-/QuickTest-Dateien wurden gespeichert, aber ein anderer Quellenimport "
+                "läuft bereits. Bitte die Dateien anschließend unter Datenquellen importieren.",
+            )
+            return
+        self._case_quicktest_import_pending = True
+        source_page._archive_paths(paths)
+
+    def _portable_transfer_ready(self) -> bool:
+        """Never replace data while a source import or background download runs."""
+        source = self.pages["sources"]
+        cases = self.pages["cases"]
+        qec = cases.qec_download
+        exporter = cases.fin_zip_export
+        return (
+            source._worker is None
+            and not self._case_quicktest_import_pending
+            and cases._quicktest_worker is None
+            and (qec is None or qec.worker is None)
+            and (exporter is None or exporter.worker is None)
+        )
+
+    def _portable_transfer_busy(self, busy: bool) -> None:
+        """Avoid any GUI-driven writes during DuckDB snapshot/restore."""
+        self.stack.setEnabled(not busy)
+        self.navigation.setEnabled(not busy)
+
+    def _portable_restored(self, result: object) -> None:
+        """Build fresh repositories directly from the transferred DuckDB."""
+        self._case_quicktest_import_pending = False
         self._reload_data()
+        self.navigation.select_page("cases")
+        QMessageBox.information(
+            self, "Gesamtdatenstand wiederhergestellt",
+            f"{result.case_count} Fall/Fälle und {result.quicktest_count} "
+            "bereits geparste QuickTests sind sofort verfügbar. "
+            "Originale, manuelle Änderungen und weitere Analysewerte wurden "
+            "aus demselben Paket übernommen. Kein erneutes Parsen nötig.",
+        )
+
+    def _reload_after_source_import(self, summary: str, quicktests_saved: int = 0) -> None:
+        """Refresh all views while preserving case analysis after case-led downloads."""
+        from_case_download = self._case_quicktest_import_pending
+        current_case = (
+            self.pages["cases"].selector.currentData() if from_case_download else None
+        )
+        self._case_quicktest_import_pending = False
+        self._reload_data()
+        if from_case_download:
+            if current_case:
+                self.pages["cases"].select_case(current_case)
+            self.navigation.select_page("cases")
+            return
         self.pages["sources"].import_status.setText(summary)
         if quicktests_saved:
             self.navigation.select_page("cases")
@@ -129,5 +203,8 @@ class MainWindow(QMainWindow):
             return
         if key == "cases":
             page.cluster_workspace.refresh_review_priorities()
+            page._refresh_quicktest_download_dates()
+            page._refresh_qec_download_dates()
+            page._refresh_shared_credentials_status()
         self.stack.setCurrentWidget(page)
         self.stack.setFocus(Qt.FocusReason.OtherFocusReason)

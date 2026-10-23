@@ -43,3 +43,118 @@ class SourceImportService:
 
     def list_artifacts(self) -> list[SourceArtifact]:
         return self.store.load_artifacts()
+
+    def delete_artifact(self, sha256: str) -> None:
+        """Remove one archived source and source-owned derived data.
+
+        Never touch files outside the content-addressed local raw archive.
+        A QEC-primary list is allowed to be deleted only when it has no
+        independently manually edited cases; this avoids silent evidence loss.
+        """
+        from ntf_insight.ingestion.qec_primary import active_qec_lists
+        from ntf_insight.ingestion.real_source_parsers import QECWorkbookParser
+        artifacts = self.list_artifacts()
+        target = next((a for a in artifacts if a.sha256 == sha256), None)
+        if target is None:
+            raise ValueError("Archivierte Datei nicht gefunden.")
+        archive_path = Path(target.archived_path).resolve()
+        raw_root = self.archive.root.resolve()
+        if not archive_path.is_relative_to(raw_root) or archive_path.is_symlink():
+            raise ValueError("Quelldatei liegt außerhalb des sicheren Rohdatenarchivs.")
+
+        # Ensure optional derived tables exist for fresh local databases.
+        from ntf_insight.storage.quicktest_store import QuickTestStore
+        from ntf_insight.storage.source_knowledge_store import SourceKnowledgeStore
+        from ntf_insight.storage.qec_workflow_store import QecWorkflowStore
+        QuickTestStore(self.store)
+        SourceKnowledgeStore(self.store)
+        QecWorkflowStore(self.store)
+
+        primary = bool(active_qec_lists([target]))
+        source_cases = []
+        if primary:
+            source_cases = QECWorkbookParser(target.sha256).parse(archive_path).cases
+        original_ids = {c.case_id for c in source_cases}
+        # Make source-derived snapshots consistent before removing the file.
+        affected_cases = []
+        if not primary:
+            for case in self.store.load_cases():
+                altered = False
+                for attr in (
+                    "diagnostic_sessions", "diagnostics", "ecu_states",
+                    "repairs", "tips_observations", "replacements",
+                    "software_events", "supplier_findings",
+                ):
+                    before = getattr(case, attr)
+                    after = [
+                        event for event in before
+                        if not str(getattr(event, "source_ref", "") or "").startswith(
+                            f"raw:{sha256}"
+                        )
+                    ]
+                    if len(after) != len(before):
+                        setattr(case, attr, after)
+                        altered = True
+                if str(getattr(case, "qec_ssl_end_source_ref", "")).startswith(sha256):
+                    for field in (
+                        "qec_ssl_end_finding", "qec_ssl_end_code",
+                        "qec_ssl_end_date", "qec_ssl_end_source_ref",
+                    ):
+                        setattr(case, field, None)
+                    altered = True
+                if altered:
+                    affected_cases.append(case)
+
+        # Manual edits must never be silently dropped.
+        with self.store.connect() as con:
+            if original_ids:
+                for case_id in original_ids:
+                    if con.execute(
+                        "SELECT COUNT(*) FROM manual_changes WHERE case_id=?",
+                        [case_id],
+                    ).fetchone()[0]:
+                        raise ValueError(
+                            "Die QEC-Liste enthält manuell bearbeitete Fälle. "
+                            "Bitte Änderungen vor dem Löschen gesondert prüfen."
+                        )
+            con.execute("BEGIN TRANSACTION")
+            try:
+                if primary:
+                    for case_id in original_ids:
+                        con.execute("DELETE FROM case_snapshots WHERE case_id=?", [case_id])
+                    con.execute("DELETE FROM qec_workflow_decisions WHERE source_sha256=?", [sha256])
+                    con.execute("DELETE FROM qec_cluster_handoff WHERE source_sha256=?", [sha256])
+                for case in affected_cases:
+                    con.execute(
+                        "UPDATE case_snapshots SET payload_json=? WHERE case_id=?",
+                        [case.model_dump_json(), case.case_id],
+                    )
+                # Source-specific normalized knowledge.
+                SourceKnowledgeStore(self.store) if False else None
+                con.execute("DELETE FROM source_knowledge_rows WHERE source_sha256=?", [sha256])
+                con.execute("DELETE FROM source_knowledge_documents WHERE source_sha256=?", [sha256])
+                # QuickTest reports can be shared across PDFs: remove only
+                # an unreferenced report with no other imported source.
+                report = con.execute(
+                    "SELECT report_id FROM quicktest_sources WHERE artifact_sha256=?",
+                    [sha256],
+                ).fetchone()
+                con.execute("DELETE FROM quicktest_sources WHERE artifact_sha256=?", [sha256])
+                if report:
+                    report_id = report[0]
+                    if not con.execute(
+                        "SELECT 1 FROM quicktest_sources WHERE report_id=? LIMIT 1",
+                        [report_id],
+                    ).fetchone():
+                        for name in (
+                            "quicktest_parameters", "quicktest_dtcs", "quicktest_ecus",
+                            "quicktest_pages", "quicktest_reports",
+                        ):
+                            con.execute(f"DELETE FROM {name} WHERE report_id=?", [report_id])
+                con.execute("DELETE FROM parse_runs WHERE artifact_sha256=?", [sha256])
+                con.execute("DELETE FROM source_artifacts WHERE sha256=?", [sha256])
+                con.execute("COMMIT")
+            except Exception:
+                con.execute("ROLLBACK")
+                raise
+        archive_path.unlink(missing_ok=True)
