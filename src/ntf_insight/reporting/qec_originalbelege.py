@@ -22,7 +22,7 @@ MAX_SINGLE_FILE_BYTES = 80 * 1024 * 1024
 MAX_QEC_JSON_BYTES = 32 * 1024 * 1024
 SUFFIXES = frozenset({
     ".pdf", ".xlsx", ".xls", ".csv", ".txt", ".xml", ".png", ".jpg", ".jpeg",
-    ".docx", ".doc", ".pptx", ".ppt", ".rtf", ".eml", ".msg", ".zip",
+    ".docx", ".doc", ".pptx", ".ppt", ".rtf", ".eml", ".msg", ".zip", ".bin",
 })
 _FIN = re.compile(r"[A-HJ-NPR-Z0-9]{17}\Z")
 _REF = re.compile(r"[0-9]{1,14}\Z")
