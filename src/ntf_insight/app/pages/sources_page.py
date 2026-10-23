@@ -404,6 +404,9 @@ class SourcesPage(QWidget):
             f"{summary.qec_findings_linked} QEC-Fälle mit SSL-Endbefunden ergänzt, "
             f"{summary.qec_findings_conflicted} Referenzkonflikte, "
             f"{summary.quicktests_saved} QuickTest(s) dauerhaft nach FIN gespeichert, "
+            f"{summary.fin_zips_imported} FIN-ZIP(s) übertragen, "
+            f"{summary.fin_files_installed} neue QuickTest-/QEC-/TIPS-Dateien, "
+            f"{summary.fin_file_conflicts} unveränderte Konfliktdateien · "
             f"{summary.events_linked} zugeordnete Ereignisse · "
             f"{summary.events_unassigned} Ereignisse ohne eindeutige QEC-Zuordnung · "
             f"{summary.rows_scanned} gepruefte CSV-Zeilen, "
@@ -425,6 +428,7 @@ class SourcesPage(QWidget):
         self._pending_reload = bool(
             summary.cases_created or summary.events_linked or summary.quicktests_saved
             or summary.reference_sources or summary.qec_findings_linked
+            or summary.fin_files_installed
         )
         self._refresh_all()
 
