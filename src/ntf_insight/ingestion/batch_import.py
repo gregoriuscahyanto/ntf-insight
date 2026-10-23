@@ -14,14 +14,16 @@ import stat
 import tempfile
 from collections import defaultdict
 from dataclasses import dataclass, field
-from datetime import date
+from datetime import date, datetime, timezone
 from pathlib import Path, PurePosixPath
 from typing import Callable, Iterable
 from zipfile import ZipFile, is_zipfile
 
 from ntf_insight.domain.case import NTFCase
 from ntf_insight.domain.events import CaseEvent
-from ntf_insight.ingestion.artifacts import SourceArtifact, SourceType
+from ntf_insight.ingestion.artifacts import (
+    ParseRun, ParseStatus, SourceArtifact, SourceType, sha256_file,
+)
 from ntf_insight.ingestion.parser_execution import ParserExecutionService
 from ntf_insight.ingestion.real_source_parsers import (
     AutoExportParser,
@@ -57,6 +59,9 @@ class ImportSummary:
     files_archived: int = 0
     files_parsed: int = 0
     files_pending: int = 0
+    files_unchanged: int = 0
+    files_failed: int = 0
+    cancelled: bool = False
     cases_created: int = 0
     qec_findings_linked: int = 0
     qec_findings_conflicted: int = 0
@@ -151,12 +156,58 @@ class LocalBatchImporter:
         forced_source_type: SourceType | None = None,
         source_system: str | None = None,
         vin_hint: str | None = None,
+        only_new: bool = False,
+        local_kind: str | None = None,
+        should_cancel: Callable[[], bool] | None = None,
     ) -> ImportSummary:
         def progress(text: str) -> None:
             if on_progress is not None:
                 on_progress(text)
 
         paths = [Path(path) for path in paths]
+        if only_new and local_kind not in {"quicktests", "qec"}:
+            raise ValueError("Inkrementeller Import benötigt QuickTests oder QEC als Quellenart.")
+
+        # Completed state is persisted in DuckDB and survives app restarts.
+        # Failed files are also skipped when unchanged; a manual retry or
+        # future parser-version bump explicitly retries them.
+        already_done: set[str] = set()
+        if only_new:
+            expected_name, expected_version = (
+                (QuickTestPdfParser.name, QuickTestPdfParser.version)
+                if local_kind == "quicktests" else (QECJsonParser.name, QECJsonParser.version)
+            )
+            recent: dict[str, ParseRun] = {}
+            for run in self.sources.store.load_parse_runs():
+                if run.parser_name != expected_name or run.parser_version != expected_version:
+                    continue
+                previous = recent.get(run.artifact_sha256)
+                if previous is None or (run.completed_at or run.started_at) >= (
+                    previous.completed_at or previous.started_at
+                ):
+                    recent[run.artifact_sha256] = run
+            if local_kind == "quicktests":
+                with self.sources.store.connect() as connection:
+                    persisted = {
+                        row[0] for row in connection.execute(
+                            "SELECT artifact_sha256 FROM quicktest_sources"
+                        ).fetchall()
+                    }
+            else:
+                persisted = {
+                    document["source_sha256"]
+                    for document in self.knowledge.documents()
+                    if document["source_kind"] == "qec_live_report"
+                }
+            for sha, run in recent.items():
+                if run.status == ParseStatus.FAILED or (
+                    run.status in {ParseStatus.SUCCESS, ParseStatus.PARTIAL} and sha in persisted
+                ):
+                    already_done.add(sha)
+
+        def stop_requested() -> bool:
+            return should_cancel is not None and should_cancel()
+
         from_zip = set()
         summary = ImportSummary()
         previously_archived_items = self.sources.list_artifacts()
@@ -211,7 +262,24 @@ class LocalBatchImporter:
             known = previously_archived | zip_hashes
             artifacts: list[SourceArtifact] = []
             processed = set()
-            for path in extracted:
+            for position, path in enumerate(extracted, start=1):
+                if stop_requested():
+                    summary.cancelled = True
+                    break
+                if only_new:
+                    digest = sha256_file(path)
+                    if digest in previously_archived and digest in already_done:
+                        summary.files_unchanged += 1
+                        if position % 20 == 0 or position == len(extracted):
+                            progress(
+                                f"Dateien abgleichen ({position}/{len(extracted)}) · "
+                                f"{summary.files_unchanged} unverändert übersprungen …"
+                            )
+                        continue
+                progress(
+                    f"Originaldateien archivieren ({position}/{len(extracted)}) · "
+                    f"{summary.files_unchanged} unverändert übersprungen …"
+                )
                 try:
                     source_type = (
                         forced_source_type
@@ -246,8 +314,26 @@ class LocalBatchImporter:
                 if artifact.sha256 not in known:
                     summary.files_archived += 1
                 artifacts.append(artifact)
+                if only_new and source_type == SourceType.OTHER:
+                    # An already-downloaded file that cannot be recognized is a
+                    # failed attempt, not a permanent infinite reparse candidate.
+                    self.sources.store.save_parse_run(ParseRun(
+                        artifact_sha256=artifact.sha256,
+                        parser_name=expected_name,
+                        parser_version=expected_version,
+                        status=ParseStatus.FAILED,
+                        started_at=datetime.now(timezone.utc),
+                        completed_at=datetime.now(timezone.utc),
+                        error_message="Dateiformat nicht als erwarteter Bericht erkannt.",
+                    ))
+                    summary.files_failed += 1
                 label = str(source_type)
                 summary.source_counts[label] = summary.source_counts.get(label, 0) + 1
+
+            # Safe checkpoint: originals are durable; unparsed ones are retried
+            # on the next scan. No canonical case data has been modified yet.
+            if summary.cancelled:
+                return summary
 
             # A second QEC FIN cohort must never enter the archive/database.
             validate_single_qec_list(
@@ -265,6 +351,9 @@ class LocalBatchImporter:
             existing = {case.case_id: case for case in self.sources.store.load_cases()}
             pending: list[tuple[SourceArtifact, ParsedSource]] = []
             for artifact in case_artifacts:
+                if stop_requested():
+                    summary.cancelled = True
+                    break
                 progress("QEC-Fälle und SSL-Endbefunde einlesen …")
                 # First archive all original Excel fields. A 'Schadteile'
                 # export without FIN is a valid reference-only source, but
@@ -445,6 +534,9 @@ class LocalBatchImporter:
             allowed_fins = set(case_fin)
 
             for artifact in others:
+                if stop_requested():
+                    summary.cancelled = True
+                    break
                 suffix = Path(artifact.original_name).suffix.casefold()
                 # Global source knowledge is NOT a per-FIN diagnosis event.
                 reference_parser = None
@@ -472,6 +564,7 @@ class LocalBatchImporter:
                         summary.files_parsed += 1
                         summary.issues.extend(catalog.issues)
                     except Exception as exc:
+                        summary.files_failed += 1
                         summary.issues.append(
                             f"{artifact.original_name}: {type(exc).__name__}"
                         )
@@ -535,6 +628,7 @@ class LocalBatchImporter:
                 try:
                     result, _ = self.execution.execute(artifact, parser)
                 except Exception as exc:
+                    summary.files_failed += 1
                     summary.issues.append(f"{artifact.original_name}: {type(exc).__name__}")
                     continue
                 summary.files_parsed += 1
@@ -544,6 +638,16 @@ class LocalBatchImporter:
                 summary.rows_invalid += result.invalid_rows
                 if isinstance(parser, QuickTestPdfParser):
                     if result.quicktest_report is None:
+                        self.sources.store.save_parse_run(ParseRun(
+                            artifact_sha256=artifact.sha256,
+                            parser_name=parser.name,
+                            parser_version=parser.version,
+                            status=ParseStatus.FAILED,
+                            started_at=datetime.now(timezone.utc),
+                            completed_at=datetime.now(timezone.utc),
+                            error_message="QuickTest ohne vollständig extrahierbaren Bericht.",
+                        ))
+                        summary.files_failed += 1
                         summary.issues.append(
                             f"{artifact.original_name}: QuickTest ohne vollständige Extraktion."
                         )
