@@ -242,6 +242,13 @@ def export_ki_analysepaket(
         {case.vin for case in cases}
         | {row[1] for row in reports}
         | {str(doc["metadata"].get("fin")) for doc in documents if doc["metadata"].get("fin")}
+        | {fin for fin in tips_counts if _FIN_RE.fullmatch(str(fin or ""))}
+        | {
+            str(art.vin_hint).strip().upper() for art in artifacts
+            if art.source_type == SourceType.SMR_D and _FIN_RE.fullmatch(
+                str(art.vin_hint or "").strip().upper()
+            )
+        }
     )
     fins = {fin for fin in fins if fin}
     secret = secrets.token_bytes(32)
