@@ -79,7 +79,7 @@ def main(argv: list[str] | None = None) -> int:
             parse_native_details,
         )
 
-        metadata, rows = parse_native_details(args.file)
+        _, rows = parse_native_details(args.file)
         if args.cmd == "native-import":
             print(
                 "NTF Insight: ",
