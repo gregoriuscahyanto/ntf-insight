@@ -97,7 +97,7 @@ def _set_up(tmp_path):
                 [label, FIN, FIN, tested, kilometer, 1, 1, "{}", "b" * 64, tested],
             )
             con.execute(
-                "INSERT INTO quicktest_ecus VALUES (?,?,?,?,?,?,?,?,?)",
+                "INSERT INTO quicktest_ecus VALUES (?,?,?,?,?,?,?,?,?,?)",
                 [label, 1, "CPC3", "Prüfstelle", "CPC3", json.dumps({
                     "software_version": "25/04",
                     "hardware_version": "A01",
