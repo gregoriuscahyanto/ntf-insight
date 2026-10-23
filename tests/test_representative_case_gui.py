@@ -174,7 +174,8 @@ def test_case_workspace_has_only_one_clustering_tab(tmp_path, monkeypatch) -> No
     window = MainWindow()
     cases = window.pages["cases"]
     tabs = cases.detail_tabs
-    assert tabs.count() == 3
+    assert tabs.count() == 4
+    assert tabs.tabText(3) == "QuickTest-Gesamtauswertung"
     assert tabs.tabText(0) == "Clusteranalyse"
     assert tabs.tabText(1) == "FIN / Fallanalyse"
     assert tabs.tabText(2) == "QuickTests nach FIN"

@@ -27,11 +27,13 @@ from PySide6.QtWidgets import (
 from ntf_insight.app.models.simple_table_model import SimpleTableModel
 from ntf_insight.app.widgets.file_drop_zone import FileDropZone
 from ntf_insight.app.widgets.qec_workflow_panel import QecWorkflowPanel
+from ntf_insight.app.widgets.portable_backup_panel import PortableBackupPanel
 from ntf_insight.storage.qec_workflow_store import QecWorkflowStore
 from ntf_insight.ingestion.qec_primary import active_qec_lists
 from ntf_insight.ingestion.artifacts import ParseStatus, SourceType
 from ntf_insight.ingestion.batch_import import ImportSummary, LocalBatchImporter
 from ntf_insight.ingestion.source_detection import detect_source_type
+from ntf_insight.ingestion.downloaded_quicktests import list_downloaded_quicktests
 from ntf_insight.ingestion.service import SourceImportService
 from ntf_insight.storage.reference_repositories import ReferenceRepository
 from ntf_insight.storage.repositories import CaseRepository
@@ -108,6 +110,7 @@ class SourcesPage(QWidget):
         self.cases = cases
         self.references = references
         self.mode = mode
+        self.data_dir = Path(data_dir) if data_dir else None
         self._worker: _SourceImportWorker | None = None
         self._pending_reload = False
         self._quicktests_added = 0
@@ -140,6 +143,12 @@ class SourcesPage(QWidget):
         )
         subtitle.setWordWrap(True)
         layout.addWidget(subtitle)
+
+        self.portable_backup_panel = (
+            PortableBackupPanel(Path(data_dir)) if data_dir and self.import_service else None
+        )
+        if self.portable_backup_panel is not None:
+            layout.addWidget(self.portable_backup_panel)
 
         self.workflow_store = (
             QecWorkflowStore(self.import_service.store)
@@ -209,6 +218,23 @@ class SourcesPage(QWidget):
         self.archive_button.clicked.connect(self._archive_file)
         controls.addWidget(self.archive_button)
         layout.addLayout(controls)
+
+        local_row = QHBoxLayout()
+        self.local_quicktests_button = QPushButton(
+            "Alle bereits heruntergeladenen QuickTests einlesen"
+        )
+        self.local_quicktests_button.setToolTip(
+            "Sucht lokale PDFs unter quicktests/<FIN>/ und archiviert sie mit "
+            "FIN-Prüfung durch den bestehenden QuickTest-Parser. "
+            "Bereits bekannte Berichte werden nicht doppelt gezählt."
+        )
+        self.local_quicktests_button.setEnabled(
+            self.data_dir is not None and self.import_service is not None
+        )
+        self.local_quicktests_button.clicked.connect(self._import_existing_quicktests)
+        local_row.addWidget(self.local_quicktests_button)
+        local_row.addStretch(1)
+        layout.addLayout(local_row)
 
         self.drop_zone = FileDropZone()
         self.drop_zone.setEnabled(self.import_service is not None)
@@ -297,6 +323,19 @@ class SourcesPage(QWidget):
         if filenames:
             self._archive_paths([Path(filename) for filename in filenames])
 
+    def _import_existing_quicktests(self) -> None:
+        if self.data_dir is None or self._worker is not None:
+            return
+        paths = list_downloaded_quicktests(self.data_dir)
+        if not paths:
+            self.import_status.setText(
+                "Keine lokalen QuickTest-PDFs unter quicktests/<FIN>/ gefunden."
+            )
+            return
+        # This dedicated action always uses safe content recognition.
+        self.source_type.setCurrentIndex(0)
+        self._archive_paths(paths)
+
     def _artifact_selected(self, index) -> None:
         self.delete_button.setEnabled(
             self.import_service is not None and self._worker is None
@@ -369,12 +408,19 @@ class SourcesPage(QWidget):
         return detect_source_type(path)
 
     def _archive_paths(self, paths: list[Path]) -> None:
-        if self.import_service is None or not paths or self._worker is not None:
+        if (
+            self.import_service is None or not paths or self._worker is not None
+            or (
+                self.portable_backup_panel is not None
+                and self.portable_backup_panel.worker is not None
+            )
+        ):
             return
 
         forced = self.source_type.currentData()
         forced_type = forced if isinstance(forced, SourceType) else None
         self.archive_button.setEnabled(False)
+        self.local_quicktests_button.setEnabled(False)
         self.drop_zone.setEnabled(False)
         self.retry_button.setEnabled(False)
         self.delete_button.setEnabled(False)
@@ -404,6 +450,9 @@ class SourcesPage(QWidget):
             f"{summary.qec_findings_linked} QEC-Fälle mit SSL-Endbefunden ergänzt, "
             f"{summary.qec_findings_conflicted} Referenzkonflikte, "
             f"{summary.quicktests_saved} QuickTest(s) dauerhaft nach FIN gespeichert, "
+            f"{summary.fin_zips_imported} FIN-ZIP(s) übertragen, "
+            f"{summary.fin_files_installed} neue QuickTest-/QEC-/TIPS-Dateien, "
+            f"{summary.fin_file_conflicts} unveränderte Konfliktdateien · "
             f"{summary.events_linked} zugeordnete Ereignisse · "
             f"{summary.events_unassigned} Ereignisse ohne eindeutige QEC-Zuordnung · "
             f"{summary.rows_scanned} gepruefte CSV-Zeilen, "
@@ -425,6 +474,7 @@ class SourcesPage(QWidget):
         self._pending_reload = bool(
             summary.cases_created or summary.events_linked or summary.quicktests_saved
             or summary.reference_sources or summary.qec_findings_linked
+            or summary.fin_files_installed
         )
         self._refresh_all()
 
@@ -437,6 +487,9 @@ class SourcesPage(QWidget):
 
     def _import_worker_finished(self) -> None:
         self.archive_button.setEnabled(self.import_service is not None)
+        self.local_quicktests_button.setEnabled(
+            self.import_service is not None and self.data_dir is not None
+        )
         self.drop_zone.setEnabled(self.import_service is not None)
         worker = self._worker
         self._worker = None

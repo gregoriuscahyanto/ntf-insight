@@ -39,6 +39,7 @@ from ntf_insight.ingestion.reference_source_parsers import (
 )
 from ntf_insight.ingestion.service import SourceImportService
 from ntf_insight.ingestion.source_detection import detect_source_type
+from ntf_insight.ingestion.fin_zip_import import is_fin_export, prepare_fin_export, install_fin_export
 from ntf_insight.ingestion.qec_primary import validate_single_qec_list
 from ntf_insight.storage.quicktest_store import QuickTestStore
 from ntf_insight.storage.source_knowledge_store import SourceKnowledgeStore
@@ -67,6 +68,9 @@ class ImportSummary:
     tips_unassigned: int = 0
     duplicates: int = 0
     quicktests_saved: int = 0
+    fin_zips_imported: int = 0
+    fin_files_installed: int = 0
+    fin_file_conflicts: int = 0
     quicktests_without_case: int = 0
     reference_sources: int = 0
     reference_rows: int = 0
@@ -173,9 +177,23 @@ class LocalBatchImporter:
                 # No rejected second QEC-FIN cohort must pollute the archive.
                 from ntf_insight.ingestion.artifacts import sha256_file
                 zip_digest = sha256_file(path)
-                zip_members = self._extract_zip(path, Path(temp) / zip_digest)
-                extracted.extend(zip_members)
-                from_zip.update(zip_members)
+                if is_fin_export(path):
+                    plan = prepare_fin_export(path, Path(temp) / ("fin_" + zip_digest))
+                    outcome = install_fin_export(plan, self.sources.archive.root.parent)
+                    extracted.extend(outcome.quicktest_paths)
+                    from_zip.update(outcome.quicktest_paths)
+                    summary.fin_zips_imported += 1
+                    summary.fin_files_installed += sum(outcome.counts.values())
+                    summary.fin_file_conflicts += len(outcome.conflicts)
+                    if outcome.conflicts:
+                        summary.issues.append(
+                            f"FIN {plan.fin}: {len(outcome.conflicts)} unterschiedliche QEC-/TIPS-Dateien "
+                            "nicht überschrieben. Konflikte bitte im Zielverzeichnis prüfen."
+                        )
+                else:
+                    zip_members = self._extract_zip(path, Path(temp) / zip_digest)
+                    extracted.extend(zip_members)
+                    from_zip.update(zip_members)
 
             # Validate primary QEC workbooks before any member is archived.
             validate_single_qec_list(extracted, previously_archived_items)

@@ -54,6 +54,7 @@ from ntf_insight.app.models.simple_table_model import SimpleTableModel
 from ntf_insight.app.models.timeline_table_model import TimelineTableModel
 from ntf_insight.app.widgets.event_time_plot import EventTimePlot
 from ntf_insight.app.widgets.quicktest_browser import QuickTestBrowser
+from ntf_insight.app.widgets.quicktest_fleet_panel import QuickTestFleetPanel
 from ntf_insight.app.widgets.qec_case_download import QecCaseDownloadPanel
 from ntf_insight.app.widgets.fin_zip_export import FinZipExportPanel
 from ntf_insight.app.widgets.case_checkbox_delegate import CaseCheckboxDelegate
@@ -174,8 +175,14 @@ class CasePage(QWidget):
                 QuickTestStore(manual_service.store)
             )
             self.detail_tabs.addTab(self.quicktest_browser, "QuickTests nach FIN")
+            self.quicktest_fleet = QuickTestFleetPanel(
+                QuickTestStore(manual_service.store)
+            )
+            self.detail_tabs.addTab(self.quicktest_fleet, "QuickTest-Gesamtauswertung")
+            self.quicktest_fleet.fin_requested.connect(self.show_quicktests)
         else:
             self.quicktest_browser = None
+            self.quicktest_fleet = None
 
         layout = QVBoxLayout(content)
         layout.setContentsMargins(32, 28, 32, 28)
