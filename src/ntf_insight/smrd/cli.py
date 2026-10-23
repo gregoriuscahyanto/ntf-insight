@@ -35,6 +35,10 @@ def main(argv: list[str] | None = None) -> int:
     native_capabilities_cmd.add_argument("--runtime-dir", type=Path)
     native_probe_cmd = sub.add_parser("native-probe")
     native_probe_cmd.add_argument("--runtime-dir", type=Path)
+    project_test_cmd = sub.add_parser("native-project-test")
+    project_test_cmd.add_argument("file", type=Path)
+    project_test_cmd.add_argument("--runtime-dir", type=Path)
+    project_test_cmd.add_argument("--timeout", type=int, default=120)
     native_export_cmd = sub.add_parser("native-export")
     native_export_cmd.add_argument("file", type=Path)
     native_export_cmd.add_argument("--runtime-dir", type=Path)
@@ -102,6 +106,13 @@ def main(argv: list[str] | None = None) -> int:
         from ntf_insight.smrd.native_export import native_probe
 
         print(native_probe(runtime_dir=args.runtime_dir, data_dir=args.data_dir))
+    elif args.cmd == "native-project-test":
+        from ntf_insight.smrd.native_export import native_project_test
+
+        print(native_project_test(
+            args.file, runtime_dir=args.runtime_dir,
+            data_dir=args.data_dir, timeout=args.timeout,
+        ))
     elif args.cmd == "native-export":
         from ntf_insight.smrd.native_export import export_native_dtcs
 
