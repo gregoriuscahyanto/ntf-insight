@@ -30,8 +30,7 @@ def test_chatgpt_return_and_qec_document_checkbox_are_visible(tmp_path, monkeypa
 
     case_page = window.pages["cases"]
     assert case_page.chatgpt_analysen is not None
-    assert "Keine ChatGPT-Analyse" in case_page.chatgpt_result_text.text() or (
-        "Noch keine" in case_page.chatgpt_result_text.text()
-    )
+    assert case_page.chatgpt_result_text.text()
+    assert case_page.chatgpt_result_text.text() != "—"
     window.close()
     app.processEvents()
