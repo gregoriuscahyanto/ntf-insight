@@ -495,8 +495,7 @@ def export_ki_analysepaket(
             "anhaenge_anzahl": m.get("attachments"),
         })
     qec_fields: list[dict] = []
-    field_numbers: dict[str, int] = defaultdict(int)
-    for sha, category, _location, label, raw in qec_rows:
+    for sha, category, location, label, raw in qec_rows:
         alias = qec_aliases.get(sha)
         if alias is None:
             continue
@@ -509,10 +508,19 @@ def export_ki_analysepaket(
         doc = docs_by_sha.get(sha)
         if doc is None:
             continue
-        field_numbers[sha] += 1
         kind = str(value.get("typ") or "")
         if category == "qec_table_row":
             kind = "tabelle"
+        form_name = str(value.get("name") or value.get("beschriftung") or "").strip()
+        comparable = category == "qec_field" and bool(form_name)
+        # The same named field in the same section gets the same pseudonym
+        # across QEC reports. Unnamed/table rows get source-local IDs, never
+        # incorrectly treated as identical merely because the row numbers match.
+        basis = (
+            "feld:" + str(value.get("bereich") or "") + ":" + kind + ":" + form_name
+            if comparable else "einmalig:" + sha + ":" + location
+        )
+        field_alias = "QF" + _key_order(secret, "qec_feld", basis)[:12].upper()
         qec_fields.append({
             "qec_bericht_id": alias,
             "fahrzeug_id": aliases.get(str(doc["metadata"].get("fin") or ""), ""),
@@ -524,7 +532,8 @@ def export_ki_analysepaket(
                 )
             ),
             "reiter": str(value.get("bereich") or ""),
-            "feld_id": f"QF{field_numbers[sha]:05d}",
+            "feld_id": field_alias,
+            "uebergreifend_vergleichbar": int(comparable),
             "feldart": _code(kind),
             "wert_strukturiert": _safe_value(value.get("wert"), kind),
             "alter_reiter": int(value.get("aus_vorherigem_abruf") is True),
@@ -615,7 +624,7 @@ def export_ki_analysepaket(
         "dtc_beobachtungen": (("quicktest_id", "fahrzeug_id", "steuergeraet", "dtc_code", "dtc_status", "haeufigkeit"), dtc_rows),
         "ecu_staende": (("quicktest_id", "fahrzeug_id", "steuergeraet", "softwarestand", "hardwarestand"), software_rows),
         "qec_berichte": (("qec_bericht_id", "fahrzeug_id", "fall_ids", "teilegruppe", "erfassungsstand", "reiter_gesamt", "reiter_frisch", "formularfelder", "werte", "tabellenzeilen", "anhaenge_anzahl"), qec_reports),
-        "qec_felder": (("qec_bericht_id", "fahrzeug_id", "fall_ids", "reiter", "feld_id", "feldart", "wert_strukturiert", "alter_reiter", "original_bezeichnung", "original_wert"), qec_fields),
+        "qec_felder": (("qec_bericht_id", "fahrzeug_id", "fall_ids", "reiter", "feld_id", "uebergreifend_vergleichbar", "feldart", "wert_strukturiert", "alter_reiter", "original_bezeichnung", "original_wert"), qec_fields),
         "tips": (("fall_id", "fahrzeug_id", "tips_id", "beschwerde_vorhanden", "werkstattbefund_vorhanden", "massnahme_vorhanden", "beschwerde_original", "werkstattbefund_original", "massnahme_original"), tips_rows),
         "smrd_bestand": (("smrd_id", "fahrzeug_id", "struktur_parsebar", "stand", "byte_anzahl"), smrd_rows),
         "bewertungen_NICHT_CLUSTER": (("fall_id", "ntf_urteil_fachlich", "ursachenkategorie_bewertet", "lieferantenbeteiligung_bewertet", "bewertung_sicherheit", "lieferantenbefund_ntf_vorhanden", "lieferantenbefund_fehler_vorhanden", "hinweis"), bewertungen),
