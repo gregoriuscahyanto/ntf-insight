@@ -7,6 +7,8 @@ from __future__ import annotations
 
 import json
 import os
+
+import duckdb
 from datetime import datetime
 from pathlib import Path
 from zipfile import ZipFile
@@ -253,3 +255,35 @@ def test_rollback_if_installation_fails_after_previous_data_moved(tmp_path, monk
         restore_portable_backup(package, dest, replace_existing=True)
     assert DuckDBStore(dest / DATABASE_NAME).load_cases()[0].case_id == "OLD-LOCAL-CASE"
     assert (dest / DATABASE_NAME).read_bytes() == before
+
+
+def test_failed_rollback_preserves_original_database_for_recovery(tmp_path, monkeypatch):
+    import ntf_insight.ingestion.portable_backup as module
+
+    package, _ = _backup(tmp_path)
+    dest = tmp_path / "pc-b"
+    dest.mkdir()
+    store = DuckDBStore(dest / DATABASE_NAME)
+    store.save_case(NTFCase(
+        case_id="PRESERVE-ME", vehicle=Vehicle(vin=FIN),
+        component_type="Coolant Pump",
+    ))
+    real_replace = module.os.replace
+
+    def fail_install_and_rollback(src, dst):
+        if Path(dst) == dest / "quicktests":
+            raise OSError("synthetic failed installation")
+        if Path(dst) == dest / DATABASE_NAME and Path(src).parent.name == "_vorher":
+            raise OSError("synthetic locked destination")
+        return real_replace(src, dst)
+
+    monkeypatch.setattr(module.os, "replace", fail_install_and_rollback)
+    with pytest.raises(RuntimeError, match="manuellen Wiederherstellung"):
+        restore_portable_backup(package, dest, replace_existing=True)
+    recovered = list(tmp_path.glob(".ntf-restore-*/_vorher/ntf-insight.duckdb"))
+    assert len(recovered) == 1
+    assert recovered[0].is_file()
+    with duckdb.connect(str(recovered[0]), read_only=True) as con:
+        assert con.execute(
+            "SELECT COUNT(*) FROM case_snapshots WHERE case_id='PRESERVE-ME'"
+        ).fetchone()[0] == 1
