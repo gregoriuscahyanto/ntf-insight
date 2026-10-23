@@ -27,6 +27,7 @@ from PySide6.QtWidgets import (
 from ntf_insight.app.models.simple_table_model import SimpleTableModel
 from ntf_insight.app.widgets.file_drop_zone import FileDropZone
 from ntf_insight.app.widgets.qec_workflow_panel import QecWorkflowPanel
+from ntf_insight.app.widgets.portable_backup_panel import PortableBackupPanel
 from ntf_insight.storage.qec_workflow_store import QecWorkflowStore
 from ntf_insight.ingestion.qec_primary import active_qec_lists
 from ntf_insight.ingestion.artifacts import ParseStatus, SourceType
@@ -142,6 +143,12 @@ class SourcesPage(QWidget):
         )
         subtitle.setWordWrap(True)
         layout.addWidget(subtitle)
+
+        self.portable_backup_panel = (
+            PortableBackupPanel(Path(data_dir)) if data_dir and self.import_service else None
+        )
+        if self.portable_backup_panel is not None:
+            layout.addWidget(self.portable_backup_panel)
 
         self.workflow_store = (
             QecWorkflowStore(self.import_service.store)
@@ -401,7 +408,13 @@ class SourcesPage(QWidget):
         return detect_source_type(path)
 
     def _archive_paths(self, paths: list[Path]) -> None:
-        if self.import_service is None or not paths or self._worker is not None:
+        if (
+            self.import_service is None or not paths or self._worker is not None
+            or (
+                self.portable_backup_panel is not None
+                and self.portable_backup_panel.worker is not None
+            )
+        ):
             return
 
         forced = self.source_type.currentData()
