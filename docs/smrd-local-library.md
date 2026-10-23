@@ -212,6 +212,41 @@ Es findet keine Fahrzeugkommunikation statt. Ein weiterer nativer
 Laufzeitfehler darf nicht mit angeblich erfolgreicher DTC-Extraktion
 verwechselt werden.
 
+### Lizenzstatus vor nativer Projektauswahl
+
+Nach erfolgreichen 12 lokalen Regressionstests, `native-capabilities`
+(1.777 Funktionen) und `native-probe` war beim echten Aufruf von
+`SelectDynamicProject` die Hersteller-Laufzeit **nicht lizenziert**:
+`eSYSTEM_LICENSE_ERROR` (58679), `No BaseSystem license was found.
+Add license in Configurator under General Settings!` (59075).
+
+Das ist ein Fehler der **Softing-Lizenzverwaltung**, weder ein DTC-
+Parserfehler noch ein Hinweis auf eine defekte `.smr-d`. Eine vorhandene
+`mvci/config/license.bin`, das Laden der DLL und ein erfolgreicher
+`native-probe` garantieren keine aktive DTS-BaseSystem-Berechtigung.
+
+Nur bei vorhandener, rechtmaessiger Berechtigung kann der Benutzer
+im **offiziellen Softing DTS System Configurator** unter
+**General Settings / Licenses** die aktive BaseSystem-Lizenz und
+die zugehoerige Lizenzierungs-Hardware (z.B. USB-Lizenzdongle
+oder unterstuetztes Hardware-Interface) pruefen. Bei fehlender
+Berechtigung oder unpassender DTS-Version muss der Lizenzverantwortliche
+oder Softing-Support kontaktiert werden; eine Demo-/OEM-Ausgabe darf
+nicht als voll lizenzierte DTS-Laufzeit angenommen werden.
+
+**Wichtig:** Weder `native-doctor` noch `native-prepare` stellt eine
+Softing-Lizenz her. Es gibt keinen automatisierten Lizenz-Import,
+keine Lizenzmanipulation und keine Umgehung. Bis der Hersteller die
+BaseSystem-Berechtigung bestaetigt, `native-project-test` und
+`native-export` nicht erneut aufrufen. Die bereits funktionierenden
+XML-Referenzparser und die manuell abgelegten SMR-D-Dateien bleiben
+weiterhin verfuegbar.
+
+Der Python-Adapter erkennt die Lizenzfehlermeldung jetzt als
+`NativeLicenseError` und nennt die offiziellen Fehlercodes,
+statt sie mit inkompatiblen DLL-APIs oder einem Datenbankfehler
+zu verwechseln.
+
 ### Gezielte dynamische Projektauswahl (ohne DTC-Export)
 
 Wenn `native-probe` erfolgreich ist, sollte zunaechst nur die native
