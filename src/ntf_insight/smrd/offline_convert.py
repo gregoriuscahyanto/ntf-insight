@@ -126,7 +126,7 @@ def _binding_path(library: SmrdLocalLibrary, smrd_sha: str) -> Path:
     return library.manifests / "offline-links" / f"{smrd_sha}.json"
 
 
-def _saved_xml_files(library: SmrdLocalLibrary, smrd_sha: str) -> list[Path]:
+def _saved_xml_files(library: SmrdLocalLibrary, smrd_sha: str) -> list[tuple[Path, str]]:
     manifest = _binding_path(library, smrd_sha)
     if not manifest.exists():
         return []
@@ -148,7 +148,10 @@ def _saved_xml_files(library: SmrdLocalLibrary, smrd_sha: str) -> list[Path]:
                 "Lokal zugeordnete XML fehlt oder wurde veraendert; "
                 "erneut mit --xml und --remember verknuepfen"
             )
-        paths.append(path)
+        origin = source.get("kind", "preexisting_local_xml")
+        if origin not in ("preexisting_local_xml", "smrd2xml_local_vendor_export"):
+            raise ValueError("Unbekannte lokale XML-Herkunft")
+        paths.append((path, origin))
     return paths
 
 
@@ -159,6 +162,7 @@ def offline_convert(
     data_dir: Path | None = None,
     output: Path | None = None,
     remember: bool = False,
+    xml_origin: str = "preexisting_local_xml",
 ) -> dict:
     """Create a transparent offline JSON bundle from SMR-D and LOCAL XML references.
 
@@ -170,6 +174,8 @@ def offline_convert(
         raise ValueError("Es wird eine vorhandene .smr-d-Datei benoetigt")
     if Path(smrd).is_symlink():
         raise ValueError("SMR-D-Symlink nicht erlaubt")
+    if xml_origin not in ("preexisting_local_xml", "smrd2xml_local_vendor_export"):
+        raise ValueError("Unbekannte XML-Herkunft")
     library = SmrdLocalLibrary(data_dir=data_dir)
     sha = digest(source)
     header = inspect_smrd_header(source)
@@ -178,12 +184,12 @@ def offline_convert(
         for path in xml_files:
             if Path(path).expanduser().is_symlink():
                 raise ValueError("Lokale XML-Symlinks sind nicht erlaubt")
-        xml_paths = [Path(p).expanduser().resolve() for p in xml_files]
+        xml_specs = [(Path(p).expanduser().resolve(), xml_origin) for p in xml_files]
     else:
-        xml_paths = _saved_xml_files(library, sha)
-    if len(xml_paths) > 20:
+        xml_specs = _saved_xml_files(library, sha)
+    if len(xml_specs) > 20:
         raise ValueError("Maximal 20 lokale XML-Dateien pro Offline-Paket")
-    if remember and not xml_paths:
+    if remember and not xml_specs:
         raise ValueError("--remember benoetigt mindestens eine XML-Quelle")
 
     references: list[dict] = []
@@ -191,7 +197,7 @@ def offline_convert(
     sources: list[dict] = []
     warnings: list[str] = []
     seen_sources: set[str] = set()
-    for xml in xml_paths:
+    for xml, xml_source_kind in xml_specs:
         if xml.is_symlink() or not xml.is_file():
             raise ValueError(f"Lokale XML fehlt oder ist ein Symlink: {xml.name}")
         source_hash = digest(xml)
@@ -223,7 +229,7 @@ def offline_convert(
                 "SMR-D-Revision ab; Zuordnung nicht cryptographisch belegt."
             )
         sources.append({
-            "kind": "preexisting_local_xml",
+            "kind": xml_source_kind,
             "filename": xml.name,
             "sha256": source_hash,
             "xml_format": metadata.get("format"),
@@ -245,6 +251,9 @@ def offline_convert(
                 }],
             }
             normalized["data"]["from_native_smrd_payload"] = False
+            normalized["data"]["from_vendor_smrd2xml_xml"] = (
+                xml_source_kind == "smrd2xml_local_vendor_export"
+            )
             normalized["data"]["is_vehicle_observation"] = False
             normalized["data"]["trigger_conditions_validated"] = False
             unique_key = _unique_reference_key(normalized)
@@ -276,7 +285,9 @@ def offline_convert(
     document = {
         "format": OFFLINE_FORMAT,
         "offline": True,
-        "vendor_runtime_used": False,
+        "vendor_runtime_used": any(
+            item["kind"] == "smrd2xml_local_vendor_export" for item in sources
+        ),
         "network_used": False,
         "source_smrd": {
             "filename": source.name,
@@ -288,6 +299,9 @@ def offline_convert(
             "status": "metadata_and_local_xml_references" if has_xml else "metadata_only",
             "smrd_header_inspected": True,
             "native_binary_dtc_decoded": False,
+            "vendor_xml_used": any(
+                item["kind"] == "smrd2xml_local_vendor_export" for item in sources
+            ),
             "dtc_reference_catalogue_from_xml": counts.get("smrd_xml_dtc", 0) > 0,
             "smrd_payload_encryption_not_bypassed": True,
             "error_level_from_xml_only": True,
@@ -313,8 +327,10 @@ def offline_convert(
         _write_json_atomic(link, {
             "format": BINDING_FORMAT,
             "smrd_sha256": sha,
-            "sources": [{"path": str(xml), "sha256": digest(xml)}
-                        for xml in xml_paths],
+            "sources": [
+                {"path": str(xml), "sha256": digest(xml), "kind": kind}
+                for xml, kind in xml_specs
+            ],
         })
     return {
         "bundle": str(export),
@@ -334,8 +350,25 @@ def import_offline_bundle(path: Path, *, data_dir: Path | None = None) -> int:
     if path.is_symlink() or not path.is_file() or not 0 < path.stat().st_size <= MAX_BUNDLE_BYTES:
         raise ValueError("Offline-Paket fehlt oder ist zu gross")
     doc = json.loads(path.read_text(encoding="utf-8"))
-    if doc.get("format") != OFFLINE_FORMAT or doc.get("vendor_runtime_used") is not False:
-        raise ValueError("Unbekanntes oder natives Offline-Paket")
+    if doc.get("format") != OFFLINE_FORMAT or not isinstance(
+        doc.get("vendor_runtime_used"), bool
+    ):
+        raise ValueError("Unbekanntes Offline-Paket")
+    xml_sources = doc.get("xml_sources")
+    if not isinstance(xml_sources, list) or not all(
+        isinstance(source, dict)
+        and source.get("kind") in (
+            "preexisting_local_xml", "smrd2xml_local_vendor_export"
+        )
+        for source in xml_sources
+    ):
+        raise ValueError("Unbekannte XML-Quellenherkunft im Offline-Paket")
+    vendor_sources = any(
+        source["kind"] == "smrd2xml_local_vendor_export"
+        for source in xml_sources
+    )
+    if doc["vendor_runtime_used"] is not vendor_sources:
+        raise ValueError("Widerspruechliche Quellenprovenienz im Offline-Paket")
     smrd = doc.get("source_smrd", {})
     sha = smrd.get("sha256")
     if not isinstance(sha, str) or not re.fullmatch("[0-9a-f]{64}", sha):
