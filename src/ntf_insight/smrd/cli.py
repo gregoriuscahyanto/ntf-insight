@@ -32,6 +32,19 @@ def main(argv: list[str] | None = None) -> int:
                              help="Remember XML links locally by SMR-D SHA256")
     offline_import = sub.add_parser("offline-import")
     offline_import.add_argument("file", type=Path)
+    smrd2xml = sub.add_parser(
+        "smrd2xml", help="Use the user's local external Smrd2Xml.exe on Windows"
+    )
+    smrd2xml.add_argument("file", type=Path)
+    smrd2xml.add_argument("--runtime-dir", type=Path)
+    smrd2xml.add_argument("--ecu", help="ECU identifier (default: filename guess)")
+    smrd2xml.add_argument(
+        "--mode", choices=("ECU", "DTCSXML", "COMPAR", "CANMODEL"),
+        action="append", dest="modes",
+    )
+    smrd2xml.add_argument("--timeout", type=int, default=180)
+    smrd2xml.add_argument("--remember", action="store_true")
+    smrd2xml.add_argument("--dry-run", action="store_true")
     for name in ("native-doctor", "native-prepare"):
         config_cmd = sub.add_parser(name)
         config_cmd.add_argument("--runtime-dir", type=Path)
@@ -99,6 +112,27 @@ def main(argv: list[str] | None = None) -> int:
                 "HINWEIS: Nur SMR-D-Metadaten. Der geschuetzte binaere Payload "
                 "ist nicht decodiert; fuer DTCs vorhandene XML-Exporte "
                 "mit --xml angeben."
+            )
+    elif args.cmd == "smrd2xml":
+        import json
+
+        from ntf_insight.smrd.smrd2xml_runner import (
+            DEFAULT_MODES,
+            run_smrd2xml,
+        )
+
+        report = run_smrd2xml(
+            args.file, runtime_dir=args.runtime_dir,
+            data_dir=args.data_dir, ecu=args.ecu,
+            modes=tuple(args.modes) if args.modes else DEFAULT_MODES,
+            timeout=args.timeout, remember=args.remember,
+            dry_run=args.dry_run,
+        )
+        print(json.dumps(report, indent=2, ensure_ascii=False))
+        if not args.dry_run and not report.get("total_references"):
+            print(
+                "Keine indexierbaren ECU-/DTC-XML-Referenzen erzeugt. "
+                "Siehe Modus-Logs; kein DuckDB-Import ausgefuehrt."
             )
     elif args.cmd == "offline-import":
         from ntf_insight.smrd.offline_convert import import_offline_bundle
