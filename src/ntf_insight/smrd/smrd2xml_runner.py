@@ -131,7 +131,7 @@ def run_smrd2xml(
     if not modes or any(mode not in MODES for mode in modes):
         raise ValueError(f"Zulaessige Smrd2Xml-Modi: {', '.join(MODES)}")
     modes = tuple(dict.fromkeys(modes))
-    ecu_name = (ecu or guess_ecu_name(source)).strip()
+    ecu_name = (ecu or guess_ecu_name(source)).strip() if "ECU" in modes else (ecu or "")
     if "ECU" in modes and not re.fullmatch(
         r"[A-Za-z0-9_]+(?:\.\d+\.\d+\.\d+)?", ecu_name
     ):
