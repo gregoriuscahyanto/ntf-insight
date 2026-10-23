@@ -22,6 +22,11 @@ def main(argv: list[str] | None = None) -> int:
         p = sub.add_parser(name)
         p.add_argument("file", type=Path)
         p.add_argument("--skip-dtcs", action="store_true")
+    for name in ("native-doctor", "native-prepare"):
+        config_cmd = sub.add_parser(name)
+        config_cmd.add_argument("--runtime-dir", type=Path)
+        if name == "native-prepare":
+            config_cmd.add_argument("--apply", action="store_true")
     native_probe_cmd = sub.add_parser("native-probe")
     native_probe_cmd.add_argument("--runtime-dir", type=Path)
     native_export_cmd = sub.add_parser("native-export")
@@ -53,6 +58,22 @@ def main(argv: list[str] | None = None) -> int:
             print(metadata, len(rows))
         else:
             print("Gespeicherte Referenzzeilen:", service.import_xml(args.file, skip_dtcs=args.skip_dtcs))
+    elif args.cmd in ("native-doctor", "native-prepare"):
+        import json
+
+        from ntf_insight.smrd.runtime_config import (
+            diagnose_native_runtime,
+            prepare_native_runtime,
+        )
+
+        runtime = args.runtime_dir or library.root / "runtime" / "SMRxView"
+        if args.cmd == "native-doctor":
+            report = diagnose_native_runtime(runtime)
+        else:
+            report = prepare_native_runtime(
+                runtime, data_dir=args.data_dir, apply=args.apply,
+            )
+        print(json.dumps(report, ensure_ascii=False, indent=2))
     elif args.cmd == "native-probe":
         from ntf_insight.smrd.native_export import native_probe
 
