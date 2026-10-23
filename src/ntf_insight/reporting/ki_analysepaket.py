@@ -778,10 +778,10 @@ def export_ki_analysepaket(
         "Seltene technische Konstellationen koennen reidentifizierend sein.\n"
         "Alle technischen Daten unterliegen der Unternehmensfreigabe.\n"
         + (
-            "ERHOEHTER SCHUTZBEDARF: QEC-/TIPS-Freitext ist enthalten,\n"
-            "nicht automatisch anonymisiert! KEINESFALLS ungeprueft hochladen.\n"
-            if mit_freitext else
-            "Ohne QEC-/TIPS-Freitext; Detailfelder fehlen absichtlich.\n"
+            "ERHOEHTER SCHUTZBEDARF: QEC-Originaltexte und/oder TIPS-Freitexte\n"
+            "sind enthalten und NICHT anonymisiert! Nicht ungeprueft hochladen.\n"
+            if (mit_freitext or mit_qec_originalen) else
+            "Ohne QEC-/TIPS-Originalfreitext; Detailfelder fehlen absichtlich.\n"
         )
     ).encode("utf-8")
     files["manifest.json"] = json.dumps({
