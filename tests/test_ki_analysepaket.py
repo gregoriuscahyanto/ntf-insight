@@ -166,6 +166,11 @@ def test_lightweight_export_joins_all_sources_and_retains_private_mapping(tmp_pa
         assert {row["dtc_code"] for row in dtcs} == {"P26F100"}
         assert all(row["fahrzeug_id"] == cases[0]["fahrzeug_id"] for row in dtcs)
         feature = _csv(z, "fallmerkmale.csv")[0]
+        cluster = _csv(z, "cluster_input.csv")[0]
+        assert cluster["qt_vor_tausch"] == "1"
+        assert "qt_nach_tausch" not in cluster
+        assert "lieferantenbeteiligung_bewertet" not in cluster
+        assert "qec_erfassungsstand" not in cluster
         assert feature["qt_vor_tausch"] == "1"
         assert feature["qt_nach_tausch"] == "1"
         assert feature["gleiche_cpc3_dtc_beidseits"] == "1"
@@ -241,6 +246,7 @@ def test_ntf_workflow_label_is_not_a_clustering_feature(tmp_path):
         assert labels[0]["ntf_urteil_fachlich"] == "NTF"
         assert PRIVATE_TEXT not in z.read("bewertungen_NICHT_CLUSTER.csv").decode()
         assert "ntf_urteil" not in z.read("fallmerkmale.csv").decode()
+        assert "ntf_urteil" not in z.read("cluster_input.csv").decode()
         assert FIN not in z.read("fallmerkmale.csv").decode()
 
 
