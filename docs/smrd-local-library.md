@@ -71,6 +71,53 @@ Eine andere Installationsstelle kann mit `--runtime-dir` oder
 konfiguriert und rechtmäßig lizenziert sein. Keine automatische
 Lizenzaktivierung, Entschlüsselung, Config-Manipulation oder Umgehung.
 
+### Beschaedigte Runtime-XML: Wiederherstellung aus dem Original-ZIP
+
+Wenn `native-doctor` `not well-formed (invalid token)` meldet,
+**nicht** `native-export` ausfuehren. Es ist moeglich, dass die lokale
+Runtime-Konfiguration nach dem Umzug oder durch Bearbeitung ungueltiges XML
+enthaelt. Die beiden Konfigurationsdateien im vom Benutzer urspruenglich
+bereitgestellten `SMRxView.zip` lassen sich dagegen als gueltiges XML lesen.
+
+Die wiederherstellende Funktion kopiert **nur** defekte
+`mvci/SystemConfig.xml` und `mvci/config/DtsConfig64.xml` aus einem vom
+Benutzer lokal bereitgestellten Original-ZIP. Bevor Aenderungen moeglich
+sind, muessen vier native DLLs im ZIP und in der lokalen Runtime dieselben
+SHA-256-Pruefsummen haben. Bereits gueltige Konfigurationsdateien werden
+nicht ersetzt. Standardmaessig erfolgt **nur eine Vorschau**.
+
+```powershell
+$runtime = "$env:USERPROFILE\.ntf-insight\smrd\runtime\SMRxView"
+$originalZip = "$env:USERPROFILE\Downloads\SMRxView.zip"
+
+# Vorschau, keine Veraenderungen
+python -m ntf_insight.smrd native-restore-config --runtime-dir $runtime --source-zip $originalZip
+
+# Nur falls die Vorschau zur erwarteten Runtime passt: explizit wiederherstellen
+python -m ntf_insight.smrd native-restore-config --runtime-dir $runtime --source-zip $originalZip --apply
+
+# Rein lesend pruefen; alte C:\Nisp-Pfade bleiben zunaechst erhalten.
+python -m ntf_insight.smrd native-doctor --runtime-dir $runtime
+
+# Alte Pfade (zuerst nur als Vorschau) auf die lokale Runtime kopieren
+python -m ntf_insight.smrd native-prepare --runtime-dir $runtime
+python -m ntf_insight.smrd native-prepare --runtime-dir $runtime --apply
+
+# Danach erneut read-only kontrollieren
+python -m ntf_insight.smrd native-doctor --runtime-dir $runtime
+```
+
+Bei `--apply` entstehen vor jeder geaenderten Datei Sicherungen mit
+`.before_smrd_restore_<SHA>.bak`. Lizenzdateien, Runtime-DLLs, SMR-D-Dateien,
+andere XML-Dateien und die produktive DuckDB bleiben unveraendert. Der
+Wiederherstellungsbefehl entpackt **nicht** das ganze ZIP und schreibt nur
+innerhalb von `.ntf-insight/smrd/runtime`.
+
+Sowohl der Wiederherstellungstest als auch der spaetere `native-doctor`
+pruefen lediglich statische Voraussetzungen, nicht die korrekte Laufzeit-
+Initialisierung. Auch nach gruenem Doctor kann der proprietaere DTS-Aufruf
+noch abstuerzen und sollte dann nicht wiederholt werden.
+
 ### Laufzeit-Initialisierung und AccessViolationException
 
 Wenn `native-probe` erfolgreich ist, kann sich die native Softing-Laufzeit
