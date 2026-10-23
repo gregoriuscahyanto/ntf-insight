@@ -15,7 +15,6 @@ from pathlib import Path
 import re
 import struct
 import tempfile
-from typing import Any
 
 from ntf_insight.smrd.binary_header import inspect_smrd_header
 from ntf_insight.smrd.library import SmrdLocalLibrary, digest
@@ -74,7 +73,7 @@ def _version_parts(value: str | None) -> tuple[int, ...] | None:
 def _ecu_matches_filename(filename: str, ecu: str) -> bool:
     # The filename has no standard that guarantees ECU identity; this is a
     # warning only and cannot establish an authentic binary-to-XML link.
-    stem = filename.removesuffix(".smr-d").casefold()
+    stem = filename.casefold().removesuffix(".smr-d")
     key = ecu.casefold().strip()
     return stem == key or stem.startswith(key + "_") or stem.startswith(key + "-")
 
@@ -167,11 +166,13 @@ def offline_convert(
     sha = digest(source)
     header = inspect_smrd_header(source)
     sections = _sections(source, payload_offset=header["payload_offset_bytes"])
-    xml_paths = (
-        [Path(p).expanduser().resolve() for p in xml_files]
-        if xml_files is not None
-        else _saved_xml_files(library, sha)
-    )
+    if xml_files is not None:
+        for path in xml_files:
+            if Path(path).expanduser().is_symlink():
+                raise ValueError("Lokale XML-Symlinks sind nicht erlaubt")
+        xml_paths = [Path(p).expanduser().resolve() for p in xml_files]
+    else:
+        xml_paths = _saved_xml_files(library, sha)
     if len(xml_paths) > 20:
         raise ValueError("Maximal 20 lokale XML-Dateien pro Offline-Paket")
     if remember and not xml_paths:
@@ -295,11 +296,11 @@ def offline_convert(
         Path(output).expanduser().resolve()
         if output is not None else library.exports / f"{sha}.offline.json"
     )
-    if Path(output).is_symlink() if output is not None else False:
+    if output is not None and Path(output).expanduser().is_symlink():
         raise ValueError("Exportziel darf kein Symlink sein")
+    library._ensure()
     _write_json_atomic(export, document)
     if remember:
-        library._ensure()
         link = _binding_path(library, sha)
         _write_json_atomic(link, {
             "format": BINDING_FORMAT,
