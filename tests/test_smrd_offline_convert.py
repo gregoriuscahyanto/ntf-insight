@@ -76,9 +76,9 @@ def test_metadata_only_never_claims_binary_dtc_decoding(tmp_path):
     assert bundle["coverage"]["native_binary_dtc_decoded"] is False
     assert bundle["source_smrd"]["container"]["metadata"]["REVISION INFO"] == "24.01.00"
     sections = bundle["source_smrd"]["opaque_sections"]
-    assert sum(s["size_bytes"] for s in sections) + bundle[
-        "source_smrd"
-    ]["container"]["payload_offset_bytes"] == smrd.stat().st_size
+    assert sum(s["size_bytes"] for s in sections) + (
+        88 + bundle["source_smrd"]["container"]["metadata_length_bytes"]
+    ) == smrd.stat().st_size
     assert all(s["decode_status"] == "opaque_not_decoded" for s in sections[1:])
     assert bundle["xml_sources"] == []
     assert bundle["reference_records"] == []
