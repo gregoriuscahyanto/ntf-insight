@@ -261,7 +261,8 @@ class SourceKnowledgeStore:
 
         actual_part = str(metadata.get("part_number") or "").strip()
         expected_part = str(part_number or "").strip()
-        normalized = lambda value: value.upper().replace(" ", "").replace("-", "")
+        def normalized(value: str) -> str:
+            return value.upper().replace(" ", "").replace("-", "")
         if actual_part and expected_part and normalized(actual_part) != normalized(expected_part):
             result["status"] = "Prüfbedarf"
             result["reason"] = (
