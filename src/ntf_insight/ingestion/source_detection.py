@@ -15,6 +15,14 @@ def detect_source_type(path: Path) -> SourceType:
     path = Path(path)
     ext = path.suffix.casefold()
 
+    if ext == ".json":
+        try:
+            from ntf_insight.ingestion.qec_json import QECJsonParser
+            QECJsonParser().parse(path)
+        except (OSError, UnicodeError, ValueError, TypeError):
+            return SourceType.OTHER
+        return SourceType.QEC_REPORT
+
     if ext == ".smr-d":
         return SourceType.SMR_D
     if ext == ".cdd":

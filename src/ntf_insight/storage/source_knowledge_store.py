@@ -6,7 +6,7 @@ and row number, so reparsing is idempotent and provenance stays traceable.
 from __future__ import annotations
 
 import json
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Iterable, Sequence
 
 from ntf_insight.storage.duckdb_store import DuckDBStore
@@ -200,6 +200,114 @@ class SourceKnowledgeStore:
             }
             for row in rows
         ]
+
+    def qec_report_for_case(
+        self,
+        fin: str,
+        reference: str,
+        *,
+        part_number: str | None = None,
+        limit: int = 750,
+    ) -> dict[str, Any] | None:
+        """Show one QEC JSON source by *both* FIN and reference.
+
+        Never combine rows of two downloads. A duplicated latest timestamp,
+        contradictory part number or failed download is flagged explicitly,
+        not silently trusted as the current source of truth.
+        """
+        fin = str(fin or "").strip().upper()
+        reference = str(reference or "").strip()
+        if not fin or not reference:
+            return None
+        candidates = [
+            document for document in self.documents()
+            if (
+                document["source_kind"] == "qec_live_report"
+                and document["metadata"].get("fin") == fin
+                and str(document["metadata"].get("reference") or "") == reference
+            )
+        ]
+        if not candidates:
+            return None
+
+        def captured_at(document: dict) -> datetime:
+            raw = str(document["metadata"].get("downloaded_at_utc") or "")
+            try:
+                parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+                return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
+            except ValueError:
+                return datetime.min.replace(tzinfo=timezone.utc)
+
+        latest_time = max(captured_at(item) for item in candidates)
+        latest = [item for item in candidates if captured_at(item) == latest_time]
+        chosen = max(latest, key=lambda item: (item["updated_at"], item["source_sha256"]))
+        metadata = chosen["metadata"]
+        result: dict[str, Any] = {
+            "source_sha256": chosen["source_sha256"],
+            "metadata": metadata,
+            "versions": len(candidates),
+            "status": "Teilweise",
+            "reason": "",
+            "records": [],
+            "truncated": False,
+        }
+        if len(latest) > 1:
+            result["status"] = "Prüfbedarf"
+            result["reason"] = (
+                "Mehrere unterschiedliche QEC-Dateien mit derselben Abrufzeit. "
+                "Bitte die Originaldateien prüfen; keine automatische Auswahl."
+            )
+            return result
+
+        actual_part = str(metadata.get("part_number") or "").strip()
+        expected_part = str(part_number or "").strip()
+        def normalized(value: str) -> str:
+            return value.upper().replace(" ", "").replace("-", "")
+        if actual_part and expected_part and normalized(actual_part) != normalized(expected_part):
+            result["status"] = "Prüfbedarf"
+            result["reason"] = (
+                "QEC-Sachnummer widerspricht der ausgewählten Fall-Sachnummer. "
+                "Die QEC-Felder werden nicht als zugeordnet angezeigt."
+            )
+            return result
+
+        if int(metadata.get("download_errors") or 0) > 0:
+            result["status"] = "Prüfbedarf"
+            result["reason"] = "Der QEC-Abruf enthält Fehler; Originalbericht prüfen."
+        elif metadata.get("fresh_complete") is True:
+            result["status"] = "Vollständig"
+        else:
+            result["reason"] = (
+                "QEC-Reiter fehlen, sind älter oder der Abruf wurde nicht vollständig bestätigt."
+            )
+
+        max_rows = min(max(int(limit), 1), 2_500)
+        with self.store.connect() as con:
+            rows = con.execute(
+                """
+                SELECT category, source_location, label, payload_json
+                FROM source_knowledge_rows
+                WHERE source_sha256 = ?
+                  AND category IN (
+                      'qec_section', 'qec_field', 'qec_table_row', 'qec_attachment'
+                  )
+                ORDER BY record_number
+                LIMIT ?
+                """,
+                [chosen["source_sha256"], max_rows + 1],
+            ).fetchall()
+        result["truncated"] = len(rows) > max_rows
+        result["records"] = [
+            {
+                "source_sha256": chosen["source_sha256"],
+                "category": category,
+                "source_location": location,
+                "label": label,
+                "data": json.loads(payload),
+            }
+            for category, location, label, payload in rows[:max_rows]
+        ]
+        return result
 
     def qec_ssl_findings_by_reference(
         self,

@@ -42,7 +42,8 @@ _RESERVED = re.compile(r"(CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])(\..*)?\Z", re.I)
 _ALLOWED_LOCAL_SUFFIXES = {
     "quicktests": {".pdf", ".json"},
     "qec": {".pdf", ".json", ".html", ".htm", ".txt", ".csv", ".xml",
-            ".jpg", ".jpeg", ".png", ".xlsx", ".docx", ".zip"},
+            ".jpg", ".jpeg", ".png", ".xlsx", ".xls", ".docx", ".doc",
+            ".pptx", ".ppt", ".zip", ".rtf", ".msg", ".eml", ".bin"},
     "tips": {
         ".pdf", ".json", ".jpg", ".jpeg", ".png", ".bmp", ".tif",
         ".tiff", ".webp", ".gif", ".csv", ".xlsx", ".xls", ".doc",
