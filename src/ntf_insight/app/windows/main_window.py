@@ -113,6 +113,13 @@ class MainWindow(QMainWindow):
         if (
             source_page._worker is not None
             or (
+                source_page.ki_analyse_panel is not None
+                and (
+                    source_page.ki_analyse_panel.worker is not None
+                    or source_page.ki_analyse_panel.import_worker is not None
+                )
+            )
+            or (
                 source_page.portable_backup_panel is not None
                 and source_page.portable_backup_panel.worker is not None
             )
@@ -140,7 +147,10 @@ class MainWindow(QMainWindow):
             and source._diagnostics_worker is None
             and (
                 source.ki_analyse_panel is None
-                or source.ki_analyse_panel.worker is None
+                or (
+                    source.ki_analyse_panel.worker is None
+                    and source.ki_analyse_panel.import_worker is None
+                )
             )
             and not self._case_quicktest_import_pending
             and cases._quicktest_worker is None

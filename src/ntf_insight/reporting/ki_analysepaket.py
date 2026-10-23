@@ -31,8 +31,16 @@ from ntf_insight.ingestion.artifacts import SourceType
 from ntf_insight.ingestion.service import SourceImportService
 from ntf_insight.storage.quicktest_store import QuickTestStore
 from ntf_insight.storage.source_knowledge_store import SourceKnowledgeStore
+from ntf_insight.ingestion.qec_json import list_downloaded_qec_reports
+from ntf_insight.ingestion.artifacts import sha256_file
+from ntf_insight.reporting.chatgpt_exchange import (
+    ChatGPTAnalyseStore, ergebnis_schema, ergebnis_vorlage,
+)
+from ntf_insight.reporting.qec_originalbelege import (
+    plan_qec_originale, write_qec_originale,
+)
 
-EXPORT_VERSION = 1
+EXPORT_VERSION = 2
 _FIN_RE = re.compile(r"^[A-HJ-NPR-Z0-9]{17}$", re.I)
 _SAFE_CODE_RE = re.compile(r"^[A-Za-z0-9_.:/+\-]{1,45}$")
 MAX_QEC_RECORDS = 200_000
@@ -48,6 +56,8 @@ class AnalysepaketErgebnis:
     dtcs: int
     qec_berichte: int
     freitexte: bool
+    qec_originale: int = 0
+    fehlende_qec_originale: int = 0
 
 
 def _safe_tabular(value):
@@ -180,6 +190,7 @@ def export_ki_analysepaket(
     destination: Path,
     *,
     mit_freitext: bool = False,
+    mit_qec_originalen: bool = False,
     progress: Callable[[str], None] | None = None,
 ) -> AnalysepaketErgebnis:
     """Export structured local evidence, with no source files or source IDs.
@@ -210,6 +221,53 @@ def export_ki_analysepaket(
         if doc["source_kind"] == "qec_live_report"
     ]
     artifacts = service.list_artifacts()
+    if mit_qec_originalen:
+        # Important: original QEC downloads not yet processed into DuckDB
+        # must not disappear from an explicitly requested evidence package.
+        # Only exact FIN+reference-bound schema-v2 JSON is accepted.
+        known = {doc["source_sha256"] for doc in documents}
+        unreadable = 0
+        for report_path in list_downloaded_qec_reports(service.archive.root.parent):
+            if report_path.stat().st_size > 32 * 1024 * 1024:
+                unreadable += 1
+                continue
+            digest = sha256_file(report_path)
+            if digest in known:
+                continue
+            try:
+                raw = json.loads(report_path.read_text(encoding="utf-8-sig"))
+            except (OSError, ValueError, UnicodeError):
+                unreadable += 1
+                continue
+            fin = report_path.parent.parent.name
+            reference = report_path.parent.name.removeprefix("ref_")
+            if (
+                not isinstance(raw, dict) or raw.get("schema_version") != 2
+                or raw.get("fin") != fin
+                or str(raw.get("referenznummer") or "") != reference
+            ):
+                unreadable += 1
+                continue
+            documents.append({
+                "source_sha256": digest,
+                "source_kind": "qec_local_unparsed",
+                "metadata": {
+                    "fin": fin, "reference": reference,
+                    "part_number": str(raw.get("sachnummer") or ""),
+                    "fresh_complete": False,
+                    "sections": len(raw.get("abschnitte") or []),
+                    "fresh_sections": 0,
+                    "fields": 0, "values": 0, "table_rows": 0,
+                    "attachments": len(raw.get("anhaenge") or []),
+                },
+            })
+            known.add(digest)
+        if unreadable:
+            raise ValueError(
+                f"{unreadable} lokale QEC-Originaldatei(en) können keinem "
+                "gültigen Fall zugeordnet werden. Bitte unter Datenquellen "
+                "prüfen und gegebenenfalls mit dem Parser-Diagnose-ZIP untersuchen."
+            )
 
     with service.store.connect() as con:
         reports = con.execute(
@@ -259,6 +317,7 @@ def export_ki_analysepaket(
     )
     fins = {fin for fin in fins if fin}
     secret = secrets.token_bytes(32)
+    paket_id = secrets.token_hex(16)
     aliases = {
         fin: f"V{i:04d}"
         for i, fin in enumerate(sorted(fins, key=lambda x: _key_order(secret, "fin", x)), 1)
@@ -383,6 +442,9 @@ def export_ki_analysepaket(
                 ),
             })
         qa = [d["metadata"] for d in doc_matches]
+        all_unparsed = bool(doc_matches) and not any(
+            d["source_kind"] == "qec_live_report" for d in doc_matches
+        )
         part_conflict = any(
             not same_part(getattr(case, "qec_part_number", ""), m.get("part_number"))
             for m in qa
@@ -391,6 +453,7 @@ def export_ki_analysepaket(
         missing = min((len(m.get("missing_sections") or []) for m in qa), default=5)
         qa_status = (
             "pruefbedarf" if part_conflict else
+            "nicht_geparst" if all_unparsed else
             "vollstaendig" if komplett else "teilweise" if doc_matches else "nicht_erfasst"
         )
         faelle.append({
@@ -492,6 +555,7 @@ def export_ki_analysepaket(
             "fall_ids": ";".join(case_aliases[c.case_id] for c in affected),
             "teilegruppe": part_aliases.get(str(m.get("part_number") or "").strip(), ""),
             "erfassungsstand": (
+                "nicht_geparst" if doc.get("source_kind") == "qec_local_unparsed" else
                 "vollstaendig" if m.get("fresh_complete") else "teilweise"
             ),
             "reiter_gesamt": m.get("sections"),
@@ -644,17 +708,58 @@ def export_ki_analysepaket(
         "qec_berichte": len(qec_reports), "freitexte": mit_freitext,
         "smrd_originalquellen_nur_inventar": len(smrd_rows),
         "datenstand": "lokale DuckDB",
+        "qec_originale_angefordert": mit_qec_originalen,
+        "qec_nur_original_nicht_geparst": sum(
+            doc.get("source_kind") == "qec_local_unparsed" for doc in documents
+        ),
     }
     advance("Kompakte CSV-Dateien und Excel-Fallübersicht erstellen …")
     files: dict[str, bytes] = {}
     for name, (headers, rows) in table_items.items():
         files[f"{name}.csv"] = _csv_file(headers, rows)
     files["Auswertung.xlsx"] = _excel_summary(table_items, stats)
+    files["chatgpt_ergebnis_vorlage.json"] = json.dumps(
+        ergebnis_vorlage(paket_id), ensure_ascii=False, indent=2,
+    ).encode("utf-8")
+    files["chatgpt_ergebnis_schema.json"] = json.dumps(
+        ergebnis_schema(), ensure_ascii=False, indent=2,
+    ).encode("utf-8")
+    files["CHATGPT_ANWEISUNG.txt"] = (
+        "NTF INSIGHT / CHATGPT ANALYSE-VERTRAG v1\n\n"
+        "Aus diesem ZIP eine fallbezogene Ursachen-/Clusteranalyse durchführen.\n"
+        "Als RÜCKGABE NUR chatgpt_ergebnis.json im JSON-Format erzeugen,\n"
+        "kompatibel zu chatgpt_ergebnis_schema.json.\n"
+        "paket_id und alle Fall-, QEC- und QuickTest-Pseudonyme unverändert verwenden.\n"
+        "Alle ausgewerteten Fälle aufnehmen, auch Nicht-bewertbare.\n"
+        "Cluster anhand VOR-Tausch-DTCs und zulässiger technischer Merkmale bilden.\n"
+        "QEC-/SSL-Endbefunde, Nach-Tausch-DTCs und NTF-Klassifikationen\n"
+        "nur für Ursachenprüfung/Validierung verwenden (keine Leakage).\n"
+        "NTF-Bewertung: NTF plausibel / NTF fraglich / Kein reiner NTF /\n"
+        "Nicht bewertbar / Nicht bewertet. Keine unbelegte Schuldzuweisung.\n"
+        "Sicherheit der Zuordnung: Belegt / Plausibel / Offen.\n"
+        "Für jeden Fall Belege mit Quelle, Quelle-ID und genauer Fundstelle angeben.\n"
+        "Falls ein QEC-Dokument fehlt, ausdrücklich als Datenlücke kennzeichnen.\n"
+        "JSON niemals mit echten FINs, QEC-Referenzen oder internen Dateipfaden füllen.\n"
+        "Die private NICHT_HOCHLADEN-Zuordnung wird niemals an ChatGPT gegeben.\n"
+        "Weder QEC-Originale noch die KI-Antwort sind automatisch anonymisiert.\n"
+    ).encode("utf-8")
+    qec_plan = None
+    if mit_qec_originalen:
+        advance("Freigegebene QEC-Originalberichte und Anhänge für vertrauliches Paket prüfen …")
+        qec_plan = plan_qec_originale(
+            service.archive.root.parent, documents, qec_aliases, artifacts,
+        )
     files["README.txt"] = (
         "NTF INSIGHT · KI-ANALYSEPAKET\n\n"
         "Dieses ZIP enthält strukturierte CSV-Tabellen und eine Excel-Übersicht.\n"
-        "Es enthält KEINE Originaldateien, Quellpfade, Roh-SHA-256,\n"
-        "Anmeldedaten oder Browserprofile. FINs und QEC-Referenzen wurden\n"
+        + (
+            "VERTRAULICH: Unveränderte QEC-JSON-Originalberichte und Anhänge\n"
+            "liegen unter qec_originale/. Darin können FINs enthalten sein!\n"
+            if mit_qec_originalen else
+            "Es enthält KEINE Originaldateien, Quellpfade oder Roh-SHA-256.\n"
+        )
+        + "Anmeldedaten oder Browserprofile sind nicht enthalten.\n"
+        "FINs und QEC-Referenzen wurden\n"
         "in den strukturierten Schlüsselfeldern durch Pseudonyme ersetzt.\n"
         "ACHTUNG: Opt-in-Freitext kann dennoch echte FINs und Namen enthalten.\n"
         "Fahrzeug- und Fallpseudonyme verbinden alle Tabellen innerhalb der ZIP.\n"
@@ -666,21 +771,29 @@ def export_ki_analysepaket(
         "3. tips.csv fuer Werkstattkontext, smrd_bestand.csv fuer Datenlücken.\n"
         "4. fallmerkmale.csv enthaelt AUCH NACH-Tausch-Beobachtungen: NICHT\n"
         "   ungeprueft als Cluster-Features verwenden!\n"
-        "5. bewertungen_NICHT_CLUSTER.csv erst NACH dem Clustering ansehen.\n\n"
+        "5. bewertungen_NICHT_CLUSTER.csv erst NACH dem Clustering ansehen.\n"
+        "6. CHATGPT_ANWEISUNG.txt, chatgpt_ergebnis_vorlage.json und\n"
+        "   chatgpt_ergebnis_schema.json geben das Rückgabeformat vor.\n\n"
         "WARNUNG: Pseudonymisierung ist KEINE garantierte Anonymisierung.\n"
         "Seltene technische Konstellationen koennen reidentifizierend sein.\n"
         "Alle technischen Daten unterliegen der Unternehmensfreigabe.\n"
         + (
-            "ERHOEHTER SCHUTZBEDARF: QEC-/TIPS-Freitext ist enthalten,\n"
-            "nicht automatisch anonymisiert! KEINESFALLS ungeprueft hochladen.\n"
-            if mit_freitext else
-            "Ohne QEC-/TIPS-Freitext; Detailfelder fehlen absichtlich.\n"
+            "ERHOEHTER SCHUTZBEDARF: QEC-Originaltexte und/oder TIPS-Freitexte\n"
+            "sind enthalten und NICHT anonymisiert! Nicht ungeprueft hochladen.\n"
+            if (mit_freitext or mit_qec_originalen) else
+            "Ohne QEC-/TIPS-Originalfreitext; Detailfelder fehlen absichtlich.\n"
         )
     ).encode("utf-8")
     files["manifest.json"] = json.dumps({
         "schema_version": EXPORT_VERSION,
+        "paket_id": paket_id,
         "generiert": "NTF Insight (lokal)",
-        "pseudonymisiert": not mit_freitext,
+        "pseudonymisiert": not mit_freitext and not mit_qec_originalen,
+        "qec_originaldateien_enthalten": bool(qec_plan and qec_plan.dateien),
+        "qec_originaldateien_anzahl": qec_plan.anzahl_dateien if qec_plan else 0,
+        "qec_originaldateien_nicht_in_standard_sha_liste": mit_qec_originalen,
+        "fehlende_qec_originalberichte": list(qec_plan.fehlende_berichte) if qec_plan else [],
+        "fehlende_qec_anhaenge": list(qec_plan.fehlende_anhaenge) if qec_plan else [],
         "anonymisiert_garantiert": False,
         "fachfreitexte_enthalten": mit_freitext,
         "datenreihen": stats,
@@ -720,8 +833,25 @@ def export_ki_analysepaket(
             "fin": "", "fall_id_original": "",
             "qec_referenz_original": "", "sachnummer_original": number,
         })
+    for qid, pseudonym in report_aliases.items():
+        mapping_rows.append({
+            "art": "quicktest", "pseudonym": pseudonym, "fin": report_to_fin.get(qid, ""),
+            "fall_id_original": "", "qec_referenz_original": "",
+            "sachnummer_original": "", "quelle_id_original": qid,
+        })
+    for entry in mapping_rows:
+        entry["paket_id"] = paket_id
+        entry.setdefault("quelle_id_original", "")
+        if entry["art"] == "qec_bericht":
+            entry["quelle_id_original"] = next(
+                sha for sha, pseudonym in qec_aliases.items()
+                if pseudonym == entry["pseudonym"]
+            )
     private_bytes = _csv_file(
-        ("art", "pseudonym", "fin", "fall_id_original", "qec_referenz_original", "sachnummer_original"),
+        (
+            "paket_id", "art", "pseudonym", "fin", "fall_id_original",
+            "qec_referenz_original", "sachnummer_original", "quelle_id_original",
+        ),
         mapping_rows,
     )
     advance("ZIP und getrennte lokale Zuordnung sicher speichern …")
@@ -737,6 +867,8 @@ def export_ki_analysepaket(
         with ZipFile(zip_temp, "w", compression=ZIP_DEFLATED) as zip_file:
             for name, data in files.items():
                 _zip_entry(zip_file, name, data)
+            if qec_plan is not None:
+                write_qec_originale(zip_file, qec_plan)
         Path(map_temp).write_bytes(private_bytes)
         if target.exists() or mapping_path.exists():
             raise FileExistsError("Exportdateien wurden zwischenzeitlich bereits erstellt.")
@@ -749,10 +881,18 @@ def export_ki_analysepaket(
     finally:
         Path(zip_temp).unlink(missing_ok=True)
         Path(map_temp).unlink(missing_ok=True)
+    # The identity map lives in DuckDB (also transferred with .ntfbackup)
+    # and in the separate local CSV. It is NEVER inside the analysis ZIP.
+    ChatGPTAnalyseStore(service.store).save_mapping(paket_id, mapping_rows)
     advance("KI-Analysepaket und private Zuordnung erfolgreich lokal gespeichert.")
     return AnalysepaketErgebnis(
         pfad=target, private_zuordnung=mapping_path,
         fahrzeuge=len(fahrzeuge), faelle=len(faelle),
         quicktests=len(reports), dtcs=len(dtcs),
         qec_berichte=len(qec_reports), freitexte=mit_freitext,
+        qec_originale=qec_plan.anzahl_dateien if qec_plan else 0,
+        fehlende_qec_originale=(
+            len(qec_plan.fehlende_berichte) + len(qec_plan.fehlende_anhaenge)
+            if qec_plan else 0
+        ),
     )

@@ -68,6 +68,7 @@ from ntf_insight.ingestion.manual_entry import ManualCaseService, ManualEntryErr
 from ntf_insight.ingestion.real_source_parsers import canonical_fin
 from ntf_insight.domain.events import PartReplacement
 from ntf_insight.reporting.markdown import save_case_report
+from ntf_insight.reporting.chatgpt_exchange import ChatGPTAnalyseStore
 from ntf_insight.storage.reference_repositories import ReferenceRepository
 from ntf_insight.storage.repositories import CaseRepository
 from ntf_insight.storage.quicktest_store import QuickTestStore
@@ -108,6 +109,10 @@ class CasePage(QWidget):
         self._quicktest_files_for_import: list[Path] = []
         self.source_knowledge = (
             SourceKnowledgeStore(manual_service.store)
+            if manual_service is not None else None
+        )
+        self.chatgpt_analysen = (
+            ChatGPTAnalyseStore(manual_service.store)
             if manual_service is not None else None
         )
         self.fin_only_previews = (
@@ -574,6 +579,15 @@ class CasePage(QWidget):
             self.source_knowledge, data_dir=self.qec_data_dir,
         )
         layout.addWidget(self.qec_structured_panel)
+        layout.addWidget(QLabel(
+            "Externes ChatGPT-Analyseergebnis (keine automatische Fallentscheidung)",
+            objectName="CardTitle",
+        ))
+        self.chatgpt_result_text = QLabel("Keine ChatGPT-Analyse importiert.")
+        self.chatgpt_result_text.setObjectName("PageSubtitle")
+        self.chatgpt_result_text.setTextFormat(Qt.TextFormat.PlainText)
+        self.chatgpt_result_text.setWordWrap(True)
+        layout.addWidget(self.chatgpt_result_text)
 
         layout.addWidget(QLabel("Zeitliches Auftreten", objectName="CardTitle"))
         time_hint = QLabel(
@@ -1155,6 +1169,7 @@ class CasePage(QWidget):
         self.version_change_summary.setText("Keine FIN / kein Fall ausgewählt.")
         self.cpc3_panel.clear()
         self.qec_structured_panel.clear()
+        self.chatgpt_result_text.setText("Keine ChatGPT-Analyse importiert.")
         self.autoexport_history_model.set_rows([])
         self.autoexport_history_note.setText("Keine FIN ausgewählt.")
         self.autoexport_history_count.setText("—")
@@ -1359,6 +1374,24 @@ class CasePage(QWidget):
         self._display_version_changes(case)
         self.cpc3_panel.show_case(case)
         self.qec_structured_panel.show_case(case)
+        if self.chatgpt_analysen is not None and not is_preview:
+            external = self.chatgpt_analysen.latest_for_case(case.case_id)
+            if external is not None:
+                result = external["bewertung"]
+                self.chatgpt_result_text.setText(
+                    f"Analyse {external['analyse_id']} · "
+                    f"Cluster {external['cluster_id'] or '—'} · "
+                    f"NTF-Hypothese {result.get('ntf_bewertung', 'Nicht bewertet')} · "
+                    f"Review: {external['review_status']}\n"
+                    f"Ursachenhypothese: {str(result.get('ursachenhypothese') or '—')[:900]}\n"
+                    "Externer Vorschlag, nicht als QEC-/Lieferantenentscheidung übernommen."
+                )
+            else:
+                self.chatgpt_result_text.setText("Noch keine zugeordnete ChatGPT-Analyse.")
+        else:
+            self.chatgpt_result_text.setText(
+                "Kein bestätigter Schadteilfall – keine ChatGPT-Fallzuordnung."
+            )
         # Case change refreshes the corresponding VIN-wide history; an
         # independent direct FIN lookup remains possible without a case.
         self.autoexport_fin_lookup.setText(case.vin)
