@@ -325,6 +325,8 @@ class SourcesPage(QWidget):
                 "Keine lokalen QuickTest-PDFs unter quicktests/<FIN>/ gefunden."
             )
             return
+        # This dedicated action always uses safe content recognition.
+        self.source_type.setCurrentIndex(0)
         self._archive_paths(paths)
 
     def _artifact_selected(self, index) -> None:
