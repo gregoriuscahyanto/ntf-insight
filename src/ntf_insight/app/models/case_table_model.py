@@ -214,6 +214,19 @@ class CaseTableModel(QAbstractTableModel):
         row = self._rows[source_row]
         return row.qec_folder if self._has_qec_folder(row) else None
 
+    def mark_local_tips_fins(self, fins: set[str]) -> None:
+        """Mark local FIN-level TIPS findings without inventing a case match."""
+        for index, row in enumerate(self._rows):
+            if row.vin in fins and row.tips_status == "—":
+                self._rows[index] = replace(row, tips_status="FIN-Hinweis")
+                cell = self.index(index, self.TIPS_COLUMN)
+                self.dataChanged.emit(
+                    cell, cell, [
+                        Qt.ItemDataRole.DisplayRole,
+                        Qt.ItemDataRole.ToolTipRole,
+                    ],
+                )
+
     def set_qec_history(
         self,
         history: Mapping[str, tuple[str, Path | None]],

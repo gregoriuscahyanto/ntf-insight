@@ -58,6 +58,8 @@ from ntf_insight.app.widgets.cpc3_pump_overview_panel import CPC3PumpOverviewPan
 from ntf_insight.app.widgets.quicktest_browser import QuickTestBrowser
 from ntf_insight.app.widgets.quicktest_fleet_panel import QuickTestFleetPanel
 from ntf_insight.app.widgets.qec_case_download import QecCaseDownloadPanel
+from ntf_insight.app.widgets.tips_case_download import TipsCaseDownloadPanel
+from ntf_insight.acquisition.tips_archive import local_tips_cases
 from ntf_insight.app.widgets.fin_zip_export import FinZipExportPanel
 from ntf_insight.app.widgets.case_checkbox_delegate import CaseCheckboxDelegate
 from ntf_insight.app.widgets.autoexport_fin_workspace import AutoExportFinWorkspace
@@ -330,6 +332,7 @@ class CasePage(QWidget):
         self.case_model = CaseTableModel(case_rows)
         self.case_model.selection_changed.connect(self._update_quicktest_selection)
         self.case_model.selection_changed.connect(self._update_qec_selection)
+        self.case_model.selection_changed.connect(self._update_tips_selection)
         self.case_model.selection_changed.connect(self._update_fin_zip_selection)
         self.case_proxy = QSortFilterProxyModel(self)
         self.case_proxy.setSourceModel(self.case_model)
@@ -407,7 +410,7 @@ class CasePage(QWidget):
         self.shared_credentials_status = QLabel(objectName="PageSubtitle")
         self.shared_credentials_status.setWordWrap(True)
         self.shared_credentials_status.setToolTip(
-            "Gemeinsame Benutzer-ID und Passwort für Diagnosis Viewer und QEC. "
+            "Gemeinsame Benutzer-ID und Passwort für Diagnosis Viewer, QEC und TIPS Writer. "
             "Nur im Windows-Anmeldeinformationsmanager gespeichert. "
             "PING ID wird weiterhin manuell bestätigt."
         )
@@ -469,6 +472,23 @@ class CasePage(QWidget):
             layout.addWidget(self.qec_download)
         self._refresh_qec_download_dates()
         self._update_qec_selection()
+
+        # Pilotabruf aus TIPS Writer. Eigenes Edge-Profil und manuelle PING-ID;
+        # fachliche Live-Freigabe im Unternehmensnetz steht noch aus.
+        self.tips_download = None
+        if self.qec_data_dir is not None:
+            self.tips_download = TipsCaseDownloadPanel(
+                self.qec_data_dir,
+                all_fins=self.case_model.all_fins,
+                selected_fins=self.case_model.selected_fins,
+                login_resolver=self._resolve_qec_credentials,
+            )
+            self.tips_download.downloads_completed.connect(
+                lambda _results: self._refresh_local_tips_status()
+            )
+            layout.addWidget(self.tips_download)
+        self._refresh_local_tips_status()
+        self._update_tips_selection()
 
         # Exporte pro FIN, nicht pro Schadteilfall: nutzt dieselben
         # persistenten Checkboxen wie QuickTest und QEC.
@@ -820,6 +840,22 @@ class CasePage(QWidget):
                 len(self._selected_qec_targets()),
             )
 
+    def _update_tips_selection(self) -> None:
+        if self.tips_download is not None:
+            self.tips_download.set_selection_count(
+                len(self.case_model.all_fins()),
+                len(self.case_model.selected_fins()),
+            )
+
+    def _refresh_local_tips_status(self) -> None:
+        if self.qec_data_dir is None:
+            return
+        local_fins = {
+            fin for fin in self.case_model.all_fins()
+            if local_tips_cases(self.qec_data_dir, fin)
+        }
+        self.case_model.mark_local_tips_fins(local_fins)
+
     def _update_fin_zip_selection(self) -> None:
         if self.fin_zip_export is not None:
             self.fin_zip_export.set_selection_count(
@@ -847,7 +883,7 @@ class CasePage(QWidget):
             stored = None
         if stored:
             self.shared_credentials_status.setText(
-                "✓ Mercedes-SSO für QuickTest und QEC sicher gespeichert · "
+                "✓ Mercedes-SSO für QuickTest, QEC und TIPS sicher gespeichert · "
                 "PING ID bei Bedarf am Smartphone bestätigen"
             )
             self.shared_credentials_status.setStyleSheet(

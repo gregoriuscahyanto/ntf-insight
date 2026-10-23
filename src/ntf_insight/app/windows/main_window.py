@@ -129,12 +129,14 @@ class MainWindow(QMainWindow):
         source = self.pages["sources"]
         cases = self.pages["cases"]
         qec = cases.qec_download
+        tips = getattr(cases, 'tips_download', None)
         exporter = cases.fin_zip_export
         return (
             source._worker is None
             and not self._case_quicktest_import_pending
             and cases._quicktest_worker is None
             and (qec is None or qec.worker is None)
+            and (tips is None or tips.worker is None)
             and (exporter is None or exporter.worker is None)
         )
 
@@ -205,6 +207,7 @@ class MainWindow(QMainWindow):
             page.cluster_workspace.refresh_review_priorities()
             page._refresh_quicktest_download_dates()
             page._refresh_qec_download_dates()
+            page._refresh_local_tips_status()
             page._refresh_shared_credentials_status()
         self.stack.setCurrentWidget(page)
         self.stack.setFocus(Qt.FocusReason.OtherFocusReason)
