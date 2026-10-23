@@ -8,6 +8,7 @@ param(
     [string] $SmrdFile = '',
     [string] $OutputJson = '',
     [switch] $ProbeOnly,
+    [switch] $ProjectOnly,
     [ValidateRange(1, 250000)][int] $MaxDtcs = 250000
 )
 $ErrorActionPreference = 'Stop'
@@ -23,15 +24,20 @@ $dll = Join-Path $bin 'Softing.Dts.dll'
 if (-not (Test-Path -LiteralPath $dll -PathType Leaf)) {
     throw "Softing.Dts.dll not found: $dll"
 }
+if ($ProbeOnly -and $ProjectOnly) {
+    throw 'ProbeOnly and ProjectOnly are mutually exclusive.'
+}
 if (-not $ProbeOnly) {
-    if (-not $SmrdFile -or -not $OutputJson) {
-        throw 'SmrdFile and OutputJson are required.'
+    if (-not $SmrdFile -or (-not $ProjectOnly -and -not $OutputJson)) {
+        throw 'SmrdFile is required, and OutputJson is required for full export.'
     }
     $SmrdFile = (Resolve-Path -LiteralPath $SmrdFile -ErrorAction Stop).Path
     if ([IO.Path]::GetExtension($SmrdFile).ToLowerInvariant() -ne '.smr-d') {
         throw 'Only .smr-d input files are allowed.'
     }
-    $OutputJson = [IO.Path]::GetFullPath($OutputJson)
+    if (-not $ProjectOnly) {
+        $OutputJson = [IO.Path]::GetFullPath($OutputJson)
+    }
 }
 
 function Read-Prop($obj, [string] $name) {
@@ -147,6 +153,11 @@ try {
         $dbProject = Read-Prop $project 'DbProject'
         if ($null -eq $dbProject) { throw 'DtsProject.DbProject returned null.' }
 
+        if ($ProjectOnly) {
+            # Stop at the project/database boundary. Do not enumerate DTCs or
+            # write JSON/DB. The caller can isolate project API failures here.
+            Write-Output ("SOFTING_DTS_PROJECT_OPEN_OK project_type={0} db_type={1}" -f $project.GetType().FullName, $dbProject.GetType().FullName)
+        } else {
         $found = New-Object 'System.Collections.Generic.List[object]'
         $seen = New-Object 'System.Collections.Generic.HashSet[string]'
         $errors = New-Object 'System.Collections.Generic.List[string]'
@@ -277,6 +288,7 @@ try {
             )
         }
         Write-Output ("SOFTING_DTS_DTC_EXPORT_OK count={0}" -f $found.Count)
+        }
     }
 } finally {
     # DtsSystem.DeselectProject() is NOT exposed by this managed assembly,
