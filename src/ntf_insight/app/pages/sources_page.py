@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections import Counter
 from pathlib import Path
+from threading import Event
 
 from PySide6.QtCore import QThread, Signal
 from PySide6.QtWidgets import (
@@ -54,13 +55,22 @@ class _SourceImportWorker(QThread):
         forced_type: SourceType | None,
         source_system: str | None = None,
         vin_hint: str | None = None,
+        only_new: bool = False,
+        local_kind: str | None = None,
     ) -> None:
         super().__init__()
+        self.only_new = only_new
+        self.local_kind = local_kind
+        self._cancel_event = Event()
         self.sources = sources
         self.paths = paths
         self.forced_type = forced_type
         self.source_system = source_system
         self.vin_hint = vin_hint
+
+    def request_cancel(self) -> None:
+        """Stop at the next safe file boundary. Never terminate a DB transaction."""
+        self._cancel_event.set()
 
     def run(self) -> None:
         try:
@@ -70,6 +80,9 @@ class _SourceImportWorker(QThread):
                 forced_source_type=self.forced_type,
                 source_system=self.source_system,
                 vin_hint=self.vin_hint,
+                only_new=self.only_new,
+                local_kind=self.local_kind,
+                should_cancel=self._cancel_event.is_set,
             )
         except Exception as exc:
             self.failed.emit(f"{type(exc).__name__}: {exc}")
@@ -114,6 +127,7 @@ class SourcesPage(QWidget):
         self.mode = mode
         self.data_dir = Path(data_dir) if data_dir else None
         self._worker: _SourceImportWorker | None = None
+        self._resume_kind: str | None = None
         self._pending_reload = False
         self._quicktests_added = 0
         self.import_service = (
@@ -243,6 +257,23 @@ class SourcesPage(QWidget):
         self.local_qec_button.setEnabled(self.data_dir is not None and self.import_service is not None)
         self.local_qec_button.clicked.connect(self._import_existing_qec)
         local_row.addWidget(self.local_qec_button)
+        self.cancel_import_button = QPushButton("Import abbrechen")
+        self.cancel_import_button.setToolTip(
+            "Stoppt kontrolliert nach der aktuellen Datei. Fertige Einträge "
+            "bleiben gespeichert; beim Fortsetzen werden sie übersprungen."
+        )
+        self.cancel_import_button.setEnabled(False)
+        self.cancel_import_button.clicked.connect(self._cancel_import)
+        local_row.addWidget(self.cancel_import_button)
+        self.resume_import_button = QPushButton("Import fortsetzen")
+        self.resume_import_button.setToolTip(
+            "Durchsucht die zuletzt gewählte lokale Quellenart erneut; "
+            "unveränderte erfolgreich eingelesene oder bekannte fehlerhafte "
+            "Dateien werden übersprungen."
+        )
+        self.resume_import_button.setEnabled(False)
+        self.resume_import_button.clicked.connect(self._resume_import)
+        local_row.addWidget(self.resume_import_button)
         local_row.addStretch(1)
         layout.addLayout(local_row)
 
@@ -344,7 +375,7 @@ class SourcesPage(QWidget):
             return
         # This dedicated action always uses safe content recognition.
         self.source_type.setCurrentIndex(0)
-        self._archive_paths(paths)
+        self._archive_paths(paths, only_new=True, local_kind="quicktests")
 
     def _import_existing_qec(self) -> None:
         if self.data_dir is None or self._worker is not None:
@@ -354,7 +385,25 @@ class SourcesPage(QWidget):
             self.import_status.setText("Keine QEC-Berichte unter qec/<FIN>/ref_<Referenz>/qec.json gefunden.")
             return
         self.source_type.setCurrentIndex(0)
-        self._archive_paths(paths)
+        self._archive_paths(paths, only_new=True, local_kind="qec")
+
+    def _cancel_import(self) -> None:
+        if self._worker is None:
+            return
+        self._worker.request_cancel()
+        self.cancel_import_button.setEnabled(False)
+        self.import_status.setText(
+            "Abbruch angefordert: Die laufende Datei wird sicher fertig verarbeitet. "
+            "Danach bleiben die gespeicherten Daten erhalten."
+        )
+
+    def _resume_import(self) -> None:
+        if self._worker is not None:
+            return
+        if self._resume_kind == "quicktests":
+            self._import_existing_quicktests()
+        elif self._resume_kind == "qec":
+            self._import_existing_qec()
 
     def _artifact_selected(self, index) -> None:
         self.delete_button.setEnabled(
@@ -427,7 +476,10 @@ class SourcesPage(QWidget):
             return selected
         return detect_source_type(path)
 
-    def _archive_paths(self, paths: list[Path]) -> None:
+    def _archive_paths(
+        self, paths: list[Path], *,
+        only_new: bool = False, local_kind: str | None = None,
+    ) -> None:
         if (
             self.import_service is None or not paths or self._worker is not None
             or (
@@ -439,6 +491,10 @@ class SourcesPage(QWidget):
 
         forced = self.source_type.currentData()
         forced_type = forced if isinstance(forced, SourceType) else None
+        if only_new:
+            self._resume_kind = local_kind
+        self.cancel_import_button.setEnabled(True)
+        self.resume_import_button.setEnabled(False)
         self.archive_button.setEnabled(False)
         self.local_quicktests_button.setEnabled(False)
         self.local_qec_button.setEnabled(False)
@@ -456,6 +512,8 @@ class SourcesPage(QWidget):
             forced_type,
             self.source_system.text().strip() or None,
             self.vin_hint.text().strip() or None,
+            only_new=only_new,
+            local_kind=local_kind,
         )
         self._worker.progress.connect(self.import_status.setText)
         self._worker.imported.connect(self._import_completed)
@@ -465,7 +523,11 @@ class SourcesPage(QWidget):
 
     def _import_completed(self, summary: ImportSummary) -> None:
         text = (
-            f"Import: {summary.files_archived} neue Originaldateien, "
+            ("Import unterbrochen (Fortsetzen möglich): "
+             if summary.cancelled else "Import abgeschlossen: ")
+            + f"{summary.files_unchanged} unveränderte Dateien übersprungen, "
+            f"{summary.files_failed} Problemdateien, "
+            f"{summary.files_archived} neue Originaldateien, "
             f"{summary.files_parsed} geparst, {summary.files_pending} noch ohne Parser · "
             f"{summary.cases_created} neue Fälle, "
             f"{summary.qec_findings_linked} QEC-Fälle mit SSL-Endbefunden ergänzt, "
@@ -507,6 +569,11 @@ class SourcesPage(QWidget):
         self._refresh_all()
 
     def _import_worker_finished(self) -> None:
+        self.cancel_import_button.setEnabled(False)
+        self.resume_import_button.setEnabled(
+            self.import_service is not None and self.data_dir is not None
+            and self._resume_kind in {"quicktests", "qec"}
+        )
         self.archive_button.setEnabled(self.import_service is not None)
         self.local_quicktests_button.setEnabled(
             self.import_service is not None and self.data_dir is not None
