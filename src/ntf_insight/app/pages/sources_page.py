@@ -465,7 +465,13 @@ class SourcesPage(QWidget):
         if (
             self.import_service is None or self.data_dir is None
             or self._worker is not None or self._diagnostics_worker is not None
-            or (self.ki_analyse_panel is not None and self.ki_analyse_panel.worker is not None)
+            or (
+                self.ki_analyse_panel is not None
+                and (
+                    self.ki_analyse_panel.worker is not None
+                    or self.ki_analyse_panel.import_worker is not None
+                )
+            )
             or (
                 self.portable_backup_panel is not None
                 and self.portable_backup_panel.worker is not None
@@ -635,7 +641,13 @@ class SourcesPage(QWidget):
         if (
             self.import_service is None or not paths or self._worker is not None
             or self._diagnostics_worker is not None
-            or (self.ki_analyse_panel is not None and self.ki_analyse_panel.worker is not None)
+            or (
+                self.ki_analyse_panel is not None
+                and (
+                    self.ki_analyse_panel.worker is not None
+                    or self.ki_analyse_panel.import_worker is not None
+                )
+            )
             or (
                 self.portable_backup_panel is not None
                 and self.portable_backup_panel.worker is not None
