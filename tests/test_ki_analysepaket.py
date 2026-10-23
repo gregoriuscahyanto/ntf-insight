@@ -222,3 +222,44 @@ def test_no_quicktest_or_qec_still_exports_case_and_assessment_separately(tmp_pa
         assert len(_csv(z, "faelle.csv")) == 1
         assert len(_csv(z, "dtc_beobachtungen.csv")) == 0
         assert len(_csv(z, "bewertungen_NICHT_CLUSTER.csv")) == 1
+
+
+
+def test_ntf_workflow_label_is_not_a_clustering_feature(tmp_path):
+    from ntf_insight.storage.qec_workflow_store import QecWorkflowStore
+
+    source = _set_up(tmp_path)
+    QecWorkflowStore(source.store)
+    with source.store.connect() as con:
+        con.execute(
+            "INSERT INTO qec_workflow_decisions VALUES (?, ?, ?, ?)",
+            ["c" * 64, "QEC-FALL-VERTRAULICH", "NTF", PRIVATE_TEXT],
+        )
+    result = export_ki_analysepaket(source, tmp_path / "labels.zip")
+    with ZipFile(result.pfad) as z:
+        labels = _csv(z, "bewertungen_NICHT_CLUSTER.csv")
+        assert labels[0]["ntf_urteil_fachlich"] == "NTF"
+        assert PRIVATE_TEXT not in z.read("bewertungen_NICHT_CLUSTER.csv").decode()
+        assert "ntf_urteil" not in z.read("fallmerkmale.csv").decode()
+        assert FIN not in z.read("fallmerkmale.csv").decode()
+
+
+def test_quicktest_only_vehicle_is_present_without_any_qec_case(tmp_path):
+    source = _set_up(tmp_path)
+    other_fin = "WDB00000000012345"
+    with source.store.connect() as con:
+        con.execute(
+            "INSERT INTO quicktest_reports VALUES (?,?,?,?,?,?,?,?,?,?)",
+            ["ORPHAN-QT", other_fin, other_fin, datetime(2026, 1, 7, 11),
+             3000, 1, 0, "{}", "d" * 64, datetime(2026, 1, 7, 11)],
+        )
+    result = export_ki_analysepaket(source, tmp_path / "orphan.zip")
+    assert result.fahrzeuge == 2
+    assert result.quicktests == 3
+    assert result.faelle == 1
+    with ZipFile(result.pfad) as z:
+        vehicles = _csv(z, "fahrzeuge.csv")
+        assert len(vehicles) == 2
+        assert any(row["anzahl_faelle"] == "0" and row["anzahl_quicktests"] == "1"
+                   for row in vehicles)
+        assert other_fin not in z.read("fahrzeuge.csv").decode()
