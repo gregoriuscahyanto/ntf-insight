@@ -22,7 +22,6 @@ class NavigationPanel(QFrame):
         ("dashboard", "Übersicht"),
         ("sources", "Datenquellen"),
         ("knowledge", "Quellenwissen"),
-        ("smrd", "SMR-D Offline"),
         ("cases", "Fälle / FIN"),
         ("dtcs", "DTC-Explorer"),
         ("suppliers", "Lieferanten"),
