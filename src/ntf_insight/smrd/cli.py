@@ -27,6 +27,10 @@ def main(argv: list[str] | None = None) -> int:
         config_cmd.add_argument("--runtime-dir", type=Path)
         if name == "native-prepare":
             config_cmd.add_argument("--apply", action="store_true")
+    recovery = sub.add_parser("native-restore-config")
+    recovery.add_argument("--runtime-dir", type=Path)
+    recovery.add_argument("--source-zip", type=Path, required=True)
+    recovery.add_argument("--apply", action="store_true")
     native_probe_cmd = sub.add_parser("native-probe")
     native_probe_cmd.add_argument("--runtime-dir", type=Path)
     native_export_cmd = sub.add_parser("native-export")
@@ -74,6 +78,15 @@ def main(argv: list[str] | None = None) -> int:
                 runtime, data_dir=args.data_dir, apply=args.apply,
             )
         print(json.dumps(report, ensure_ascii=False, indent=2))
+    elif args.cmd == "native-restore-config":
+        import json
+
+        from ntf_insight.smrd.runtime_config import recover_native_runtime_configs
+
+        runtime = args.runtime_dir or library.root / "runtime" / "SMRxView"
+        print(json.dumps(recover_native_runtime_configs(
+            runtime, args.source_zip, data_dir=args.data_dir, apply=args.apply,
+        ), ensure_ascii=False, indent=2))
     elif args.cmd == "native-probe":
         from ntf_insight.smrd.native_export import native_probe
 
