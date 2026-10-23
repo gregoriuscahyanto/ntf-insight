@@ -54,6 +54,7 @@ def _run_script(
     output: Path | None,
     timeout: int,
     probe_only: bool,
+    project_only: bool = False,
 ) -> subprocess.CompletedProcess:
     if sys.platform != "win32":
         raise NativeRuntimeError("Der native DTS-Exporter erfordert Windows x64.")
@@ -69,6 +70,9 @@ def _run_script(
     ]
     if probe_only:
         args.append("-ProbeOnly")
+    elif project_only:
+        assert source is not None
+        args.extend(["-SmrdFile", str(source), "-ProjectOnly"])
     else:
         assert source is not None and output is not None
         args.extend(["-SmrdFile", str(source), "-OutputJson", str(output)])
@@ -122,6 +126,52 @@ def native_probe(
         + "; VIEWER_ENTRYPOINT_MISSING: "
         + str(symbols["managed_only_viewer_api"])
     )
+
+
+def native_project_test(
+    smrd: Path,
+    *,
+    runtime_dir: Path | None = None,
+    data_dir: Path | None = None,
+    timeout: int = 120,
+) -> str:
+    """Test only native offline project selection and DbProject access.
+
+    No DTC enumeration, output JSON, vehicle connection or DuckDB import.
+    Runs the untrusted vendor runtime in its own Windows process.
+    """
+    smrd = Path(smrd).expanduser().resolve()
+    if not smrd.is_file() or smrd.suffix.casefold() != ".smr-d":
+        raise FileNotFoundError(f"SMR-D-Datei fehlt: {smrd}")
+    library = SmrdLocalLibrary(data_dir=data_dir)
+    runtime, binary_dir = resolve_runtime_dir(runtime_dir, library)
+    symbols = diagnose_native_symbols(binary_dir / "csWrap.dll")
+    if not symbols["native_api_ready"]:
+        raise NativeRuntimeError(
+            "CSWrap.dll ist nicht kompatibel. Fehlende native Funktionen: "
+            + ", ".join(symbols["missing_required_exports"])
+        )
+    from ntf_insight.smrd.runtime_config import diagnose_native_runtime
+
+    health = diagnose_native_runtime(runtime)
+    if not health["ready_for_native_attempt"]:
+        raise NativeRuntimeError(
+            "DTS-Runtime ist nicht bereit. Zuerst 'native-doctor' ausfuehren. "
+            f"Fehler: {health['errors']}; fehlend: {health['missing']}; "
+            f"abweichende Pfade: {health['mismatches']}"
+        )
+    script = Path(str(files("ntf_insight.smrd").joinpath("softing_native_export.ps1")))
+    result = _run_script(
+        script, source=smrd, runtime=runtime, output=None,
+        timeout=timeout, probe_only=False, project_only=True,
+    )
+    if result.returncode or "SOFTING_DTS_PROJECT_OPEN_OK" not in result.stdout:
+        raise NativeRuntimeError(
+            "DTS-Projektpruefung fehlgeschlagen; keine DTCs exportiert "
+            "und keine Datenbank veraendert.\n"
+            + (result.stderr or result.stdout or "Keine gueltige Erfolgsmeldung")[-6000:]
+        )
+    return result.stdout.strip()
 
 
 def export_native_dtcs(
