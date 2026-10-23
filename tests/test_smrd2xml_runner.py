@@ -131,6 +131,11 @@ def test_external_tool_xml_is_indexed_and_original_is_untouched(tmp_path, monkey
     assert saved["vendor_runtime_used"] is True
     assert all(x["kind"] == "smrd2xml_local_vendor_export" for x in saved["xml_sources"])
 
+    from ntf_insight.smrd.offline_convert import import_offline_bundle
+
+    assert import_offline_bundle(Path(result["bundle"]), data_dir=tmp_path) == 5
+    assert import_offline_bundle(Path(result["bundle"]), data_dir=tmp_path) == 5
+
 
 def test_vendor_license_error_is_not_hidden(tmp_path, monkeypatch):
     smrd = _fake_smrd(tmp_path)
@@ -191,3 +196,28 @@ def test_license_error_classification_distinguishes_other_failures():
     assert isinstance(error, runner.Smrd2XmlError)
     assert not isinstance(error, runner.Smrd2XmlLicenseError)
     assert "Unknown ECU" in str(error)
+
+
+def test_repeat_vendor_export_keeps_prior_run_files(tmp_path, monkeypatch):
+    smrd = _fake_smrd(tmp_path)
+    runtime = _fake_runtime(tmp_path)
+    monkeypatch.setattr(runner.sys, "platform", "win32")
+
+    def fake_run(args, **kwargs):
+        (Path(args[3]) / "ECU.xml").write_text(
+            '<ECUS><ECU NAME="CPC3"><VARIANT NAME="R1">'
+            '<DTC NAME="P101010">Synthetic</DTC></VARIANT></ECU></ECUS>',
+            encoding="utf-8",
+        )
+        return subprocess.CompletedProcess(args=args, returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr(runner.subprocess, "run", fake_run)
+    first = runner.run_smrd2xml(
+        smrd, data_dir=tmp_path, runtime_dir=runtime, modes=("ECU",),
+    )
+    second = runner.run_smrd2xml(
+        smrd, data_dir=tmp_path, runtime_dir=runtime, modes=("ECU",),
+    )
+    assert first["manifest"] != second["manifest"]
+    assert all(Path(p).is_file() for p in first["generated_xml"])
+    assert all(Path(p).is_file() for p in second["generated_xml"])
