@@ -44,6 +44,88 @@ separate Arbeiten. Bitte `SMRxView` und die bestehende Bridge **noch nicht
 löschen**, bevor der Windows-Exportersatz getestet ist.
 
 
+## Eigenstaendiger Offline-Modus (OHNE Softing-DTS, OHNE Lizenz, OHNE Internet)
+
+Ab jetzt gibt es **zwei getrennte Wege**:
+
+1. Der portable Modus `offline-convert` nutzt ausschliesslich die Python-
+   Standardbibliothek und den lokalen NTF-SMR-D/XML-Parser. Er benoetigt
+   **keine** Softing.Dts.dll, keinen Dongle, keine BaseSystem-Lizenz und
+   **keinen Internetzugriff**.
+2. Der optionale `native-export` nutzt wie zuvor eine offiziell
+   lizenzierte Softing-Runtime. Er bleibt optional und ist bei der
+   derzeitigen Installation wegen `eSYSTEM_LICENSE_ERROR` gesperrt.
+
+**Technische Grenze:** Das gepruefte Original
+`CPC3_24.01.00.smr-d` enthaelt zwar lesbare SMR-D-Container-Metadaten,
+aber keine klartextlichen ECU-/DTC-XML-Daten im binären Payload. Die
+Datenbereiche sind undurchsichtig codiert. Der portable Modus **umgeht
+keine Verschluesselung und keine Softing-Lizenzkontrolle**. Wenn nur eine
+SMR-D-Datei existiert, wird ein echtes `metadata_only`-Paket erzeugt,
+**keine erfundene vollstaendige DTC-Liste**.
+
+Wenn bereits lokal erzeugte XML-Exporte vorliegen, kann NTF Insight
+diese offline mit der SMR-D verknuepfen, analysieren und alle vorhandenen
+ECUs, Varianten, DTCs, Services, Parameter und SDGs als portables
+JSON-Referenzpaket exportieren. Fehlende Felder wie `REPAIR_ACTION`,
+`POSSIBLE_CAUSES` und `ERROR_LEVEL` werden **nicht hinzuerfunden**.
+
+### Portable Befehle
+
+```powershell
+$smrd = "$env:USERPROFILE\.ntf-insight\smrd\originale\CPC3_24.01.00.smr-d"
+
+# Nur SMR-D vorhanden: geschuetzten Container inspizieren und JSON ausgeben
+python -m ntf_insight.smrd offline-convert $smrd
+
+# Vorhandene, lokale XMLs als referenzierbare Offline-Daten zuordnen
+# (eigene Pfade anpassen, XML muss bereits vorliegen)
+$ecuXml = "$env:USERPROFILE\.ntf-insight\smrd\exporte\CPC3_ECU_Export.xml"
+$dtcXml = "$env:USERPROFILE\.ntf-insight\smrd\exporte\CPC3_24.01.00_DTCSXML.xml"
+python -m ntf_insight.smrd offline-convert $smrd --xml $ecuXml --xml $dtcXml --remember
+
+# Die Verbindung (SMR-D SHA-256 -> lokale XML SHA-256) ist danach gespeichert.
+# Die naechste Ausfuehrung braucht weder XML-Argumente noch Softing-Laufzeit:
+python -m ntf_insight.smrd offline-convert $smrd
+
+# OPTIONAL: Verifizierte XML-Referenzdaten aus dem Offline-Paket in eine
+# lokale NTF-Insight-DuckDB aufnehmen (kein Fahrzeugereignis):
+$sha = (Get-FileHash -Algorithm SHA256 -LiteralPath $smrd).Hash.ToLowerInvariant()
+$bundle = "$env:USERPROFILE\.ntf-insight\smrd\exporte\$sha.offline.json"
+python -m ntf_insight.smrd offline-import $bundle
+```
+
+`--remember` speichert nur die **lokale Zuordnung** unter
+`.ntf-insight/smrd/manifeste/offline-links/<SMR-D-SHA256>.json`.
+Wenn eine XML-Datei veraendert oder geloescht wird, verweigert der
+Converter die alte Zuordnung, bis `--xml --remember` erneut
+ausgefuehrt wurde. Das eigentliche Offline-Paket liegt unter
+`.ntf-insight/smrd/exporte/<SMR-D-SHA256>.offline.json`.
+
+Bei den beiden bereits bereitgestellten CPC3-Referenz-XMLs
+entspricht die exportierte ECU-Information **nur der XML-Abdeckung**:
+- `CPC3_ECU_Export.xml`: 3 Varianten, 311 Services, 8.487 Parameter,
+  201 SDGs und 1.571 DTC-Referenzen
+- `CPC3_24.01.00_DTCSXML.xml`: 1.571 DTC-Referenzen zu denselben
+  drei Varianten
+- Das Portable-Paket fuehrt gleiche ECU-/Variant-/DTC-Referenzen mit
+  mehreren Quellnachweisen zusammen; Unterschiede in Beschreibungen
+  bleiben als Alternativen sichtbar.
+
+Alle bekannten Diagnosedaten behalten die Kennzeichnung
+`trigger_conditions_validated: false`,
+`is_vehicle_observation: false` und
+`from_native_smrd_payload: false`. `offline-import` behandelt sie
+ausschliesslich als **ECU-Referenzwissen**, niemals als echten Fehler
+eines Fahrzeugs.
+
+Die Offline-Funktion kann im Labor dauerhaft ohne Internet laufen,
+**sobald die benoetigten referenzierbaren XML-Daten lokal vorhanden sind**.
+Sie ist aber **kein gleichwertiger Ersatz** fuer eine vollstaendige
+Dekodierung verschluesselter SMR-D-Nutzdaten. Zum Erzeugen bislang
+fehlender Informationen wird eine berechtigte Quelle (z.B. bereits
+verfuegbare ODX/PDX oder ein lizenzierter Export) benoetigt.
+
 ## Nativer Offline-DTS-Exporter (experimentell, Windows x64)
 
 Der native Exporter nutzt die **lokal installierte, lizenzierte** Softing-DTS-.NET-
