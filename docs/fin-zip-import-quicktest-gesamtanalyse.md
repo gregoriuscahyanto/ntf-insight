@@ -1,5 +1,11 @@
 # FIN-ZIP-Import und QuickTest-Gesamtauswertung
 
+**Für einen vollständigen Umzug ohne erneutes Parsen bevorzugt das
+[Ein-Datei-Gesamtpaket](gesamtstand-einzeldatei-transfer.md) unter
+Datenquellen verwenden.** Die folgenden FIN-ZIPs dienen weiterhin dazu,
+einzelne FIN-Originalquellen zu übertragen; dabei werden QuickTests neu
+eingelesen und nicht alle manuellen Änderungen mitgenommen.
+
 ## Zwischen PCs übertragen
 
 Die bestehenden Tasten **Alle FINs als ZIP exportieren** und
