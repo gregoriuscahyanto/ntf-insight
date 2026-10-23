@@ -22,6 +22,15 @@ def main(argv: list[str] | None = None) -> int:
         p = sub.add_parser(name)
         p.add_argument("file", type=Path)
         p.add_argument("--skip-dtcs", action="store_true")
+    offline_cmd = sub.add_parser("offline-convert")
+    offline_cmd.add_argument("file", type=Path)
+    offline_cmd.add_argument("--xml", type=Path, action="append", default=None,
+                             help="Existing local XML; repeat for several exports")
+    offline_cmd.add_argument("--out", type=Path)
+    offline_cmd.add_argument("--remember", action="store_true",
+                             help="Remember XML links locally by SMR-D SHA256")
+    offline_import = sub.add_parser("offline-import")
+    offline_import.add_argument("file", type=Path)
     for name in ("native-doctor", "native-prepare"):
         config_cmd = sub.add_parser(name)
         config_cmd.add_argument("--runtime-dir", type=Path)
@@ -68,6 +77,29 @@ def main(argv: list[str] | None = None) -> int:
             print(metadata, len(rows))
         else:
             print("Gespeicherte Referenzzeilen:", service.import_xml(args.file, skip_dtcs=args.skip_dtcs))
+    elif args.cmd == "offline-convert":
+        import json
+
+        from ntf_insight.smrd.offline_convert import offline_convert
+
+        report = offline_convert(
+            args.file, xml_files=args.xml, data_dir=args.data_dir,
+            output=args.out, remember=args.remember,
+        )
+        print(json.dumps(report, ensure_ascii=False, indent=2))
+        if not report["total_references"]:
+            print(
+                "HINWEIS: Nur SMR-D-Metadaten. Der geschuetzte binaere Payload "
+                "ist nicht decodiert; fuer DTCs vorhandene XML-Exporte "
+                "mit --xml angeben."
+            )
+    elif args.cmd == "offline-import":
+        from ntf_insight.smrd.offline_convert import import_offline_bundle
+
+        print(
+            "Gespeicherte Offline-Referenzen:",
+            import_offline_bundle(args.file, data_dir=args.data_dir),
+        )
     elif args.cmd in ("native-doctor", "native-prepare"):
         import json
 
