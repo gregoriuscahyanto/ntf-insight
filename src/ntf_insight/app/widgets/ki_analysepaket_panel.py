@@ -1,17 +1,22 @@
-"""GUI für den lokalen, pseudonymisierten KI-Clusterexport."""
+"""GUI für den zweistufigen KI-Analyseexport und geprüften ChatGPT-Rückimport."""
 from __future__ import annotations
 
+import json
 from datetime import datetime
 from pathlib import Path
 from typing import Callable
 
 from PySide6.QtCore import QThread, Signal
 from PySide6.QtWidgets import (
-    QCheckBox, QFileDialog, QHBoxLayout, QLabel, QMessageBox,
-    QPushButton, QVBoxLayout, QWidget,
+    QAbstractItemView, QCheckBox, QFileDialog, QHBoxLayout, QHeaderView,
+    QLabel, QMessageBox, QPushButton, QTableView, QVBoxLayout, QWidget,
 )
 
+from ntf_insight.app.models.simple_table_model import SimpleTableModel
 from ntf_insight.ingestion.service import SourceImportService
+from ntf_insight.reporting.chatgpt_exchange import (
+    ChatGPTAnalyseStore, MAX_JSON_SIZE,
+)
 from ntf_insight.reporting.ki_analysepaket import export_ki_analysepaket
 
 
@@ -26,16 +31,19 @@ class KIAnalyseWorker(QThread):
         path: Path,
         *,
         mit_freitext: bool,
+        mit_qec_originalen: bool = False,
     ) -> None:
         super().__init__()
         self.service = service
         self.path = Path(path)
         self.mit_freitext = mit_freitext
+        self.mit_qec_originalen = mit_qec_originalen
 
     def run(self) -> None:
         try:
             result = export_ki_analysepaket(
                 self.service, self.path, mit_freitext=self.mit_freitext,
+                mit_qec_originalen=self.mit_qec_originalen,
                 progress=self.progress.emit,
             )
         except Exception as exc:
@@ -44,8 +52,32 @@ class KIAnalyseWorker(QThread):
         self.completed.emit(result)
 
 
+class ChatGPTImportWorker(QThread):
+    completed = Signal(object)
+    failed = Signal(str)
+
+    def __init__(
+        self, service: SourceImportService, path: Path,
+        *, private_csv: Path | None = None,
+    ) -> None:
+        super().__init__()
+        self.service = service
+        self.path = Path(path)
+        self.private_csv = private_csv
+
+    def run(self) -> None:
+        try:
+            result = ChatGPTAnalyseStore(self.service.store).import_file(
+                self.path, private_csv=self.private_csv,
+            )
+        except Exception as exc:
+            self.failed.emit(f"{type(exc).__name__}: {exc}")
+            return
+        self.completed.emit(result)
+
+
 class KIAnalysepaketPanel(QWidget):
-    """Safe-by-default analysis export, separate from the full .ntfbackup."""
+    """Default: structured pseudonyms. Raw QEC documents are explicitly opt-in."""
 
     transfer_busy = Signal(bool)
 
@@ -54,23 +86,25 @@ class KIAnalysepaketPanel(QWidget):
     ) -> None:
         super().__init__(parent)
         self.service = service
+        self.analysis_store = ChatGPTAnalyseStore(service.store)
         self.worker: KIAnalyseWorker | None = None
+        self.import_worker: ChatGPTImportWorker | None = None
         self._guard: Callable[[], bool] | None = None
+        self._visible: list[dict] = []
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 8, 0, 8)
         layout.setSpacing(8)
         layout.addWidget(QLabel(
-            "KI-Analysepaket · kompakter Export für Clusterung",
+            "KI-Analysepaket · ChatGPT-Austausch und geprüfter Rückimport",
             objectName="CardTitle",
         ))
         description = QLabel(
             "Erstellt EINE ZIP mit verknüpften QEC-Befundmerkmalen, "
-            "QuickTest-/CPC3-DTCs, TIPS-Abdeckung, Fall- und Zeitbezug, "
-            "Datenlücken und einer Excel-Übersicht. Große Original-PDFs, "
-            "QEC-/TIPS-Dateien und Anhänge werden NICHT beigefügt. "
-            "Die echte FIN-/QEC-Zuordnung bleibt als separate "
-            "NICHT-HOCHLADEN-Datei auf diesem Rechner.",
+            "QuickTest-/CPC3-DTCs, TIPS-Abdeckung, Fall- und Zeitbezug "
+            "und einer Excel-Übersicht. Original-PDFs, QEC-JSONs und "
+            "Anhänge sind nur bei ausdrücklicher Auswahl enthalten. "
+            "Die echte FIN-/QEC-Zuordnung bleibt ausschließlich lokal.",
             objectName="PageSubtitle",
         )
         description.setWordWrap(True)
@@ -86,11 +120,27 @@ class KIAnalysepaketPanel(QWidget):
         self.include_text.setChecked(False)
         layout.addWidget(self.include_text)
 
+        self.include_qec_originale = QCheckBox(
+            "Vollständige QEC-Befundungsdokumente und Anhänge beifügen "
+            "(Originale, vertraulich)",
+        )
+        self.include_qec_originale.setToolTip(
+            "Nimmt optional die unveränderten qec.json mit allen fünf Reitern "
+            "und zugehörige PDF-/Bild-/Office-Anhänge in die Analyse-ZIP. "
+            "Diese enthalten oft echte FINs, Seriennummern und vertrauliche Daten. "
+            "Kein automatisches Anonymisieren, keine automatische Freigabe. "
+            "Maximal 1 GiB Originalbytes und 5.000 Dateien pro ZIP."
+        )
+        self.include_qec_originale.setChecked(False)
+        layout.addWidget(self.include_qec_originale)
+
         row = QHBoxLayout()
-        self.export_button = QPushButton("Lightweight KI-Analysepaket als ZIP exportieren…")
+        self.export_button = QPushButton(
+            "Lightweight KI-Analysepaket als ZIP exportieren…"
+        )
         self.export_button.setToolTip(
-            "Pseudonymisierte CSVs für Clusterung, Excel-Zusammenfassung "
-            "und eine separate lokale Zuordnungstabelle. Niemals automatischer Upload."
+            "CSV-Clusterdateien und Excel-Übersicht, vollständige einheitliche "
+            "ChatGPT-Ergebnisvorlage, lokale private Pseudonymzuordnung."
         )
         self.export_button.clicked.connect(self._export)
         row.addWidget(self.export_button)
@@ -98,76 +148,167 @@ class KIAnalysepaketPanel(QWidget):
         layout.addLayout(row)
 
         self.status = QLabel(
-            "Standard ohne fachlichen Freitext, ohne reale FINs und "
-            "ohne Originaldateien. Pseudonymisiert ist NICHT gleich anonym. "
-            "Interne Informationsschutzfreigabe vor jedem externen Upload prüfen.",
+            "Standard ohne fachliche Freitexte, reale FINs und Originaldateien. "
+            "Freigegebene Originalberichte können bewusst ergänzt werden; "
+            "ein ZIP mit Originalen ist NICHT anonymisiert. "
+            "Kein automatischer Upload.",
             objectName="PageSubtitle",
         )
         self.status.setWordWrap(True)
         layout.addWidget(self.status)
 
+        layout.addWidget(QLabel(
+            "ChatGPT-Ergebnisse wieder in die App übernehmen",
+            objectName="CardTitle",
+        ))
+        hint = QLabel(
+            "Das Analyse-ZIP enthält chatgpt_ergebnis_vorlage.json und "
+            "chatgpt_ergebnis_schema.json. ChatGPT kann damit eine "
+            "chatgpt_ergebnis.json zurückgeben. Beim Import werden Paket-ID, "
+            "Fallpseudonyme und Belegverweise geprüft. Ergebnisse bleiben "
+            "von fachlichen Entscheidungen GETRENNT und zunächst ungeprüft.",
+            objectName="PageSubtitle",
+        )
+        hint.setWordWrap(True)
+        layout.addWidget(hint)
+        import_row = QHBoxLayout()
+        self.import_button = QPushButton("ChatGPT-Auswertung als JSON importieren…")
+        self.import_button.clicked.connect(self._import_result)
+        import_row.addWidget(self.import_button)
+        self.review_confirm = QPushButton("Markierten Vorschlag als geprüft bestätigen")
+        self.review_confirm.clicked.connect(lambda: self._review("Bestätigt"))
+        import_row.addWidget(self.review_confirm)
+        self.review_reject = QPushButton("Markierten Vorschlag ablehnen")
+        self.review_reject.clicked.connect(lambda: self._review("Abgelehnt"))
+        import_row.addWidget(self.review_reject)
+        layout.addLayout(import_row)
+
+        self.review_model = SimpleTableModel((
+            "Analyse", "Fall-ID (lokal)", "Cluster",
+            "NTF-Hypothese", "Ursachenhypothese", "Prüfstatus",
+        ))
+        self.review_table = QTableView()
+        self.review_table.setModel(self.review_model)
+        self.review_table.setMinimumHeight(135)
+        self.review_table.setMaximumHeight(245)
+        self.review_table.setAlternatingRowColors(True)
+        self.review_table.setSelectionBehavior(
+            QAbstractItemView.SelectionBehavior.SelectRows
+        )
+        self.review_table.setSelectionMode(
+            QAbstractItemView.SelectionMode.SingleSelection
+        )
+        self.review_table.setEditTriggers(
+            QAbstractItemView.EditTrigger.NoEditTriggers
+        )
+        self.review_table.verticalHeader().setVisible(False)
+        self.review_table.horizontalHeader().setSectionResizeMode(
+            QHeaderView.ResizeMode.ResizeToContents
+        )
+        self.review_table.horizontalHeader().setStretchLastSection(True)
+        self.review_table.selectionModel().selectionChanged.connect(
+            lambda *_args: self._review_enabled(),
+        )
+        layout.addWidget(self.review_table)
+        self.review_note = QLabel(
+            "Review-Status ändert nur den Prüfvermerk der ChatGPT-Analyse. "
+            "QEC-Entscheidung, Lieferantenursache und bestehende Fallbewertung "
+            "werden ausdrücklich NICHT überschrieben.",
+            objectName="PageSubtitle",
+        )
+        self.review_note.setWordWrap(True)
+        layout.addWidget(self.review_note)
+        self._refresh_imports()
+
     def set_guard(self, guard: Callable[[], bool]) -> None:
         self._guard = guard
 
-    def _export(self) -> None:
-        if self.worker is not None:
-            return
+    def _can_start(self) -> bool:
+        if self.worker is not None or self.import_worker is not None:
+            return False
         if self._guard is not None and not self._guard():
             QMessageBox.warning(
-                self, "Analyseexport derzeit nicht möglich",
-                "Bitte zuvor laufende Downloads, Imports, ZIP-Exporte "
-                "und vollständige Datentransfers abschließen.",
+                self, "Analysefunktion derzeit nicht möglich",
+                "Bitte zuerst laufende Downloads, Imports und "
+                "Gesamtstand-Transfers abschließen.",
             )
+            return False
+        return True
+
+    def _confirm_confidential(self, *, originals: bool, text: bool) -> bool:
+        if not (originals or text):
+            return True
+        relevant = (
+            "vollständige QEC-Originalberichte UND Anhänge" if originals
+            else "QEC-/TIPS-Originalfreitexte"
+        )
+        reply = QMessageBox.warning(
+            self, "Freigabe erforderlich · nicht anonymisierte QEC-Daten",
+            "Du möchtest " + relevant + " in eine ZIP-Datei übernehmen.\n\n"
+            "Die Inhalte können echte FINs, Seriennummern, Namen und "
+            "vertrauliche Mercedes-Benz-Befunde enthalten. "
+            "Die Dateinamen werden neutralisiert, nicht aber die Inhalte. "
+            "Die ZIP ist nicht verschlüsselt und es erfolgt KEINE "
+            "automatische Anonymisierung oder externe Übertragung.\n\n"
+            "Die Datei nur nach Unternehmensfreigabe extern teilen. "
+            "Vertrauliche Originale wirklich lokal exportieren?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        return reply == QMessageBox.StandardButton.Yes
+
+    def _export(self) -> None:
+        if not self._can_start():
             return
         with_text = self.include_text.isChecked()
-        if with_text:
-            reply = QMessageBox.warning(
-                self, "Nicht anonymisierte QEC-/TIPS-Freitexte",
-                "Diese Option exportiert Originalfreitexte aus QEC und TIPS. "
-                "Darin können echte FINs, persönliche und vertrauliche "
-                "Unternehmensdaten stehen. Eine vollständige Anonymisierung "
-                "erfolgt NICHT. Vor Upload ist eine interne Freigabe "
-                "und eigenständige Prüfung notwendig.\n\n"
-                "Vertrauliche Texte wirklich lokal exportieren?",
-                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-                QMessageBox.StandardButton.No,
-            )
-            if reply != QMessageBox.StandardButton.Yes:
-                return
-        path, _ = QFileDialog.getSaveFileName(
+        with_originals = self.include_qec_originale.isChecked()
+        if not self._confirm_confidential(originals=with_originals, text=with_text):
+            return
+        filename, _ = QFileDialog.getSaveFileName(
             self, "KI-Analysepaket für Fallclusterung erstellen",
             str(Path.home() / (
                 "NTF-Insight-KI-Analyse-" + datetime.now().strftime("%Y%m%d-%H%M") + ".zip"
             )),
             "NTF KI-Analysepaket (*.zip)",
         )
-        if not path:
+        if not filename:
             return
-        destination = Path(path)
+        destination = Path(filename)
         if destination.suffix.lower() != ".zip":
             destination = destination.with_suffix(".zip")
         self.worker = KIAnalyseWorker(
             self.service, destination, mit_freitext=with_text,
+            mit_qec_originalen=with_originals,
         )
         self.worker.progress.connect(self.status.setText)
         self.worker.completed.connect(self._completed)
         self.worker.failed.connect(self._failed)
         self.worker.finished.connect(self._finished)
         self.export_button.setEnabled(False)
+        self.import_button.setEnabled(False)
         self.include_text.setEnabled(False)
-        self.status.setText("Strukturiertes KI-Analysepaket wird lokal erstellt …")
+        self.include_qec_originale.setEnabled(False)
+        self.status.setText("Versioniertes KI-Analysepaket wird lokal erstellt …")
         self.transfer_busy.emit(True)
         self.worker.start()
 
     def _completed(self, result) -> None:
+        extra = (
+            f" · {result.qec_originale} QEC-Originaldateien"
+            if result.qec_originale else ""
+        )
+        gap = (
+            f" · {result.fehlende_qec_originale} fehlende Belege, im ZIP dokumentiert"
+            if result.fehlende_qec_originale else ""
+        )
         self.status.setText(
             f"KI-Analysepaket bereit: {result.pfad.name} · "
             f"{result.faelle} Fälle, {result.fahrzeuge} Fahrzeuge, "
             f"{result.quicktests} QuickTests, {result.dtcs} DTC-Beobachtungen, "
-            f"{result.qec_berichte} QEC-Berichte. "
-            "Nur die ZIP zur freigegebenen Analyse verwenden. "
-            f"Die daneben erstellte Datei {result.private_zuordnung.name} "
-            "enthält die echten FIN-/Fall-Zuordnungen und darf NICHT hochgeladen werden."
+            f"{result.qec_berichte} QEC-Berichte{extra}{gap}. "
+            "Vor jeder Weitergabe Freigabe und ZIP-Inhalte prüfen. "
+            f"Die lokale Datei {result.private_zuordnung.name} "
+            "mit echten FIN-/Fall-Zuordnungen niemals hochladen."
         )
 
     def _failed(self, message: str) -> None:
@@ -178,5 +319,125 @@ class KIAnalysepaketPanel(QWidget):
         if worker is not None:
             worker.deleteLater()
         self.export_button.setEnabled(True)
+        self.import_button.setEnabled(True)
         self.include_text.setEnabled(True)
+        self.include_qec_originale.setEnabled(True)
         self.transfer_busy.emit(False)
+
+    def _import_result(self) -> None:
+        if not self._can_start():
+            return
+        filename, _ = QFileDialog.getOpenFileName(
+            self, "ChatGPT-Ergebnis im NTF-Insight-JSON-Vertrag wählen",
+            str(Path.home()), "NTF ChatGPT-Auswertung (*.json)",
+        )
+        if not filename:
+            return
+        path = Path(filename)
+        if not path.is_file() or path.stat().st_size > MAX_JSON_SIZE:
+            QMessageBox.warning(self, "Ungültige Datei", "JSON-Datei fehlt oder ist zu groß.")
+            return
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8-sig"))
+            paket_id = payload["paket_id"]
+            self.analysis_store._mapping(paket_id, None)
+            mapping_path = None
+        except (KeyError, ValueError, TypeError) as exc:
+            # The mapping can remain on a different PC. In that case the user
+            # supplies the local private file; it never leaves this computer.
+            if "Paketzuordnung nicht" not in str(exc):
+                QMessageBox.warning(self, "Ergebnis nicht zuordenbar", str(exc))
+                return
+            mapping_file, _ = QFileDialog.getOpenFileName(
+                self, "Lokale NICHT_HOCHLADEN-Zuordnung auswählen",
+                str(Path.home()), "Private Paketzuordnung (*.csv)",
+            )
+            if not mapping_file:
+                return
+            mapping_path = Path(mapping_file)
+
+        self.import_worker = ChatGPTImportWorker(
+            self.service, path, private_csv=mapping_path,
+        )
+        self.import_worker.completed.connect(self._import_completed)
+        self.import_worker.failed.connect(self._import_failed)
+        self.import_worker.finished.connect(self._import_finished)
+        self.import_button.setEnabled(False)
+        self.export_button.setEnabled(False)
+        self.status.setText("ChatGPT-Ergebnis und lokale Fallzuordnung prüfen …")
+        self.transfer_busy.emit(True)
+        self.import_worker.start()
+
+    def _import_completed(self, result: dict) -> None:
+        suffix = " (bereits identisch importiert)" if result["bereits_importiert"] else ""
+        self.status.setText(
+            f"ChatGPT-Analyse {result['analyse_id']} lokal gespeichert: "
+            f"{result['faelle']} Fälle, {result['cluster']} Cluster{suffix}. "
+            "Vorschläge bleiben separat und bis zur fachlichen Prüfung offen."
+        )
+        self._refresh_imports()
+
+    def _import_failed(self, message: str) -> None:
+        self.status.setText("ChatGPT-Rückimport abgebrochen: " + message)
+
+    def _import_finished(self) -> None:
+        worker, self.import_worker = self.import_worker, None
+        if worker is not None:
+            worker.deleteLater()
+        self.import_button.setEnabled(True)
+        self.export_button.setEnabled(True)
+        self.transfer_busy.emit(False)
+
+    def _refresh_imports(self) -> None:
+        self._visible = self.analysis_store.list_case_findings(limit=2000)
+        self.review_model.set_rows([
+            (
+                item["analyse_id"], item["case_id"], item["cluster_id"] or "—",
+                item["bewertung"].get("ntf_bewertung") or "Nicht bewertet",
+                str(item["bewertung"].get("ursachenhypothese") or "")[:240],
+                item["review_status"],
+            )
+            for item in self._visible
+        ])
+        self._review_enabled()
+
+    def _review_enabled(self) -> None:
+        active = (
+            self.review_table.selectionModel().selectedRows()
+            if self.review_table.selectionModel() else []
+        )
+        enabled = bool(active) and self.worker is None and self.import_worker is None
+        self.review_confirm.setEnabled(enabled)
+        self.review_reject.setEnabled(enabled)
+
+    def _review(self, status: str) -> None:
+        if not self._can_start():
+            return
+        selected = self.review_table.selectionModel().selectedRows()
+        if len(selected) != 1:
+            return
+        row = selected[0].row()
+        if row >= len(self._visible):
+            return
+        finding = self._visible[row]
+        prompt = (
+            f"ChatGPT-Vorschlag für Fall {finding['case_id']} "
+            f"als {status.lower()} markieren?\n\n"
+            "Dies ist nur ein Prüfvermerk. Die eigentliche Fallbewertung, "
+            "der QEC-Status und Lieferantenangaben bleiben unverändert."
+        )
+        answer = QMessageBox.question(
+            self, "Externen Analysevorschlag prüfen", prompt,
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if answer != QMessageBox.StandardButton.Yes:
+            return
+        self.analysis_store.set_review_status(
+            finding["analyse_id"], finding["case_id"], status,
+        )
+        self._refresh_imports()
+        self.review_note.setText(
+            f"Prüfvermerk {status} lokal gespeichert. "
+            "Keine automatische Änderung von NTF- oder Lieferantenentscheidungen."
+        )
