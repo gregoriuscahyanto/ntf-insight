@@ -227,7 +227,6 @@ class LocalBatchImporter:
                 self._validate_zip(path)
                 # Validate ZIP members before persisting the ZIP itself.
                 # No rejected second QEC-FIN cohort must pollute the archive.
-                from ntf_insight.ingestion.artifacts import sha256_file
                 zip_digest = sha256_file(path)
                 if is_fin_export(path):
                     plan = prepare_fin_export(path, Path(temp) / ("fin_" + zip_digest))
