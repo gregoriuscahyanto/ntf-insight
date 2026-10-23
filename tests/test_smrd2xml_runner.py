@@ -113,14 +113,23 @@ def test_external_tool_xml_is_indexed_and_original_is_untouched(tmp_path, monkey
         "smrd_xml_dtc": 1,
     }
     assert len(result["generated_xml"]) == 2
+    assert result["license_free_guaranteed"] is False
     assert smrd.read_bytes() == original
     assert not (tmp_path / "ntf-insight.duckdb").exists()
     bundle = json.loads(Path(result["bundle"]).read_text(encoding="utf-8"))
+    assert bundle["vendor_runtime_used"] is True
+    assert all(
+        x["kind"] == "smrd2xml_local_vendor_export"
+        for x in bundle["xml_sources"]
+    )
     dtc = next(r for r in bundle["reference_records"] if r["category"] == "smrd_xml_dtc")
     assert len(dtc["source_provenance"]) == 2
     # Vendor-generated XML is retained; subsequent pure-Python runs need no EXE.
     pure = offline_convert(smrd, data_dir=tmp_path)
     assert pure["total_references"] == 5
+    saved = json.loads(Path(pure["bundle"]).read_text(encoding="utf-8"))
+    assert saved["vendor_runtime_used"] is True
+    assert all(x["kind"] == "smrd2xml_local_vendor_export" for x in saved["xml_sources"])
 
 
 def test_vendor_license_error_is_not_hidden(tmp_path, monkeypatch):
