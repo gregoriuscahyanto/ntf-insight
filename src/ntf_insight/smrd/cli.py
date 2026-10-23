@@ -14,6 +14,7 @@ def main(argv: list[str] | None = None) -> int:
     sub = parser.add_subparsers(dest="cmd", required=True)
     sub.add_parser("where")
     sub.add_parser("list")
+    sub.add_parser("gui", help="Air-gapped PySide6 SMR-D workspace without Softing")
     add = sub.add_parser("add")
     add.add_argument("file", type=Path)
     inspect = sub.add_parser("inspect")
@@ -62,6 +63,12 @@ def main(argv: list[str] | None = None) -> int:
     library = SmrdLocalLibrary(data_dir=args.data_dir)
     if args.cmd == "where":
         print(library.root)
+    elif args.cmd == "gui":
+        from ntf_insight.smrd.offline_gui import main as offline_gui_main
+
+        return offline_gui_main(
+            ["--data-dir", str(args.data_dir)] if args.data_dir else []
+        )
     elif args.cmd == "list":
         for item in library.list_smrd():
             print(item["sha256"], item["path"])
