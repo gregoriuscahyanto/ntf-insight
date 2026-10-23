@@ -16,6 +16,7 @@ from collections import Counter
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from zipfile import ZipFile
+from pypdf.errors import PdfReadError
 
 from ntf_insight.ingestion.quicktest_detailed import extract_quicktest
 
@@ -168,7 +169,7 @@ def prepare_fin_export(path: Path, temp_root: Path) -> FinZipPlan:
                 # *explicitly contradictory* parsed FIN must be rejected.
                 try:
                     parsed = extract_quicktest(staged, expected_sha)
-                except (OSError, ValueError):
+                except (OSError, ValueError, PdfReadError):
                     parsed = None
                 if parsed is not None and parsed.quicktest_report["fin"] != fin:
                     raise ValueError("QuickTest-FIN weicht vom Exportmanifest ab.")
@@ -224,7 +225,24 @@ def install_fin_export(plan: FinZipPlan, data_dir: Path) -> FinZipInstallResult:
     quicktests: list[Path] = []
     attachments: list[Path] = []
     conflicts: list[str] = []
+    # Never combine new attachments with a different local QEC finding.
+    rejected_refs: set[str] = set()
     for item in plan.files:
+        if item.category != "qec_json":
+            continue
+        target = data_dir / item.relative_path
+        _safe_parent(data_dir, target)
+        if target.is_file():
+            with target.open("rb") as existing:
+                if hashlib.file_digest(existing, "sha256").hexdigest() != item.checksum:
+                    rejected_refs.add(item.relative_path.parts[2])
+    for item in plan.files:
+        if (
+            item.category in {"qec_json", "qec_pdfs"}
+            and item.relative_path.parts[2] in rejected_refs
+        ):
+            conflicts.append(str(item.relative_path))
+            continue
         target = data_dir / item.relative_path
         _safe_parent(data_dir, target)
         if target.exists() and target.is_dir():
