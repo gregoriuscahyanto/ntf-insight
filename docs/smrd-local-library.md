@@ -175,11 +175,18 @@ Vorhanden sind hingegen `selectDynamicProject`,
 DTC-Level- und SDG-Lesemethoden.
 
 Der Exporter verwendet jetzt `SelectDynamicProject(..., string[])`
-und `DtsProject.DbProject` in einer Offline-DTS-Projektauswahl und
-`DeselectProject()` zur Freigabe. Das ist eine **alternative API-Route**,
-kein bereits nachgewiesener vollständiger Export. Die genaue Laufzeit-
-Semantik und alle notwendigen globalen Verweise muessen noch auf dem
-Windows-PC mit einer echten SMR-D verifiziert werden.
+und die ueber das Interface `MCDProject` erreichbare Eigenschaft
+`DbProject`. Die aktuelle .NET-Version kennt **keine oeffentliche**
+Methode `DtsSystem.DeselectProject()`, obwohl die native DLL einen
+aehnlich benannten Export enthaelt. Deshalb darf die Managed-API-Pruefung
+diese Methode nicht voraussetzen. Zum Aufraeumen wird das zurueckgegebene
+Projekt nur bei `IDisposable` freigegeben; die Softing-Laufzeit wird
+danach mit `Uninitialize()` geschlossen.
+
+Die .NET-Methodendeklarationen `DtsSystem.SelectDynamicProject`,
+`MCDProject.DbProject` und `DtsProjectImpl.Dispose` wurden in der
+bereitgestellten Assembly statisch verifiziert. Der vollstaendige
+Offline-Export einer echten SMR-D ist **noch nicht** bestaetigt.
 
 ```powershell
 $runtime = "$env:USERPROFILE\.ntf-insight\smrd\runtime\SMRxView"
