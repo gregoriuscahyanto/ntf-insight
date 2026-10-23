@@ -71,6 +71,47 @@ Eine andere Installationsstelle kann mit `--runtime-dir` oder
 konfiguriert und rechtmäßig lizenziert sein. Keine automatische
 Lizenzaktivierung, Entschlüsselung, Config-Manipulation oder Umgehung.
 
+### Laufzeit-Initialisierung und AccessViolationException
+
+Wenn `native-probe` erfolgreich ist, kann sich die native Softing-Laufzeit
+trotzdem noch nicht initialisieren: der Probe testet nur die **verwaltete
+.NET-Assembly und Methodennamen**, nicht `Statics.getSystem()`.
+
+Das bereitgestellte ursprüngliche SMRxView-Archiv enthält in
+`mvci/SystemConfig.xml` und `mvci/config/DtsConfig64.xml` sechs
+absolute Pfade zu `C:\\Nisp\\SMRxView`, die nach einem Umzug unter
+`.ntf-insight/smrd/runtime/SMRxView` falsch sein können. Der neue
+`native-doctor` prüft diese Pfade und die wichtigsten Runtime-Dateien
+**rein lesend**, ohne native Funktionen auszuführen.
+
+```powershell
+$runtime = "$env:USERPROFILE\.ntf-insight\smrd\runtime\SMRxView"
+python -m ntf_insight.smrd native-doctor --runtime-dir $runtime
+
+# Trockenlauf: druckt nur die geplanten Aenderungen
+python -m ntf_insight.smrd native-prepare --runtime-dir $runtime
+
+# NUR auf ausdrueckliche Entscheidung des Benutzers hin, in seiner lokalen Kopie
+python -m ntf_insight.smrd native-prepare --runtime-dir $runtime --apply
+
+# Danach noch einmal rein lesend kontrollieren
+python -m ntf_insight.smrd native-doctor --runtime-dir $runtime
+```
+
+`native-prepare --apply` ist **opt-in**; Änderungen sind nur unter
+`.ntf-insight/smrd/runtime/` erlaubt. Vor jeder Änderung werden
+inhaltshash-benannte `.bak`-Sicherungen der beiden XML-Dateien angelegt.
+Nur die bekannten XML-Verzeichnisfelder werden geändert; `license.bin`,
+`Softing.Dts.dll`, `csWrap.dll` und SMR-D-Dateien bleiben unverändert.
+`native-export` verweigert einen riskanten Aufruf, wenn diese statischen
+Voraussetzungen noch nicht erfüllt sind.
+
+Eine grüne Doctor-Meldung **garantiert keinen funktionierenden DTS-Server**.
+Wenn `getSystem()` auch nach passender Pfadkonfiguration abstürzt, native
+Exportversuche nicht wiederholen: zuerst vollständige DTS-Installation,
+Laufzeit-/DLL-Versionen und lizenzierte Initialisierungsumgebung klären.
+Das Aufrufverfahren kann sich zwischen Softing-Versionen unterscheiden.
+
 ### Befehle
 
 ```powershell
