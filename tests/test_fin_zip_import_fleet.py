@@ -113,3 +113,14 @@ def test_fleet_analysis_empty_database(tmp_path):
     assert result.fins == 0
     assert result.clean_reports == 0
     assert result.dtc_rows == ()
+
+
+def test_local_quicktest_scan_does_not_infer_fin_or_follow_invalid_folders(tmp_path):
+    from ntf_insight.ingestion.downloaded_quicktests import list_downloaded_quicktests
+
+    first = _write(tmp_path, f"quicktests/{FIN}/first.pdf", b"%PDF-local")
+    second = _write(tmp_path, f"quicktests/{FIN}/second.PDF", b"%PDF-local")
+    _write(tmp_path, f"quicktests/{FIN}/abrufstatus.json", b"{}")
+    _write(tmp_path, "quicktests/not-a-fin/wrong.pdf", b"%PDF-private")
+    _write(tmp_path, f"quicktests/{FIN}/nested/not-scanned.pdf", b"%PDF-nested")
+    assert list_downloaded_quicktests(tmp_path) == [first, second]
