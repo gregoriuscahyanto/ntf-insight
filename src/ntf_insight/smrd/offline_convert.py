@@ -31,14 +31,22 @@ RELEVANT_CATEGORIES = {
 
 
 def _sections(smrd: Path, *, payload_offset: int) -> list[dict]:
-    """List validated opaque data regions without reading protected payloads."""
+    """List validated opaque data regions without reading protected payloads.
+
+    The file-hash block starts immediately after the metadata, NOT at the
+    container header's 'file_hash_block_offset' field. The real CPC3 file
+    has a 12-byte difference between these two values; using the latter
+    would cause a false format error and incorrect region offsets.
+    """
     with smrd.open("rb") as handle:
         header = handle.read(88)
     if len(header) != 88:
         raise ValueError("SMR-D-Header ist unvollstaendig")
     words = struct.unpack_from("<17I", header, 16)
     end = smrd.stat().st_size
-    offset = payload_offset
+    offset = 88 + struct.unpack_from("<I", header, 84)[0]
+    if not offset <= payload_offset <= offset + 32 or offset + 32 > end:
+        raise ValueError("Unplausible SMR-D-Metadaten-/Hashblockposition")
     regions = [{"name": "hash_block", "offset": offset, "size_bytes": 32}]
     offset += 32
     for i, name in enumerate(("database_index", "database_binary", "database_strings")):
