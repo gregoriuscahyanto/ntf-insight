@@ -269,3 +269,33 @@ def test_quicktest_only_vehicle_is_present_without_any_qec_case(tmp_path):
         assert any(row["anzahl_faelle"] == "0" and row["anzahl_quicktests"] == "1"
                    for row in vehicles)
         assert other_fin not in z.read("fahrzeuge.csv").decode()
+
+
+
+def test_pseudonymous_qec_form_field_is_comparable_across_reports(tmp_path):
+    source = _set_up(tmp_path)
+    SourceKnowledgeStore(source.store).save_records(
+        "e" * 64, "qec_live_report", [{
+            "category": "qec_field",
+            "source_location": "QEC/01-WE-Daten/feld:9",
+            "fin": FIN,
+            "reference": "654321",
+            "label": "Andere Aufschrift",
+            "data": {
+                "bereich": "WE-Daten", "name": "check", "typ": "checkbox",
+                "wert": "nein", "beschriftung": "Andere Aufschrift",
+            },
+        }], metadata={
+            "fin": FIN, "reference": "654321",
+            "part_number": "A-EXAMPLE-001", "fresh_complete": True,
+            "sections": 5, "fresh_sections": 5,
+        },
+    )
+    result = export_ki_analysepaket(source, tmp_path / "felder.zip")
+    with ZipFile(result.pfad) as archive:
+        fields = _csv(archive, "qec_felder.csv")
+        matching = [row for row in fields if row["wert_strukturiert"] in {"ja", "nein"}]
+        assert len(matching) == 2
+        assert matching[0]["feld_id"] == matching[1]["feld_id"]
+        assert all(r["uebergreifend_vergleichbar"] == "1" for r in matching)
+        assert matching[0]["qec_bericht_id"] != matching[1]["qec_bericht_id"]
