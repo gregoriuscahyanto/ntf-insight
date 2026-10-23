@@ -183,7 +183,9 @@ class SmrdOfflinePage(QWidget):
         commands.addStretch(1)
         root.addLayout(commands)
 
-        self.status = QLabel("Bereit: kein Internet und keine Softing-Lizenz notwendig.")
+        self.status = QLabel(
+            "Metadatenmodus: ohne DTS/Lizenz. Smrd2Xml-Programm: ggf. DTS-Lizenz notwendig."
+        )
         self.status.setWordWrap(True)
         root.addWidget(self.status)
         self.details = QPlainTextEdit()
@@ -285,7 +287,10 @@ class SmrdOfflinePage(QWidget):
         worker = _OfflineTask(operation, data_dir=self.data_dir, **arguments)
         self._worker = worker
         self._set_busy(True)
-        self.status.setText("Lokale Verarbeitung läuft. Kein Netzwerkzugriff.")
+        self.status.setText(
+            "Lokale Verarbeitung läuft. NTF Insight nutzt kein Netzwerk; "
+            "das Verhalten des externen Konverters kann nicht garantiert werden."
+        )
         worker.completed.connect(self._completed)
         worker.failed.connect(self._failed)
         worker.finished.connect(self._worker_finished)
