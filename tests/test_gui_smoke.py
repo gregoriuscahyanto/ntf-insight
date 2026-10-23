@@ -14,6 +14,9 @@ def test_main_window_can_be_constructed(tmp_path, monkeypatch) -> None:
 
     assert "dashboard" in window.pages
     assert "sources" in window.pages
+    assert window.pages["sources"].portable_backup_panel is not None
+    assert window.pages["sources"].portable_backup_panel.export_button.isEnabled()
+    assert window.pages["sources"].portable_backup_panel.restore_button.isEnabled()
     assert "quicktest_download" not in window.pages
     assert "quicktest_download" not in window.navigation.buttons
     assert "cases" in window.pages
