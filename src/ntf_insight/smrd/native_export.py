@@ -116,6 +116,20 @@ def export_native_dtcs(
         raise FileNotFoundError(f"SMR-D-Datei fehlt: {smrd}")
     library = SmrdLocalLibrary(data_dir=data_dir)
     runtime, _ = resolve_runtime_dir(runtime_dir, library)
+    from ntf_insight.smrd.runtime_config import diagnose_native_runtime
+
+    health = diagnose_native_runtime(runtime)
+    if not health["ready_for_native_attempt"]:
+        missing = ", ".join(health["missing"])
+        differences = ", ".join(item["key"] for item in health["mismatches"])
+        errors = "; ".join(health["errors"])
+        raise NativeRuntimeError(
+            "Softing-Laufzeit vor dem nativen Aufruf nicht bereit. "
+            "Abbruch, um einen erneuten CSNIDTS_getSystem-Absturz zu vermeiden. "
+            f"Fehlend: {missing or '-'}; falsche Pfade: {differences or '-'}; "
+            f"Konfigurationsfehler: {errors or '-'}. "
+            "Bitte erst 'python -m ntf_insight.smrd native-doctor' ausfuehren."
+        )
     library.exports.mkdir(parents=True, exist_ok=True)
     output = (
         Path(output_path).expanduser().resolve()
