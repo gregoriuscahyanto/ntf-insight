@@ -10,7 +10,6 @@ import hashlib
 import io
 import json
 import re
-import shutil
 from dataclasses import dataclass
 from pathlib import Path
 from zipfile import ZIP_DEFLATED, ZipFile, ZipInfo
