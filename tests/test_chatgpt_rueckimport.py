@@ -283,3 +283,48 @@ def test_qec_attachment_with_traversal_never_exported(tmp_path):
         assert all(not name.endswith(".pdf") for name in zip_file.namelist())
         findings = json.loads(zip_file.read("qec_originale/vollstaendigkeit.json"))
         assert findings["fehlende_qec_anhaenge"]
+
+
+
+def test_unparsed_but_valid_downloaded_qec_is_not_lost_from_opt_in_zip(tmp_path):
+    service = make_data(tmp_path, qec=False)
+    path = tmp_path / "qec" / FIN / ("ref_" + REF) / "qec.json"
+    path.parent.mkdir(parents=True)
+    raw = {
+        "schema_version": 2, "fin": FIN, "referenznummer": REF,
+        "sachnummer": "A-EXAMPLE-001",
+        "abgerufen_am_utc": "2026-10-20T08:30:00+00:00",
+        "abschnitte": [{"bereich": "WE-Daten", "sichtbarer_text": "Noch nicht geparst"}],
+        "anhaenge": [],
+    }
+    path.write_text(json.dumps(raw, ensure_ascii=False), encoding="utf-8")
+    result = export_ki_analysepaket(
+        service, tmp_path / "unparsed-originals.zip", mit_qec_originalen=True,
+    )
+    assert result.qec_berichte == 1
+    assert result.qec_originale == 1
+    with ZipFile(result.pfad) as package:
+        assert "qec_originale/Q00001/qec.json" in package.namelist()
+        qec = list(csv.DictReader(io.StringIO(
+            package.read("qec_berichte.csv").decode("utf-8-sig")
+        )))
+        assert qec[0]["erfassungsstand"] == "nicht_geparst"
+        assert json.loads(package.read("manifest.json"))[
+            "datenreihen"
+        ]["qec_nur_original_nicht_geparst"] == 1
+    assert service.store.get_case("Original-interner-Fall-123") is not None
+
+
+def test_unidentifiable_qec_json_blocks_incomplete_original_export(tmp_path):
+    service = make_data(tmp_path, qec=False)
+    path = tmp_path / "qec" / FIN / ("ref_" + REF) / "qec.json"
+    path.parent.mkdir(parents=True)
+    path.write_text(
+        json.dumps({"schema_version": 2, "fin": "FALSCH", "referenznummer": REF}),
+        encoding="utf-8",
+    )
+    with pytest.raises(ValueError, match="keinem gültigen Fall zugeordnet"):
+        export_ki_analysepaket(
+            service, tmp_path / "unsafe.zip", mit_qec_originalen=True,
+        )
+    assert not (tmp_path / "unsafe.zip").exists()
