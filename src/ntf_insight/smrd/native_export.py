@@ -15,6 +15,7 @@ from pathlib import Path
 
 from ntf_insight.smrd.library import SmrdLocalLibrary, digest
 from ntf_insight.smrd.native_details import NativeDetailError, parse_native_details
+from ntf_insight.smrd.native_symbols import diagnose_native_symbols
 
 
 class NativeRuntimeError(RuntimeError):
@@ -82,6 +83,15 @@ def _run_script(
         ) from exc
 
 
+def native_capabilities(
+    *, runtime_dir: Path | None = None, data_dir: Path | None = None
+) -> dict:
+    """Check native DLL export table without loading or executing vendor code."""
+    library = SmrdLocalLibrary(data_dir=data_dir)
+    _, binary_dir = resolve_runtime_dir(runtime_dir, library)
+    return diagnose_native_symbols(binary_dir / "csWrap.dll")
+
+
 def native_probe(
     *,
     runtime_dir: Path | None = None,
@@ -89,7 +99,13 @@ def native_probe(
     timeout: int = 40,
 ) -> str:
     library = SmrdLocalLibrary(data_dir=data_dir)
-    runtime, _ = resolve_runtime_dir(runtime_dir, library)
+    runtime, binary_dir = resolve_runtime_dir(runtime_dir, library)
+    symbols = diagnose_native_symbols(binary_dir / "csWrap.dll")
+    if not symbols["native_api_ready"]:
+        raise NativeRuntimeError(
+            "Softing-DTS API nicht kompatibel; nicht exportierte native Funktionen: "
+            + ", ".join(symbols["missing_required_exports"])
+        )
     script = Path(str(files("ntf_insight.smrd").joinpath("softing_native_export.ps1")))
     result = _run_script(
         script, source=None, output=None, runtime=runtime,
@@ -99,7 +115,13 @@ def native_probe(
         raise NativeRuntimeError(
             (result.stderr or result.stdout or "DTS-Probe fehlgeschlagen")[-4000:]
         )
-    return result.stdout.strip()
+    return (
+        result.stdout.strip()
+        + "\nCSWRAP_DYNAMIC_PROJECT_API_OK: "
+        + str(symbols["has_dynamic_project_api"])
+        + "; VIEWER_ENTRYPOINT_MISSING: "
+        + str(symbols["managed_only_viewer_api"])
+    )
 
 
 def export_native_dtcs(
@@ -115,7 +137,14 @@ def export_native_dtcs(
     if not smrd.is_file() or smrd.suffix.casefold() != ".smr-d":
         raise FileNotFoundError(f"SMR-D-Datei fehlt: {smrd}")
     library = SmrdLocalLibrary(data_dir=data_dir)
-    runtime, _ = resolve_runtime_dir(runtime_dir, library)
+    runtime, binary_dir = resolve_runtime_dir(runtime_dir, library)
+    symbols = diagnose_native_symbols(binary_dir / "csWrap.dll")
+    if not symbols["native_api_ready"]:
+        raise NativeRuntimeError(
+            "Der native DTS-Exporter wurde vor dem Aufruf gestoppt: "
+            "CSWrap.dll exportiert nicht alle benoetigten Funktionen. "
+            "Fehlend: " + ", ".join(symbols["missing_required_exports"])
+        )
     from ntf_insight.smrd.runtime_config import diagnose_native_runtime
 
     health = diagnose_native_runtime(runtime)
