@@ -23,8 +23,12 @@ Diese Ergänzung führt die folgenden separaten Funktionen ein:
    \`qec_originale/Q00001/qec.json\`, \`anlage_0001.pdf\` usw.,
    \`belegindex.csv\` (QEC-ID, Datei, SHA-256) und
    \`vollstaendigkeit.json\` mit fehlenden/älteren Belegständen.
-   Nur echte, zugeordneten QEC-Berichten gehörende Dokumente werden
-   ergänzt. Das ursprüngliche qec.json bewahrt **alle fünf Reiter,
+   Nur exakt FIN- und referenzgebundene QEC-Berichte werden
+   ergänzt. Auch eine noch nicht geparste, aber gültige lokale
+   `qec.json` wird als **nicht geparst** aufgenommen. Unlesbare
+   oder hinsichtlich FIN/Referenz widersprüchliche lokale QEC-Dateien
+   blockieren den vertraulichen Originalbelegexport, statt still
+   ignoriert zu werden. Das ursprüngliche qec.json bewahrt **alle fünf Reiter,
    die Originaltexte, Formularfelder und Tabellen**. Reiter, die aus
    älteren Abrufen übernommen wurden, bleiben darin gekennzeichnet.
    PDF/Bild/Office-Anhänge werden **nicht automatisch geparst**.
