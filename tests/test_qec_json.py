@@ -108,3 +108,25 @@ def test_alte_berichte_offline_suchen_ohne_dateien_zu_lesen(tmp_path):
     other = write_report(tmp_path / "qec" / "INVALID" / "ref_123456" / "qec.json", report())
     assert list_downloaded_qec_reports(tmp_path) == [path]
     assert other.exists()
+
+
+def test_import_persists_qec_with_source_provenance_and_idempotence(tmp_path):
+    from ntf_insight.ingestion.batch_import import LocalBatchImporter
+    from ntf_insight.ingestion.service import SourceImportService
+    from ntf_insight.storage.source_knowledge_store import SourceKnowledgeStore
+
+    path = write_report(tmp_path / "qec" / FIN / "ref_123456" / "qec.json", report())
+    service = SourceImportService(tmp_path / "raw", tmp_path / "local.duckdb")
+    importer = LocalBatchImporter(service)
+    first = importer.import_paths([path])
+    assert first.files_parsed == 1
+    assert first.reference_sources == 1
+    assert first.cases_created == 0  # No invented QEC case from a report
+    store = SourceKnowledgeStore(service.store)
+    rows = store.list_rows(category="qec_value", fin=FIN)
+    assert len(rows) == 15
+    assert {row["reference"] for row in rows} == {"123456"}
+    assert all(row["source_sha256"] for row in rows)
+    assert store.documents()[0]["metadata"]["fresh_complete"]
+    importer.import_paths([path])
+    assert len(store.list_rows(category="qec_value", fin=FIN)) == 15
