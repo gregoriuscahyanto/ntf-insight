@@ -227,6 +227,14 @@ def export_ki_analysepaket(
             "SELECT fin,COUNT(*) FROM source_knowledge_rows "
             "WHERE category='autoexport_tips' AND fin IS NOT NULL GROUP BY fin"
         ).fetchall())
+        has_qec_decisions = bool(con.execute(
+            "SELECT COUNT(*) FROM information_schema.tables "
+            "WHERE table_schema='main' AND table_name='qec_workflow_decisions'"
+        ).fetchone()[0])
+        saved_qec_decisions = (
+            con.execute("SELECT case_id,decision FROM qec_workflow_decisions").fetchall()
+            if has_qec_decisions else []
+        )
     if len(qec_rows) > MAX_QEC_RECORDS:
         raise ValueError("Mehr als 200.000 QEC-Detailzeilen; Export bitte eingrenzen.")
 
@@ -303,6 +311,10 @@ def export_ki_analysepaket(
     for row in dtcs:
         dtcs_by_report[row[0]].append(row)
     total_tips_by_fin = Counter(tips_counts)
+    decision_values: dict[str, set[str]] = defaultdict(set)
+    for original_case_id, decision in saved_qec_decisions:
+        if decision in {"NTF", "Kein NTF"}:
+            decision_values[original_case_id].add(decision)
 
     fahrzeuge = []
     for fin in sorted(fins, key=lambda x: aliases[x]):
@@ -399,9 +411,14 @@ def export_ki_analysepaket(
             "smrd_bezug_bestaetigt": 0,
         })
         assessment = case.assessment
+        decided = decision_values.get(case.case_id, set())
+        decision_label = (
+            next(iter(decided)) if len(decided) == 1 else
+            "widerspruechlich" if len(decided) > 1 else ""
+        )
         bewertungen.append({
             "fall_id": cid,
-            "ntf_urteil_fachlich": "",  # Workflow decisions are separate from case.assessment.
+            "ntf_urteil_fachlich": decision_label,
             "ursachenkategorie_bewertet": str(assessment.root_cause.value) if assessment else "",
             "lieferantenbeteiligung_bewertet": (
                 str(assessment.supplier_involvement.value) if assessment else ""
