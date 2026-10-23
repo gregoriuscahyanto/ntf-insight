@@ -34,6 +34,7 @@ from ntf_insight.ingestion.artifacts import ParseStatus, SourceType
 from ntf_insight.ingestion.batch_import import ImportSummary, LocalBatchImporter
 from ntf_insight.ingestion.source_detection import detect_source_type
 from ntf_insight.ingestion.downloaded_quicktests import list_downloaded_quicktests
+from ntf_insight.ingestion.qec_json import list_downloaded_qec_reports
 from ntf_insight.ingestion.service import SourceImportService
 from ntf_insight.storage.reference_repositories import ReferenceRepository
 from ntf_insight.storage.repositories import CaseRepository
@@ -80,6 +81,7 @@ class SourcesPage(QWidget):
     sources_updated = Signal(str, int)
     SOURCE_LABELS = {
         SourceType.VEHICLE_CASE_LIST: "QEC-Fall-/SSL-Endbefundliste",
+        SourceType.QEC_REPORT: "QEC-Befundbericht · JSON",
         SourceType.SHORT_TEST: "Kurztest",
         SourceType.TP_DASHBOARD: "TP-Dashboard · CPC/SAM",
         SourceType.REPLACEMENT_LIST: "Tauschliste",
@@ -233,6 +235,14 @@ class SourcesPage(QWidget):
         )
         self.local_quicktests_button.clicked.connect(self._import_existing_quicktests)
         local_row.addWidget(self.local_quicktests_button)
+        self.local_qec_button = QPushButton("Bereits heruntergeladene QEC-Berichte einlesen")
+        self.local_qec_button.setToolTip(
+            "Liest qec/<FIN>/ref_<Referenz>/qec.json strukturiert ein. "
+            "Die Originale und Anhänge bleiben unverändert."
+        )
+        self.local_qec_button.setEnabled(self.data_dir is not None and self.import_service is not None)
+        self.local_qec_button.clicked.connect(self._import_existing_qec)
+        local_row.addWidget(self.local_qec_button)
         local_row.addStretch(1)
         layout.addLayout(local_row)
 
@@ -336,6 +346,16 @@ class SourcesPage(QWidget):
         self.source_type.setCurrentIndex(0)
         self._archive_paths(paths)
 
+    def _import_existing_qec(self) -> None:
+        if self.data_dir is None or self._worker is not None:
+            return
+        paths = list_downloaded_qec_reports(self.data_dir)
+        if not paths:
+            self.import_status.setText("Keine QEC-Berichte unter qec/<FIN>/ref_<Referenz>/qec.json gefunden.")
+            return
+        self.source_type.setCurrentIndex(0)
+        self._archive_paths(paths)
+
     def _artifact_selected(self, index) -> None:
         self.delete_button.setEnabled(
             self.import_service is not None and self._worker is None
@@ -421,6 +441,7 @@ class SourcesPage(QWidget):
         forced_type = forced if isinstance(forced, SourceType) else None
         self.archive_button.setEnabled(False)
         self.local_quicktests_button.setEnabled(False)
+        self.local_qec_button.setEnabled(False)
         self.drop_zone.setEnabled(False)
         self.retry_button.setEnabled(False)
         self.delete_button.setEnabled(False)
@@ -488,6 +509,9 @@ class SourcesPage(QWidget):
     def _import_worker_finished(self) -> None:
         self.archive_button.setEnabled(self.import_service is not None)
         self.local_quicktests_button.setEnabled(
+            self.import_service is not None and self.data_dir is not None
+        )
+        self.local_qec_button.setEnabled(
             self.import_service is not None and self.data_dir is not None
         )
         self.drop_zone.setEnabled(self.import_service is not None)
@@ -606,6 +630,11 @@ class SourcesPage(QWidget):
             SourceKnowledgeStore(self.import_service.store).summary()
             if self.import_service is not None else {}
         )
+        qec_docs = [
+            item for item in SourceKnowledgeStore(self.import_service.store).documents()
+            if item["source_kind"] == "qec_live_report"
+        ] if self.import_service is not None else []
+        qec_complete = sum(bool(item["metadata"].get("fresh_complete")) for item in qec_docs)
         repair_count = sum(len(case.repairs) for case in all_cases)
         linked_tips_count = sum(
             len(case.tips_observations) for case in all_cases
@@ -643,6 +672,13 @@ class SourcesPage(QWidget):
         )
 
         rows = [
+            (
+                "QEC-Befundberichte (JSON)",
+                "Fünf QEC-Reiter, Formularwerte, Tabellen und Dateiverweise",
+                "Quellentreu extrahiert; keine automatische Ursachen-/Lieferantenzuordnung",
+                f"{len(qec_docs)} Berichte · {qec_complete} vollständig · "
+                f"{knowledge_counts.get('qec_live_report', 0)} Datensätze",
+            ),
             (
                 "CDD-Diagnosebeschreibung",
                 "Candela-Steuergerätebeschreibung, keine SMR-D-Triggerlogik",
