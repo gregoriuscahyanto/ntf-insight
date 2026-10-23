@@ -593,7 +593,20 @@ def export_ki_analysepaket(
         {"thema": "Einsatz", "regel": "Dieses Paket ist nicht automatisch freigegeben/anonym. Datenschutz und Informationsschutz vor Upload pruefen."},
     ]
 
+    # Strict clustering input: no outcomes, no QEC supplier findings, no
+    # after-swap DTC data. Full history remains available for later validation.
+    cluster_columns = (
+        "fall_id", "fahrzeug_id", "baureihe", "teilegruppe",
+        "qt_vor_tausch", "ecu_dtc_kombinationen_vor",
+        "cpc3_dtc_kombinationen_vor",
+    )
+    cluster_input = [
+        {column: item.get(column) for column in cluster_columns}
+        for item in features
+    ]
+
     table_items = {
+        "cluster_input": (cluster_columns, cluster_input),
         "fahrzeuge": (("fahrzeug_id", "baureihe", "anzahl_faelle", "anzahl_quicktests", "tips_autoexport_rohzeilen"), fahrzeuge),
         "faelle": (("fall_id", "fahrzeug_id", "bauteilprofil", "baureihe", "tauschanker_vorhanden", "qec_bericht_status", "qec_berichte", "tips_verknuepft", "quicktests_gesamt"), faelle),
         "fallmerkmale": (("fall_id", "fahrzeug_id", "baureihe", "teilegruppe", "tausch_km", "qt_vor_tausch", "qt_nach_tausch", "qt_ungekl", "ecu_dtc_kombinationen_vor", "cpc3_dtc_kombinationen_vor", "cpc3_dtc_kombinationen_nach", "gleiche_cpc3_dtc_beidseits", "qec_erfassungsstand", "qec_fehlende_reiter_min", "tips_faelle", "smrd_bezug_bestaetigt"), features),
@@ -631,11 +644,13 @@ def export_ki_analysepaket(
         "Fahrzeug- und Fallpseudonyme verbinden alle Tabellen innerhalb der ZIP.\n"
         "Die NICHT_HOCHLADEN-Zuordnung wird SEPARAT auf dem lokalen PC abgelegt.\n\n"
         "REIHENFOLGE FÜR DIE ANALYSE:\n"
-        "1. fallmerkmale.csv / quicktest_fallbezug.csv und dtc_beobachtungen.csv\n"
-        "   fuer Cluster nur mit DTCs aus der Phase vor_tausch.\n"
+        "1. cluster_input.csv als sichere Ausgangsmatrix. DTC-Codes ueber\n"
+        "   quicktest_fallbezug.csv (NUR vor_tausch) mit dtc_beobachtungen.csv verbinden.\n"
         "2. qec_berichte.csv und qec_felder.csv zur Befunderklärung.\n"
         "3. tips.csv fuer Werkstattkontext, smrd_bestand.csv fuer Datenlücken.\n"
-        "4. bewertungen_NICHT_CLUSTER.csv erst NACH dem Clustering ansehen.\n\n"
+        "4. fallmerkmale.csv enthaelt AUCH NACH-Tausch-Beobachtungen: NICHT\n"
+        "   ungeprueft als Cluster-Features verwenden!\n"
+        "5. bewertungen_NICHT_CLUSTER.csv erst NACH dem Clustering ansehen.\n\n"
         "WARNUNG: Pseudonymisierung ist KEINE garantierte Anonymisierung.\n"
         "Seltene technische Konstellationen koennen reidentifizierend sein.\n"
         "Alle technischen Daten unterliegen der Unternehmensfreigabe.\n"
