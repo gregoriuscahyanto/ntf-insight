@@ -76,7 +76,7 @@ Die SMR-D-Verarbeitung kann ohne Terminal in einem separaten,
 lizenzfreien PySide6-Fenster gestartet werden:
 
 ```powershell
-cd "C:\Users\Cahyanto\Documents\GitHub\ntf-insight"
+cd (Join-Path $env:USERPROFILE "Documents\GitHub\ntf-insight")
 python -m ntf_insight.smrd gui
 
 # Alternative: direktes Modul
