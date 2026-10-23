@@ -31,6 +31,8 @@ def main(argv: list[str] | None = None) -> int:
     recovery.add_argument("--runtime-dir", type=Path)
     recovery.add_argument("--source-zip", type=Path, required=True)
     recovery.add_argument("--apply", action="store_true")
+    native_capabilities_cmd = sub.add_parser("native-capabilities")
+    native_capabilities_cmd.add_argument("--runtime-dir", type=Path)
     native_probe_cmd = sub.add_parser("native-probe")
     native_probe_cmd.add_argument("--runtime-dir", type=Path)
     native_export_cmd = sub.add_parser("native-export")
@@ -87,6 +89,15 @@ def main(argv: list[str] | None = None) -> int:
         print(json.dumps(recover_native_runtime_configs(
             runtime, args.source_zip, data_dir=args.data_dir, apply=args.apply,
         ), ensure_ascii=False, indent=2))
+    elif args.cmd == "native-capabilities":
+        import json
+
+        from ntf_insight.smrd.native_export import native_capabilities
+
+        print(json.dumps(
+            native_capabilities(runtime_dir=args.runtime_dir, data_dir=args.data_dir),
+            ensure_ascii=False, indent=2,
+        ))
     elif args.cmd == "native-probe":
         from ntf_insight.smrd.native_export import native_probe
 
