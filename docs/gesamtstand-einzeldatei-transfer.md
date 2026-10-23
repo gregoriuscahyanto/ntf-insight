@@ -9,7 +9,7 @@ ohne erneuten QuickTest-, QEC- oder AutoExport-Parserlauf.
 Das transportable Format hat die Endung **.ntfbackup**. Technisch ist es
 ein geprüftes ZIP mit einer eigenständigen, bereits gefüllten
 **DuckDB-Datenbank** und den zugehörigen lokalen Originaldateien.
-Eine nackte \`ntf-insight.duckdb\` allein ist **nicht** der vollständige
+Eine nackte `ntf-insight.duckdb` allein ist **nicht** der vollständige
 Arbeitsstand, da sie absolute Rohdateipfade und externe PDF/JSON-Anhänge
 referenziert.
 
@@ -46,12 +46,12 @@ Datenverzeichnis liegen.
   Datenbankkopie einschließlich Rohdatenindizes, QuickTest-Tabellen,
   QEC-Fall- und Analyse-Snapshots, manuelle Änderungen, Reviews,
   Clustergrundlagen, Verlauf und Referenz-/TP-Daten
-- Alle aus **source_artifacts** referenzierten Rohdateien unter \`raw/\`
-- Lokale \`quicktests/<FIN>/\`, \`qec/<FIN>/\` und \`tips/<FIN>/\`
-  mit unterstützten Dokumenttypen einschließlich QEC-JSON und PDF
+- Alle aus **source_artifacts** referenzierten Rohdateien unter `raw/`
+- Lokale `quicktests/<FIN>/`, `qec/<FIN>/` und `tips/<FIN>/`
+  mit unterstützten Dokumenttypen einschließlich QEC-JSON, PDF und archivierten älteren QEC-HTML-Ansichten
 - Manifest mit Dateiliste, Größen und **SHA-256** zur Integritätsprüfung
 - Beim Import: automatische Anpassung der
-  \`source_artifacts.archived_path\`-Einträge an den neuen Datenordner
+  `source_artifacts.archived_path`-Einträge an den neuen Datenordner
 
 ## Was ausdrücklich nicht enthalten ist?
 
@@ -60,7 +60,7 @@ Datenverzeichnis liegen.
 - Programmdateien/Installer und lokal gewählte UI-Erscheinungsoptionen
 - Beliebige Dateien außerhalb des NTF-Insight-Datenordners
 - Extern gespeicherte Exportdateien und nicht registrierte
-  Dateien im \`raw/\`-Verzeichnis
+  Dateien im `raw/`-Verzeichnis
 
 Es handelt sich um einen **vollständigen analysierten Datenstand**,
 nicht um eine Zusammenführung zweier Datenbanken. Das Zielsystem
