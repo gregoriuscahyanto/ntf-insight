@@ -4,11 +4,44 @@
 
 Unter **Datenquellen** stehen nun für den lokalen Altbestand bereit:
 
-- **Alle bereits heruntergeladenen QuickTests einlesen**
+- **Alle bereits heruntergeladenen QuickTests einlesen** (vollständiger Datei-/SHA-Abgleich; nach Parser-Update werden auch v2-Erfolge erneut geparst)
+- **Nur fehlerhafte QuickTests erneut einlesen** (gezielt; ohne Scan aller heruntergeladenen PDFs)
 - **Bereits heruntergeladene QEC-Berichte einlesen**
 - **Import abbrechen** (nur während des Imports aktiv)
 - **Import fortsetzen** (nach einer gestarteten lokalen Importserie)
 - **Nicht parsebare QuickTests/QEC als ZIP exportieren…**
+
+## Nur die bisher fehlgeschlagenen QuickTests erneut prüfen
+
+Über **Datenquellen → Nur fehlerhafte QuickTests erneut einlesen** kann zuerst
+die Qualität der neuen Parser-Version an den bereits bekannten Problemdateien
+geprüft werden, **ohne** alle heruntergeladenen Dateien zu durchsuchen und
+**ohne** erfolgreiche QuickTests aus Parser v2 erneut zu verarbeiten.
+
+Die Auswahl verwendet die **gespeicherten QuickTest-Parser-Läufe und das
+unveränderte lokale SHA-256-Rohdatenarchiv**. Ausgewählt werden zuvor
+fehlgeschlagene, teilweise extrahierte oder trotz eines Parser-Versuchs nicht
+persistierte PDF-Quellen. Auch früher nicht als QuickTest erkannte Dateien
+(source_type=other) werden berücksichtigt, wenn ein dokumentierter
+QuickTest-Parser-Versuch existiert. Eine lediglich heruntergeladene und noch
+nicht importierte Datei gehört **nicht** zu dieser Fehlergruppe.
+
+Der Import prüft die Prüfsumme ausschließlich der ausgewählten Archivdateien.
+Erfolgreiche v2-Dateien werden weder gescannt noch geparst. Erneutes Anklicken
+oder **Import fortsetzen** wählt die *weiterhin* problematischen Berichte
+neu aus, auch wenn diese bereits mit der gleichen Parser-Version fehlgeschlagen
+sind. Ein Abbruch verändert keine erfolgreich archivierten oder gespeicherten
+Berichte. Die Fehler- und Erfolgszahlen stehen im Importstatus.
+
+**Zweite Phase, erst nach erfolgreicher Fehlerbereinigung:** Über
+**Alle bereits heruntergeladenen QuickTests einlesen** wird wieder der
+vollständige lokale Quellenbestand abgeglichen; hierbei greift die normale
+Parser-Versionserkennung. Dadurch können auch bisher mit v2 eingelesene
+PDFs mit v3 geprüft werden. Die persistierte Berichtsstruktur wird dabei
+aktuell nur bei bisher nicht bekannten Berichts-IDs neu angelegt; eine
+vollständige Aktualisierung vorhandener v2-Berichtsinhalte muss gesondert
+abgesichert werden (kein automatisches Überschreiben manuell korrigierter
+Fallinformationen).
 
 Die beiden lokalen Importaktionen sind **inkrementell**. Das heißt:
 Bereits erfolgreich eingelesene, byteidentische PDF- und QEC-JSON-Dateien
