@@ -1011,6 +1011,7 @@ class CasePage(QWidget):
 
     def _start_quicktest_download(
         self, *, selected_only: bool, fins_override: list[str] | None = None,
+        retry_missing: bool = False,
     ) -> None:
         """FIN-Kohorte aus dem Workflow darf die Falltabelle gezielt einschränken."""
         if self._quicktest_worker is not None or self.quicktest_download_root is None:
@@ -1039,7 +1040,7 @@ class CasePage(QWidget):
             return
 
         # No need to ask for credentials when all FINs were attempted recently.
-        new_requests = self.quicktest_retry_24h.isChecked() or any(
+        new_requests = retry_missing or self.quicktest_retry_24h.isChecked() or any(
             recently_attempted(self.quicktest_download_root, fin) is None
             for fin in valid_fins
         )
@@ -1055,7 +1056,7 @@ class CasePage(QWidget):
             self.quicktest_download_root,
             self.quicktest_download_root.parent / "edge-diagnosis-viewer-profile",
             login=login,
-            retry_recent=self.quicktest_retry_24h.isChecked(),
+            retry_recent=retry_missing or self.quicktest_retry_24h.isChecked(),
         )
         self.quicktest_password.clear()
         self._refresh_shared_credentials_status()
