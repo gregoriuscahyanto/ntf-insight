@@ -114,6 +114,9 @@ class MainWindow(QMainWindow):
                 "konsistent aktualisiert sind.",
             )
             return
+        dashboard_worker = getattr(self.pages.get("dashboard"), "_worker", None)
+        if dashboard_worker is not None and dashboard_worker.isRunning():
+            dashboard_worker.wait()  # DuckDB-Verbindungen vollständig schließen.
         super().closeEvent(event)
 
     def _create_pages(self) -> dict[str, QWidget]:
