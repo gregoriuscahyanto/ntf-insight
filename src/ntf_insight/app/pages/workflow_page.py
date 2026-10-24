@@ -448,7 +448,7 @@ class WorkflowPage(QWidget):
             lambda: self._trigger_qec_download("all")
         )
         self.download_missing_button = QPushButton(
-            "Download fortsetzen", objectName="WorkflowAction",
+            "Abruf fortsetzen", objectName="WorkflowAction",
         )
         self.download_missing_button.clicked.connect(
             lambda: self._trigger_qec_download("missing")
@@ -2238,7 +2238,7 @@ class WorkflowPage(QWidget):
             "all": (self.download_all_button,
                     "Alle QEC abrufen", has_rows),
             "missing": (self.download_missing_button,
-                        "Download fortsetzen",
+                        "Abruf fortsetzen",
                         bool(qec_coverage and qec_coverage.missing_qec)),
             "selected": (self.download_selected_button,
                          "Markierte abrufen",
