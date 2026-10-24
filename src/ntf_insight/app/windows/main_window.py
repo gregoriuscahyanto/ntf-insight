@@ -119,9 +119,24 @@ class MainWindow(QMainWindow):
         self.navigation.select_page("workflow")
 
     def closeEvent(self, event) -> None:  # noqa: N802
+        sources = self.pages["sources"]
+        cases = self.pages["cases"]
         if (
             self._project_transfer_worker is not None
-            or self.pages["sources"]._diagnostics_worker is not None
+            or sources._diagnostics_worker is not None
+            or (
+                sources.ki_analyse_panel is not None
+                and sources.ki_analyse_panel.worker is not None
+            )
+            or (
+                sources.portable_backup_panel is not None
+                and sources.portable_backup_panel.worker is not None
+            )
+            or (
+                cases.fin_zip_export is not None
+                and cases.fin_zip_export.worker is not None
+            )
+            or isinstance(self._context_worker, ClusterContextExportWorker)
         ):
             # Der modale Fortschrittsdialog sperrt die Oberfläche, aber auch
             # Alt+F4/Taskleisten-Schließen darf keinen noch laufenden ZIP-
@@ -2060,6 +2075,10 @@ class MainWindow(QMainWindow):
             dest = Path(filename)
             if dest.suffix.lower() != ".csv":
                 dest = dest.with_suffix(".csv")
+            dialog = self._show_operation_progress(
+                "QEC-FIN-Liste exportieren",
+                "Projektbezogene FIN-/QEC-Fälle werden als CSV gespeichert …",
+            )
             try:
                 count = source.workflow_store.export_csv(
                     dest, workflow.qec_root, part_number=part,
@@ -2068,8 +2087,15 @@ class MainWindow(QMainWindow):
                     },
                 )
             except (OSError, ValueError) as exc:
-                QMessageBox.warning(self, "QEC-FIN-Export", str(exc))
+                dialog.fail(str(exc))
                 return
+            dialog.complete(
+                dest,
+                details=(
+                    f"{count} QEC-Fälle exportiert. Die Datei enthält echte "
+                    "FINs: nur intern freigegeben weitergeben."
+                ),
+            )
             workflow.set_notice(
                 f"{count} QEC-Fälle lokal exportiert. "
                 "Die Datei enthält echte FINs: nur intern freigegeben weitergeben."
