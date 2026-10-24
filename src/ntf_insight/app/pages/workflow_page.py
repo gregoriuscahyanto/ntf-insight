@@ -104,6 +104,8 @@ class WorkflowPage(QWidget):
         self._notice = ""
         self._error_step: int | None = None
         self._busy = False
+        self._qec_download_scope: str | None = None
+        self._qec_stop_requested = False
         self._import_busy = False
         self._import_can_resume = False
         self.analysis_store = ChatGPTAnalyseStore(progress_store.store) if qec_store else None
@@ -384,21 +386,21 @@ class WorkflowPage(QWidget):
             "Alle QEC-Berichte herunterladen / aktualisieren", objectName="WorkflowAction",
         )
         self.download_all_button.clicked.connect(
-            lambda: self.action_requested.emit("qec_download_all")
+            lambda: self._trigger_qec_download("all")
         )
         downloads.addWidget(self.download_all_button)
         self.download_missing_button = QPushButton(
             "Download fortsetzen", objectName="WorkflowAction",
         )
         self.download_missing_button.clicked.connect(
-            lambda: self.action_requested.emit("qec_download_missing")
+            lambda: self._trigger_qec_download("missing")
         )
         downloads.addWidget(self.download_missing_button)
         self.download_selected_button = QPushButton(
             "Markierte herunterladen", objectName="WorkflowAction",
         )
         self.download_selected_button.clicked.connect(
-            lambda: self.action_requested.emit("qec_download_selected")
+            lambda: self._trigger_qec_download("selected")
         )
         downloads.addWidget(self.download_selected_button)
         self.cancel_download_button = QPushButton(
@@ -407,7 +409,7 @@ class WorkflowPage(QWidget):
         self.cancel_download_button.clicked.connect(
             lambda: self.action_requested.emit("qec_download_cancel")
         )
-        downloads.addWidget(self.cancel_download_button)
+        self.cancel_download_button.hide()  # Stop ist im aktiven Abrufbutton.
         grid.addLayout(downloads, 0, 1)
 
         parsing = QVBoxLayout()
@@ -1948,8 +1950,26 @@ class WorkflowPage(QWidget):
         self._import_can_resume = can_resume
         self._refresh_controls()
 
-    def set_download_busy(self, busy: bool, message: str = "") -> None:
+    def _trigger_qec_download(self, scope: str) -> None:
+        if self._busy:
+            if scope == self._qec_download_scope and not self._qec_stop_requested:
+                self._qec_stop_requested = True
+                self.action_requested.emit("qec_download_cancel")
+                self._refresh_controls()
+            return
+        self.action_requested.emit({
+            "all": "qec_download_all",
+            "missing": "qec_download_missing",
+            "selected": "qec_download_selected",
+        }[scope])
+
+    def set_download_busy(
+        self, busy: bool, message: str = "", *, scope: str = "all",
+    ) -> None:
         self._busy = busy
+        self._qec_download_scope = scope if busy else None
+        if not busy:
+            self._qec_stop_requested = False
         if message:
             self.qec_status.setText(message)
         self._refresh_controls()
@@ -2072,13 +2092,24 @@ class WorkflowPage(QWidget):
         )
         self.qec_portal_button.setEnabled(not paused and self.profile_id == "coolant_pump")
         self.qec_export_button.setEnabled(not paused and has_rows)
-        self.download_all_button.setEnabled(not paused and not self._busy and has_rows)
         qec_coverage = self._source_coverage.get("qec")
-        self.download_missing_button.setEnabled(
-            not paused and not self._busy and bool(
-                qec_coverage is not None and qec_coverage.missing_qec
+        choices = {
+            "all": (self.download_all_button,
+                    "Alle QEC-Berichte herunterladen / aktualisieren", has_rows),
+            "missing": (self.download_missing_button,
+                        "Download fortsetzen",
+                        bool(qec_coverage and qec_coverage.missing_qec)),
+            "selected": (self.download_selected_button,
+                         "Markierte herunterladen",
+                         bool(self.qec_table.selectionModel().selectedRows())),
+        }
+        for scope, (button, normal_label, available) in choices.items():
+            active = self._busy and self._qec_download_scope == scope
+            button.setText("Abruf stoppen" if active else normal_label)
+            button.setEnabled(
+                active and not self._qec_stop_requested
+                or not self._busy and not paused and available
             )
-        )
         qec_parsing_busy = "qec" in self._context_parsers_busy
         self.qec_parse_all_button.setText(
             "Parsing stoppen" if qec_parsing_busy
@@ -2104,12 +2135,7 @@ class WorkflowPage(QWidget):
                 qec_coverage is not None and qec_coverage.can_resume_parsing
             )
         )
-        self.download_selected_button.setEnabled(
-            not paused and not self._busy and bool(
-                self.qec_table.selectionModel().selectedRows()
-            )
-        )
-        self.cancel_download_button.setEnabled(self._busy)
+        self.cancel_download_button.setEnabled(False)
         self.local_qec_button.setEnabled(not paused and not self._busy)
         self.ai_export_button.setEnabled(not paused and has_rows)
         self.ai_import_button.setEnabled(not paused)
