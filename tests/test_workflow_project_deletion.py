@@ -11,7 +11,9 @@ from ntf_insight.ingestion.artifacts import RawArchive, SourceType
 from ntf_insight.storage.cluster_evidence_store import ClusterEvidenceStore
 from ntf_insight.storage.duckdb_store import DuckDBStore
 from ntf_insight.storage.qec_workflow_store import QecWorkflowStore
-from ntf_insight.storage.workflow_progress import WorkflowProgressStore
+from ntf_insight.storage.workflow_progress import (
+    WorkflowProgress, WorkflowProgressStore,
+)
 from ntf_insight.storage.workflow_project_deletion import (
     fully_delete_project, remove_project_assignment,
 )
@@ -109,9 +111,7 @@ def test_fully_delete_only_exclusive_files_and_keep_other_project(tmp_path):
     )
     WorkflowProgressStore(store).save(
         "coolant_pump", "A111222",
-        __import__(
-            "ntf_insight.storage.workflow_progress", fromlist=["WorkflowProgress"]
-        ).WorkflowProgress(step=3, reviewed_steps=(3,)),
+        WorkflowProgress(step=3, reviewed_steps=(3,)),
     )
     result = fully_delete_project(store, root, "coolant_pump", "A 111 222")
     assert result.complete
@@ -184,7 +184,7 @@ def test_project_settings_confirmation_requires_exact_part_number(tmp_path, monk
     from ntf_insight.app.pages.project_settings_page import ProjectSettingsPage
 
     app = QApplication.instance() or QApplication([])
-    store, projects = _storage(tmp_path / "data")
+    _store, projects = _storage(tmp_path / "data")
     widget = ProjectSettingsPage(projects)
     widget.select_project("coolant_pump", "A 111 222")
     requested = []
