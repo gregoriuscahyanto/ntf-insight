@@ -37,6 +37,9 @@ from ntf_insight.storage.workflow_source_activity import WorkflowSourceActivity
 from ntf_insight.storage.workflow_ssl_selection import (
     WorkflowSSLSelection, fin_ssl_groups,
 )
+from ntf_insight.storage.workflow_source_coverage import (
+    SourceCoverage, get_workflow_coverage,
+)
 from ntf_insight.storage.workflow_progress import (
     STEP_COUNT, WorkflowProgressStore, normalize_part_number,
 )
@@ -106,6 +109,7 @@ class WorkflowPage(QWidget):
         self.ai_chain = WorkflowAIChainStore(progress_store.store)
         self.ssl_selection = WorkflowSSLSelection(progress_store.store)
         self.source_activity = WorkflowSourceActivity(progress_store.store)
+        self._source_coverage: dict[str, SourceCoverage] = {}
         self._project_rows: list[dict] = []
         self._fin_findings: dict[str, str] = {}
         self.context_files = []
@@ -340,6 +344,18 @@ class WorkflowPage(QWidget):
             actions, "Alle QEC-Berichte herunterladen / aktualisieren",
             lambda: self.action_requested.emit("qec_download_all"),
         )
+        self.download_missing_button = self._add_action(
+            actions, "Download fortsetzen",
+            lambda: self.action_requested.emit("qec_download_missing"),
+            tooltip="Nur QEC-Fälle ohne aktuellen JSON-Bericht abrufen; "
+                    "bereits vorhandene Berichte nicht erneut herunterladen.",
+        )
+        self.qec_parse_resume_button = self._add_action(
+            actions, "Parsing fortsetzen",
+            lambda: self.action_requested.emit("qec_parse_resume"),
+            tooltip="Nur lokal vorhandene, noch nicht erfolgreich indexierte "
+                    "QEC-JSON-Berichte mit dem vorhandenen Parser nachverarbeiten.",
+        )
         self.download_selected_button = self._add_action(
             actions, "Markierte herunterladen",
             lambda: self.action_requested.emit("qec_download_selected"),
@@ -356,12 +372,19 @@ class WorkflowPage(QWidget):
         body.addLayout(actions)
         self.qec_donut = WorkflowDonut("QEC-Berichte · eindeutige FINs")
         body.addWidget(self.qec_donut)
+        self.qec_coverage = QLabel(objectName="PageSubtitle")
+        self.qec_coverage.setWordWrap(True)
+        body.addWidget(self.qec_coverage)
+        self.qec_parse_progress = QProgressBar()
+        self.qec_parse_progress.setMaximumHeight(9)
+        self.qec_parse_progress.setTextVisible(False)
+        body.addWidget(self.qec_parse_progress)
         self.qec_status = QLabel(objectName="PageSubtitle")
         self.qec_status.setWordWrap(True)
         body.addWidget(self.qec_status)
         self.qec_table, self.qec_model = _create_table((
             "FIN", "QEC-Fall", "Referenz", "Sachnummer",
-            "Letzter Download", "Downloadstatus",
+            "Letzter Download", "Downloadstatus", "Parsing",
         ))
         self.qec_table.selectionModel().selectionChanged.connect(
             lambda *_: self._refresh_controls()
@@ -420,17 +443,21 @@ class WorkflowPage(QWidget):
         self.context_scraper_buttons: dict[str, dict[str, QPushButton]] = {}
         self.context_import_buttons: dict[str, QPushButton] = {}
         self.context_counts: dict[str, QLabel] = {}
-        for column, heading in enumerate(
-            ("Quelle", "Abruf", "Abbruch", "Parser", "Datei", "Letzter Abruf / Import", "Bestand")
-        ):
+        for column, heading in enumerate((
+            "Quelle", "Abruf", "Stop", "Parser", "Datei",
+            "Letzter Abruf / Import", "Dokumente / FINs",
+        )):
             scraper_grid.addWidget(QLabel(heading, objectName="PageSubtitle"), 0, column)
         self.context_source_dates: dict[str, QLabel] = {}
         self.context_source_names: dict[str, QLabel] = {}
+        self.context_coverage_bars: dict[str, QProgressBar] = {}
         for index, (category, label) in enumerate(EVIDENCE_CATEGORIES[:4], start=1):
             name = QLabel(label)
             self.context_source_names[category] = name
             scraper_grid.addWidget(name, index, 0)
             buttons: dict[str, QPushButton] = {}
+            fetch_layout = QVBoxLayout()
+            fetch_layout.setSpacing(2)
             fetch = QPushButton("Abrufen", objectName="WorkflowAction")
             if category in ("diagnosis_viewer", "tips_writer"):
                 fetch.clicked.connect(
@@ -439,10 +466,24 @@ class WorkflowPage(QWidget):
                 )
             else:
                 fetch.setEnabled(False)
-                fetch.setText("Nicht verfügbar")
-                fetch.setToolTip("Für diese Quelle existiert noch kein freigegebener Scraper.")
+                fetch.setText("Kein Scraper")
+                fetch.setToolTip("Für diese Quelle existiert kein freigegebener Scraper.")
             buttons["all"] = fetch
-            scraper_grid.addWidget(fetch, index, 1)
+            fetch_layout.addWidget(fetch)
+            resume_download = QPushButton("Fehlende abrufen", objectName="WorkflowAction")
+            resume_download.setToolTip(
+                "Nur FINs ohne erfolgreichen Abrufstand oder mit "
+                "unvollständigem Portalabruf erneut abfragen. "
+                "Die tatsächliche Portal-Dokumentenzahl ist vorab unbekannt."
+            )
+            resume_download.clicked.connect(
+                lambda _checked=False, c=category:
+                self.action_requested.emit(f"context_scrape:{c}:missing")
+            )
+            resume_download.setVisible(category in ("diagnosis_viewer", "tips_writer"))
+            buttons["missing"] = resume_download
+            fetch_layout.addWidget(resume_download)
+            scraper_grid.addLayout(fetch_layout, index, 1)
             cancel = QPushButton("Stop", objectName="WorkflowAction")
             cancel.setVisible(category in ("diagnosis_viewer", "tips_writer"))
             cancel.clicked.connect(
@@ -451,24 +492,43 @@ class WorkflowPage(QWidget):
             )
             buttons["cancel"] = cancel
             scraper_grid.addWidget(cancel, index, 2)
+            parser_layout = QVBoxLayout()
+            parser_layout.setSpacing(2)
             parser = QPushButton("Einlesen …", objectName="WorkflowAction")
             parser.clicked.connect(
                 lambda _checked=False, c=category:
                 self.action_requested.emit(f"context_parse:{c}")
             )
             parser.setToolTip(
-                "Vorhandenen Quellenparser verwenden; Parserstatus wird "
-                "in Datenquellen angezeigt. Celonis-Dateien können bislang "
-                "nur als Original archiviert werden."
+                "Vorhandene Quelldateien auswählen und mit dem lokalen Parser "
+                "strukturiert indexieren."
             )
             if category == "celonis":
                 parser.setText("Einlesen (Archiv)")
                 parser.setToolTip(
-                    "Celonis-Originaldatei lokal einlesen und archivieren. "
-                    "Ein strukturierter Celonis-Parser ist noch nicht verfügbar."
+                    "Celonis-Originaldatei lokal archivieren. Ein strukturierter "
+                    "Celonis-Parser ist noch nicht verfügbar."
                 )
             buttons["parse"] = parser
-            scraper_grid.addWidget(parser, index, 3)
+            parser_layout.addWidget(parser)
+            resume_parse = QPushButton("Parsing fortsetzen", objectName="WorkflowAction")
+            resume_parse.clicked.connect(
+                lambda _checked=False, c=category:
+                self.action_requested.emit(f"context_parse_resume:{c}")
+            )
+            resume_parse.setToolTip(
+                "Nur dokumentiert heruntergeladene/archivierte Dateien "
+                "ohne erfolgreich gespeichertes Parsergebnis erneut einlesen."
+            )
+            if category == "celonis":
+                resume_parse.setText("Parser fehlt")
+                resume_parse.setToolTip(
+                    "Keine strukturierte Celonis-Auswertung implementiert."
+                )
+                resume_parse.setEnabled(False)
+            buttons["resume_parse"] = resume_parse
+            parser_layout.addWidget(resume_parse)
+            scraper_grid.addLayout(parser_layout, index, 3)
             archive = QPushButton("+ Beleg", objectName="WorkflowAction")
             archive.clicked.connect(
                 lambda _checked=False, c=category:
@@ -481,8 +541,20 @@ class WorkflowPage(QWidget):
             timestamp.setWordWrap(True)
             self.context_source_dates[category] = timestamp
             scraper_grid.addWidget(timestamp, index, 5)
-            count = QLabel("0", objectName="PageSubtitle")
-            scraper_grid.addWidget(count, index, 6)
+            cell = QVBoxLayout()
+            cell.setSpacing(3)
+            count = QLabel("0 Dokumente", objectName="PageSubtitle")
+            count.setWordWrap(True)
+            count.setMinimumWidth(205)
+            cell.addWidget(count)
+            bar = QProgressBar()
+            bar.setTextVisible(False)
+            bar.setMaximumHeight(8)
+            bar.setRange(0, 100)
+            bar.setValue(0)
+            cell.addWidget(bar)
+            scraper_grid.addLayout(cell, index, 6)
+            self.context_coverage_bars[category] = bar
             self.context_counts[category] = count
             self.context_scraper_buttons[category] = buttons
         body.addLayout(scraper_grid)
@@ -1188,6 +1260,16 @@ class WorkflowPage(QWidget):
             "info" if str(row["fin"]).upper() in eligible else "muted"
             for row in self._project_rows
         ])
+        self._source_coverage = get_workflow_coverage(
+            self.progress_store.store, self.progress_store.store.path.parent,
+            self._scoped_rows, self.context_files,
+        )
+        qec_coverage = self._source_coverage["qec"]
+        self.qec_coverage.setText(qec_coverage.display())
+        self.qec_parse_progress.setValue(
+            round(100 * qec_coverage.parsed_documents
+                  / max(1, qec_coverage.local_documents))
+        )
         reports = [
             local_qec_archive(self.qec_root, row["fin"], row["reference"])
             for row in self._scoped_rows
@@ -1197,10 +1279,22 @@ class WorkflowPage(QWidget):
                 row["fin"], row["case_id"], row["reference"],
                 row["part_number"], report.date_label if report else "—",
                 "Gespeichert" if report else "Ausstehend",
+                (
+                    "Geparst" if (
+                        str(row["fin"]).upper(), str(row["reference"])
+                    ) in qec_coverage.parsed_qec
+                    else "Ausstehend" if report else "—"
+                ),
             )
             for row, report in zip(self._scoped_rows, reports)
         ], row_states=[
-            "success" if report else "muted" for report in reports
+            (
+                "success" if (
+                    str(row["fin"]).upper(), str(row["reference"])
+                ) in qec_coverage.parsed_qec
+                else "warning" if report else "muted"
+            )
+            for row, report in zip(self._scoped_rows, reports)
         ])
         by_fin: dict[str, list[bool]] = defaultdict(list)
         for row, report in zip(self._scoped_rows, reports):
@@ -1253,6 +1347,26 @@ class WorkflowPage(QWidget):
             grouped["Weitere"] = sum(value for _, value in ordered[5:])
         self.cause_donut.set_counts(grouped)
         self._refresh_ssl_menu()
+        self._update_coverage_labels()
+
+    def _update_coverage_labels(self) -> None:
+        """Anzeige nur aus verifizierter Dateiliste und gespeicherten Parserläufen."""
+        for category, label in self.context_counts.items():
+            status = self._source_coverage.get(category)
+            if status is None:
+                continue
+            label.setText(status.display())
+            label.setToolTip(status.note)
+            bar = self.context_coverage_bars[category]
+            bar.setValue(round(
+                100 * status.parsed_documents / max(1, status.local_documents)
+            ))
+            bar.setToolTip(status.display() + "\n" + status.note)
+            label.setStyleSheet(
+                "color: #268763;" if status.local_documents
+                and status.local_documents == status.parsed_documents else
+                "color: #bd8318;" if status.local_documents else ""
+            )
 
     def _show_chatgpt_cluster_details(self) -> None:
         index = self.chatgpt_cluster_table.currentIndex().row()
@@ -1400,9 +1514,13 @@ class WorkflowPage(QWidget):
         self.qec_import_button.setEnabled(not paused and not self._import_busy)
         for button in self.context_import_buttons.values():
             button.setEnabled(not paused and not self._context_busy)
-        for buttons in self.context_scraper_buttons.values():
-            buttons["parse"].setEnabled(
-                not paused and not self._context_busy and not self._import_busy
+        for category, buttons in self.context_scraper_buttons.items():
+            blocked = self._context_busy or self._import_busy
+            buttons["parse"].setEnabled(not paused and not blocked)
+            status = self._source_coverage.get(category)
+            buttons["resume_parse"].setEnabled(
+                not paused and not blocked and status is not None
+                and status.can_resume_parsing
             )
         self.cluster_originals.setEnabled(not paused and not self._context_busy)
         has_first = self.first_package is not None
@@ -1435,6 +1553,12 @@ class WorkflowPage(QWidget):
             buttons = self.context_scraper_buttons[category]
             busy = category in self._context_scrapers_busy
             buttons["all"].setEnabled(not paused and not busy and bool(self._scoped_rows))
+            status = self._source_coverage.get(category)
+            buttons["missing"].setEnabled(
+                not paused and not busy and bool(
+                    status is not None and status.missing_fins
+                )
+            )
             buttons["cancel"].setEnabled(busy)
         self.cancel_import_button.setEnabled(self._import_busy)
         self.resume_import_button.setEnabled(
@@ -1443,6 +1567,16 @@ class WorkflowPage(QWidget):
         self.qec_portal_button.setEnabled(not paused and self.profile_id == "coolant_pump")
         self.qec_export_button.setEnabled(not paused and has_rows)
         self.download_all_button.setEnabled(not paused and not self._busy and has_rows)
+        qec_coverage = self._source_coverage.get("qec")
+        self.download_missing_button.setEnabled(
+            not paused and not self._busy and bool(
+                qec_coverage is not None and qec_coverage.missing_qec
+            )
+        )
+        self.qec_parse_resume_button.setEnabled(
+            not paused and not self._busy and not self._import_busy
+            and bool(qec_coverage is not None and qec_coverage.can_resume_parsing)
+        )
         self.download_selected_button.setEnabled(
             not paused and not self._busy and bool(
                 self.qec_table.selectionModel().selectedRows()
