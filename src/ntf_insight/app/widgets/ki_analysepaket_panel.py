@@ -80,6 +80,7 @@ class KIAnalysepaketPanel(QWidget):
     """Default: structured pseudonyms. Raw QEC documents are explicitly opt-in."""
 
     transfer_busy = Signal(bool)
+    analysis_updated = Signal()
 
     def __init__(
         self, service: SourceImportService, *, parent: QWidget | None = None,
@@ -391,6 +392,7 @@ class KIAnalysepaketPanel(QWidget):
             "Vorschläge bleiben separat und bis zur fachlichen Prüfung offen."
         )
         self._refresh_imports()
+        self.analysis_updated.emit()
 
     def _import_failed(self, message: str) -> None:
         self.status.setText("ChatGPT-Rückimport abgebrochen: " + message)
