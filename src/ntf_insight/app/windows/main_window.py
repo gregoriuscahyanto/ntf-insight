@@ -347,6 +347,7 @@ class MainWindow(QMainWindow):
         dialog.setMinimumWidth(510)
         dialog.setMinimumDuration(0)
         dialog.setAutoClose(False)
+        dialog.setAutoReset(False)
         dialog.setWindowModality(Qt.WindowModality.WindowModal)
         dialog.setWindowFlags(
             Qt.WindowType.Dialog | Qt.WindowType.CustomizeWindowHint
