@@ -164,6 +164,15 @@ def _scope_snapshot(database: Path, data_root: Path, profile: str, part: str) ->
                     "SELECT report_id,fin FROM quicktest_reports"
                 ).fetchall() if str(fin).upper() in fins
             }
+        if "quicktest_ecus" in available:
+            for report_id, ecu_code, ecu_name in con.execute(
+                "SELECT report_id,ecu_code,ecu_name FROM quicktest_ecus"
+            ).fetchall():
+                if report_id in report_ids:
+                    ecu_names.update(
+                        str(value).upper() for value in (ecu_code, ecu_name)
+                        if value and str(value).strip()
+                    )
 
         _project_rows(con, "workflow_projects", profile, key, available)
         if "workflow_progress" in available:
@@ -253,6 +262,12 @@ def _scope_snapshot(database: Path, data_root: Path, profile: str, part: str) ->
                     "SELECT DISTINCT source_sha256 FROM source_knowledge_rows"
                 ).fetchall()
             )
+            for (ecu,) in con.execute(
+                "SELECT DISTINCT json_extract_string(payload_json, '$.EcuNm') "
+                "FROM source_knowledge_rows"
+            ).fetchall():
+                if ecu and str(ecu).strip():
+                    ecu_names.add(str(ecu).strip().upper())
         if "source_knowledge_documents" in available:
             _retain(
                 con, "source_knowledge_documents", "source_sha256",
@@ -278,9 +293,30 @@ def _scope_snapshot(database: Path, data_root: Path, profile: str, part: str) ->
                     selected_shas.add(str(sha))
         _retain(con, "source_artifacts", "sha256", selected_shas, available)
         _retain(con, "parse_runs", "artifact_sha256", selected_shas, available)
-        _retain(con, "dtc_trigger_definitions", "ecu", ecu_names, available)
-        _retain(con, "ecu_change_records", "ecu", ecu_names, available)
-        _retain(con, "dtc_manual_review_marks", "ecu", ecu_names, available)
+        ecu_names = {
+            value for value in ecu_names if value and len(value) <= 48
+        }
+        for table in (
+            "dtc_trigger_definitions", "ecu_change_records",
+            "dtc_manual_review_marks",
+        ):
+            if table not in available:
+                continue
+            if not ecu_names:
+                if con.execute(
+                    f'SELECT EXISTS(SELECT 1 FROM "{table}" LIMIT 1)'
+                ).fetchone()[0]:
+                    raise ValueError(
+                        "Relevante Steuergeräte fehlen. Bitte vor dem Export "
+                        "in Projekteinstellungen die ECU-Liste festlegen."
+                    )
+                continue
+            names = sorted(ecu_names)
+            placeholders = ",".join("?" for _ in names)
+            con.execute(
+                f'DELETE FROM "{table}" WHERE upper(ecu) NOT IN ({placeholders})',
+                names,
+            )
         con.execute("CHECKPOINT")
     return fins, {"references": references, "shas": selected_shas, "cases": case_ids}, shared_source
 
