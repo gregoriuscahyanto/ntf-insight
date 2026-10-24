@@ -13,6 +13,10 @@ Der Einstiegspunkt **Workflow** verbindet bereits bestehende Ansichten, ohne bes
 
 ## Bedienung
 
+- **Direkte Navigation:** Die sechs großen Kacheln sind Schaltflächen. Ein Klick öffnet direkt den QEC-Quellbereich, den QEC-Berichtsabruf, die NTF-Fallentscheidung, QuickTests, die Pumpen-Clusteranalyse oder das ChatGPT-Analysepaket. Die Seite springt dabei zum richtigen Bereich innerhalb der bestehenden Detailansicht; die Workflow-Startseite selbst ist nicht scrollbar.
+- **Weiter / Zurück:** Wählt den Nachbar-Schritt und öffnet ebenfalls dessen Arbeitsbereich. Über die Seitenleiste **Workflow** gelangt man jederzeit zur Statusübersicht zurück.
+- **Import abbrechen / fortsetzen:** Wenn kein laufender bzw. fortsetzbarer Import vorhanden ist, erscheint direkt auf der Workflow-Seite eine kurze Statusmeldung statt einer funktionslosen Navigation.
+
 - Die Startseite enthält keine `QScrollArea`. Bei einer zu kleinen Fensterhöhe wird kein eigenständiger Seitenscrollbereich hinzugefügt; die Anordnung richtet sich nach der Fenstergröße.
 - Der aktive Schritt erhält eine hervorgehobene Kontur; offene und bereits bearbeitete Stationen sind separat markiert. Der Fortschrittsbalken nutzt Quellabdeckung und die explizit bestätigten fachlichen Schritte. Er ist keine Qualitäts- oder Ursachenwahrscheinlichkeit.
 - **Pausieren** blockiert Schrittwechsel und fachliche Bestätigung; **Fortsetzen** stellt den Zustand wieder her. Ein bereits laufender Quellenimport wird dadurch nicht abgebrochen. Dies erfolgt weiterhin über den vorhandenen Button **Import abbrechen**, anschließend **Import fortsetzen** unter Datenquellen.
