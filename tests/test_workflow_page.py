@@ -851,6 +851,7 @@ def test_first_chatgpt_dialog_has_both_optins_unchecked_and_safely_passes_choice
     assert calls[0] == (chosen, {
         "mit_freitext": True,
         "mit_qec_originalen": True,
+        "confirmation_parent": dialog,
     })
     assert not dialog._running  # Nur ein erfolgreich gestarteter Export sperrt.
     dialog.close()
