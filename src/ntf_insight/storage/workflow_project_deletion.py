@@ -239,6 +239,18 @@ def fully_delete_project(
                 "WHERE profile_id=? AND part_key=?", [profile, key],
             ).fetchall()
         } if "workflow_first_ai_packages" in available else set()
+        if "workflow_second_ai_exports" in available:
+            followup_packages = {
+                row[0] for row in con.execute(
+                    "SELECT DISTINCT paket_id FROM workflow_second_ai_exports "
+                    "WHERE profile_id=? AND part_key=?", [profile, key],
+                ).fetchall()
+            }
+            if followup_packages - packages:
+                raise ValueError(
+                    "Nicht verknüpfte zweite ChatGPT-Analyse vorhanden. "
+                    "Vollständiges Löschen aus Sicherheitsgründen verweigert."
+                )
         for package in packages:
             if con.execute(
                 "SELECT EXISTS(SELECT 1 FROM workflow_first_ai_packages "
