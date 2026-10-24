@@ -218,3 +218,30 @@ def test_first_chatgpt_package_is_restricted_to_selected_fins(tmp_path):
         export_ki_analysepaket(
             source, tmp_path / "empty.zip", selected_fins=set(),
         )
+
+
+
+def test_ssl_filtered_opt_in_qec_originals_keep_only_chosen_fin(tmp_path):
+    root = tmp_path / "evidence"
+    root.mkdir()
+    source = make_data(root, qec=True)
+    source.store.save_case(NTFCase(
+        case_id="OTHER-QEC-FALL-2",
+        vehicle=Vehicle(vin=FIN_B, model_series="214"),
+        component_type="Kühlmittelpumpe",
+        component_profile_id="coolant_pump",
+        qec_reference="22222",
+        qec_part_number="B-OTHER",
+    ))
+    result = export_ki_analysepaket(
+        source, tmp_path / "selected_with_originals.zip",
+        mit_qec_originalen=True, selected_fins={FIN},
+    )
+    with ZipFile(result.pfad) as archive:
+        names = archive.namelist()
+        reports = [item for item in names if item.endswith("/qec.json")]
+        assert len(reports) == 1
+        assert FIN.encode("ascii") in archive.read(reports[0])
+        assert FIN_B.encode("ascii") not in archive.read(reports[0])
+        manifest = json.loads(archive.read("manifest.json"))
+        assert manifest["ssl_fin_filter_aktiv"] is True
