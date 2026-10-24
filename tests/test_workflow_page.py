@@ -302,6 +302,11 @@ def test_context_scrapers_use_only_current_qec_part_with_single_fetch_action(
     page.cards[3].click()
 
     monkeypatch.setattr(window, "_portable_transfer_ready", lambda: True)
+    from PySide6.QtWidgets import QMessageBox
+    monkeypatch.setattr(
+        QMessageBox, "question",
+        lambda *_args, **_kwargs: QMessageBox.StandardButton.Yes,
+    )
     cases = window.pages["cases"]
     calls = []
     quicktest_worker = FakeWorker()
