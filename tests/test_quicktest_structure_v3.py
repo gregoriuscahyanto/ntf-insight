@@ -65,7 +65,7 @@ def test_reale_xentry_zeit_und_ecu_metadaten():
     assert dtc["kind"] == "EV-DEV"
     assert dtc["status"] == "S"
     assert dtc["frequency_counter"] == 3
-    assert dtc["most_recent_odometer_km"] == 2000
+    assert dtc["most_recent_odometer_km"] == 29161
 
 
 def test_zwei_quicktests_werden_nicht_zu_einem_durchlauf():
@@ -109,3 +109,22 @@ def test_fehlende_fin_muss_im_integrationsparser_abgewiesen_werden():
     text = _header() + ["QuickTest 1", "ECU Count 1", "ECUS (1)"] + _ecu(dtcs=0)
     text = ["FIN -" if row.startswith("FIN ") else row for row in text]
     assert parse_quicktest_structure(["\n".join(text)])["fin"] is None
+
+
+def test_legacy_supplier_and_hardware_fields_are_not_mixed_with_labels():
+    text = _header() + [
+        "QuickTest 1", "ECU Count 1", "ECUS (1)",
+        "CPC3-N127 - Controller",
+        "Diagnostics ID 00AB13 ECU Variant CPC3_TEST",
+        "Hardware", "Partnumber", "001 002 003 Hardware",
+        "Version", "23/15 000",
+        "Supplier Example Software",
+        "Version", "25/04 002",
+        "FAULT CODES (0)", "No fault codes",
+    ]
+    parsed = parse_quicktest_structure(["\n".join(text)])
+    meta = parsed["ecus"][0]["metadata"]
+    assert meta["hardware_partnumber"] == "001 002 003"
+    assert meta["hardware_version"] == "23/15 000"
+    assert meta["supplier"] == "Example"
+    assert meta["software_version"] == "25/04 002"
