@@ -56,6 +56,7 @@ class KIAnalyseWorker(QThread):
 
 
 class ChatGPTImportWorker(QThread):
+    progress = Signal(str)
     completed = Signal(object)
     failed = Signal(str)
 
@@ -72,6 +73,7 @@ class ChatGPTImportWorker(QThread):
         try:
             result = ChatGPTAnalyseStore(self.service.store).import_file(
                 self.path, private_csv=self.private_csv,
+                progress=self.progress.emit,
             )
         except Exception as exc:
             self.failed.emit(f"{type(exc).__name__}: {exc}")
@@ -91,6 +93,10 @@ class KIAnalysepaketPanel(QWidget):
     export_failed = Signal(str)
     export_finished = Signal()
     analysis_imported = Signal(object)
+    analysis_import_started = Signal(str)
+    analysis_import_progress = Signal(str)
+    analysis_import_failed = Signal(str)
+    analysis_import_finished = Signal()
 
     def __init__(
         self, service: SourceImportService, *, parent: QWidget | None = None,
@@ -421,44 +427,55 @@ class KIAnalysepaketPanel(QWidget):
             return
         self.import_from_path(Path(filename))
 
-    def import_from_path(self, path: Path) -> None:
-        """Import ohne zweiten Dateidialog, z. B. für Workflow 05."""
+    def import_from_path(self, path: Path) -> bool:
+        """Ergebnis ohne zweiten Dateidialog importieren; Fehler sichtbar melden."""
         if not self._can_start():
-            return
+            return False
         path = Path(path)
         if not path.is_file() or path.stat().st_size > MAX_JSON_SIZE:
-            QMessageBox.warning(self, "Ungültige Datei", "JSON-Datei fehlt oder ist zu groß.")
-            return
+            self._import_failed("JSON-Datei fehlt oder ist zu groß.")
+            return False
         try:
             payload = json.loads(path.read_text(encoding="utf-8-sig"))
             paket_id = payload["paket_id"]
             self.analysis_store._mapping(paket_id, None)
             mapping_path = None
-        except (KeyError, ValueError, TypeError) as exc:
-            # The mapping can remain on a different PC. In that case the user
-            # supplies the local private file; it never leaves this computer.
+        except (OSError, json.JSONDecodeError, KeyError, ValueError, TypeError) as exc:
+            # Nur bei tatsächlich fehlender DB-Zuordnung lokale CSV anbieten.
+            # Die private Datei darf niemals extern hochgeladen werden.
             if "Paketzuordnung nicht" not in str(exc):
-                QMessageBox.warning(self, "Ergebnis nicht zuordenbar", str(exc))
-                return
+                self._import_failed(str(exc))
+                return False
             mapping_file, _ = QFileDialog.getOpenFileName(
                 self, "Lokale NICHT_HOCHLADEN-Zuordnung auswählen",
                 str(Path.home()), "Private Paketzuordnung (*.csv)",
             )
             if not mapping_file:
-                return
+                self._import_failed(
+                    "Lokale Pseudonymzuordnung wurde nicht ausgewählt. "
+                    "Es wurden keine Fälle geändert."
+                )
+                return False
             mapping_path = Path(mapping_file)
 
         self.import_worker = ChatGPTImportWorker(
             self.service, path, private_csv=mapping_path,
         )
+        self.import_worker.progress.connect(self._import_progress)
         self.import_worker.completed.connect(self._import_completed)
         self.import_worker.failed.connect(self._import_failed)
         self.import_worker.finished.connect(self._import_finished)
         self.import_button.setEnabled(False)
         self.export_button.setEnabled(False)
         self.status.setText("ChatGPT-Ergebnis und lokale Fallzuordnung prüfen …")
+        self.analysis_import_started.emit(path.name)
         self.transfer_busy.emit(True)
         self.import_worker.start()
+        return True
+
+    def _import_progress(self, message: str) -> None:
+        self.status.setText(message)
+        self.analysis_import_progress.emit(message)
 
     def _import_completed(self, result: dict) -> None:
         suffix = " (bereits identisch importiert)" if result["bereits_importiert"] else ""
@@ -473,6 +490,7 @@ class KIAnalysepaketPanel(QWidget):
 
     def _import_failed(self, message: str) -> None:
         self.status.setText("ChatGPT-Rückimport abgebrochen: " + message)
+        self.analysis_import_failed.emit(message)
 
     def _import_finished(self) -> None:
         worker, self.import_worker = self.import_worker, None
@@ -481,6 +499,7 @@ class KIAnalysepaketPanel(QWidget):
         self.import_button.setEnabled(True)
         self.export_button.setEnabled(True)
         self.transfer_busy.emit(False)
+        self.analysis_import_finished.emit()
 
     def _refresh_imports(self) -> None:
         self._visible = self.analysis_store.list_case_findings(limit=2000)
