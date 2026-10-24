@@ -1313,7 +1313,10 @@ class WorkflowPage(QWidget):
                 row["part_number"], report.date_label if report else "—",
                 "Gespeichert" if report else "Ausstehend",
                 (
-                    "Geparst" if (
+                    "Mit Hinweisen" if (
+                        str(row["fin"]).upper(), str(row["reference"])
+                    ) in qec_coverage.partial_qec
+                    else "Geparst" if (
                         str(row["fin"]).upper(), str(row["reference"])
                     ) in qec_coverage.parsed_qec
                     else "Ausstehend" if report else "—"
@@ -1322,7 +1325,10 @@ class WorkflowPage(QWidget):
             for row, report in zip(self._scoped_rows, reports)
         ], row_states=[
             (
-                "success" if (
+                "warning" if (
+                    str(row["fin"]).upper(), str(row["reference"])
+                ) in qec_coverage.partial_qec
+                else "success" if (
                     str(row["fin"]).upper(), str(row["reference"])
                 ) in qec_coverage.parsed_qec
                 else "warning" if report else "muted"
@@ -1420,6 +1426,7 @@ class WorkflowPage(QWidget):
                 not status.unsupported_parser
                 and bool(status.local_documents)
                 and status.local_documents == status.parsed_documents
+                and not status.partial_documents
                 and (
                     status.total_cases is None
                     or status.parsed_cases == status.total_cases
