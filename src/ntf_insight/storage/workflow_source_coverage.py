@@ -12,7 +12,6 @@ TP/Celonis: Dokument- und Parse-Zähler, FIN-Zuordnung ggf. unbekannt.
 from __future__ import annotations
 
 import json
-import re
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
@@ -20,14 +19,13 @@ from pathlib import Path
 from ntf_insight.acquisition.diagnosis_viewer import read_last_attempt
 from ntf_insight.acquisition.qec_archive import local_qec_archive
 from ntf_insight.acquisition.tips_archive import local_tips_cases
-from ntf_insight.ingestion.artifacts import ParseStatus, SourceType, sha256_file
+from ntf_insight.ingestion.artifacts import ParseStatus, sha256_file
 from ntf_insight.ingestion.real_source_parsers import AutoExportParser, QuickTestPdfParser
 from ntf_insight.ingestion.qec_json import QECJsonParser
 from ntf_insight.ingestion.tips_json import TipsJsonParser
 from ntf_insight.storage.cluster_evidence_store import EvidenceFile
 from ntf_insight.storage.duckdb_store import DuckDBStore
 
-_FIN = re.compile(r"[A-HJ-NPR-Z0-9]{17}\Z")
 
 
 @lru_cache(maxsize=8192)
@@ -175,6 +173,10 @@ def _tp_sources(
     """Quelle und nachweislich geparste FINs (keine Schätzung anhand Dateinamen)."""
     if not target_fins:
         return set(), set()
+    if len(target_fins) > 10000:
+        raise ValueError("Zu viele FINs für die Dokumentenabdeckung.")
+    eligible = sorted(target_fins)
+    placeholders = ",".join("?" for _ in eligible)
     with store.connect() as con:
         if not (
             _has_table(con, "source_knowledge_rows")
@@ -182,11 +184,15 @@ def _tp_sources(
         ):
             return set(), set()
         rows = con.execute(
-            "SELECT r.source_sha256,r.fin FROM source_knowledge_rows r "
+            "SELECT DISTINCT r.source_sha256,r.fin FROM source_knowledge_rows r "
             "JOIN source_knowledge_documents d ON d.source_sha256=r.source_sha256 "
             "WHERE d.source_kind='autoexport_rows' "
             "AND json_extract_string(d.metadata_json, '$.source_type')='tp_dashboard' "
-            "AND r.fin IS NOT NULL"
+            "AND (CASE WHEN length(trim(r.fin))=20 "
+            "AND left(upper(trim(r.fin)),3)='MBC' "
+            "THEN substr(upper(trim(r.fin)),4) ELSE upper(trim(r.fin)) END) "
+            f"IN ({placeholders})",
+            eligible,
         ).fetchall()
     shas = set()
     fins = set()
