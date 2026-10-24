@@ -34,6 +34,7 @@ class ProjectDeleteResult:
     report_count: int = 0
     files_deleted: int = 0
     shared_files_retained: int = 0
+    cleanup_warning: str = ""
 
 
 def _existing_project(store: DuckDBStore, profile: str, number: str) -> NTFProject:
@@ -467,18 +468,23 @@ def fully_delete_project(
             raise
 
     # Keine Quarantänedatei vor einem erfolgreichen DB-COMMIT entfernen.
+    warning = ""
     try:
         shutil.rmtree(quarantine)
-    except OSError as exc:
-        raise OSError(
-            "Projektdaten gelöscht, aber Restdateien liegen noch im "
-            f"Quarantäneverzeichnis: {quarantine}"
-        ) from exc
+    except OSError:
+        # Die DB-Transaktion ist bereits erfolgreich committed.
+        # Nicht als "abgebrochene Löschung" ausgeben, sondern GUI neu laden
+        # und verbliebene geschützte Dateien präzise melden.
+        warning = (
+            "Datenbank bereinigt, aber lokale Quarantänedateien konnten nicht "
+            f"entfernt werden: {quarantine}"
+        )
     return ProjectDeleteResult(
         project=project,
         complete=True,
         cases_deleted=case_count,
         report_count=report_count,
-        files_deleted=len(paths),
+        files_deleted=len(paths) if not warning else 0,
         shared_files_retained=len(shared),
+        cleanup_warning=warning,
     )
