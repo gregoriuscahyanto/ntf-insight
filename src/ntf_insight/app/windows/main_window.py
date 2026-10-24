@@ -951,6 +951,7 @@ class MainWindow(QMainWindow):
         source = self.pages["sources"]
         status = workflow._source_coverage.get(category)
         kind = {
+            "qec": SourceType.QEC_REPORT,
             "tp_dashboard": SourceType.TP_DASHBOARD,
             "diagnosis_viewer": SourceType.SHORT_TEST,
             "tips_writer": SourceType.TIPS_CASE,
@@ -1613,6 +1614,19 @@ class MainWindow(QMainWindow):
     def _workflow_action(self, action: str) -> None:
         workflow = self.pages["workflow"]
         source = self.pages["sources"]
+        if action.startswith("parser_diagnostics:"):
+            category = action.partition(":")[2]
+            coverage = workflow._source_coverage.get(category)
+            if coverage is None or not coverage.local_paths:
+                workflow.set_notice(
+                    "Keine verifizierten lokalen Unterlagen dieser Quelle vorhanden.",
+                    error=True,
+                )
+                return
+            source._export_parser_problems(
+                category=category, scope_paths=coverage.local_paths,
+            )
+            return
         if action.startswith("context_files:"):
             self._context_import(action.partition(":")[2])
             return
