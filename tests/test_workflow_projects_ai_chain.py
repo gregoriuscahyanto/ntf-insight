@@ -136,7 +136,6 @@ def test_project_page_opens_new_project_and_configures_ecus(tmp_path, monkeypatc
     assert workflow.local_cluster_widget is window.pages["cases"].cluster_workspace
     assert not hasattr(workflow, "context_base_button")
     assert not hasattr(workflow, "context_export_button")
-    assert not hasattr(workflow, "workspaces").__bool__() is False if False else True
     workflow.new_project_button.click()
     assert window.stack.currentWidget() is settings
     settings.part_edit.setText("A 123 456")
