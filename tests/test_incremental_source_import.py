@@ -128,7 +128,7 @@ def test_qec_cancel_after_some_reports_and_resume_from_db(tmp_path):
     parsed = {"count": 0}
 
     def progress(text):
-        if "Referenzquelle einlesen:" in text:
+        if text.startswith("Referenzquelle einlesen"):
             parsed["count"] += 1
             if parsed["count"] == 2:
                 cancel.set()
