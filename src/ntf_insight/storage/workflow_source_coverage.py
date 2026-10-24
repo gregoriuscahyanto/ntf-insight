@@ -264,28 +264,49 @@ def get_workflow_coverage(
 
     # Diagnosis: echte PDFs, nicht nur Abrufstatus/Ordner. Portalanzahl
     # pro FIN kann vor dem Abruf nicht vorausgesetzt werden.
-    local_pdfs: list[Path] = []
+    quick_sources: dict[str, tuple[Path, str]] = {}
     for fin in sorted(fins):
         folder = root / "quicktests" / fin
         if folder.is_symlink() or not folder.is_dir():
             continue
-        local_pdfs.extend(
-            path for path in sorted(folder.glob("*.pdf"))
-            if path.is_file() and not path.is_symlink()
-        )
+        for path in sorted(folder.glob("*.pdf")):
+            sha = _file_hash(path)
+            if sha:
+                quick_sources.setdefault(sha, (path, fin))
+    for sha, item in evidence.get("diagnosis_viewer", {}).items():
+        if item.source_path.suffix.lower() != ".pdf":
+            continue
+        actual_sha = _file_hash(item.source_path)
+        if actual_sha == sha:
+            verified_fin = index["quicktests"].get(sha, "")
+            # Nicht aus dem Dateinamen auf eine FIN schließen.
+            quick_sources.setdefault(sha, (item.source_path, verified_fin))
+    # Auch direkt über Datenquellen importierte QuickTests dürfen nicht
+    # verschwinden, wenn der ursprüngliche Portalordner nicht mehr existiert.
+    all_artifacts = {artifact.sha256: artifact for artifact in store.load_artifacts()}
+    for sha, fin in index["quicktests"].items():
+        if fin not in fins or sha in quick_sources:
+            continue
+        artifact = all_artifacts.get(sha)
+        if artifact is None:
+            continue
+        path = Path(artifact.archived_path)
+        if path.suffix.lower() == ".pdf" and _file_hash(path) == sha:
+            quick_sources[sha] = (path, fin)
     quick_parsed: set[str] = set()
     quick_local_fins: set[str] = set()
     quick_pending: list[Path] = []
     quick_parsed_docs = 0
     quick_partial = 0
-    for path in local_pdfs:
-        fin = path.parent.name
-        quick_local_fins.add(fin)
-        sha = _file_hash(path)
+    for sha, (path, fin_hint) in quick_sources.items():
+        verified_fin = index["quicktests"].get(sha, "")
+        fin = verified_fin if verified_fin in fins else fin_hint
+        if fin in fins:
+            quick_local_fins.add(fin)
         success, partial = _was_parsed(
             sha, QuickTestPdfParser, "quicktest",
             latest, index, fin=fin,
-        )
+        ) if fin in fins else (False, False)
         if success:
             quick_parsed_docs += 1
             quick_partial += int(partial)
@@ -308,7 +329,7 @@ def get_workflow_coverage(
             quick_missing.append(fin)
     result["diagnosis_viewer"] = SourceCoverage(
         "diagnosis_viewer", len(fins), len(quick_local_fins),
-        len(quick_parsed), len(local_pdfs), quick_parsed_docs, quick_partial,
+        len(quick_parsed), len(quick_sources), quick_parsed_docs, quick_partial,
         pending_paths=tuple(quick_pending),
         missing_fins=tuple(quick_missing),
         note="Portalsitzungen pro FIN vorab unbekannt.",
@@ -317,23 +338,48 @@ def get_workflow_coverage(
     # TIPS: Ein tips.json = ein heruntergeladener TIPS-Fallbericht, nicht
     # alle enthaltenen Anhänge. Fehlerhafte/teilweise Portalabrufe werden
     # trotz einzelner Berichtdateien erneut angeboten.
-    tips_reports: list[Path] = []
+    tips_reports: dict[str, tuple[Path, str, str]] = {}
     for fin in sorted(fins):
-        tips_reports.extend(local_tips_cases(root, fin))
+        for path in local_tips_cases(root, fin):
+            sha = _file_hash(path)
+            if sha:
+                tips_reports.setdefault(
+                    sha, (path, fin, path.parent.name.removeprefix("fall_"))
+                )
+    for sha, item in evidence.get("tips_writer", {}).items():
+        if item.source_path.suffix.lower() != ".json":
+            continue  # TIPS-CSV muss gesondert über "Einlesen" importiert werden.
+        if _file_hash(item.source_path) == sha and sha not in tips_reports:
+            doc = index["documents"].get(sha)
+            metadata = doc[1] if doc and doc[0] == "tips_live_case" else {}
+            fin = str(metadata.get("fin") or "").upper()
+            reference = str(metadata.get("reference") or "")
+            tips_reports[sha] = (item.source_path, fin, reference)
+    for sha, doc in index["documents"].items():
+        if doc[0] != "tips_live_case" or sha in tips_reports:
+            continue
+        fin = str(doc[1].get("fin") or "").upper()
+        if fin not in fins:
+            continue
+        artifact = all_artifacts.get(sha)
+        if artifact:
+            path = Path(artifact.archived_path)
+            if path.suffix.lower() == ".json" and _file_hash(path) == sha:
+                tips_reports[sha] = (
+                    path, fin, str(doc[1].get("reference") or ""),
+                )
     tips_pending: list[Path] = []
     tips_parsed_fins: set[str] = set()
     tips_parsed_docs = 0
     tips_partial = 0
     tips_local_fins: set[str] = set()
-    for path in tips_reports:
-        fin = path.parent.parent.name
-        reference = path.parent.name.removeprefix("fall_")
-        tips_local_fins.add(fin)
-        sha = _file_hash(path)
+    for sha, (path, fin, reference) in tips_reports.items():
+        if fin in fins:
+            tips_local_fins.add(fin)
         success, partial = _was_parsed(
             sha, TipsJsonParser, "tips_live_case",
             latest, index, fin=fin, reference=reference,
-        )
+        ) if fin in fins else (False, False)
         if success:
             tips_parsed_docs += 1
             tips_partial += int(partial)
@@ -368,7 +414,6 @@ def get_workflow_coverage(
     # Provenienz-Zeilen liefern FIN-Abdeckung.
     tp_fin_sources = _tp_sources(store, fins)
     tp_documents = index["documents"]
-    all_artifacts = {a.sha256: a for a in store.load_artifacts()}
     tp_selected: dict[str, Path] = {
         sha: entry.source_path
         for sha, entry in evidence.get("tp_dashboard", {}).items()
