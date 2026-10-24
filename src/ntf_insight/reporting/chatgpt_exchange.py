@@ -28,6 +28,10 @@ _REVIEW = {"Offen", "Bestätigt", "Abgelehnt"}
 BelegQuelle = Literal[
     "qec_berichte", "qec_felder", "qec_dokumente", "quicktests",
     "dtc_beobachtungen", "ecu_staende", "tips", "technische_referenz",
+    "autoexport_diagnosen", "werkstatt_historie", "autoexport_tips",
+    "pumpentausch_historie", "fall_ereignisse", "ecu_versionshistorie",
+    "diagnose_qualitaet", "lieferantenbefunde_NICHT_CLUSTER",
+    "lieferantenquellen_bestand_NICHT_CLUSTER",
 ]
 Bewertung = Literal[
     "NTF plausibel", "NTF fraglich", "Kein reiner NTF",
@@ -197,7 +201,10 @@ class ChatGPTAnalyseStore:
                 raise ValueError("Private Zuordnung enthält eine falsche Paketkennung.")
             art = str(row.get("art") or "")
             pseudo = str(row.get("pseudonym") or "")
-            if art not in {"fahrzeug", "fall", "qec_bericht", "quicktest", "teil"}:
+            if art not in {
+                "fahrzeug", "fall", "qec_bericht", "quicktest", "teil",
+                "quelle", "tips_ref", "lieferant", "seriennummer", "charge",
+            }:
                 raise ValueError("Unbekannter privater Zuordnungstyp.")
             if not _IDENT.fullmatch(pseudo):
                 raise ValueError("Ungültiges Pseudonym in der privaten Zuordnung.")
@@ -213,6 +220,7 @@ class ChatGPTAnalyseStore:
                 else str(row.get("fin") or "")
                 if art == "fahrzeug"
                 else str(row.get("sachnummer_original") or "")
+                if art == "teil" else str(row.get("original_wert") or "")
             )
             if not original:
                 raise ValueError("Leere Originalkennung in der privaten Zuordnung.")
@@ -269,7 +277,8 @@ class ChatGPTAnalyseStore:
                 row["fall_id_original"] if art == "fall"
                 else row["quelle_id_original"] if art in {"quicktest", "qec_bericht"}
                 else row["fin"] if art == "fahrzeug"
-                else row["sachnummer_original"]
+                else row["sachnummer_original"] if art == "teil"
+                else row.get("original_wert", "")
             )
             result[key] = {
                 "art": art, "pseudonym": pseudo, "original": original,
@@ -289,6 +298,15 @@ class ChatGPTAnalyseStore:
             "dtc_beobachtungen": "quicktest",
             "ecu_staende": "quicktest",
             "tips": "fall",
+            "autoexport_diagnosen": "quelle",
+            "werkstatt_historie": "quelle",
+            "autoexport_tips": "quelle",
+            "ecu_versionshistorie": "quelle",
+            "pumpentausch_historie": "fall",
+            "fall_ereignisse": "fall",
+            "diagnose_qualitaet": "fall",
+            "lieferantenbefunde_NICHT_CLUSTER": "fall",
+            "lieferantenquellen_bestand_NICHT_CLUSTER": "quelle",
         }
         for item in belege:
             if item.quelle == "technische_referenz":

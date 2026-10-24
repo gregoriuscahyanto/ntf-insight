@@ -33,6 +33,7 @@ from ntf_insight.storage.quicktest_store import QuickTestStore
 from ntf_insight.storage.source_knowledge_store import SourceKnowledgeStore
 from ntf_insight.ingestion.qec_json import list_downloaded_qec_reports
 from ntf_insight.ingestion.artifacts import sha256_file
+from ntf_insight.reporting.ki_analysepaket_erweiterung import autoexport_fins, build_zusatztabellen
 from ntf_insight.reporting.chatgpt_exchange import (
     ChatGPTAnalyseStore, ergebnis_schema, ergebnis_vorlage,
 )
@@ -40,7 +41,7 @@ from ntf_insight.reporting.qec_originalbelege import (
     plan_qec_originale, write_qec_originale,
 )
 
-EXPORT_VERSION = 2
+EXPORT_VERSION = 3
 _FIN_RE = re.compile(r"^[A-HJ-NPR-Z0-9]{17}$", re.I)
 _SAFE_CODE_RE = re.compile(r"^[A-Za-z0-9_.:/+\-]{1,45}$")
 MAX_QEC_RECORDS = 200_000
@@ -141,7 +142,7 @@ def _excel_summary(tables: dict[str, tuple[tuple[str, ...], list[dict]]], stats:
     summary.append(["QuickTest-Berichte", stats["quicktests"]])
     summary.append(["DTC-Beobachtungen", stats["dtcs"]])
     summary.append(["QEC-JSON-Berichte", stats["qec_berichte"]])
-    summary.append(["Freitext aus QEC/TIPS", "Enthalten" if stats["freitexte"] else "Nicht enthalten"])
+    summary.append(["QEC/TIPS/AutoExport/Lieferanten-Freitext", "Enthalten" if stats["freitexte"] else "Nicht enthalten"])
     summary.append(["Hinweis", "Private Zuordnung bleibt lokal; Freitext kann echte Identifikatoren enthalten."])
     summary.append(["Methodik", "Clustermerkmale vor Tausch; spätere Befunde/Bewertungen separat."])
     for sheet_name, table_name in (
@@ -304,7 +305,8 @@ def export_ki_analysepaket(
         raise ValueError("Mehr als 200.000 QEC-Detailzeilen; Export bitte eingrenzen.")
 
     fins = (
-        {case.vin for case in cases}
+        autoexport_fins(service)
+        | {case.vin for case in cases}
         | {row[1] for row in reports}
         | {str(doc["metadata"].get("fin")) for doc in documents if doc["metadata"].get("fin")}
         | {fin for fin in tips_counts if _FIN_RE.fullmatch(str(fin or ""))}
@@ -668,7 +670,9 @@ def export_ki_analysepaket(
         {"thema": "FIN-Identitaet", "regel": "Nur Pseudonyme in ZIP. Die eindeutige Zuordnung wird getrennt und lokal gespeichert."},
         {"thema": "QEC-Freitext", "regel": "Standard ohne Freitext. Optionaler Freitext ist NICHT anonymisiert; interne Freigabe erforderlich."},
         {"thema": "SMR-D", "regel": "Ohne strukturellen Parser nur Inventar-/Vollstaendigkeitsnachweis, keine vorgetaeuschten SMR-D-Diagnosefeatures."},
-        {"thema": "Dateien", "regel": "Keine PDF-, JSON-, XML-, SMR-D-, TIPS-Originale, Anhaenge, CSV-Rohquellen, ZIP-Archive oder Pfade enthalten."},
+        {"thema": "Dateien", "regel": "Keine AutoExport-Rohdateien oder internen Quellpfade enthalten. QEC-JSON-Originale und zugehoerige Anhaenge nur mit expliziter Opt-in-Originaloption."},
+        {"thema": "AutoExport", "regel": "AutoExport-Beobachtungen nur ueber autoexport_fallbezug mit Lage vor_tausch als zusaetzliche Diagnosefeatures nutzen; keine vollstaendigen Null-DTC-QuickTests unterstellen."},
+        {"thema": "Lieferantenbelege", "regel": "Lieferantenbefunde und -dokumente sind nachgelagerte Beweismittel, niemals Clustereingaben. Externe originale Lieferantenquellen werden nur inventarisiert."},
         {"thema": "Quelle", "regel": "Strukturierte Daten aus der lokalen NTF-Insight-DuckDB. Nicht belegte oder mehrdeutige Verknuepfung bleibt offen."},
         {"thema": "Einsatz", "regel": "Dieses Paket ist nicht automatisch freigegeben/anonym. Datenschutz und Informationsschutz vor Upload pruefen."},
     ]
@@ -685,6 +689,13 @@ def export_ki_analysepaket(
         for item in features
     ]
 
+    advance("Weitere lokale AutoExport- und Ereignisquellen zusammenstellen …")
+    zusatz = build_zusatztabellen(
+        service, cases, aliases, case_aliases, part_aliases,
+        secret=secret, mit_freitext=mit_freitext, artifacts=artifacts,
+        quicktest_fallbezug=fall_quicktests, quicktests=quicktest_rows,
+        progress=progress,
+    )
     table_items = {
         "cluster_input": (cluster_columns, cluster_input),
         "fahrzeuge": (("fahrzeug_id", "baureihe", "anzahl_faelle", "anzahl_quicktests", "tips_autoexport_rohzeilen"), fahrzeuge),
@@ -702,6 +713,8 @@ def export_ki_analysepaket(
         "methodik": (("thema", "regel"), methodik),
     }
 
+    table_items.update(zusatz.tabellen)
+
     stats = {
         "fahrzeuge": len(fahrzeuge), "faelle": len(faelle),
         "quicktests": len(reports), "dtcs": len(dtcs),
@@ -709,6 +722,7 @@ def export_ki_analysepaket(
         "smrd_originalquellen_nur_inventar": len(smrd_rows),
         "datenstand": "lokale DuckDB",
         "qec_originale_angefordert": mit_qec_originalen,
+        **zusatz.statistiken,
         "qec_nur_original_nicht_geparst": sum(
             doc.get("source_kind") == "qec_local_unparsed" for doc in documents
         ),
@@ -734,6 +748,8 @@ def export_ki_analysepaket(
         "Cluster anhand VOR-Tausch-DTCs und zulässiger technischer Merkmale bilden.\n"
         "QEC-/SSL-Endbefunde, Nach-Tausch-DTCs und NTF-Klassifikationen\n"
         "nur für Ursachenprüfung/Validierung verwenden (keine Leakage).\n"
+        "AutoExport-DTCs nur mit autoexport_fallbezug.csv und vor_tausch nutzen.\n"
+        "Lieferantenbefunde und -dokumente nur nach Clustering auswerten.\n"
         "NTF-Bewertung: NTF plausibel / NTF fraglich / Kein reiner NTF /\n"
         "Nicht bewertbar / Nicht bewertet. Keine unbelegte Schuldzuweisung.\n"
         "Sicherheit der Zuordnung: Belegt / Plausibel / Offen.\n"
@@ -773,12 +789,22 @@ def export_ki_analysepaket(
         "   ungeprueft als Cluster-Features verwenden!\n"
         "5. bewertungen_NICHT_CLUSTER.csv erst NACH dem Clustering ansehen.\n"
         "6. CHATGPT_ANWEISUNG.txt, chatgpt_ergebnis_vorlage.json und\n"
-        "   chatgpt_ergebnis_schema.json geben das Rückgabeformat vor.\n\n"
+        "   chatgpt_ergebnis_schema.json geben das Rückgabeformat vor.\n"
+        "7. autoexport_diagnosen.csv nur ueber autoexport_fallbezug.csv\n"
+        "   mit Lage vor_tausch als zusaetzliche DTC-Features nutzen.\n"
+        "8. werkstatt_historie.csv, pumpentausch_historie.csv,\n"
+        "   fall_ereignisse.csv, ecu_versionshistorie.csv, autoexport_tips.csv\n"
+        "   und diagnose_qualitaet.csv pruefen; keine Ergebnis-Leakage.\n"
+        "9. lieferantenbefunde_NICHT_CLUSTER.csv und\n"
+        "   lieferantenquellen_bestand_NICHT_CLUSTER.csv erst NACH\n"
+        "   der Clusterbildung als Pruefbelege auswerten.\n"
+        "10. QEC-Anlagen sind nur bei aktiviertem Original-Opt-in enthalten.\n"
+        "   Eigenstaendige Lieferanten-Originale sind nur inventarisiert.\n\n"
         "WARNUNG: Pseudonymisierung ist KEINE garantierte Anonymisierung.\n"
         "Seltene technische Konstellationen koennen reidentifizierend sein.\n"
         "Alle technischen Daten unterliegen der Unternehmensfreigabe.\n"
         + (
-            "ERHOEHTER SCHUTZBEDARF: QEC-Originaltexte und/oder TIPS-Freitexte\n"
+            "ERHOEHTER SCHUTZBEDARF: QEC-/TIPS-/AutoExport-/Lieferanten-Freitexte\n"
             "sind enthalten und NICHT anonymisiert! Nicht ungeprueft hochladen.\n"
             if (mit_freitext or mit_qec_originalen) else
             "Ohne QEC-/TIPS-Originalfreitext; Detailfelder fehlen absichtlich.\n"
@@ -839,9 +865,11 @@ def export_ki_analysepaket(
             "fall_id_original": "", "qec_referenz_original": "",
             "sachnummer_original": "", "quelle_id_original": qid,
         })
+    mapping_rows.extend(zusatz.private_zuordnungen)
     for entry in mapping_rows:
         entry["paket_id"] = paket_id
         entry.setdefault("quelle_id_original", "")
+        entry.setdefault("original_wert", "")
         if entry["art"] == "qec_bericht":
             entry["quelle_id_original"] = next(
                 sha for sha, pseudonym in qec_aliases.items()
@@ -851,6 +879,7 @@ def export_ki_analysepaket(
         (
             "paket_id", "art", "pseudonym", "fin", "fall_id_original",
             "qec_referenz_original", "sachnummer_original", "quelle_id_original",
+            "original_wert",
         ),
         mapping_rows,
     )

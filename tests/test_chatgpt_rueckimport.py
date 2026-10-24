@@ -133,7 +133,7 @@ def test_contract_is_embedded_and_returned_analysis_is_reviewable(tmp_path):
     assert "chatgpt_ergebnis_schema.json" in entries
     assert "CHATGPT_ANWEISUNG.txt" in entries
     assert manifest["paket_id"] == template["paket_id"]
-    assert manifest["schema_version"] == 2
+    assert manifest["schema_version"] == 3
     assert manifest["qec_originaldateien_enthalten"] is False
     assert template["faelle"] == []
     assert ergebnis_vorlage(template["paket_id"])["paket_id"] == template["paket_id"]
