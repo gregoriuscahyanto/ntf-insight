@@ -147,7 +147,7 @@ def test_project_page_opens_new_project_and_configures_ecus(tmp_path, monkeypatc
     assert "MCM" in workflow.project_ecus_label.text()
     assert workflow.part_number.text() == "A 123 456"
     assert not workflow.cluster_export_button.isEnabled()
-    assert workflow.pc_export_button.parent() is workflow
-    assert workflow.pc_import_button.parent() is workflow
+    assert workflow.project_export_button.parent() is workflow
+    assert workflow.project_import_button.parent() is workflow
     window.close()
     app.processEvents()
