@@ -644,6 +644,20 @@ def test_qec_and_underlagen_share_compact_no_scroll_layout(tmp_path, monkeypatch
     # CDD über zwei Spalten; übrige sechs Kategorien in nur drei Zeilen.
     assert page.context_technical_rows["cdd_smrd"].minimumHeight() >= 30
     assert page.context_technical_rows["additional"].isVisible()
+    assert (
+        page.context_review_button.geometry().bottom()
+        <= page.workspaces.widget(3).contentsRect().bottom()
+    )
+    # Kein Quell-Button-Text benötigt einen horizontalen Scrollbereich oder
+    # abgeschnittene Beschriftungen.
+    for button in (
+        page.download_all_button, page.download_missing_button,
+        page.qec_parse_all_button, buttons["all"], buttons["missing"],
+        buttons["parse"], buttons["resume_parse"], buttons["problem_zip"],
+    ):
+        assert button.fontMetrics().horizontalAdvance(button.text()) <= (
+            button.width() - 8
+        )
     source_rows = list(page.context_source_rows.values())
     assert all(
         previous.geometry().bottom() < following.geometry().top()
