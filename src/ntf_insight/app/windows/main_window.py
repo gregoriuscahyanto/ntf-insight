@@ -1792,6 +1792,13 @@ class MainWindow(QMainWindow):
         worker.completed.connect(self._context_import_completed)
         worker.failed.connect(self._context_failed)
         worker.finished.connect(self._context_worker_finished)
+        self._close_old_import_cards()
+        dialog = self._show_operation_progress(
+            "Technische Unterlagen importieren",
+            f"{len(paths)} Datei(en) als {CATEGORY_LABELS[category]} archivieren …",
+        )
+        self._context_import_dialog = dialog
+        worker.progress.connect(dialog.update_message)
         worker.start()
 
     def _drain_pending_context_imports(self) -> None:
@@ -1803,11 +1810,22 @@ class MainWindow(QMainWindow):
 
     def _context_import_completed(self, count: int) -> None:
         workflow = self.pages["workflow"]
+        if self._context_import_dialog is not None:
+            self._context_import_dialog.complete(
+                None,
+                details=f"{count} neue Unterlage(n) archiviert, "
+                "bereits bekannte Dateien übersprungen.",
+            )
         workflow.refresh_context_files()
         workflow.refresh()
         workflow.set_notice(f"{count} neue Unterlage(n) archiviert, Duplikate übersprungen.")
 
     def _context_failed(self, message: str) -> None:
+        if (
+            isinstance(self._context_worker, ClusterEvidenceImportWorker)
+            and self._context_import_dialog is not None
+        ):
+            self._context_import_dialog.fail(message)
         if self._second_export_dialog is not None and self._context_worker is not None:
             self._second_export_dialog.fail(message)
             self._pending_cluster_context = None
