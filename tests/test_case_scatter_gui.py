@@ -73,13 +73,13 @@ def test_cluster_workspace_replaces_scatter_tab_and_synchronizes_case_selection(
 
     assert "clusters" not in window.pages
     assert "clusters" not in window.navigation.buttons
-    assert cases.detail_tabs.widget(0) is cluster
-    assert cases.detail_tabs.tabText(0) == "Clusteranalyse"
-    assert cases.detail_tabs.widget(1) is cases.analysis_tab
-    assert cases.detail_tabs.widget(2) is cases.quicktest_browser
-    assert cases.detail_tabs.count() == 5
-    assert cases.detail_tabs.tabText(3) == "QuickTest-Gesamtauswertung"
-    assert cases.detail_tabs.tabText(4) == "ECU · SW-Übersicht"
+    assert cases.detail_tabs.indexOf(cluster) == -1
+    assert window.pages["workflow"].local_cluster_widget is cluster
+    assert cases.detail_tabs.widget(0) is cases.analysis_tab
+    assert cases.detail_tabs.widget(1) is cases.quicktest_browser
+    assert cases.detail_tabs.count() == 4
+    assert cases.detail_tabs.tabText(2) == "QuickTest-Gesamtauswertung"
+    assert cases.detail_tabs.tabText(3) == "ECU · SW-Übersicht"
     assert cluster is cases.autoexport_fin_workspace
     assert cluster.plot is not None
     assert cluster.start_button.text() == "Clusteranalyse starten"
@@ -91,7 +91,8 @@ def test_cluster_workspace_replaces_scatter_tab_and_synchronizes_case_selection(
     assert cases.selector.currentData() == "DEMO-004"
 
     cases.find_similar_button.click()
-    assert cases.detail_tabs.currentWidget() is cluster
+    assert window.pages["workflow"].workspaces.currentIndex() == 4
+    assert window.pages["workflow"].local_cluster_widget is cluster
     assert cluster._focused_case_id == "DEMO-004"
 
     cases.show_quicktests()
