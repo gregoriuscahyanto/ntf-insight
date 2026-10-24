@@ -175,6 +175,17 @@ QPushButton:hover {{
     background-color: {p["hover"]};
 }}
 
+/* Feste, kompakte Quelldatenaktionen ohne abgeschnittene Beschriftungen. */
+QPushButton#WorkflowAction[sourceCompact="true"] {{
+    font-size: 12px;
+    padding: 3px 5px;
+    border-radius: 6px;
+}}
+QFrame#SourceTableHeader {{
+    background: transparent;
+    border: none;
+}}
+
 /* Flächige Quellenampel: eindeutige Statusrückmeldung unabhängig von Textfarbe. */
 QFrame#SourceCoverageRow, QFrame#TechnicalEvidenceRow {{
     background-color: {p["surface"]};
