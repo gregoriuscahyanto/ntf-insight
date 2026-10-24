@@ -139,6 +139,11 @@ class _ParserDiagnosticsWorker(QThread):
 
 class SourcesPage(QWidget):
     sources_updated = Signal(str, int)
+    import_started = Signal(str)
+    import_progress = Signal(str)
+    import_completed = Signal(str)
+    import_failed = Signal(str)
+    import_ended = Signal()
     diagnostics_started = Signal(str)
     diagnostics_progress = Signal(str)
     diagnostics_saved = Signal(str)
@@ -796,9 +801,16 @@ class SourcesPage(QWidget):
             retry_failed_quicktests=retry_failed_quicktests,
         )
         self._worker.progress.connect(self.import_status.setText)
+        self._worker.progress.connect(self.import_progress.emit)
         self._worker.imported.connect(self._import_completed)
         self._worker.failed.connect(self._import_failed)
         self._worker.finished.connect(self._import_worker_finished)
+        task = (
+            "Fehlerhafte QuickTests erneut prüfen"
+            if retry_failed_quicktests else
+            f"{len(paths)} Quelldatei(en) importieren"
+        )
+        self.import_started.emit(task)
         self._worker.start()
 
     def _import_completed(self, summary: ImportSummary) -> None:
@@ -853,6 +865,7 @@ class SourcesPage(QWidget):
             or summary.fin_files_installed
         )
         self._refresh_all()
+        self.import_completed.emit(text)
 
     def _import_failed(self, message: str) -> None:
         self.import_status.setText(
@@ -860,6 +873,7 @@ class SourcesPage(QWidget):
             + " · Bereits archivierte Originaldateien bleiben erhalten."
         )
         self._refresh_all()
+        self.import_failed.emit(message)
 
     def _import_worker_finished(self) -> None:
         self.cancel_import_button.setEnabled(False)
@@ -886,6 +900,7 @@ class SourcesPage(QWidget):
         if worker is not None:
             worker.deleteLater()
         self._refresh_all()
+        self.import_ended.emit()
         if self._pending_reload:
             self.sources_updated.emit(self.import_status.text(), self._quicktests_added)
 
