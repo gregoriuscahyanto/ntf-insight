@@ -136,3 +136,27 @@ def test_context_package_rejects_unredacted_first_zip_without_opt_in(tmp_path):
             include_originals=False,
         )
     assert not (tmp_path / "nur-metadaten.zip").exists()
+
+
+
+def test_context_files_survive_pc_backup_and_restore(tmp_path):
+    from ntf_insight.ingestion.portable_backup import (
+        export_portable_backup, restore_portable_backup,
+    )
+
+    store = _store(tmp_path)
+    doc = tmp_path / "ecu_net.xml"
+    doc.write_text("<synthetic>test</synthetic>", encoding="utf-8")
+    store.add_files("coolant_pump", "A 123 456", "network_topology", [doc])
+    archive = tmp_path / "transfer.ntfbackup"
+    export_portable_backup(store.store.path.parent, archive)
+    destination = tmp_path / "pc2"
+    restore_portable_backup(archive, destination)
+    migrated = ClusterEvidenceStore(
+        DuckDBStore(destination / "ntf-insight.duckdb"),
+    )
+    files = migrated.list_files("coolant_pump", "A123456")
+    assert len(files) == 1
+    assert files[0].source_path.is_file()
+    assert files[0].source_path.read_bytes() == doc.read_bytes()
+    assert files[0].source_path.is_relative_to(destination)
