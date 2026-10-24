@@ -299,3 +299,34 @@ def test_workflow_buttons_show_actual_counts_and_resume_only_missing(tmp_path, m
     )
     window.close()
     app.processEvents()
+
+
+
+def test_unparsed_manual_evidence_counts_as_documents_not_fictitious_fin_cases(
+    tmp_path,
+):
+    root = tmp_path / "data"
+    store, _knowledge, evidence = _setup(root)
+    quicktest = tmp_path / "extern.pdf"
+    quicktest.write_bytes(b"%PDF-1.4\nsynthetic not yet parsed")
+    evidence.add_files(
+        "coolant_pump", "A111222", "diagnosis_viewer", [quicktest],
+    )
+    external_tips = _write_tips(tmp_path / "extern")
+    evidence.add_files(
+        "coolant_pump", "A111222", "tips_writer", [external_tips],
+    )
+    files = evidence.list_files("coolant_pump", "A111222")
+    result = get_workflow_coverage(store, root, _rows(), files)
+    quick = result["diagnosis_viewer"]
+    assert quick.local_documents == 1
+    assert quick.parsed_documents == 0
+    assert quick.downloaded_cases == 0  # FIN nicht aus Dateiname raten
+    assert quick.can_resume_parsing
+    assert quick.pending_paths[0].is_file()
+    tips = result["tips_writer"]
+    assert tips.local_documents == 1
+    assert tips.parsed_documents == 0
+    assert tips.downloaded_cases == 0
+    assert tips.can_resume_parsing
+    assert tips.pending_paths[0].is_file()
