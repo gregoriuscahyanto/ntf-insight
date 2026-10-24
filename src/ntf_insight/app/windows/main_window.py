@@ -231,10 +231,56 @@ class MainWindow(QMainWindow):
             except ValueError as exc:
                 workflow.set_notice(str(exc), error=True)
                 return
+        migrated = False
+        if len(counts) == 1:
+            # Ein unscoped Altworfklow ist nur dann eindeutig übernehmbar,
+            # wenn der vorhandene QEC-Master genau eine Sachnummer enthält.
+            from ntf_insight.storage.workflow_progress import WorkflowProgress
+
+            old_state = workflow.progress_store.load("coolant_pump", "")
+            part_state = workflow.progress_store.load("coolant_pump", part)
+            if old_state != WorkflowProgress() and part_state == WorkflowProgress():
+                workflow.progress_store.save("coolant_pump", part, old_state)
+                migrated = True
+            with workflow.progress_store.store.connect() as con:
+                con.execute("BEGIN TRANSACTION")
+                try:
+                    con.execute(
+                        "INSERT INTO cluster_evidence_files "
+                        "(profile_id,part_key,category,sha256) "
+                        "SELECT profile_id,?,category,sha256 FROM cluster_evidence_files "
+                        "WHERE profile_id=? AND part_key='' ON CONFLICT DO NOTHING",
+                        [part_key(part), "coolant_pump"],
+                    )
+                    con.execute(
+                        "INSERT INTO workflow_first_ai_packages "
+                        "(profile_id,part_key,paket_id,sha256) "
+                        "SELECT profile_id,?,paket_id,sha256 "
+                        "FROM workflow_first_ai_packages "
+                        "WHERE profile_id=? AND part_key='' ON CONFLICT DO NOTHING",
+                        [part_key(part), "coolant_pump"],
+                    )
+                    con.execute(
+                        "UPDATE workflow_second_ai_exports SET part_key=? "
+                        "WHERE profile_id=? AND part_key=''",
+                        [part_key(part), "coolant_pump"],
+                    )
+                    con.execute("COMMIT")
+                except Exception:
+                    con.execute("ROLLBACK")
+                    raise
         self._project_selected(project.profile_id, project.part_number)
         workflow.set_notice(
             f"{counts[part_key(part)]} vorhandene QEC-Fälle der Sachnummer "
             f"{part} sind jetzt im Projekt sichtbar; kein erneuter Import."
+            + (
+                " Vorheriger Workflow-Stand ebenfalls übernommen."
+                if migrated else ""
+            )
+            + (
+                " Achtung: Unterlagen ohne Sachnummer bitte separat prüfen."
+                if len(counts) > 1 else ""
+            )
         )
 
     def _project_transfer_export(self) -> None:
