@@ -519,13 +519,26 @@ def test_source_row_colors_and_live_document_progress(tmp_path, monkeypatch):
     bar = page.context_operation_bars["diagnosis_viewer"]
     assert bar.maximum() == 171 and bar.value() == 12
     assert page.context_operation_labels["diagnosis_viewer"].isHidden() is False
+    assert page.context_operation_labels["diagnosis_viewer"].text() == (
+        "Abruf: 12/171 FINs"
+    )
+    assert page.context_coverage_bars["diagnosis_viewer"].isHidden()
+    assert page.context_source_dates["diagnosis_viewer"].isHidden()
     page.set_context_operation("diagnosis_viewer", False)
     assert bar.isHidden()
+    assert not page.context_coverage_bars["diagnosis_viewer"].isHidden()
+    assert not page.context_source_dates["diagnosis_viewer"].isHidden()
     page.set_context_operation(
         "tp_dashboard", True, "Lokale Quelle parsen (1/2) …",
     )
     assert page.context_operation_bars["tp_dashboard"].maximum() == 2
     assert page.context_operation_bars["tp_dashboard"].value() == 1
+    assert page.context_operation_labels["tp_dashboard"].text() == (
+        "Parsing: 1/2 Dateien"
+    )
+    assert page.context_operation_labels["tp_dashboard"].toolTip().startswith(
+        "Lokale Quelle parsen"
+    )
     page.set_context_operation("tp_dashboard", False)
     window.close()
     app.processEvents()
