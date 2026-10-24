@@ -36,8 +36,10 @@ class ExportOperationDialog(QDialog):
             Qt.WindowType.Dialog | Qt.WindowType.CustomizeWindowHint
             | Qt.WindowType.WindowTitleHint
         )
-        self.setMinimumWidth(540)
-        self.resize(660, 275)
+        # Checkboxtexte dürfen auch bei längerer deutscher Beschriftung
+        # nicht rechts abgeschnitten werden.
+        self.setMinimumWidth(760 if options else 540)
+        self.resize(800 if options else 660, 275)
         self.setStyleSheet(
             "QDialog#NTFExportOperationDialog {"
             "background: #f5f7fa; border: 1px solid #aab7c2;"
@@ -51,6 +53,7 @@ class ExportOperationDialog(QDialog):
         self._started_at = 0.0
         self._units: tuple[int, int] | None = None
         self._destination: Path | None = None
+        self._destination_dir: Path | None = None
         layout = QVBoxLayout(self)
         layout.setContentsMargins(24, 24, 24, 20)
         layout.setSpacing(12)
@@ -117,6 +120,7 @@ class ExportOperationDialog(QDialog):
         self._started_at = time.monotonic()
         self._units = None
         self._destination = None
+        self._destination_dir = None
         self.start_button.hide()
         self.close_button.hide()
         self.folder_button.hide()
@@ -183,6 +187,9 @@ class ExportOperationDialog(QDialog):
     def _done(self) -> None:
         self._running = False
         self.clock.stop()
+        self.start_button.hide()
+        for checkbox in self.checkboxes.values():
+            checkbox.hide()
         self.progress.hide()
         self.time_label.hide()
         self.close_button.show()
@@ -198,6 +205,7 @@ class ExportOperationDialog(QDialog):
                 self.fail("Die exportierte Datei fehlt oder ist leer.")
                 return
             self._destination = destination
+            self._destination_dir = destination.parent
             self.folder_button.show()
             self.destination_label.setText(
                 f"Speicherort: {destination}\n"
@@ -216,7 +224,8 @@ class ExportOperationDialog(QDialog):
             self.fail("Der Exportordner konnte nicht gefunden werden.")
             return
         self._done()
-        self._destination = directory / "FIN-Exporte"
+        self._destination = None
+        self._destination_dir = directory
         self.folder_button.show()
         self.destination_label.setText(f"Speicherordner: {directory}")
         self.destination_label.show()
@@ -228,15 +237,16 @@ class ExportOperationDialog(QDialog):
     def fail(self, message: str) -> None:
         self._done()
         self._destination = None
+        self._destination_dir = None
         self.folder_button.hide()
         self.destination_label.hide()
         self.status.setText("Vorgang fehlgeschlagen:\n" + message)
 
     def open_destination(self) -> bool:
-        if self._destination is None:
+        if self._destination_dir is None:
             return False
         return QDesktopServices.openUrl(
-            QUrl.fromLocalFile(str(self._destination.parent))
+            QUrl.fromLocalFile(str(self._destination_dir))
         )
 
     def closeEvent(self, event) -> None:  # noqa: N802
