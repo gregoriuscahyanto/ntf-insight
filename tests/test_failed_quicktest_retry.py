@@ -137,6 +137,7 @@ def test_nur_fehlerhafte_wiederholen_erhaelt_v2_erfolge(tmp_path, monkeypatch):
     assert result.files_parsed == 1
     assert result.files_failed == 0
     assert result.quicktests_saved == 1
+    assert result.remaining_failed_quicktests == 0
     assert seen == [Path(failed.archived_path)]
     assert {run.parser_version for run in sources.store.load_parse_runs(ok.sha256)} == {
         "2.0.0"
@@ -160,6 +161,7 @@ def test_bekannt_fehlerhafte_koennen_mit_gleicher_version_nochmal_versucht_werde
     assert first.selected_failed_quicktests == 1
     assert first.files_failed == 1
     assert first.files_parsed == 0
+    assert first.remaining_failed_quicktests == 1
     second = importer.retry_failed_quicktests()
     assert second.selected_failed_quicktests == 1
     assert second.files_failed == 1
@@ -206,4 +208,5 @@ def test_fehler_reimport_abbruch_und_fortsetzung(tmp_path):
     finished = LocalBatchImporter(sources).retry_failed_quicktests()
     assert finished.selected_failed_quicktests == 3
     assert finished.files_parsed == 3
+    assert finished.remaining_failed_quicktests == 0
     assert not find_failed_quicktest_artifacts(sources)
