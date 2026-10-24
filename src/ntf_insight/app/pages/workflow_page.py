@@ -494,7 +494,7 @@ class WorkflowPage(QWidget):
         grid.addWidget(self.qec_problem_zip_button, 0, 3, Qt.AlignmentFlag.AlignTop)
 
         self.local_qec_button = _source_single(
-            4, QPushButton("Lokale Berichte", objectName="WorkflowAction"),
+            4, QPushButton("Einlesen …", objectName="WorkflowAction"),
         )
         self.local_qec_button.setToolTip("Lokale QEC-Berichte auswählen und einlesen")
         self.local_qec_button.clicked.connect(
