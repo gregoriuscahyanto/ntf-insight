@@ -306,13 +306,13 @@ def test_context_scrapers_use_only_current_qec_part_with_single_fetch_action(
     calls = []
     quicktest_worker = FakeWorker()
 
-    def fake_start(*, selected_only, fins_override=None):
-        calls.append(("diagnosis", selected_only, list(fins_override or [])))
+    def fake_start(*, selected_only, fins_override=None, retry_missing=False):
+        calls.append(("diagnosis", selected_only, list(fins_override or []), retry_missing))
         cases._quicktest_worker = quicktest_worker
 
     monkeypatch.setattr(cases, "_start_quicktest_download", fake_start)
     window._context_scrape("diagnosis_viewer", "all")
-    assert calls == [("diagnosis", False, ["WDD12345678901234"])]
+    assert calls == [("diagnosis", False, ["WDD12345678901234"], False)]
     assert page.context_scraper_buttons["diagnosis_viewer"]["cancel"].isEnabled()
     cases._quicktest_worker = None
     quicktest_worker.finished.emit()
