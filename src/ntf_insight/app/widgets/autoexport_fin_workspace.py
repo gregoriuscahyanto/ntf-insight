@@ -755,10 +755,14 @@ class AutoExportFinWorkspace(QWidget):
             excluded_findings=self._dtc_filter.exclude_findings,
         )
         if self._workflow_part_number:
+            def key(value: str) -> str:
+                return "".join(
+                    char for char in str(value).strip().upper() if char.isalnum()
+                )
             cases = tuple(
                 case for case in cases
-                if str(getattr(case, "qec_part_number", "") or "").strip().upper()
-                == self._workflow_part_number
+                if key(getattr(case, "qec_part_number", "") or "")
+                == key(self._workflow_part_number)
             )
         return tuple(cases)
 
