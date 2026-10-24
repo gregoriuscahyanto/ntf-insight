@@ -819,6 +819,10 @@ class MainWindow(QMainWindow):
         )
         if not filenames:
             return
+        context = (workflow.profile_id, workflow._context_part)
+        workflow.source_activity.record(
+            context[0], context[1], category, "Einlesen gestartet",
+        )
         before = source.source_type.currentIndex()
         index = source.source_type.findData(kind)
         try:
@@ -826,6 +830,17 @@ class MainWindow(QMainWindow):
             source._archive_paths([Path(name) for name in filenames])
         finally:
             source.source_type.setCurrentIndex(before)
+        worker = source._worker
+        if worker is not None:
+            worker.completed.connect(
+                lambda summary, ctx=context, cat=category:
+                self._context_parse_completed(cat, ctx, summary)
+            )
+            worker.failed.connect(
+                lambda _message, ctx=context, cat=category:
+                self._context_parse_failed(cat, ctx)
+            )
+        workflow.refresh_context_files()
         if category == "celonis":
             workflow.set_notice(
                 "Celonis-Dateien werden archiviert. Ein strukturierter "
@@ -836,6 +851,29 @@ class MainWindow(QMainWindow):
                 f"{len(filenames)} Datei(en) für vorhandenen Parser eingelesen. "
                 "Ergebnis und Fehlermeldungen unter Datenquellen prüfen."
             )
+
+    def _context_parse_completed(
+        self, category: str, context: tuple[str, str], summary: object,
+    ) -> None:
+        workflow = self.pages["workflow"]
+        result = (
+            "Abgebrochen" if summary.cancelled
+            else "Archiviert" if category == "celonis"
+            else "Eingelesen" if summary.files_parsed or summary.quicktests_saved
+            else "Fehlgeschlagen" if summary.files_failed
+            else "Archiviert"
+        )
+        workflow.source_activity.record(context[0], context[1], category, result)
+        workflow.refresh_context_files()
+
+    def _context_parse_failed(
+        self, category: str, context: tuple[str, str],
+    ) -> None:
+        workflow = self.pages["workflow"]
+        workflow.source_activity.record(
+            context[0], context[1], category, "Fehlgeschlagen",
+        )
+        workflow.refresh_context_files()
 
     def _context_import(self, category: str) -> None:
         """Fachunterlagen unverändert im vorhandenen lokalen Rohdatenarchiv sammeln."""
