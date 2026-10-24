@@ -42,6 +42,7 @@ class ClusterContextExportWorker(QThread):
     def __init__(
         self, store: ClusterEvidenceStore, profile: str, part_number: str,
         first_package: Path, destination: Path, *, include_originals: bool,
+        first_result: dict | None = None,
     ) -> None:
         super().__init__()
         self.store = store
@@ -50,6 +51,7 @@ class ClusterContextExportWorker(QThread):
         self.first_package = Path(first_package)
         self.destination = Path(destination)
         self.include_originals = include_originals
+        self.first_result = first_result
 
     def run(self) -> None:
         try:
@@ -57,6 +59,7 @@ class ClusterContextExportWorker(QThread):
                 self.store, self.profile, self.part_number,
                 self.first_package, self.destination,
                 include_originals=self.include_originals,
+                first_result=self.first_result,
             )
         except Exception as exc:  # Worker-Grenze: kein Qt-Thread-Absturz
             self.failed.emit(f"{type(exc).__name__}: {exc}")
