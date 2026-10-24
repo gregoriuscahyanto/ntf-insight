@@ -992,8 +992,11 @@ class MainWindow(QMainWindow):
         self._case_quicktest_import_pending = True
         source_page._archive_paths(paths)
 
-    def _portable_transfer_ready(self, *, allow_source_parser: bool = False) -> bool:
-        """Keine parallelen Transfers; optionale Freigabe nur für Parser-Vormerkung."""
+    def _portable_transfer_ready(
+        self, *, allow_source_parser: bool = False,
+        allow_context_import: bool = False,
+    ) -> bool:
+        """Exklusive Transfers sperren; Vormerkung nur für aktive Imports erlauben."""
         source = self.pages["sources"]
         cases = self.pages["cases"]
         qec = cases.qec_download
@@ -1014,7 +1017,13 @@ class MainWindow(QMainWindow):
                 )
             )
             and not self._case_quicktest_import_pending
-            and self._context_worker is None
+            and (
+                self._context_worker is None or (
+                    allow_context_import and isinstance(
+                        self._context_worker, ClusterEvidenceImportWorker
+                    )
+                )
+            )
             and self._project_transfer_worker is None
             and self._project_delete_worker is None
             and cases._quicktest_worker is None
@@ -1610,20 +1619,8 @@ class MainWindow(QMainWindow):
         importing = isinstance(self._context_worker, ClusterEvidenceImportWorker)
         # Projekttransfers/Exporte bleiben exklusiv. Nur ein laufender Parser
         # oder ein weiterer Unterlagenimport erlaubt das Vormerken.
-        if (
-            self._project_transfer_worker is not None
-            or self._project_delete_worker is not None
-            or self._context_worker is not None and not importing
-            or not self._portable_transfer_ready(
-                allow_source_parser=parsing
-            ) and not (
-                importing and self._context_worker is not None
-                and self._project_transfer_worker is None
-                and self._project_delete_worker is None
-                and source._worker is None
-                and source._diagnostics_worker is None
-                and not self._case_quicktest_import_pending
-            )
+        if not self._portable_transfer_ready(
+            allow_source_parser=parsing, allow_context_import=importing,
         ):
             workflow.set_notice(
                 "Ein Import, Download oder exklusiver Datentransfer läuft bereits.",
