@@ -29,7 +29,7 @@ class ClusterEvidenceImportWorker(QThread):
             count = self.store.add_files(
                 self.profile, self.part_number, self.category, self.paths,
             )
-        except (OSError, ValueError) as exc:
+        except Exception as exc:  # Worker-Grenze: kein Qt-Thread-Absturz
             self.failed.emit(f"{type(exc).__name__}: {exc}")
             return
         self.completed.emit(count)
@@ -58,7 +58,7 @@ class ClusterContextExportWorker(QThread):
                 self.first_package, self.destination,
                 include_originals=self.include_originals,
             )
-        except (OSError, ValueError) as exc:
+        except Exception as exc:  # Worker-Grenze: kein Qt-Thread-Absturz
             self.failed.emit(f"{type(exc).__name__}: {exc}")
             return
         self.completed.emit(result)
