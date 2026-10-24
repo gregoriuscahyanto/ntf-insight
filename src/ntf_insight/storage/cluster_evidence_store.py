@@ -32,6 +32,7 @@ ALLOWED_SUFFIXES = frozenset({
     ".cdd", ".smr-d", ".pdf", ".csv", ".tsv", ".xlsx", ".xls", ".json",
     ".xml", ".txt", ".docx", ".doc", ".pptx", ".ppt", ".png", ".jpg",
     ".jpeg", ".svg", ".rtf", ".msg", ".eml", ".zip",
+    ".smrd", ".dbc", ".arxml", ".odx", ".pdx", ".a2l", ".ldf", ".asc", ".fibex",
 })
 MAX_EVIDENCE_BYTES = 200 * 1024**2
 MAX_CATEGORY_FILES = 500
