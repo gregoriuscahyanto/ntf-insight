@@ -293,7 +293,7 @@ def test_workflow_buttons_show_actual_counts_and_resume_only_missing(tmp_path, m
     assert page.context_scraper_buttons["diagnosis_viewer"]["missing"].isEnabled()
     assert not page.context_scraper_buttons["celonis"]["resume_parse"].isEnabled()
     assert page.context_scraper_buttons["tips_writer"]["resume_parse"].text() == (
-        "Parsing fortsetzen"
+        "Ausstehendes Parsing fortsetzen"
     )
     window.close()
     app.processEvents()
