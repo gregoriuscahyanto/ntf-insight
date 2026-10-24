@@ -949,9 +949,21 @@ class WorkflowPage(QWidget):
         # Anzeige und intern normalisierte Sachnummer müssen dieselbe
         # Projektidentität abbilden (Leerzeichen/Trennzeichen sind zulässig).
         project = self.project_store.get(*current)
-        key = (project.profile_id, project.part_number) if project else current
-        idx = self.project_combo.findData(key)
-        self.project_combo.setCurrentIndex(idx if idx >= 0 else 0)
+        # Qt kann Python-Tupel im QVariant als Liste zurückgeben: findData()
+        # findet in diesem Fall selbst bei derselben Sachnummer keinen Eintrag.
+        # Deshalb die stabile Projektidentität explizit vergleichen.
+        from ntf_insight.storage.cluster_evidence_store import part_key
+        wanted = (self.profile_id, part_key(self._context_part))
+        idx = 0
+        for number in range(1, self.project_combo.count()):
+            item = self.project_combo.itemData(number)
+            if (
+                isinstance(item, (tuple, list)) and len(item) == 2
+                and item[0] == wanted[0] and part_key(item[1]) == wanted[1]
+            ):
+                idx = number
+                break
+        self.project_combo.setCurrentIndex(idx)
         self.project_combo.blockSignals(False)
         label = project.title if project is not None else (
             f"{'Kühlmittelpumpe' if self.profile_id == 'coolant_pump' else self.profile_id}"
