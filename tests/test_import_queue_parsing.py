@@ -111,3 +111,44 @@ def test_requested_parse_stop_remains_visible_during_late_progress(
     finally:
         window.close()
         app.processEvents()
+
+
+def test_import_completion_does_not_open_quicktests_automatically(
+    tmp_path, monkeypatch,
+):
+    """Auch bei vor dem Abbruch gespeicherten PDFs den Arbeitsbereich behalten."""
+    app, window = _window(tmp_path, monkeypatch)
+    try:
+        for initial_page in ("workflow", "sources"):
+            for cancelled in (False, True):
+                window.navigation.select_page(initial_page)
+                summary = (
+                    "Import unterbrochen (Fortsetzen möglich): 2 QuickTests"
+                    if cancelled else "Import abgeschlossen: 2 QuickTests"
+                )
+                window._reload_after_source_import(
+                    summary, quicktests_saved=2,
+                )
+                assert window.navigation.buttons[initial_page].isChecked()
+                assert window.stack.currentWidget() is window.pages[initial_page]
+                assert window.pages["sources"].import_status.text() == summary
+    finally:
+        window.close()
+        app.processEvents()
+
+
+def test_case_download_import_stays_in_case_area(tmp_path, monkeypatch):
+    """Von Fälle / FIN gestartete Downloads behalten ihren Kontext."""
+    app, window = _window(tmp_path, monkeypatch)
+    try:
+        window.navigation.select_page("cases")
+        window._case_quicktest_import_pending = True
+        window._reload_after_source_import(
+            "Import abgeschlossen: 1 QuickTest", quicktests_saved=1,
+        )
+        assert window.navigation.buttons["cases"].isChecked()
+        assert window.stack.currentWidget() is window.pages["cases"]
+        assert not window._case_quicktest_import_pending
+    finally:
+        window.close()
+        app.processEvents()
