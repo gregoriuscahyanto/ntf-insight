@@ -125,7 +125,7 @@ class WorkflowProgressStore:
                     step=excluded.step,
                     paused=excluded.paused,
                     reviewed_json=excluded.reviewed_json,
-                    updated_at=CURRENT_TIMESTAMP
+                    updated_at=now()
                 """,
                 [profile, part, state.step, state.paused, json.dumps(reviewed)],
             )
