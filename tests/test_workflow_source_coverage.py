@@ -501,7 +501,7 @@ def test_failed_or_untried_source_is_pending_regardless_of_new_parser_version(
     tmp_path,
 ):
     root = tmp_path / "data"
-    store, knowledge, _ = _setup(root)
+    store, _knowledge, _ = _setup(root)
     qec = _write_qec(root)
     source = RawArchive(root / "raw").archive(qec, SourceType.QEC_REPORT)
     store.save_artifact(source)
