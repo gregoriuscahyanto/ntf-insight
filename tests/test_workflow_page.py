@@ -814,3 +814,22 @@ def test_project_transfer_uses_same_blurred_progress_overlay(tmp_path, monkeypat
     assert window.stack.graphicsEffect() is None
     window.close()
     app.processEvents()
+
+
+def test_window_cannot_close_mid_zip_or_project_transfer(tmp_path, monkeypatch):
+    from PySide6.QtGui import QCloseEvent
+
+    app, window = _window(tmp_path, monkeypatch)
+    window._project_transfer_worker = object()
+    event = QCloseEvent()
+    window.closeEvent(event)
+    assert not event.isAccepted()
+    window._project_transfer_worker = None
+
+    window.pages["sources"]._diagnostics_worker = object()
+    event = QCloseEvent()
+    window.closeEvent(event)
+    assert not event.isAccepted()
+    window.pages["sources"]._diagnostics_worker = None
+    window.close()
+    app.processEvents()
