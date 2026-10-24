@@ -247,6 +247,7 @@ class WorkflowPage(QWidget):
 
         self.note = QLabel(objectName="PageSubtitle")
         self.note.setWordWrap(True)
+        self.note.hide()  # Nur relevante Fehler/konkrete Vorgangsresultate anzeigen.
         outer.addWidget(self.note)
         self.refresh_data()
         self.refresh_ai_chain()
@@ -259,10 +260,7 @@ class WorkflowPage(QWidget):
         body.setSpacing(7)
         heading = QLabel(title, objectName="CardTitle")
         body.addWidget(heading)
-        if subtitle:
-            label = QLabel(subtitle, objectName="PageSubtitle")
-            label.setWordWrap(True)
-            body.addWidget(label)
+        # Hilfetexte werden in Tooltips statt als dauerhafte Fließtexte gezeigt.
         self.workspaces.addWidget(widget)
         return widget, body
 
@@ -725,8 +723,7 @@ class WorkflowPage(QWidget):
         self.context_review_button.clicked.connect(self._review)
         body.addWidget(self.context_review_button)
         self.context_summary = QLabel(objectName="PageSubtitle")
-        self.context_summary.setWordWrap(True)
-        body.addWidget(self.context_summary)
+        self.context_summary.hide()  # Keine redundante Gesamtsumme unter Schritt 04.
 
     def _build_following_steps(self) -> None:
         """Die lokale FIN-Clusterberechnung wird in Schritt 05 eingehängt."""
@@ -855,14 +852,17 @@ class WorkflowPage(QWidget):
         self.project_combo.blockSignals(True)
         self.project_combo.clear()
         self.project_combo.addItem("Projekt wählen", None)
-        for project in projects:
+        for item in projects:
             self.project_combo.addItem(
-                project.title, (project.profile_id, project.part_number)
+                item.title, (item.profile_id, item.part_number)
             )
-        idx = self.project_combo.findData(current)
+        # Anzeige und intern normalisierte Sachnummer müssen dieselbe
+        # Projektidentität abbilden (Leerzeichen/Trennzeichen sind zulässig).
+        project = self.project_store.get(*current)
+        key = (project.profile_id, project.part_number) if project else current
+        idx = self.project_combo.findData(key)
         self.project_combo.setCurrentIndex(idx if idx >= 0 else 0)
         self.project_combo.blockSignals(False)
-        project = self.project_store.get(*current)
         label = project.title if project is not None else (
             f"{'Kühlmittelpumpe' if self.profile_id == 'coolant_pump' else self.profile_id}"
             f" [{self._context_part or 'Sachnummer wählen'}]"
@@ -1831,6 +1831,8 @@ class WorkflowPage(QWidget):
         self._notice = message
         self._error_step = self.state.step if error else None
         self.note.setText(message)
+        self.note.setVisible(bool(message) and (error or "abgeschlossen" in message.lower()
+                             or "gespeichert" in message.lower()))
         self.note.setProperty("isError", error)
         self.note.style().unpolish(self.note)
         self.note.style().polish(self.note)
@@ -2095,8 +2097,6 @@ class WorkflowPage(QWidget):
         elif self._notice:
             self.note.setText(self._notice)
         else:
-            self.note.setText(
-                "Grün: vollständig · Gelb: teilweise · Grau: offen. "
-                "Die aktuelle Station ist hervorgehoben."
-            )
+            self.note.clear()
+            self.note.hide()
         self._refresh_controls()
