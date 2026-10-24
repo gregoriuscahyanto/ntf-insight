@@ -462,6 +462,8 @@ class WorkflowPage(QWidget):
         self.context_source_dates: dict[str, QLabel] = {}
         self.context_source_names: dict[str, QLabel] = {}
         self.context_coverage_bars: dict[str, QProgressBar] = {}
+        self.context_operation_bars: dict[str, QProgressBar] = {}
+        self.context_operation_labels: dict[str, QLabel] = {}
         for index, (category, label) in enumerate(EVIDENCE_CATEGORIES[:4], start=1):
             name = QLabel(label)
             self.context_source_names[category] = name
@@ -565,6 +567,17 @@ class WorkflowPage(QWidget):
             bar.setRange(0, 100)
             bar.setValue(0)
             cell.addWidget(bar)
+            operation = QProgressBar()
+            operation.setRange(0, 0)
+            operation.setMaximumHeight(10)
+            operation.hide()
+            cell.addWidget(operation)
+            operation_label = QLabel(objectName="PageSubtitle")
+            operation_label.setWordWrap(True)
+            operation_label.hide()
+            cell.addWidget(operation_label)
+            self.context_operation_bars[category] = operation
+            self.context_operation_labels[category] = operation_label
             scraper_grid.addLayout(cell, index, 6)
             self.context_coverage_bars[category] = bar
             self.context_counts[category] = count
@@ -918,7 +931,25 @@ class WorkflowPage(QWidget):
         self._context_busy = busy
         self._refresh_controls()
 
+    def set_context_operation(self, category: str, active: bool, message: str = "") -> None:
+        """Unbekannte Portal-/Parser-Gesamtmenge als laufende Aktivität zeigen."""
+        bar = self.context_operation_bars.get(category)
+        label = self.context_operation_labels.get(category)
+        if bar is None or label is None:
+            return
+        bar.setVisible(active)
+        label.setVisible(active)
+        if active:
+            bar.setRange(0, 0)
+            label.setText(message or "Verarbeitung läuft · Gesamtdauer unbekannt")
+        else:
+            bar.setRange(0, 100)
+            bar.setValue(0)
+
     def set_context_scraper_busy(self, category: str, busy: bool) -> None:
+        self.set_context_operation(
+            category, busy, "Portalabruf läuft · Dauer hängt von Portal und SSO ab"
+        )
         if busy:
             self._context_scrapers_busy.add(category)
         else:
