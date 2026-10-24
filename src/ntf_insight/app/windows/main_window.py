@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import re
+import time
 from pathlib import Path
 
 from PySide6.QtCore import Qt, QEventLoop, QTimer, QUrl
@@ -70,6 +72,12 @@ class MainWindow(QMainWindow):
         self._context_worker = None
         self._project_transfer_worker = None
         self._project_transfer_dialog = None
+        self._project_transfer_failure: str | None = None
+        self._diagnostics_dialog: QProgressDialog | None = None
+        self._diagnostics_path: Path | None = None
+        self._diagnostics_error_text: str | None = None
+        self._diagnostics_started_at = 0.0
+        self._diagnostics_phase = ""
         self._project_dialog: QDialog | None = None
         self._project_delete_worker = None
         self._project_delete_result = None
@@ -174,6 +182,12 @@ class MainWindow(QMainWindow):
         pages["workflow"].project_selected.connect(self._project_selected)
         pages["workflow"].cohort_updated.connect(self._sync_local_cluster)
         pages["workflow"].mount_local_cluster(pages["cases"].cluster_workspace)
+        sources = pages["sources"]
+        sources.diagnostics_started.connect(self._diagnostics_started)
+        sources.diagnostics_progress.connect(self._diagnostics_progress)
+        sources.diagnostics_saved.connect(self._diagnostics_saved)
+        sources.diagnostics_error.connect(self._diagnostics_failed)
+        sources.diagnostics_ended.connect(self._diagnostics_ended)
         if pages["sources"].qec_workflow is not None:
             pages["sources"].qec_workflow.set_project_scope(
                 pages["workflow"]._context_part
@@ -324,6 +338,109 @@ class MainWindow(QMainWindow):
             )
         )
 
+    def _show_operation_progress(self, title: str, message: str) -> QProgressDialog:
+        """Gemeinsamer modaler Fortschritt für ZIP, Projekt-Export und -Import."""
+        self._begin_loading(message)
+        dialog = QProgressDialog(message, "", 0, 0, self)
+        dialog.setWindowTitle(title)
+        dialog.setCancelButton(None)  # ZIP-/Datenbanktransaktion nie unsicher abbrechen.
+        dialog.setMinimumWidth(510)
+        dialog.setMinimumDuration(0)
+        dialog.setAutoClose(False)
+        dialog.setWindowModality(Qt.WindowModality.WindowModal)
+        dialog.setWindowFlags(
+            Qt.WindowType.Dialog | Qt.WindowType.CustomizeWindowHint
+            | Qt.WindowType.WindowTitleHint
+        )
+        dialog.show()
+        return dialog
+
+    def _close_operation_progress(self, dialog: QProgressDialog) -> None:
+        dialog.close()
+        dialog.deleteLater()
+        self._finish_loading()
+
+    def _diagnostics_started(self, message: str) -> None:
+        self._diagnostics_path = None
+        self._diagnostics_error_text = None
+        self._diagnostics_started_at = time.monotonic()
+        self._diagnostics_phase = ""
+        self._diagnostics_dialog = self._show_operation_progress(
+            "Parser-Fehler-ZIP erstellen", message,
+        )
+
+    def _diagnostics_progress(self, message: str) -> None:
+        dialog = self._diagnostics_dialog
+        if dialog is None:
+            return
+        phase = message.partition(":")[0]
+        if phase != self._diagnostics_phase:
+            self._diagnostics_phase = phase
+            self._diagnostics_started_at = time.monotonic()
+        progress = re.search(r"(\\d+)\\s*/\\s*(\\d+)", message)
+        if progress and int(progress.group(2)) > 0:
+            done, total = (int(part) for part in progress.groups())
+            dialog.setRange(0, total)
+            dialog.setValue(min(done, total))
+            elapsed = time.monotonic() - self._diagnostics_started_at
+            eta = (
+                f" · ungefähr noch {int(elapsed * (total - done) / done)} s"
+                if 0 < done < total and elapsed >= 2 else
+                " · Restzeit wird ermittelt" if done < total else ""
+            )
+            dialog.setLabelText(message + eta)
+        else:
+            dialog.setRange(0, 0)
+            dialog.setLabelText(message + " · Dauer noch nicht abschätzbar")
+
+    def _diagnostics_saved(self, destination: str) -> None:
+        self._diagnostics_path = Path(destination)
+
+    def _diagnostics_failed(self, message: str) -> None:
+        self._diagnostics_error_text = message
+
+    def _diagnostics_ended(self) -> None:
+        dialog, self._diagnostics_dialog = self._diagnostics_dialog, None
+        if dialog is not None:
+            self._close_operation_progress(dialog)
+        path, self._diagnostics_path = self._diagnostics_path, None
+        error, self._diagnostics_error_text = self._diagnostics_error_text, None
+        if error is not None:
+            self.pages["workflow"].set_notice(
+                "Fehler-ZIP konnte nicht erstellt werden: " + error,
+                error=True,
+            )
+            QMessageBox.critical(
+                self, "Fehler-ZIP nicht erstellt",
+                "Es wurde kein neues Diagnosepaket gespeichert.\n\n" + error,
+            )
+            return
+        if path is None or not path.exists() or path.stat().st_size <= 0:
+            QMessageBox.critical(
+                self, "Fehler-ZIP nicht gefunden",
+                "Der Export hat keine überprüfbare, nicht leere ZIP-Datei "
+                "am angegebenen Ziel hinterlassen.",
+            )
+            return
+        self.pages["workflow"].set_notice(
+            f"Parser-Diagnose-ZIP gespeichert: {path}",
+        )
+        confirmation = QMessageBox(self)
+        confirmation.setWindowTitle("Fehler-ZIP erfolgreich erstellt")
+        confirmation.setIcon(QMessageBox.Icon.Information)
+        confirmation.setText(
+            f"Die ZIP-Datei ist vollständig gespeichert.\\n\\n"
+            f"Speicherort: {path}\\n"
+            f"Größe: {path.stat().st_size:,} Byte"
+        )
+        open_folder = confirmation.addButton(
+            "Ordner öffnen", QMessageBox.ButtonRole.ActionRole
+        )
+        confirmation.addButton(QMessageBox.StandardButton.OK)
+        confirmation.exec()
+        if confirmation.clickedButton() is open_folder:
+            QDesktopServices.openUrl(QUrl.fromLocalFile(str(path.parent)))
+
     def _project_transfer_export(self) -> None:
         workflow = self.pages["workflow"]
         project = workflow.project_store.get(
@@ -413,16 +530,11 @@ class MainWindow(QMainWindow):
         )
         worker = self._project_transfer_worker
         worker.completed.connect(self._project_transfer_completed)
-        dialog = QProgressDialog(
-            "Projektpaket wird verarbeitet …", "", 0, 100, self,
+        self._project_transfer_failure = None
+        dialog = self._show_operation_progress(
+            "Projekt exportieren" if action == "export" else "Projekt importieren",
+            "Projektpaket wird verarbeitet …",
         )
-        dialog.setWindowTitle(
-            "Projekt exportieren" if action == "export" else "Projekt importieren"
-        )
-        dialog.setCancelButton(None)  # Nie laufende Datenbanktransaktion abbrechen.
-        dialog.setMinimumDuration(0)
-        dialog.setAutoClose(False)
-        dialog.setWindowModality(Qt.WindowModality.NonModal)
         self._project_transfer_dialog = dialog
         worker.progress.connect(self._project_transfer_progress)
         self._project_transfer_progress(0, "Projektpaket vorbereiten")
@@ -469,6 +581,7 @@ class MainWindow(QMainWindow):
             )
 
     def _project_transfer_failed(self, message: str) -> None:
+        self._project_transfer_failure = message
         self.pages["workflow"].set_notice(
             "Projekttransfer nicht ausgeführt: " + message, error=True
         )
@@ -477,13 +590,18 @@ class MainWindow(QMainWindow):
         self.pages["workflow"].finish_project_transfer_progress()
         dialog, self._project_transfer_dialog = self._project_transfer_dialog, None
         if dialog is not None:
-            dialog.close()
-            dialog.deleteLater()
+            self._close_operation_progress(dialog)
         worker, self._project_transfer_worker = self._project_transfer_worker, None
         if worker is not None:
             worker.deleteLater()
         self._portable_transfer_busy(False)
         result, self._project_import_result = self._project_import_result, None
+        if self._project_transfer_failure:
+            error, self._project_transfer_failure = self._project_transfer_failure, None
+            QMessageBox.critical(
+                self, "Projekttransfer fehlgeschlagen",
+                "Das Projektpaket wurde nicht vollständig verarbeitet.\n\n" + error,
+            )
         if result is not None:
             self._reload_data()
             self._project_selected(result.profile_id, result.part_number)
