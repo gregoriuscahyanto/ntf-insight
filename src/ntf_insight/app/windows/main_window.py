@@ -15,6 +15,8 @@ from ntf_insight.storage.cluster_evidence_store import CATEGORY_LABELS
 from ntf_insight.app.workers.cluster_context_workers import (
     ClusterContextExportWorker, ClusterEvidenceImportWorker,
 )
+from ntf_insight.app.workers.project_transfer_worker import ProjectTransferWorker
+from ntf_insight.ingestion.project_portable import PROJECT_EXTENSION
 from ntf_insight.ingestion.artifacts import SourceType
 from ntf_insight.app.bootstrap import load_application_data
 from ntf_insight.app.pages.case_page import CasePage
@@ -59,6 +61,8 @@ class MainWindow(QMainWindow):
         self._workflow_last_qec_files: list[Path] = []
         self._workflow_quicktest_download_pending = False
         self._context_worker = None
+        self._project_transfer_worker = None
+        self._project_import_result = None
         self._pending_first_context: tuple[str, str] | None = None
         self._pending_ai_round: int | None = None
         self._pending_cluster_context: tuple[str, str, str] | None = None
@@ -229,6 +233,139 @@ class MainWindow(QMainWindow):
             f"{part} sind jetzt im Projekt sichtbar; kein erneuter Import."
         )
 
+    def _project_transfer_export(self) -> None:
+        workflow = self.pages["workflow"]
+        project = workflow.project_store.get(
+            workflow.profile_id, workflow._context_part,
+        )
+        if project is None:
+            workflow.set_notice(
+                "Bitte erst ein Projekt auswählen oder bestehenden QEC-Bestand "
+                "als Projekt übernehmen.", error=True,
+            )
+            return
+        if not self._portable_transfer_ready():
+            workflow.set_notice("Ein Import oder Download läuft bereits.", error=True)
+            return
+        note = (
+            f"Projekt: {project.title}\n\n"
+            "Es werden projektbezogene Einstellungen, Fall-/QEC-Daten, "
+            "QuickTests, technische Unterlagen, manuelle Bewertungen und "
+            "lokal gespeicherte ChatGPT-Pakete gesammelt.\n\n"
+            "ACHTUNG: Gemeinsame Quelldateien (etwa eine QEC-Excel mit mehreren "
+            "Sachnummern) werden als unveränderte Originale mitgenommen. "
+            "Diese können auch Fälle anderer Projekte enthalten.\n\n"
+            "Das Paket ist nicht verschlüsselt. Nur über freigegebene "
+            "Unternehmensspeicher übertragen. Export erstellen?"
+        )
+        answer = QMessageBox.question(
+            self, "Projektbezogenen Transfer freigeben", note,
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if answer != QMessageBox.StandardButton.Yes:
+            return
+        safe = "".join(
+            char for char in project.part_number if char.isalnum()
+        )[:35]
+        name, _ = QFileDialog.getSaveFileName(
+            self, "Projekt auf anderen PC übertragen",
+            str(Path.home() / f"NTF_{safe}{PROJECT_EXTENSION}"),
+            "NTF-Projekt (*.ntfproject)",
+        )
+        if not name:
+            return
+        package = Path(name)
+        if package.suffix.lower() != PROJECT_EXTENSION:
+            package = package.with_suffix(PROJECT_EXTENSION)
+        self._start_project_transfer(
+            "export", package,
+            profile=project.profile_id, part=project.part_number,
+        )
+
+    def _project_transfer_import(self) -> None:
+        workflow = self.pages["workflow"]
+        if not self._portable_transfer_ready():
+            workflow.set_notice("Ein Import oder Download läuft bereits.", error=True)
+            return
+        filename, _ = QFileDialog.getOpenFileName(
+            self, "Projektpaket eines anderen PCs wählen",
+            str(Path.home()), "NTF-Projekt (*.ntfproject)",
+        )
+        if not filename:
+            return
+        answer = QMessageBox.question(
+            self, "Projekt importieren (andere Projekte behalten)",
+            "Ein .ntfproject enthält die Daten und Dokumente eines Projekts.\n\n"
+            "Ein NEUES Projekt wird der lokalen App hinzugefügt. "
+            "Bereits vorhandene andere Projekte werden nicht ersetzt.\n\n"
+            "Falls die gleiche Sachnummer hier bereits als Projekt existiert, "
+            "wird der Import aus Sicherheitsgründen abgelehnt. "
+            "Ein Zusammenführen wird ausdrücklich NICHT vorgenommen.\n\n"
+            "Das Paket kann vertrauliche oder nicht anonymisierte Rohdaten "
+            "enthalten. Nur vertrauenswürdige Dateien verwenden. Fortfahren?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if answer != QMessageBox.StandardButton.Yes:
+            return
+        self._start_project_transfer("import", Path(filename))
+
+    def _start_project_transfer(
+        self, action: str, package: Path, *,
+        profile: str = "", part: str = "",
+    ) -> None:
+        self._project_import_result = None
+        self._project_transfer_worker = ProjectTransferWorker(
+            action, self.application_data.paths.data_dir,
+            package, profile=profile, part_number=part,
+        )
+        worker = self._project_transfer_worker
+        worker.completed.connect(self._project_transfer_completed)
+        worker.failed.connect(self._project_transfer_failed)
+        worker.finished.connect(self._project_transfer_finished)
+        self.pages["workflow"].set_notice(
+            "Projektpaket erstellen …" if action == "export"
+            else "Projektpaket prüfen und lokal hinzufügen …"
+        )
+        self._portable_transfer_busy(True)
+        worker.start()
+
+    def _project_transfer_completed(self, result: object) -> None:
+        workflow = self.pages["workflow"]
+        if hasattr(result, "path"):
+            warning = (
+                "Ein QEC-Original kann weitere Sachnummern enthalten. "
+                if result.shared_source_warning else ""
+            )
+            workflow.set_notice(
+                f"Projektpaket erstellt: {result.path.name} · "
+                f"{result.case_count} Fälle, {result.fin_count} FINs. "
+                "Keine anderen Projekt-Tabellendaten übernommen. "
+                + warning
+            )
+        else:
+            self._project_import_result = result
+            workflow.set_notice(
+                f"Projekt importiert: {result.part_number} · "
+                f"{result.case_count} Fälle. Andere Projekte bleiben erhalten."
+            )
+
+    def _project_transfer_failed(self, message: str) -> None:
+        self.pages["workflow"].set_notice(
+            "Projekttransfer nicht ausgeführt: " + message, error=True
+        )
+
+    def _project_transfer_finished(self) -> None:
+        worker, self._project_transfer_worker = self._project_transfer_worker, None
+        if worker is not None:
+            worker.deleteLater()
+        self._portable_transfer_busy(False)
+        result, self._project_import_result = self._project_import_result, None
+        if result is not None:
+            self._reload_data()
+            self._project_selected(result.profile_id, result.part_number)
+
     def _project_selected(self, profile: str, part: str) -> None:
         if not self._portable_transfer_ready():
             self.pages["workflow"].set_notice(
@@ -351,6 +488,7 @@ class MainWindow(QMainWindow):
             )
             and not self._case_quicktest_import_pending
             and self._context_worker is None
+            and self._project_transfer_worker is None
             and cases._quicktest_worker is None
             and (qec is None or qec.worker is None)
             and (tips is None or tips.worker is None)
@@ -1023,13 +1161,10 @@ class MainWindow(QMainWindow):
             if action == "ai_import":
                 self._pending_ai_round = 1
             (panel.export_button if action == "ai_export" else panel.import_button).click()
-        elif action in {"pc_export", "pc_import"}:
-            panel = source.portable_backup_panel
-            if panel is not None:
-                (
-                    panel.export_button if action == "pc_export"
-                    else panel.restore_button
-                ).click()
+        elif action == "project_export":
+            self._project_transfer_export()
+        elif action == "project_import":
+            self._project_transfer_import()
         elif action == "self_import":
             self.navigation.select_page("sources")
             source.archive_button.click()
