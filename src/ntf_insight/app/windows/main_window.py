@@ -1085,6 +1085,8 @@ class MainWindow(QMainWindow):
                 lambda message, cat=category:
                 workflow.set_context_operation(cat, True, message)
             )
+        else:
+            worker.progress.connect(workflow.qec_status.setText)
         worker.failed.connect(
             lambda _message, cat=category, ctx=(workflow.profile_id, workflow._context_part):
             self._context_parse_failed(cat, ctx)
