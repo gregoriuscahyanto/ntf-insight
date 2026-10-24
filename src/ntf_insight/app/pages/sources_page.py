@@ -109,6 +109,7 @@ class _ParserDiagnosticsWorker(QThread):
     def __init__(
         self, sources: SourceImportService, data_dir: Path,
         destination: Path, *, include_originals: bool,
+        overwrite_existing: bool = False,
         category: str | None = None,
         scope_paths: tuple[Path, ...] | None = None,
     ) -> None:
@@ -117,6 +118,7 @@ class _ParserDiagnosticsWorker(QThread):
         self.data_dir = data_dir
         self.destination = destination
         self.include_originals = include_originals
+        self.overwrite_existing = overwrite_existing
         self.category = category
         self.scope_paths = scope_paths
 
@@ -125,6 +127,7 @@ class _ParserDiagnosticsWorker(QThread):
             result = export_parser_diagnostics(
                 self.sources, self.data_dir, self.destination,
                 include_originals=self.include_originals,
+                overwrite_existing=self.overwrite_existing,
                 progress=self.progress.emit,
                 category=self.category, scope_paths=self.scope_paths,
             )
@@ -136,6 +139,11 @@ class _ParserDiagnosticsWorker(QThread):
 
 class SourcesPage(QWidget):
     sources_updated = Signal(str, int)
+    diagnostics_started = Signal(str)
+    diagnostics_progress = Signal(str)
+    diagnostics_saved = Signal(str)
+    diagnostics_error = Signal(str)
+    diagnostics_ended = Signal()
     SOURCE_LABELS = {
         SourceType.VEHICLE_CASE_LIST: "QEC-Fall-/SSL-Endbefundliste",
         SourceType.QEC_REPORT: "QEC-Befundbericht · JSON",
@@ -579,6 +587,27 @@ class SourcesPage(QWidget):
         target = Path(destination)
         if target.suffix.lower() != ".zip":
             target = target.with_suffix(".zip")
+        if target.is_dir():
+            QMessageBox.warning(
+                self, "Ungültiger ZIP-Zielpfad",
+                "Bitte eine ZIP-Datei auswählen, keinen Ordner.",
+            )
+            return
+        overwrite_existing = False
+        if target.exists():
+            answer = QMessageBox.question(
+                self, "Vorhandene ZIP-Datei ersetzen?",
+                f"Das Ziel '{target.name}' existiert bereits "
+                f"({target.stat().st_size:,} Byte).\n\n"
+                "Die vorhandene Datei bleibt erhalten, bis die neue ZIP-Datei "
+                "vollständig erstellt und geprüft wurde. Anschließend wird "
+                "sie ersetzt. Wirklich überschreiben?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No,
+            )
+            if answer != QMessageBox.StandardButton.Yes:
+                return
+            overwrite_existing = True
         self.problem_zip_button.setEnabled(False)
         self.archive_button.setEnabled(False)
         self.local_quicktests_button.setEnabled(False)
@@ -589,12 +618,17 @@ class SourcesPage(QWidget):
         self._diagnostics_worker = _ParserDiagnosticsWorker(
             self.import_service, self.data_dir, target,
             include_originals=include_originals,
+            overwrite_existing=overwrite_existing,
             category=category, scope_paths=scope_paths,
         )
         self._diagnostics_worker.progress.connect(self.import_status.setText)
+        self._diagnostics_worker.progress.connect(self.diagnostics_progress.emit)
         self._diagnostics_worker.completed.connect(self._diagnostics_completed)
         self._diagnostics_worker.failed.connect(self._diagnostics_failed)
         self._diagnostics_worker.finished.connect(self._diagnostics_finished)
+        self.diagnostics_started.emit(
+            "Parser-Fehler-ZIP wird erstellt …"
+        )
         self._diagnostics_worker.start()
 
     def _diagnostics_completed(self, result) -> None:
@@ -605,12 +639,15 @@ class SourcesPage(QWidget):
             f"{result.original_files} Originale beigefügt. "
             "Keine Übertragung erfolgt. Vor Weitergabe Freigabe prüfen."
         )
+        self.diagnostics_saved.emit(str(result.path))
 
     def _diagnostics_failed(self, message: str) -> None:
         self.import_status.setText("Parser-Diagnose fehlgeschlagen: " + message)
+        self.diagnostics_error.emit(message)
 
     def _diagnostics_finished(self) -> None:
         worker, self._diagnostics_worker = self._diagnostics_worker, None
+        self.diagnostics_ended.emit()
         if worker is not None:
             worker.deleteLater()
         self.problem_zip_button.setEnabled(self.import_service is not None and self.data_dir is not None)
