@@ -881,6 +881,8 @@ class WorkflowPage(QWidget):
             "ChatGPT-Ergebnis kann vertrauliche Freitexte enthalten."
         )
         # Die Freigabe erfolgt ausschließlich im neuen Exportpopup.
+        # Als verborgenes Layout-Widget bleibt die bestehende Qt-Referenz gültig.
+        options.addWidget(self.cluster_originals)
         self.cluster_originals.hide()
         self.cluster_export_button = self._add_action(
             options, "2. ChatGPT-Paket exportieren",
