@@ -287,9 +287,10 @@ class SourcesPage(QWidget):
             "Alle bereits heruntergeladenen QuickTests einlesen"
         )
         self.local_quicktests_button.setToolTip(
-            "Sucht lokale PDFs unter quicktests/<FIN>/ und archiviert sie mit "
-            "FIN-Prüfung durch den bestehenden QuickTest-Parser. "
-            "Bereits bekannte Berichte werden nicht doppelt gezählt."
+            "Vollständiger Abgleich aller lokalen PDFs unter quicktests/<FIN>/. "
+            "Nach einem Parser-Versionswechsel werden auch früher mit v2 "
+            "erfolgreich geparste PDFs erneut geprüft. Für eine gezielte "
+            "Fehlerbereinigung zuerst den separaten Fehler-Button verwenden."
         )
         self.local_quicktests_button.setEnabled(
             self.data_dir is not None and self.import_service is not None
