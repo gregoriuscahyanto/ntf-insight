@@ -210,10 +210,18 @@ def test_step_four_collects_all_requested_categories_without_page_scroll(
     assert not page.context_export_button.isEnabled()
     assert page.context_model.rowCount() == 0
 
-    # Keine Windows-Dateidialoge im Offscreen-Test öffnen.
-    page.action_requested.disconnect()
+    # Datei-/Bestätigungsdialoge hart stubben, nicht von Signal-Disconnect abhängen.
     actions = []
-    page.action_requested.connect(actions.append)
+    monkeypatch.setattr(
+        window, "_context_import",
+        lambda category: actions.append(f"context_files:{category}"),
+    )
+    monkeypatch.setattr(
+        window, "_context_choose_base", lambda: actions.append("context_base"),
+    )
+    monkeypatch.setattr(
+        window, "_context_export", lambda: actions.append("context_export"),
+    )
     page.context_import_buttons["cdd_smrd"].click()
     assert actions == ["context_files:cdd_smrd"]
     page.context_base_button.click()
