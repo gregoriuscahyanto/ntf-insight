@@ -207,3 +207,19 @@ def test_v4_unterstuetzt_umfangreiche_aber_begrenzte_pdf_berichte(
     assert QuickTestPdfParser.version == "4.0.0"
     assert parsed.quicktest_report is not None
     assert parsed.quicktest_report["reported_ecu_count"] == 1
+
+
+def test_v4_erkennt_zwei_lange_umbruchzeilen_zwischen_ecu_kopf_und_metadaten():
+    lines = _header() + ["QuickTest 1", "ECU Count 1", "ECUS (1)"]
+    lines += [
+        "CPC3-N127 - Steuergeraet fuer synthetische Funktionsgruppe",
+        "mit einer weiteren harmlosen Beschreibung",
+        "und einer zweiten umgebrochenen Namensergaenzung",
+        "General information",
+        "ECU variant CPC3_SYNTH",
+        "FAULT CODES (0)", "No fault codes",
+    ]
+    result = parse_quicktest_structure(["\n".join(lines)])
+    assert result["reported_ecu_count"] == 1
+    assert result["ecus"][0]["ecu_code"] == "CPC3"
+    assert result["observed_dtc_count"] == 0
