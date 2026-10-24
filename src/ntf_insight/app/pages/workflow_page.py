@@ -1276,12 +1276,28 @@ class WorkflowPage(QWidget):
             "info" if str(row["fin"]).upper() in eligible else "muted"
             for row in self._project_rows
         ])
-        self._source_coverage = get_workflow_coverage(
-            self.progress_store.store, self.progress_store.store.path.parent,
-            self._scoped_rows, self.context_files,
+        try:
+            self._source_coverage = get_workflow_coverage(
+                self.progress_store.store,
+                self.progress_store.store.path.parent,
+                self._scoped_rows, self.context_files,
+            )
+            self._coverage_error = ""
+        except Exception as exc:
+            # Kein Qt-Callback darf wegen beschädigter historischer
+            # Parserprotokolle abstürzen oder Vollständigkeit vortäuschen.
+            self._source_coverage = {}
+            self._coverage_error = (
+                "Quellenfortschritt nicht ermittelbar: "
+                + type(exc).__name__
+                + ". Parser- und Archivdaten unter Datenquellen prüfen."
+            )
+        qec_coverage = self._source_coverage.get(
+            "qec", SourceCoverage("qec", None, None, None, 0, 0)
         )
-        qec_coverage = self._source_coverage["qec"]
-        self.qec_coverage.setText(qec_coverage.display())
+        self.qec_coverage.setText(
+            self._coverage_error or qec_coverage.display()
+        )
         self.qec_parse_progress.setValue(
             round(100 * (qec_coverage.parsed_cases or 0)
                   / max(1, qec_coverage.total_cases or 0))
@@ -1371,6 +1387,11 @@ class WorkflowPage(QWidget):
         for category, label in self.context_counts.items():
             status = self._source_coverage.get(category)
             if status is None:
+                if category in self.context_coverage_bars and getattr(
+                    self, "_coverage_error", ""
+                ):
+                    label.setText(self._coverage_error)
+                    self.context_coverage_bars[category].setValue(0)
                 continue
             if category not in self.context_coverage_bars:
                 label.setText(
