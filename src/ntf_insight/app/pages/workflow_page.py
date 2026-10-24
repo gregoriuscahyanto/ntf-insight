@@ -1269,9 +1269,10 @@ class WorkflowPage(QWidget):
         qec_coverage = self._source_coverage["qec"]
         self.qec_coverage.setText(qec_coverage.display())
         self.qec_parse_progress.setValue(
-            round(100 * qec_coverage.parsed_documents
-                  / max(1, qec_coverage.local_documents))
+            round(100 * (qec_coverage.parsed_cases or 0)
+                  / max(1, qec_coverage.total_cases or 0))
         )
+        self.qec_parse_progress.setToolTip(qec_coverage.display())
         reports = [
             local_qec_archive(self.qec_root, row["fin"], row["reference"])
             for row in self._scoped_rows
@@ -1360,14 +1361,24 @@ class WorkflowPage(QWidget):
             label.setText(status.display())
             label.setToolTip(status.note)
             bar = self.context_coverage_bars[category]
-            bar.setValue(round(
-                100 * status.parsed_documents / max(1, status.local_documents)
-            ))
+            if status.total_cases is not None:
+                ratio = 100 * (status.parsed_cases or 0) / max(1, status.total_cases)
+            else:
+                ratio = 100 * status.parsed_documents / max(1, status.local_documents)
+            bar.setValue(round(ratio))
             bar.setToolTip(status.display() + "\n" + status.note)
+            complete = (
+                not status.unsupported_parser
+                and bool(status.local_documents)
+                and status.local_documents == status.parsed_documents
+                and (
+                    status.total_cases is None
+                    or status.parsed_cases == status.total_cases
+                )
+            )
             label.setStyleSheet(
-                "color: #268763;" if status.local_documents
-                and status.local_documents == status.parsed_documents else
-                "color: #bd8318;" if status.local_documents else ""
+                "color: #268763;" if complete
+                else "color: #bd8318;" if status.local_documents else ""
             )
 
     def _show_chatgpt_cluster_details(self) -> None:
