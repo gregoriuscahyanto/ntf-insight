@@ -93,7 +93,6 @@ def test_donuts_and_stage_one_filter_only_selected_fins_downstream(
     assert page.ssl_filter_button.menu().actions()
     assert page.cards[0].property("workflowState") == "done"
     page._select_ssl_category("Wassereintritt", False)
-    page._select_ssl_category("", False) if False else None
     page._select_ssl_category(MISSING, False)
     assert page.fin_model.rowCount() == 3  # Quelle bleibt vollständig.
     assert page.qec_model.rowCount() == 1
@@ -190,7 +189,9 @@ def test_source_activity_distinguishes_download_from_manual_import(tmp_path, mon
 
 
 def test_first_chatgpt_package_is_restricted_to_selected_fins(tmp_path):
-    source = make_data(tmp_path / "data", qec=False)
+    data_root = tmp_path / "data"
+    data_root.mkdir()
+    source = make_data(data_root, qec=False)
     source.store.save_case(NTFCase(
         case_id="EXCLUDED-CASE-002",
         vehicle=Vehicle(vin=FIN_B, model_series="214"),
