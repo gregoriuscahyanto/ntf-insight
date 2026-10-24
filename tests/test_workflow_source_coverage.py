@@ -330,3 +330,36 @@ def test_unparsed_manual_evidence_counts_as_documents_not_fictitious_fin_cases(
     assert tips.downloaded_cases == 0
     assert tips.can_resume_parsing
     assert tips.pending_paths[0].is_file()
+
+
+
+def test_cdd_resume_does_not_claim_unparsed_smrd_trigger_conditions(tmp_path):
+    from ntf_insight.ingestion.reference_source_parsers import CandelaParser
+
+    root = tmp_path / "data"
+    store, knowledge, evidence = _setup(root)
+    cdd = tmp_path / "diag.cdd"
+    cdd.write_text("<CANDELA></CANDELA>", encoding="utf-8")
+    smr = tmp_path / "trace.smr-d"
+    smr.write_text("synthetic SMR-D (not a diagnostic parser fixture)", encoding="utf-8")
+    evidence.add_files("coolant_pump", "A111222", "cdd_smrd", [cdd, smr])
+    files = evidence.list_files("coolant_pump", "A111222")
+    before = get_workflow_coverage(store, root, _rows(), files)["cdd_smrd"]
+    assert before.local_documents == 2
+    assert before.parsed_documents == 0
+    assert before.can_resume_parsing
+    assert len(before.pending_paths) == 1
+    assert before.pending_paths[0].suffix == ".cdd"
+
+    cdd_item = next(item for item in files if item.source_path.suffix == ".cdd")
+    knowledge.save_records(
+        cdd_item.sha256, "candela_services",
+        [{"category": "candela_service", "label": "Synthetisch", "data": {}}],
+        metadata={"standard": "CANDELA", "triggers_validated": False},
+    )
+    _run(store, cdd_item.sha256, CandelaParser)
+    after = get_workflow_coverage(store, root, _rows(), files)["cdd_smrd"]
+    assert after.local_documents == 2
+    assert after.parsed_documents == 1
+    assert not after.can_resume_parsing  # Kein SMR-D-Parser erfunden.
+    assert "SMR-D" in after.note
