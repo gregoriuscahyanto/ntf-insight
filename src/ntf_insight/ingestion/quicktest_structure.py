@@ -113,9 +113,18 @@ def _metadata(lines: list[str]) -> dict[str, Any]:
     return {
         "diagnostics_id": diag_id,
         "ecu_variant": variant,
-        "hardware_partnumber": lookup("HW partnumber") or legacy(r"Hardware\s*\nPartnumber\s*\n([^\n]+)"),
+        "hardware_partnumber": (lookup("HW partnumber")
+            or legacy(r"Hardware\s*
+Partnumber\s*
+(.+?)\s+Hardware\s*
+Version")
+            or legacy(r"Hardware\s*
+Partnumber\s*
+([^
+]+)")),
         "hardware_version": lookup("HW version") or legacy(r"Hardware\s*\nVersion\s*\n([^\n]+)"),
-        "supplier": lookup("Supplier") or legacy(r"Supplier\s+(.+?)\s+Software\s*\nVersion"),
+        "supplier": legacy(r"Supplier\s+(.+?)\s+Software\s*
+Version") or lookup("Supplier"),
         "software_version": lookup("SW version") or legacy(r"Software\s*\nVersion\s*\n([^\n]+)"),
         "boot_and_serial": lookup("Boot version") or lookup("Boot Version"),
         "software_partnumbers": lookup("Software Partnumbers") or legacy(r"Software\s*\nPartnumbers\s*\n([^\n]+)"),
@@ -203,12 +212,13 @@ def _fault(lines: list[tuple[str, int]]) -> dict[str, Any]:
     if pending_name:
         leftovers.append(pending_name)
 
-    def number(names: set[str]) -> int | None:
+    def number(names: set[str], *, prefer_last: bool = False) -> int | None:
         for p in parameters:
             if p["name"].casefold() not in names:
                 continue
             # First value may be unavailable, in which case last is observed.
-            for v in (p["first_value"], p["last_value"]):
+            for v in ((p["last_value"], p["first_value"])
+                      if prefer_last else (p["first_value"], p["last_value"])):
                 if v and v != "-":
                     parsed = _int(v)
                     if parsed is not None:
@@ -223,7 +233,7 @@ def _fault(lines: list[tuple[str, int]]) -> dict[str, Any]:
         "status": status,
         "frequency_counter": number(FREQUENCY_NAMES),
         "original_odometer_km": number(ORIGINAL_ODOMETER_NAMES),
-        "most_recent_odometer_km": number(RECENT_ODOMETER_NAMES),
+        "most_recent_odometer_km": number(RECENT_ODOMETER_NAMES, prefer_last=True),
         "ignition_cycle_counter": number(CYCLE_NAMES),
         "parameters": parameters,
         "unclassified_lines": leftovers,
