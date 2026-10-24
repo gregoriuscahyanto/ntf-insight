@@ -14,7 +14,7 @@ from PySide6.QtCore import QModelIndex, Qt, QThread, Signal
 from PySide6.QtWidgets import (
     QAbstractItemView, QCheckBox, QComboBox, QFrame, QHBoxLayout,
     QLabel, QLineEdit, QPlainTextEdit, QPushButton, QScrollArea,
-    QSpinBox, QTableView, QVBoxLayout, QWidget, QFileDialog, QMessageBox,
+    QSizePolicy, QSpinBox, QTableView, QVBoxLayout, QWidget, QFileDialog, QMessageBox,
 )
 
 from ntf_insight.analysis.cluster_dtc_filters import ClusterDtcFilter
