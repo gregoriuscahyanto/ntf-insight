@@ -187,6 +187,11 @@ def test_project_settings_confirmation_requires_exact_part_number(tmp_path, monk
     _store, projects = _storage(tmp_path / "data")
     widget = ProjectSettingsPage(projects)
     widget.select_project("coolant_pump", "A 111 222")
+    assert widget.project_selector.currentData() == (
+        "coolant_pump", "A 111 222",
+    )
+    assert widget.part_edit.text() == "A 111 222"
+    assert not widget._is_new
     requested = []
     widget.project_delete_requested.connect(
         lambda p, n, full: requested.append((p, n, full))
