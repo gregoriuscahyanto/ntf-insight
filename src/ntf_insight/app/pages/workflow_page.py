@@ -473,6 +473,7 @@ class WorkflowPage(QWidget):
             self.context_import_buttons[category] = archive
             scraper_grid.addWidget(archive, index, 4)
             timestamp = QLabel("Noch kein Abruf", objectName="PageSubtitle")
+            timestamp.setWordWrap(True)
             self.context_source_dates[category] = timestamp
             scraper_grid.addWidget(timestamp, index, 5)
             count = QLabel("0", objectName="PageSubtitle")
@@ -781,6 +782,9 @@ class WorkflowPage(QWidget):
         activities = self.source_activity.get(
             self.profile_id, self._context_part
         )
+        source_logs = self.source_activity.get_details(
+            self.profile_id, self._context_part
+        )
         imported_types = {
             "tp_dashboard": SourceType.TP_DASHBOARD,
             "diagnosis_viewer": SourceType.SHORT_TEST,
@@ -806,16 +810,26 @@ class WorkflowPage(QWidget):
             if key in self.context_source_dates:
                 activity = activities.get(key)
                 documents = [f for f in self.context_files if f.category == key]
-                if activity:
+                log = source_logs.get(key, {})
+                descriptions = []
+                for event_type in ("Abruf", "Einlesen"):
+                    record = log.get(event_type)
+                    if record is not None:
+                        when, state = record
+                        descriptions.append(
+                            f"{event_type}: {when:%d.%m.%Y %H:%M} · {state}"
+                        )
+                if descriptions:
+                    self.context_source_dates[key].setText("\n".join(descriptions))
+                elif activity:
                     timestamp, state = activity
-                    label = timestamp.strftime("%d.%m.%Y %H:%M")
                     kind = (
                         "Einlesen" if state in {
                             "Einlesen gestartet", "Eingelesen", "Archiviert",
                         } else "Abruf"
                     )
                     self.context_source_dates[key].setText(
-                        f"{kind}: {label} · {state}"
+                        f"{kind}: {timestamp:%d.%m.%Y %H:%M} · {state}"
                     )
                 elif documents:
                     newest = max(f.imported_at for f in documents)
@@ -832,13 +846,15 @@ class WorkflowPage(QWidget):
                     self.context_source_dates[key].setText(
                         "Noch kein Abruf / Import"
                     )
-                local_parsed = bool(activity and activity[1] in {
-                    "Eingelesen", "Archiviert",
-                })
-                available = bool(documents or local_parsed)
-                legacy_only = bool(
-                    not available and key in legacy_imports
+                imported_event = log.get("Einlesen")
+                local_parsed = bool(
+                    imported_event and imported_event[1] in {"Eingelesen", "Archiviert"}
+                    or not imported_event and activity and activity[1] in {
+                        "Eingelesen", "Archiviert",
+                    }
                 )
+                available = bool(documents or local_parsed)
+                legacy_only = bool(not available and key in legacy_imports)
                 count_label.setText(
                     str(counts[key]) if counts[key] else
                     "✓" if local_parsed else "~" if legacy_only else "0"
