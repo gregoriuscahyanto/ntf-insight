@@ -782,6 +782,9 @@ class MainWindow(QMainWindow):
             self._project_dialog.close()
             self._project_dialog.deleteLater()
             self._project_dialog = None
+        dashboard_worker = getattr(self.pages["dashboard"], "_worker", None)
+        if dashboard_worker is not None and dashboard_worker.isRunning():
+            dashboard_worker.wait()  # QThread nie während einer DB-Abfrage zerstören.
         old_pages = list(self.pages.values())
         for old in old_pages:
             if self.stack.indexOf(old) >= 0:
@@ -1806,12 +1809,17 @@ class MainWindow(QMainWindow):
             dialog = QDialog(self)
             dialog.setObjectName("ProjectSettingsDialog")
             dialog.setWindowTitle("Projekteinstellungen")
+            dialog.setWindowFlags(
+                Qt.WindowType.Dialog | Qt.WindowType.FramelessWindowHint
+            )
             dialog.setWindowModality(Qt.WindowModality.WindowModal)
             dialog.setMinimumSize(650, 545)
             dialog.resize(860, 690)
             dialog.setStyleSheet(
-                "QDialog#ProjectSettingsDialog { background-color: #f4f6f9; "
-                "border: 1px solid #8799a9; border-radius: 12px; }"
+                "QDialog#ProjectSettingsDialog { background-color: "
+                + ("#232c37" if self.navigation.theme_combo.currentData() == "dark"
+                   else "#f4f6f9")
+                + "; border: 1px solid #8799a9; border-radius: 12px; }"
             )
             frame = QVBoxLayout(dialog)
             frame.setContentsMargins(7, 7, 7, 7)
