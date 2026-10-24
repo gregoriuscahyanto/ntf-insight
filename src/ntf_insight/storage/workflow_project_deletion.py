@@ -205,8 +205,15 @@ def fully_delete_project(
             except (ValueError, TypeError) as exc:
                 raise ValueError("Ein gespeicherter Fall ist nicht lesbar.") from exc
             case_part = part_key(str(payload.get("qec_part_number") or ""))
-            case_profile = str(payload.get("component_profile_id") or project.profile_id)
-            if case_part == key and case_profile == project.profile_id:
+            case_profile = str(payload.get("component_profile_id") or "")
+            if case_part == key and not case_profile and case_id not in our_cases:
+                raise ValueError(
+                    "Ein Fall dieser Sachnummer hat keine eindeutige "
+                    "Bauteilprofil-Zuordnung. Vollständiges Löschen verweigert."
+                )
+            if case_part == key and (
+                case_profile == project.profile_id or case_id in our_cases
+            ):
                 our_cases.add(str(case_id))
                 our_fins.add(str(vin).upper())
             else:
@@ -245,6 +252,27 @@ def fully_delete_project(
                 raise ValueError(
                     "Die KI-Analyse enthält Fälle anderer Projekte. "
                     "Vollständiges Löschen nicht sicher."
+                )
+
+        if our_cases and "chatgpt_fallanalysen" in available:
+            legacy_rows = con.execute(
+                "SELECT analyse_id,case_id FROM chatgpt_fallanalysen"
+            ).fetchall()
+            known_ids = {
+                row[0] for row in con.execute(
+                    "SELECT analyse_id FROM chatgpt_imports "
+                    f"WHERE paket_id IN ({','.join('?' for _ in packages)})",
+                    sorted(packages),
+                ).fetchall()
+            } if packages and "chatgpt_imports" in available else set()
+            if any(
+                case_id in our_cases and analyse_id not in known_ids
+                for analyse_id, case_id in legacy_rows
+            ):
+                raise ValueError(
+                    "Mindestens eine ChatGPT-Analyse der Projektfälle ist "
+                    "noch keinem Projektpaket zugeordnet. Bitte erst "
+                    "den Datenstand sichern bzw. die Zuordnung prüfen."
                 )
 
         knowledge_sources: set[str] = set()
@@ -378,6 +406,7 @@ def fully_delete_project(
                     ("workflow_first_ai_packages", "sha256"),
                     ("quicktest_sources", "artifact_sha256"),
                     ("source_knowledge_documents", "source_sha256"),
+                    ("source_knowledge_rows", "source_sha256"),
                     ("qec_workflow_decisions", "source_sha256"),
                     ("qec_cluster_handoff", "source_sha256"),
                 )
