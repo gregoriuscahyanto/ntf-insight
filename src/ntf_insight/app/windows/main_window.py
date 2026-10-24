@@ -258,8 +258,9 @@ class MainWindow(QMainWindow):
             self.navigation.select_page("sources")
             if target is not None:
                 QTimer.singleShot(
-                    0, lambda scroll=source.content_scroll, widget=target:
-                    self._workflow_focus(scroll, widget),
+                    0, lambda scroll=source.content_scroll, widget=target: (
+                        self._workflow_focus(scroll, widget)
+                    ),
                 )
             return
 
@@ -276,8 +277,9 @@ class MainWindow(QMainWindow):
                 self.navigation.select_page("cases")
                 QTimer.singleShot(
                     0, lambda scroll=cases.analysis_tab,
-                    widget=cases.qec_download.all_button:
-                    self._workflow_focus(scroll, widget),
+                    widget=cases.qec_download.all_button: (
+                        self._workflow_focus(scroll, widget)
+                    ),
                 )
                 return
             if tab == "cluster":
