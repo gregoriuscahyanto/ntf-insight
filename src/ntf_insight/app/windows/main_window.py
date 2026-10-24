@@ -1812,8 +1812,11 @@ class MainWindow(QMainWindow):
         """Projekteinstellungen als schwebende, modal bedienbare Projektkarte."""
         page = self.pages["project_settings"]
         workflow = self.pages["workflow"]
+        project = workflow.project_store.get(
+            workflow.profile_id, workflow._context_part,
+        )
         page.select_project(workflow.profile_id, workflow._context_part)
-        if new:
+        if new or project is None:
             page.start_new()
         if self._project_dialog is None:
             dialog = QDialog(self)
