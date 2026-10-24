@@ -392,6 +392,12 @@ class MainWindow(QMainWindow):
         )
         worker = self._project_transfer_worker
         worker.completed.connect(self._project_transfer_completed)
+        worker.progress.connect(
+            self.pages["workflow"].update_project_transfer_progress
+        )
+        self.pages["workflow"].update_project_transfer_progress(
+            0, "Projektpaket vorbereiten"
+        )
         worker.failed.connect(self._project_transfer_failed)
         worker.finished.connect(self._project_transfer_finished)
         self.pages["workflow"].set_notice(
@@ -427,6 +433,7 @@ class MainWindow(QMainWindow):
         )
 
     def _project_transfer_finished(self) -> None:
+        self.pages["workflow"].finish_project_transfer_progress()
         worker, self._project_transfer_worker = self._project_transfer_worker, None
         if worker is not None:
             worker.deleteLater()
