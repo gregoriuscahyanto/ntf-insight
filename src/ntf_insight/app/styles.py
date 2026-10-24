@@ -304,6 +304,21 @@ QPushButton#ClusterStartButton:disabled {{
     border: 1px solid {p["border"]};
 }}
 
+/* Dezenter 750-ms-Aufmerksamkeitsimpuls nur bei fertigem QEC-Workflow. */
+QPushButton#ClusterStartButton[attention="on"] {{
+    background-color: #237c5c;
+    color: #ffffff;
+    border: 2px solid #a3dbbd;
+}}
+QPushButton#ClusterStartButton[resultImported="true"] {{
+    background-color: #d9eee2;
+    color: #164a35;
+    border: 2px solid #26845c;
+}}
+QPushButton#ClusterStartButton[resultImported="true"]:hover {{
+    background-color: #cae8d7;
+}}
+
 /* Gefährliche Aktion als klare, unaufdringliche rote Kontur. */
 QPushButton#DangerButton {{
     background-color: {p["surface"]};
