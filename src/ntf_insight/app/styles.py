@@ -175,6 +175,49 @@ QPushButton:hover {{
     background-color: {p["hover"]};
 }}
 
+/* Workflow-Kacheln: klickbar erkennbar, kompakt und themenkonform. */
+QPushButton#WorkflowStep {{
+    background-color: {p["surface"]};
+    color: {p["text"]};
+    border: 1px solid {p["border"]};
+    border-radius: 20px;
+    font-size: 14px;
+    font-weight: 600;
+    padding: 12px 16px;
+    text-align: left;
+}}
+
+QPushButton#WorkflowStep[workflowState="active"] {{
+    border: 2px solid #22789a;
+}}
+
+QPushButton#WorkflowStep[workflowState="done"] {{
+    border: 2px solid #27815c;
+}}
+
+QPushButton#WorkflowStep[workflowState="paused"] {{
+    border: 2px solid #b77822;
+}}
+
+QPushButton#WorkflowStep:hover {{
+    background-color: {p["surface_alt"]};
+    border: 2px solid #22789a;
+}}
+
+QPushButton#WorkflowStep:pressed {{
+    background-color: {p["selection"]};
+}}
+
+QPushButton#WorkflowStep:focus {{
+    border: 2px solid #22789a;
+}}
+
+QPushButton#WorkflowStep:disabled {{
+    color: {p["muted"]};
+    background-color: {p["surface_alt"]};
+}}
+
+
 /* Neutral graphite primary action; no proprietary brand assets needed. */
 QPushButton#ClusterStartButton {{
     background-color: #252a2e;
