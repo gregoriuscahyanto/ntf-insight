@@ -243,6 +243,13 @@ def test_ntf_table_combined_filters_search_sort_and_original_counts(tmp_path, mo
         page.refresh()
         assert page.ntf_proxy.rowCount() == 1
         assert page.ntf_proxy.index(0, 1).data() == "QEC-DEMO-2"
+
+        # Beim Projektwechsel dürfen Filter des alten Projekts nicht hängenbleiben.
+        page.ntf_search.setText("QEC-DEMO-2")
+        page.part_number.setText("A 123 456")
+        page._change_context()
+        assert page.ntf_search.text() == ""
+        assert all(not box.currentData() for box in page.ntf_filter_boxes.values())
     finally:
         window.close()
         app.processEvents()
