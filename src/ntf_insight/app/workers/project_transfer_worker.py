@@ -11,6 +11,7 @@ from ntf_insight.ingestion.project_portable import export_project, import_projec
 class ProjectTransferWorker(QThread):
     completed = Signal(object)
     failed = Signal(str)
+    progress = Signal(int, str)
 
     def __init__(
         self, action: str, data_dir: Path, package: Path,
@@ -28,8 +29,10 @@ class ProjectTransferWorker(QThread):
             if self.action == "export":
                 result = export_project(
                     self.data_dir, self.package, self.profile, self.part_number,
+                    progress=lambda percent, message: self.progress.emit(percent, message),
                 )
             elif self.action == "import":
+                self.progress.emit(-1, "Projektarchiv überprüfen und importieren …")
                 result = import_project(self.package, self.data_dir)
             else:
                 raise ValueError("Unbekannter Projekttransfer.")
