@@ -87,6 +87,7 @@ def test_donuts_and_stage_one_filter_only_selected_fins_downstream(
     monkeypatch.setattr(page.qec_store, "active_sources", lambda: [])
     page.part_number.setText("A 111 222")
     page._change_context()
+    page.refresh_data()
     assert page.fin_model.rowCount() == 3
     assert page.qec_model.rowCount() == 3
     assert sum(count for _, count in page.ssl_donut.ring.values) == 3
@@ -124,6 +125,7 @@ def test_qec_download_donut_and_semantic_row_highlights(tmp_path, monkeypatch):
     )
     page.part_number.setText("A111222")
     page._change_context()
+    page.refresh_data()
     assert dict(page.qec_donut.ring.values) == {
         "Alle Berichte vorhanden": 1,
         "Teilweise vorhanden": 0,
@@ -174,7 +176,8 @@ def test_source_activity_distinguishes_download_from_manual_import(tmp_path, mon
     page._change_context()
     assert "Abruf:" in page.context_source_dates["diagnosis_viewer"].text()
     assert "Einlesen:" in page.context_source_dates["tp_dashboard"].text()
-    assert page.context_counts["tp_dashboard"].text() == "✓"
+    assert "CSV-Dateien" in page.context_counts["tp_dashboard"].text()
+    assert "Einlesen:" in page.context_source_dates["tp_dashboard"].text()
     assert "selected" not in page.context_scraper_buttons["diagnosis_viewer"]
     assert page.context_scraper_buttons["tp_dashboard"]["parse"].text() == "Einlesen …"
     assert page.context_scraper_buttons["celonis"]["parse"].text() == "Einlesen (Archiv)"
