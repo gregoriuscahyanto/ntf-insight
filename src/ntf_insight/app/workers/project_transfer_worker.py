@@ -32,8 +32,10 @@ class ProjectTransferWorker(QThread):
                     progress=lambda percent, message: self.progress.emit(percent, message),
                 )
             elif self.action == "import":
-                self.progress.emit(-1, "Projektarchiv überprüfen und importieren …")
-                result = import_project(self.package, self.data_dir)
+                result = import_project(
+                    self.package, self.data_dir,
+                    progress=lambda percent, message: self.progress.emit(percent, message),
+                )
             else:
                 raise ValueError("Unbekannter Projekttransfer.")
         except Exception as exc:
