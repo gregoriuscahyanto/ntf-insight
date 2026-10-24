@@ -155,6 +155,7 @@ class QecWorkflowStore:
 
     def export_csv(
         self, destination: Path, qec_root: Path, *, part_number: str = "",
+        selected_fins: set[str] | None = None,
     ) -> int:
         """Lokale QEC-FIN-Liste – optional exakt zur gewählten Sachnummer.
 
@@ -172,6 +173,9 @@ class QecWorkflowStore:
         if part_number.strip():
             part = normalize(part_number)
             rows = [row for row in rows if normalize(row["part_number"]) == part]
+        if selected_fins is not None:
+            eligible = {str(fin).upper() for fin in selected_fins}
+            rows = [row for row in rows if str(row["fin"]).upper() in eligible]
         with Path(destination).open("w", newline="", encoding="utf-8-sig") as handle:
             writer = csv.writer(handle, delimiter=";")
             writer.writerow(("FIN", "QEC-Fall", "Referenz", "Sachnummer",
