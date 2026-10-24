@@ -861,7 +861,9 @@ class MainWindow(QMainWindow):
                 False, can_resume=bool(self._workflow_last_qec_files)
             )
 
-    def _workflow_start_qec_download(self, *, selected_only: bool) -> None:
+    def _workflow_start_qec_download(
+        self, *, selected_only: bool, missing_only: bool = False,
+    ) -> None:
         """Vorhandener QEC-Worker, aber exakt auf die Workflow-Sachnummer gefiltert."""
         workflow = self.pages["workflow"]
         cases = self.pages["cases"]
@@ -874,9 +876,17 @@ class MainWindow(QMainWindow):
             workflow.set_notice("Download/Import läuft bereits.", error=True)
             return
         targets = workflow.qec_targets(selected_only=selected_only)
+        if missing_only:
+            coverage = workflow._source_coverage.get("qec")
+            missing = set(coverage.missing_qec) if coverage else set()
+            targets = [
+                target for target in targets
+                if (target.fin, target.reference) in missing
+            ]
         if not targets:
             workflow.set_notice(
-                "Keine gültige FIN mit passender QEC-Referenz ausgewählt.", error=True
+                "Keine passenden QEC-Fälle ohne heruntergeladenen aktuellen "
+                "JSON-Bericht vorhanden.", error=True
             )
             return
         self._workflow_qec_download_pending = True
@@ -902,6 +912,87 @@ class MainWindow(QMainWindow):
         if not self._case_quicktest_import_pending:
             self._workflow_qec_download_pending = False
             workflow.refresh_data()
+
+    def _resume_source_parsing(self, category: str) -> None:
+        """Nur nicht indexierte vorhandene Dateien über bestehende Parser nachholen."""
+        workflow = self.pages["workflow"]
+        source = self.pages["sources"]
+        if not self._portable_transfer_ready():
+            workflow.set_notice(
+                "Parsing erst nach Abschluss des laufenden Datenimports starten.",
+                error=True,
+            )
+            return
+        current = workflow._source_coverage.get(category)
+        if current is None or not current.can_resume_parsing:
+            workflow.set_notice(
+                "Keine vorhandenen Dokumente mit fehlendem Parsergebnis "
+                "für diese Quelle gefunden."
+            )
+            return
+        paths = list(current.pending_paths)
+        kind = {
+            "qec": SourceType.QEC_REPORT,
+            "diagnosis_viewer": SourceType.SHORT_TEST,
+            "tips_writer": SourceType.TIPS_CASE,
+            "tp_dashboard": SourceType.TP_DASHBOARD,
+        }.get(category)
+        if kind is None:
+            workflow.set_notice(
+                "Für diese Quelle gibt es noch keinen strukturierten Parser.",
+                error=True,
+            )
+            return
+        before = source.source_type.currentIndex()
+        index = source.source_type.findData(kind)
+        try:
+            source.source_type.setCurrentIndex(index if index >= 0 else 0)
+            source._archive_paths(paths)  # Nicht erneut bereits geparste Quellen.
+        finally:
+            source.source_type.setCurrentIndex(before)
+        worker = source._worker
+        if worker is None:
+            workflow.set_notice(
+                "Parser konnte nicht gestartet werden.", error=True,
+            )
+            return
+        context = (workflow.profile_id, workflow._context_part)
+        if category != "qec":
+            workflow.source_activity.record(
+                context[0], context[1], category, "Einlesen gestartet",
+            )
+        worker.imported.connect(
+            lambda summary, ctx=context, cat=category:
+            self._resume_source_parsing_completed(cat, ctx, summary)
+        )
+        workflow.set_notice(
+            f"{category}: {len(paths)} vorhandene, noch nicht strukturierte "
+            "Datei(en) werden über den bestehenden Parser nachverarbeitet."
+        )
+
+    def _resume_source_parsing_completed(
+        self, category: str, context: tuple[str, str], summary: object,
+    ) -> None:
+        workflow = self.pages["workflow"]
+        if category != "qec":
+            result = (
+                "Abgebrochen" if summary.cancelled
+                else "Teilweise" if summary.files_failed and summary.files_parsed
+                else "Fehlgeschlagen" if summary.files_failed
+                else "Eingelesen" if summary.files_parsed
+                else "Archiviert"
+            )
+            workflow.source_activity.record(
+                context[0], context[1], category, result,
+            )
+        workflow.refresh_data()
+        workflow.set_notice(
+            f"Parsing: {summary.files_parsed} Dateien bearbeitet · "
+            f"{summary.files_failed} Fehler · "
+            f"{summary.files_pending} ohne Parser. "
+            "Bereits erfolgreich indexierte Dokumente wurden übersprungen.",
+            error=bool(summary.files_failed),
+        )
 
     def _context_parse(self, category: str) -> None:
         """Vorhandenen Importparser nutzen, ohne selbst fachliche Daten zu erfinden."""
@@ -951,7 +1042,7 @@ class MainWindow(QMainWindow):
             )
             workflow.refresh_context_files()
             return
-        worker.completed.connect(
+        worker.imported.connect(
             lambda summary, ctx=context, cat=category,
             paths=tuple(Path(name) for name in filenames):
             self._context_parse_completed(cat, ctx, summary, paths)
@@ -1261,7 +1352,7 @@ class MainWindow(QMainWindow):
             elif cases.tips_download is not None:
                 cases.tips_download._cancel()
             return
-        if scope != "all":
+        if scope not in {"all", "missing"}:
             workflow.set_notice("Unbekannte Abrufaktion.", error=True)
             return
         if not self._portable_transfer_ready() or self._context_worker is not None:
@@ -1269,6 +1360,10 @@ class MainWindow(QMainWindow):
             return
         rows = workflow._scoped_rows
         raw_fins = sorted({str(row["fin"]).strip().upper() for row in rows})
+        if scope == "missing":
+            coverage = workflow._source_coverage.get(category)
+            missing_fins = set(coverage.missing_fins) if coverage else set()
+            raw_fins = [fin for fin in raw_fins if fin in missing_fins]
         fins: list[str] = []
         for fin in raw_fins:
             try:
@@ -1355,6 +1450,12 @@ class MainWindow(QMainWindow):
         if action.startswith("context_files:"):
             self._context_import(action.partition(":")[2])
             return
+        if action.startswith("context_parse_resume:"):
+            self._resume_source_parsing(action.partition(":")[2])
+            return
+        if action == "qec_parse_resume":
+            self._resume_source_parsing("qec")
+            return
         if action.startswith("context_parse:"):
             self._context_parse(action.partition(":")[2])
             return
@@ -1432,9 +1533,12 @@ class MainWindow(QMainWindow):
                 f"{count} QEC-Fälle lokal exportiert. "
                 "Die Datei enthält echte FINs: nur intern freigegeben weitergeben."
             )
-        elif action in {"qec_download_all", "qec_download_selected"}:
+        elif action in {
+            "qec_download_all", "qec_download_selected", "qec_download_missing",
+        }:
             self._workflow_start_qec_download(
-                selected_only=action == "qec_download_selected"
+                selected_only=action == "qec_download_selected",
+                missing_only=action == "qec_download_missing",
             )
         elif action == "qec_download_cancel":
             panel = self.pages["cases"].qec_download
