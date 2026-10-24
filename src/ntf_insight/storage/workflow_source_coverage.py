@@ -59,6 +59,7 @@ class SourceCoverage:
     partial_documents: int = 0
     unsupported_parser: bool = False
     pending_paths: tuple[Path, ...] = ()
+    local_paths: tuple[Path, ...] = ()  # Prüfsummen-/Quellinventar für explizites Neuparsen
     missing_fins: tuple[str, ...] = ()
     missing_qec: tuple[tuple[str, str], ...] = ()
     case_label: str = "FINs"
@@ -263,6 +264,7 @@ def get_workflow_coverage(
     qec_parsed = 0
     qec_partial = 0
     qec_pending: list[Path] = []
+    qec_paths: list[Path] = []
     qec_parsed_cases: set[tuple[str, str]] = set()
     qec_partial_cases: set[tuple[str, str]] = set()
     qec_missing: list[tuple[str, str]] = []
@@ -276,6 +278,7 @@ def get_workflow_coverage(
         if path is None:  # altes Legacy-Format: erneut als JSON abrufen
             qec_missing.append((fin, ref))
             continue
+        qec_paths.append(path)
         if not _qec_download_complete(path, fin, ref):
             # Bereits lokal vorhanden, aber neue Portalabfrage erforderlich.
             qec_missing.append((fin, ref))
@@ -296,6 +299,7 @@ def get_workflow_coverage(
         "qec", len(cases), qec_local, qec_parsed,
         qec_local, qec_parsed, qec_partial,
         pending_paths=tuple(qec_pending),
+        local_paths=tuple(qec_paths),
         missing_qec=tuple(qec_missing),
         case_label="QEC-Fälle",
         documents_label="Berichte",
@@ -372,6 +376,7 @@ def get_workflow_coverage(
         "diagnosis_viewer", len(fins), len(quick_local_fins),
         len(quick_parsed), len(quick_sources), quick_parsed_docs, quick_partial,
         pending_paths=tuple(quick_pending),
+        local_paths=tuple(path for path, _fin in quick_sources.values()),
         missing_fins=tuple(quick_missing),
         note="Portalsitzungen pro FIN vorab unbekannt.",
     )
@@ -445,6 +450,7 @@ def get_workflow_coverage(
         "tips_writer", len(fins), len(tips_local_fins), len(tips_parsed_fins),
         len(tips_reports), tips_parsed_docs, tips_partial,
         pending_paths=tuple(tips_pending),
+        local_paths=tuple(path for path, _fin, _ref in tips_reports.values()),
         missing_fins=tuple(tips_missing),
         documents_label="Fallberichte",
         note="TIPS-Anhänge sind zusätzliche, nicht automatisch geparste Dokumente.",
@@ -496,6 +502,7 @@ def get_workflow_coverage(
         "tp_dashboard", len(fins), len(tp_local_fins), len(tp_parsed_fins),
         len(tp_selected), tp_done, tp_partial,
         pending_paths=tuple(tp_pending),
+        local_paths=tuple(tp_selected.values()),
         case_label="FINs",
         documents_label="CSV-Dateien",
         note="FIN-Zahlen aus gespeicherten CSV-Zeilen; eine Sammeldatei "
@@ -537,6 +544,7 @@ def get_workflow_coverage(
     result["cdd_smrd"] = SourceCoverage(
         "cdd_smrd", None, None, None, len(cdd_files),
         cdd_parsed, cdd_partial, pending_paths=tuple(cdd_pending),
+        local_paths=tuple(item.source_path for item in cdd_files if item.source_path.suffix.lower() == ".cdd"),
         case_label="Fälle", documents_label="CDD-/SMR-D-Dateien",
         note="CDD-Dienste können gelesen werden; Setzbedingungen aus "
              "SMR-D und eine eindeutige FIN-Zuordnung sind nicht implementiert.",
