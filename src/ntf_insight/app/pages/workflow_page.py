@@ -1,24 +1,30 @@
-"""Kompakter sechsstufiger Arbeitsbereich für die lokale NTF-Prüfung.
+"""Kompakter fünfstufiger Arbeitsbereich für die lokale NTF-Prüfung.
 
-Die sechs Workflow-Stationen stehen nebeneinander. Darunter zeigt eine
+Die fünf Workflow-Stationen stehen nebeneinander. Darunter zeigt eine
 QStackedWidget genau EINEN Arbeitsschritt; nur Tabellen scrollen intern.
 Rohdatenparser, QEC-Downloader und ChatGPT-Vertrag werden nicht dupliziert.
 """
 from __future__ import annotations
 
+from collections import Counter, defaultdict
 from dataclasses import replace
+from datetime import datetime
+from pathlib import Path
 
 from PySide6.QtCore import QSortFilterProxyModel, Qt, Signal
+from PySide6.QtGui import QAction
 from PySide6.QtGui import QCursor
 from PySide6.QtWidgets import (
     QAbstractItemView, QCheckBox, QComboBox, QGridLayout, QHBoxLayout,
-    QHeaderView, QLabel, QLineEdit, QProgressBar, QPushButton,
-    QSizePolicy, QStackedWidget, QTableView, QVBoxLayout, QWidget,
+    QHeaderView, QLabel, QLineEdit, QMenu, QProgressBar, QPushButton,
+    QScrollArea, QSizePolicy, QStackedWidget, QTabWidget, QTableView,
+    QToolButton, QVBoxLayout, QWidget,
 )
 
 from ntf_insight.acquisition.qec_archive import local_qec_archive
 from ntf_insight.acquisition.qec_tool import QecTarget, parse_qec_targets
 from ntf_insight.app.models.simple_table_model import SimpleTableModel
+from ntf_insight.app.widgets.workflow_donut import WorkflowDonut
 from ntf_insight.components.registry import list_component_profiles
 from ntf_insight.reporting.chatgpt_exchange import ChatGPTAnalyseStore
 from ntf_insight.storage.cluster_evidence_store import (
@@ -26,6 +32,10 @@ from ntf_insight.storage.cluster_evidence_store import (
 )
 from ntf_insight.storage.workflow_ai_chain import WorkflowAIChainStore
 from ntf_insight.storage.workflow_projects import WorkflowProjectStore
+from ntf_insight.storage.workflow_source_activity import WorkflowSourceActivity
+from ntf_insight.storage.workflow_ssl_selection import (
+    MISSING, MULTIPLE, WorkflowSSLSelection, fin_ssl_groups,
+)
 from ntf_insight.storage.workflow_progress import (
     STEP_COUNT, WorkflowProgressStore, normalize_part_number,
 )
@@ -90,6 +100,10 @@ class WorkflowPage(QWidget):
         self.context_store = ClusterEvidenceStore(progress_store.store)
         self.project_store = WorkflowProjectStore(progress_store.store)
         self.ai_chain = WorkflowAIChainStore(progress_store.store)
+        self.ssl_selection = WorkflowSSLSelection(progress_store.store)
+        self.source_activity = WorkflowSourceActivity(progress_store.store)
+        self._project_rows: list[dict] = []
+        self._fin_findings: dict[str, str] = {}
         self.context_files = []
         self.first_package = None
         self._context_busy = False
@@ -194,19 +208,8 @@ class WorkflowPage(QWidget):
                 steps.addWidget(arrow)
         outer.addLayout(steps)
 
-        controls = QHBoxLayout()
-        self.previous_button = QPushButton("← Zurück")
-        self.previous_button.clicked.connect(lambda: self._move(-1))
-        controls.addWidget(self.previous_button)
         self.current_title = QLabel(objectName="CardTitle")
-        controls.addWidget(self.current_title, 1)
-        self.pause_button = QPushButton("Pausieren")
-        self.pause_button.clicked.connect(self._toggle_pause)
-        controls.addWidget(self.pause_button)
-        self.next_button = QPushButton("Weiter →")
-        self.next_button.clicked.connect(lambda: self._move(1))
-        controls.addWidget(self.next_button)
-        outer.addLayout(controls)
+        outer.addWidget(self.current_title)
 
         self.workspaces = QStackedWidget()
         self.workspaces.setSizePolicy(
@@ -286,6 +289,28 @@ class WorkflowPage(QWidget):
         body.addLayout(import_controls)
         self.source_label = QLabel(objectName="PageSubtitle")
         body.addWidget(self.source_label)
+        dashboard = QHBoxLayout()
+        self.ssl_donut = WorkflowDonut("SSL-Endbefund · eindeutige FINs")
+        dashboard.addWidget(self.ssl_donut, 2)
+        selection_box = QVBoxLayout()
+        selection_box.addWidget(QLabel("FINs für Schritte 02–05"))
+        self.ssl_filter_button = QToolButton()
+        self.ssl_filter_button.setText("SSL-Endbefunde auswählen")
+        self.ssl_filter_button.setPopupMode(
+            QToolButton.ToolButtonPopupMode.InstantPopup
+        )
+        self.ssl_menu = QMenu(self.ssl_filter_button)
+        self.ssl_filter_button.setMenu(self.ssl_menu)
+        selection_box.addWidget(self.ssl_filter_button)
+        self.ssl_select_all = QPushButton("Alle übernehmen")
+        self.ssl_select_all.clicked.connect(lambda: self._select_all_ssl(True))
+        selection_box.addWidget(self.ssl_select_all)
+        self.ssl_selection_status = QLabel(objectName="PageSubtitle")
+        self.ssl_selection_status.setWordWrap(True)
+        selection_box.addWidget(self.ssl_selection_status)
+        selection_box.addStretch(1)
+        dashboard.addLayout(selection_box, 1)
+        body.addLayout(dashboard)
         self.fin_search = QLineEdit()
         self.fin_search.setPlaceholderText("FIN, QEC-Fall oder Referenz suchen …")
         body.addWidget(self.fin_search)
@@ -325,6 +350,8 @@ class WorkflowPage(QWidget):
         )
         actions.addStretch(1)
         body.addLayout(actions)
+        self.qec_donut = WorkflowDonut("QEC-Berichte · eindeutige FINs")
+        body.addWidget(self.qec_donut)
         self.qec_status = QLabel(objectName="PageSubtitle")
         self.qec_status.setWordWrap(True)
         body.addWidget(self.qec_status)
@@ -356,6 +383,16 @@ class WorkflowPage(QWidget):
         )
         actions.addStretch(1)
         body.addLayout(actions)
+        for button in (self.ai_export_button, self.ai_import_button):
+            button.setMinimumHeight(52)
+            button.setMinimumWidth(250)
+            button.setObjectName("ClusterStartButton")
+        dashboards = QHBoxLayout()
+        self.ntf_donut = WorkflowDonut("NTF-Bewertung · eindeutige FINs")
+        self.cause_donut = WorkflowDonut("Verursachungsbereich · ChatGPT-Vorschlag")
+        dashboards.addWidget(self.ntf_donut, 1)
+        dashboards.addWidget(self.cause_donut, 1)
+        body.addLayout(dashboards)
         self.ai_package_status = QLabel(objectName="PageSubtitle")
         self.ai_package_status.setWordWrap(True)
         body.addWidget(self.ai_package_status)
@@ -363,7 +400,7 @@ class WorkflowPage(QWidget):
         body.addWidget(self.ntf_status)
         self.ntf_table, self.ntf_model = _create_table((
             "FIN", "QEC-Fall", "SSL-Endbefund", "QEC-Entscheidung",
-            "ChatGPT-Vorschlag", "Prüfstatus",
+            "ChatGPT-Vorschlag", "Verursachungsbereich", "Prüfstatus",
         ))
         body.addWidget(self.ntf_table, 1)
 
