@@ -769,8 +769,11 @@ class WorkflowPage(QWidget):
         try:
             if self.qec_store is not None:
                 self._all_rows = self.qec_store.rows(self.qec_root)
-                source = self.qec_store.active_source()
-                self._source_name = source.original_name if source else ""
+                sources = self.qec_store.active_sources()
+                self._source_name = (
+                    sources[0].original_name if len(sources) == 1
+                    else f"{len(sources)} aktive QEC-Listen" if sources else ""
+                )
             if self.analysis_store is not None:
                 for finding in self.analysis_store.list_case_findings(limit=10000):
                     self._chatgpt_by_case.setdefault(finding["case_id"], finding)
