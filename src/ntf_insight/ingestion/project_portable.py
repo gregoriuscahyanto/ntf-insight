@@ -23,7 +23,7 @@ import duckdb
 
 from ntf_insight.ingestion.artifacts import SourceArtifact, sha256_file
 from ntf_insight.ingestion.portable_backup import (
-    DATABASE_NAME, DATA_FOLDERS, MAX_MEMBER_BYTES, _CHUNK, _relative,
+    DATABASE_NAME, DATA_FOLDERS, _CHUNK, _relative,
     _safe_file, _snapshot_database, _write_member, export_portable_backup,
     restore_portable_backup,
 )
