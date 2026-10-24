@@ -78,3 +78,73 @@ def test_workflow_actions_reuse_existing_source_panels(tmp_path, monkeypatch):
     )
     window.close()
     app.processEvents()
+
+
+
+def test_clicks_on_all_workflow_cards_open_the_right_area(tmp_path, monkeypatch):
+    """Ein echter Button-Klick muss zum konkreten Fachbereich führen."""
+    monkeypatch.setenv("NTF_INSIGHT_DATA_DIR", str(tmp_path / "app-data"))
+    app = QApplication.instance() or QApplication([])
+    window = MainWindow()
+    window.show()
+    workflow = window.pages["workflow"]
+    sources = window.pages["sources"]
+    cases = window.pages["cases"]
+    focused = []
+    monkeypatch.setattr(
+        window, "_workflow_focus",
+        lambda scroll, target: focused.append((scroll, target)),
+    )
+
+    assert sources.qec_workflow is not None
+    assert sources.ki_analyse_panel is not None
+    assert cases.qec_download is not None
+
+    workflow.cards[0].click()
+    app.processEvents()
+    assert window.stack.currentWidget() is sources
+    assert focused[-1] == (sources.content_scroll, sources.qec_workflow.step1)
+
+    window.navigation.select_page("workflow")
+    workflow.cards[1].click()
+    app.processEvents()
+    assert window.stack.currentWidget() is cases
+    assert cases.detail_tabs.currentWidget() is cases.analysis_tab
+    assert focused[-1] == (cases.analysis_tab, cases.qec_download.all_button)
+
+    window.navigation.select_page("workflow")
+    workflow.cards[2].click()
+    app.processEvents()
+    assert window.stack.currentWidget() is sources
+    assert focused[-1] == (
+        sources.content_scroll, sources.qec_workflow.case_selector
+    )
+
+    window.navigation.select_page("workflow")
+    workflow.cards[3].click()
+    assert window.stack.currentWidget() is cases
+    assert cases.detail_tabs.currentWidget() is cases.quicktest_browser
+
+    window.navigation.select_page("workflow")
+    workflow.cards[4].click()
+    assert window.stack.currentWidget() is cases
+    assert cases.detail_tabs.currentWidget() is cases.cluster_workspace
+
+    window.navigation.select_page("workflow")
+    workflow.cards[5].click()
+    app.processEvents()
+    assert window.stack.currentWidget() is sources
+    assert focused[-1] == (
+        sources.content_scroll, sources.ki_analyse_panel.export_button
+    )
+
+    window.navigation.select_page("workflow")
+    workflow.cards[0].click()
+    window.navigation.select_page("workflow")
+    workflow.next_button.click()
+    app.processEvents()
+    assert workflow.state.step == 1
+    assert window.stack.currentWidget() is cases
+    assert cases.detail_tabs.currentWidget() is cases.analysis_tab
+    window.close()
+    app.processEvents()
