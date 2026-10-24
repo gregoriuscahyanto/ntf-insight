@@ -1081,7 +1081,7 @@ class WorkflowPage(QWidget):
             self.profile_id, self._context_part, categories, selected,
         )
         self.cohort_updated.emit()
-        QTimer.singleShot(0, self.refresh)
+        self.refresh()
 
     def _refresh_ssl_menu(self) -> None:
         categories = self._ssl_categories()
@@ -1098,7 +1098,10 @@ class WorkflowPage(QWidget):
             action.setChecked(category in selected)
             action.toggled.connect(
                 lambda checked, label=category:
-                self._select_ssl_category(label, checked)
+                QTimer.singleShot(
+                    0, lambda checked=checked, label=label:
+                    self._select_ssl_category(label, checked)
+                )
             )
             self.ssl_menu.addAction(action)
         included = sum(
