@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import re
 import time
+from datetime import datetime
 from pathlib import Path
 
 from PySide6.QtCore import Qt, QEventLoop, QTimer, QUrl
@@ -790,7 +791,7 @@ class MainWindow(QMainWindow):
             dialog, "ChatGPT-Analyse-ZIP speichern",
             str(Path.home() / (
                 "NTF-Insight-KI-Analyse-"
-                + __import__("datetime").datetime.now().strftime("%Y%m%d-%H%M")
+                + datetime.now().strftime("%Y%m%d-%H%M")
                 + ".zip"
             )),
             "ChatGPT-Analysepaket (*.zip)",
