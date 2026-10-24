@@ -75,7 +75,14 @@ def test_project_package_imports_only_selected_part_and_preserves_other_projects
     (origin / "quicktests" / FIN_B / "test.pdf").write_bytes(b"B QuickTest")
 
     package = tmp_path / ("pumpe" + PROJECT_EXTENSION)
-    result = export_project(origin, package, "coolant_pump", "A100200")
+    export_steps = []
+    result = export_project(
+        origin, package, "coolant_pump", "A100200",
+        progress=lambda percent, message: export_steps.append((percent, message)),
+    )
+    assert export_steps[0][0] >= 0
+    assert export_steps[-1][0] == 100
+    assert any("Projektarchiv" in label for _, label in export_steps)
     assert result.case_count == 1
     assert result.fin_count == 1
     assert package.is_file()
@@ -87,7 +94,14 @@ def test_project_package_imports_only_selected_part_and_preserves_other_projects
     other, other_projects = _setup(target)
     other_projects.save(NTFProject("coolant_pump", "Z 777 777", "Altprojekt", ("MCM",)))
     _case(other, "Z777777", FIN_B, "LOCAL")
-    imported = import_project(package, target)
+    import_steps = []
+    imported = import_project(
+        package, target,
+        progress=lambda percent, message: import_steps.append((percent, message)),
+    )
+    assert import_steps[0][0] >= 0
+    assert import_steps[-1][0] == 100
+    assert any("Projekttabellen" in label for _, label in import_steps)
     assert imported.part_number == "A 100 200"
     reopened = WorkflowProjectStore(DuckDBStore(target / "ntf-insight.duckdb"))
     assert {p.part_number for p in reopened.list_projects()} == {
