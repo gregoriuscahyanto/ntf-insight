@@ -234,6 +234,17 @@ class MainWindow(QMainWindow):
     def _workflow_navigate(self, page: str, tab: str) -> None:
         """Bestehende Analyse- und Quellenseiten nutzen, keine Parallel-UI."""
         if page == "cases" and tab == "cluster":
+            workflow = self.pages["workflow"]
+            if workflow.profile_id != "coolant_pump":
+                QMessageBox.information(
+                    self, "Bauteilprofil",
+                    "Die aktuelle FIN-Clusterarbeitsfläche ist pumpenspezifisch. "
+                    "Für andere Bauteile sind eigene Diagnosemerkmale erforderlich.",
+                )
+                return
+            self.pages["cases"].cluster_workspace.set_workflow_part_number(
+                workflow.part_number.text()
+            )
             self.pages["cases"].detail_tabs.setCurrentWidget(
                 self.pages["cases"].cluster_workspace
             )
