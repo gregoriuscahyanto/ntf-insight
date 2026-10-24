@@ -62,6 +62,7 @@ class SourceCoverage:
     case_label: str = "FINs"
     documents_label: str = "Dokumente"
     note: str = ""
+    parsed_qec: frozenset[tuple[str, str]] = frozenset()
 
     @property
     def pending_documents(self) -> int:
@@ -224,6 +225,7 @@ def get_workflow_coverage(
     qec_parsed = 0
     qec_partial = 0
     qec_pending: list[Path] = []
+    qec_parsed_cases: set[tuple[str, str]] = set()
     qec_missing: list[tuple[str, str]] = []
     for fin, ref in sorted(cases):
         info = local_qec_archive(root / "qec", fin, ref)
@@ -241,6 +243,8 @@ def get_workflow_coverage(
             latest, index, fin=fin, reference=ref,
         )
         qec_parsed += int(success)
+        if success:
+            qec_parsed_cases.add((fin, ref))
         qec_partial += int(partial)
         if not success:
             qec_pending.append(path)
@@ -251,6 +255,7 @@ def get_workflow_coverage(
         missing_qec=tuple(qec_missing),
         case_label="QEC-Fälle",
         documents_label="Berichte",
+        parsed_qec=frozenset(qec_parsed_cases),
     )
 
     # Diagnosis: echte PDFs, nicht nur Abrufstatus/Ordner. Portalanzahl
