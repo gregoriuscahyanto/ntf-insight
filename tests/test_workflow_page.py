@@ -328,7 +328,7 @@ def test_context_scrapers_use_only_current_qec_part_with_single_fetch_action(
 
     monkeypatch.setattr(tips, "_start", fake_tips_start)
     assert "selected" not in page.context_scraper_buttons["tips_writer"]
-    assert page.context_scraper_buttons["tips_writer"]["parse"].text() == "Einlesen …"
+    assert page.context_scraper_buttons["tips_writer"]["parse"].text() == "Dateien auswählen & einlesen …"
     window._context_scrape("tips_writer", "all")
     assert calls[-1] == ("tips", ["WDD12345678901234"], True)
     assert "Abruf" in page.context_source_dates["tips_writer"].text()
