@@ -150,7 +150,11 @@ ein Projekt mit dem passenden Bauteil/Sachnummern-Paar angelegt.
 Die bereits importierten QEC-, FIN-, Diagnose- und Archivdateien werden
 **nicht** neu importiert, gelöscht oder überschrieben. Im Projekt werden
 die betreffenden vorhandenen Fälle anhand ihrer Sachnummer angezeigt.
-Bei mehreren Sachnummern erfolgt eine Auswahl.
+Bei **genau einer** erkannten Sachnummer werden außerdem der alte,
+sachnummernlose Workflowfortschritt und bisher ungebundene Unterlagen/
+KI-Paketreferenzen übernommen, ohne die alten Einträge zu löschen.
+Bei mehreren Sachnummern erfolgt eine Auswahl, ungebundene Unterlagen
+müssen jedoch erst fachlich zugeordnet werden.
 
 In \`Projekteinstellungen\` sind Bauteilprofil, Sachnummer,
 Bauteilbezeichnung, relevante Steuergeräte und Beschreibung editierbar.
