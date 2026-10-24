@@ -227,6 +227,10 @@ class MainWindow(QMainWindow):
         analysis_export = pages["sources"].ki_analyse_panel
         if analysis_export is not None:
             analysis_export.set_guard(self._portable_transfer_ready)
+            analysis_export.use_shared_export_dialog()
+            analysis_export.export_options_requested.connect(self._first_export_prompt)
+            analysis_export.export_progress.connect(self._first_export_progress)
+            analysis_export.export_failed.connect(self._first_export_failed)
             analysis_export.transfer_busy.connect(self._portable_transfer_busy)
             analysis_export.first_package_export_started.connect(
                 self._first_export_started
@@ -737,31 +741,116 @@ class MainWindow(QMainWindow):
         workflow._open_step(4)
         self.navigation.select_page("workflow")
 
+    def _first_export_prompt(self) -> None:
+        """Auch direkt in Datenquellen gilt dieselbe sichere Exportkarte."""
+        if not self._portable_transfer_ready():
+            QMessageBox.warning(
+                self, "ChatGPT-Export gesperrt",
+                "Zuerst laufende Abrufe, Parser und Transfers abschließen.",
+            )
+            return
+        dialog = self._show_export_prompt(
+            "ChatGPT-Analysepaket exportieren",
+            "Vor dem Erstellen den Datenumfang wählen. Beide vertraulichen "
+            "Optionen sind standardmäßig AUS. Es erfolgt kein Upload. "
+            "Die getrennte FIN-Zuordnung niemals weitergeben.",
+            options=(
+                ("text",
+                 "QEC-/TIPS-/Werkstatt-/Lieferanten-Freitexte beifügen (vertraulich)",
+                 False),
+                ("originals",
+                 "Vollständige QEC-Befundungsdokumente und Anhänge beifügen "
+                 "(Originale, vertraulich)", False),
+            ),
+        )
+        self._first_export_dialog = dialog
+        dialog.start_requested.connect(self._first_export_start)
+        dialog.finished.connect(
+            lambda _code: self._clear_export_dialog("first", dialog)
+        )
+
+    def _clear_export_dialog(
+        self, kind: str, dialog: ExportOperationDialog,
+    ) -> None:
+        attr = {
+            "first": "_first_export_dialog",
+            "second": "_second_export_dialog",
+        }.get(kind)
+        if attr is not None and getattr(self, attr) is dialog:
+            setattr(self, attr, None)
+        if kind == "first" and self.pages["sources"].ki_analyse_panel.worker is None:
+            self.pages["sources"].ki_analyse_panel._next_workflow_fins = None
+
+    def _first_export_start(self, options: dict) -> None:
+        dialog = self._first_export_dialog
+        panel = self.pages["sources"].ki_analyse_panel
+        if dialog is None or panel is None:
+            return
+        filename, _ = QFileDialog.getSaveFileName(
+            dialog, "ChatGPT-Analyse-ZIP speichern",
+            str(Path.home() / (
+                "NTF-Insight-KI-Analyse-"
+                + __import__("datetime").datetime.now().strftime("%Y%m%d-%H%M")
+                + ".zip"
+            )),
+            "ChatGPT-Analysepaket (*.zip)",
+        )
+        if not filename:
+            return
+        destination = Path(filename)
+        if destination.suffix.lower() != ".zip":
+            destination = destination.with_suffix(".zip")
+        panel.start_export(
+            destination,
+            mit_freitext=bool(options.get("text")),
+            mit_qec_originalen=bool(options.get("originals")),
+        )
+
+    def _first_export_progress(self, message: str) -> None:
+        if self._first_export_dialog is not None:
+            self._first_export_dialog.update_message(message)
+
+    def _first_export_failed(self, message: str) -> None:
+        self._pending_first_context = None
+        if self._first_export_dialog is not None:
+            self._first_export_dialog.fail(message)
+        self.pages["workflow"].set_notice(
+            "KI-Analyse-ZIP fehlgeschlagen: " + message, error=True,
+        )
+
     def _first_export_started(self, _destination: object) -> None:
         workflow = self.pages["workflow"]
         self._pending_first_context = (workflow.profile_id, workflow._context_part)
+        if self._first_export_dialog is not None:
+            self._first_export_dialog.begin("ChatGPT-Analysepaket wird erstellt …")
 
     def _first_export_completed(self, result: object) -> None:
         workflow = self.pages["workflow"]
         context = self._pending_first_context
         self._pending_first_context = None
-        if context is None:
-            return
-        try:
-            stored = workflow.ai_chain.register_first_export(
-                context[0], context[1], result.pfad
-            )
-        except (OSError, ValueError) as exc:
-            workflow.set_notice(
-                "KI-Paket erstellt, aber automatische Übernahme fehlgeschlagen: "
-                + str(exc), error=True,
-            )
-            return
-        workflow.refresh_ai_chain()
-        workflow.set_notice(
-            "1. KI-Paket automatisch lokal gesichert: "
-            + stored.paket_id[:12] + "… · kein erneutes Auswählen nötig."
+        detail = (
+            "Private FIN-/Fall-Zuordnung wird separat lokal gespeichert. "
+            "Die *_NICHT_HOCHLADEN_ZUORDNUNG.csv niemals weitergeben."
         )
+        if context is not None:
+            try:
+                stored = workflow.ai_chain.register_first_export(
+                    context[0], context[1], result.pfad
+                )
+            except (OSError, ValueError) as exc:
+                detail += " Workflow-Zuordnung fehlgeschlagen: " + str(exc)
+                workflow.set_notice(
+                    "KI-Paket erstellt, aber automatische Übernahme fehlgeschlagen: "
+                    + str(exc), error=True,
+                )
+            else:
+                workflow.refresh_ai_chain()
+                workflow.set_notice(
+                    "1. KI-Paket automatisch lokal gesichert: "
+                    + stored.paket_id[:12] + "… · kein erneutes Auswählen nötig."
+                )
+        if self._first_export_dialog is not None:
+            self._first_export_dialog.complete(result.pfad, details=detail)
 
     def _ai_import_completed(self, result: object) -> None:
         round_number = self._pending_ai_round
