@@ -1335,13 +1335,17 @@ class WorkflowPage(QWidget):
                             f"{event_type}: {when:%d.%m.%Y %H:%M} · {state}"
                         )
                 if descriptions:
-                    # Nur der jüngste Zeitstempel, vollständiger Verlauf im Tooltip.
-                    newest = max(
-                        (item for item in log.values() if item is not None),
-                        key=lambda item: item[0],
+                    # Kurzer Status mit Ereignistyp; vollständige Chronik im Tooltip.
+                    newest_type, newest = max(
+                        (
+                            (event_type, record)
+                            for event_type in ("Abruf", "Einlesen")
+                            if (record := log.get(event_type)) is not None
+                        ),
+                        key=lambda item: item[1][0],
                     )
                     self.context_source_dates[key].setText(
-                        f"Zuletzt: {newest[0]:%d.%m.%Y %H:%M}"
+                        f"{newest_type}: {newest[0]:%d.%m.%Y %H:%M}"
                     )
                     self.context_source_dates[key].setToolTip(
                         "\n".join(descriptions)
