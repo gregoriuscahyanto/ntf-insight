@@ -263,7 +263,7 @@ def test_context_collection_shows_provenance_and_part_specific_status(
     page.refresh_context_files()
     page.refresh()
     assert page.context_model.rowCount() == 1
-    assert page.context_counts["cdd_smrd"].text() == "1"
+    assert "0/1" in page.context_counts["cdd_smrd"].text()
     assert page.cards[3].property("workflowState") == "partial"
     page.cards[3].click()
     page.context_review_button.click()
@@ -430,7 +430,7 @@ def test_legacy_single_part_adoption_keeps_unscoped_workflow_and_documents(
     assert workflow._context_part == "A 123 456"
     assert workflow.state.step == 2
     assert workflow.context_model.rowCount() == 1
-    assert workflow.context_counts["cdd_smrd"].text() == "1"
+    assert "0/1" in workflow.context_counts["cdd_smrd"].text()
     assert workflow.progress_store.load("coolant_pump", "").step == 2
     assert workflow.progress_store.load("coolant_pump", "A123456").step == 0
     assert workflow.progress_store.load("coolant_pump", "A 123 456").step == 2
