@@ -189,19 +189,27 @@ QPushButton#WorkflowStep {{
 }}
 
 QPushButton#WorkflowStep[workflowState="done"] {{
+    background-color: #d6efe0;
+    color: #164a35;
+    border: 2px solid #26845c;
     border-bottom: 4px solid #26845c;
 }}
 
 QPushButton#WorkflowStep[workflowState="partial"] {{
+    background-color: #fff1d2;
+    color: #66440b;
+    border: 2px solid #bd8318;
     border-bottom: 4px solid #bd8318;
 }}
 
 QPushButton#WorkflowStep[workflowState="error"] {{
+    background-color: #fbe1e1;
+    color: #7e2424;
+    border: 2px solid #b94242;
     border-bottom: 4px solid #b94242;
 }}
 
 QPushButton#WorkflowStep[isCurrent="true"] {{
-    background-color: {p["surface_alt"]};
     border: 2px solid #22789a;
     font-weight: 700;
 }}
