@@ -33,6 +33,7 @@ from ntf_insight.storage.quicktest_store import QuickTestStore
 from ntf_insight.storage.source_knowledge_store import SourceKnowledgeStore
 from ntf_insight.ingestion.qec_json import list_downloaded_qec_reports
 from ntf_insight.ingestion.artifacts import sha256_file
+from ntf_insight.reporting.ki_analysepaket_erweiterung import autoexport_fins, build_zusatztabellen
 from ntf_insight.reporting.chatgpt_exchange import (
     ChatGPTAnalyseStore, ergebnis_schema, ergebnis_vorlage,
 )
@@ -304,7 +305,8 @@ def export_ki_analysepaket(
         raise ValueError("Mehr als 200.000 QEC-Detailzeilen; Export bitte eingrenzen.")
 
     fins = (
-        {case.vin for case in cases}
+        autoexport_fins(service)
+        | {case.vin for case in cases}
         | {row[1] for row in reports}
         | {str(doc["metadata"].get("fin")) for doc in documents if doc["metadata"].get("fin")}
         | {fin for fin in tips_counts if _FIN_RE.fullmatch(str(fin or ""))}
@@ -685,6 +687,13 @@ def export_ki_analysepaket(
         for item in features
     ]
 
+    advance("Weitere lokale AutoExport- und Ereignisquellen zusammenstellen …")
+    zusatz = build_zusatztabellen(
+        service, cases, aliases, case_aliases, part_aliases,
+        secret=secret, mit_freitext=mit_freitext, artifacts=artifacts,
+        quicktest_fallbezug=fall_quicktests, quicktests=quicktest_rows,
+        progress=progress,
+    )
     table_items = {
         "cluster_input": (cluster_columns, cluster_input),
         "fahrzeuge": (("fahrzeug_id", "baureihe", "anzahl_faelle", "anzahl_quicktests", "tips_autoexport_rohzeilen"), fahrzeuge),
@@ -702,6 +711,8 @@ def export_ki_analysepaket(
         "methodik": (("thema", "regel"), methodik),
     }
 
+    table_items.update(zusatz.tabellen)
+
     stats = {
         "fahrzeuge": len(fahrzeuge), "faelle": len(faelle),
         "quicktests": len(reports), "dtcs": len(dtcs),
@@ -709,6 +720,7 @@ def export_ki_analysepaket(
         "smrd_originalquellen_nur_inventar": len(smrd_rows),
         "datenstand": "lokale DuckDB",
         "qec_originale_angefordert": mit_qec_originalen,
+        **zusatz.statistiken,
         "qec_nur_original_nicht_geparst": sum(
             doc.get("source_kind") == "qec_local_unparsed" for doc in documents
         ),
@@ -839,9 +851,11 @@ def export_ki_analysepaket(
             "fall_id_original": "", "qec_referenz_original": "",
             "sachnummer_original": "", "quelle_id_original": qid,
         })
+    mapping_rows.extend(zusatz.private_zuordnungen)
     for entry in mapping_rows:
         entry["paket_id"] = paket_id
         entry.setdefault("quelle_id_original", "")
+        entry.setdefault("original_wert", "")
         if entry["art"] == "qec_bericht":
             entry["quelle_id_original"] = next(
                 sha for sha, pseudonym in qec_aliases.items()
@@ -851,6 +865,7 @@ def export_ki_analysepaket(
         (
             "paket_id", "art", "pseudonym", "fin", "fall_id_original",
             "qec_referenz_original", "sachnummer_original", "quelle_id_original",
+            "original_wert",
         ),
         mapping_rows,
     )
