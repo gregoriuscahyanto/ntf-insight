@@ -478,6 +478,19 @@ class MainWindow(QMainWindow):
         dialog.deleteLater()
         self._finish_loading()
 
+    def _track_import_card(
+        self, attribute: str, dialog: ExportOperationDialog,
+    ) -> None:
+        setattr(self, attribute, dialog)
+        # Der Dialog wird nach finished per deleteLater freigegeben.
+        # Niemals einen bereits zerstörten QObject über ein altes Attribut
+        # ansprechen, insbesondere beim unmittelbar folgenden Import.
+        dialog.finished.connect(
+            lambda _code, attr=attribute, card=dialog:
+            setattr(self, attr, None)
+            if getattr(self, attr) is card else None
+        )
+
     def _close_old_import_cards(self) -> None:
         """Vor einem Folgeimport nur bereits abgeschlossene Importkarten schließen."""
         for name in (
@@ -493,7 +506,7 @@ class MainWindow(QMainWindow):
         dialog = self._show_operation_progress(
             "Quelldateien importieren", message,
         )
-        self._source_import_dialog = dialog
+        self._track_import_card("_source_import_dialog", dialog)
         dialog.allow_cancel()
         dialog.cancel_requested.connect(self.pages["sources"]._cancel_import)
 
@@ -521,10 +534,11 @@ class MainWindow(QMainWindow):
 
     def _ai_import_started(self, filename: str) -> None:
         self._close_old_import_cards()
-        self._ai_import_dialog = self._show_operation_progress(
+        dialog = self._show_operation_progress(
             "ChatGPT-Ergebnis importieren",
             f"Ergebnisdatei {filename} wird geprüft und lokal zugeordnet …",
         )
+        self._track_import_card("_ai_import_dialog", dialog)
 
     def _ai_import_progress(self, message: str) -> None:
         if self._ai_import_dialog is not None:
@@ -534,9 +548,10 @@ class MainWindow(QMainWindow):
         self._pending_ai_round = None
         self._close_old_import_cards()
         if self._ai_import_dialog is None:
-            self._ai_import_dialog = self._show_operation_progress(
+            dialog = self._show_operation_progress(
                 "ChatGPT-Ergebnis importieren", "Rückimport prüfen …",
             )
+            self._track_import_card("_ai_import_dialog", dialog)
         self._ai_import_dialog.fail(message)
         self.pages["workflow"].set_notice(
             "ChatGPT-Rückimport abgebrochen: " + message, error=True,
@@ -1797,7 +1812,7 @@ class MainWindow(QMainWindow):
             "Technische Unterlagen importieren",
             f"{len(paths)} Datei(en) als {CATEGORY_LABELS[category]} archivieren …",
         )
-        self._context_import_dialog = dialog
+        self._track_import_card("_context_import_dialog", dialog)
         worker.progress.connect(dialog.update_message)
         worker.start()
 
