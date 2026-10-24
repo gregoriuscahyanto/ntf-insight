@@ -9,6 +9,7 @@ from __future__ import annotations
 from collections import Counter, defaultdict
 import json
 from dataclasses import replace
+from datetime import datetime
 
 from PySide6.QtCore import QSortFilterProxyModel, QTimer, Qt, Signal
 from PySide6.QtGui import QAction
@@ -775,6 +776,55 @@ class WorkflowPage(QWidget):
             self._context_scrapers_busy.discard(category)
         self._refresh_controls()
 
+    def _historical_portal_downloads(
+        self, *, diagnosis: bool, tips: bool,
+    ) -> dict[str, tuple[datetime, bool]]:
+        """Reale lokale Portal-Manifeste statt geschätzter Download-Daten."""
+        if not diagnosis and not tips:
+            return {}
+        from ntf_insight.acquisition.diagnosis_viewer import read_last_attempt
+        from ntf_insight.acquisition.tips_archive import local_tips_cases
+
+        project_rows = self._rows_for_context()
+        fins = self.ssl_selection.allowed_fins(
+            self.profile_id, self._context_part, project_rows,
+        )
+        # Kein vollständiger Datumsnachweis aus einer unvollständig gelesenen Kohorte.
+        if len(fins) > 2000:
+            return {}
+        base = self.progress_store.store.path.parent
+        result: dict[str, tuple[datetime, bool]] = {}
+        if diagnosis:
+            for fin in fins:
+                state = read_last_attempt(base / "quicktests", fin)
+                if state is None or not state.last_attempt_at:
+                    continue
+                try:
+                    timestamp = datetime.fromisoformat(
+                        state.last_attempt_at.replace("Z", "+00:00")
+                    )
+                except ValueError:
+                    continue
+                last = result.get("diagnosis_viewer")
+                if last is None or timestamp > last[0]:
+                    result["diagnosis_viewer"] = (timestamp, bool(state.files))
+        if tips:
+            for fin in fins:
+                for path in local_tips_cases(base, fin):
+                    try:
+                        doc = json.loads(path.read_text(encoding="utf-8-sig"))
+                        timestamp = datetime.fromisoformat(
+                            str(doc["abgerufen_am_utc"]).replace("Z", "+00:00")
+                        )
+                    except (OSError, ValueError, KeyError, TypeError):
+                        continue
+                    if timestamp.tzinfo is None:
+                        continue
+                    last = result.get("tips_writer")
+                    if last is None or timestamp > last[0]:
+                        result["tips_writer"] = (timestamp, True)
+        return result
+
     def refresh_context_files(self) -> None:
         """Kontextdaten der aktuellen Sachnummer ohne Dateiinhalt in GUI anzeigen."""
         self.context_files = self.context_store.list_files(
@@ -788,6 +838,10 @@ class WorkflowPage(QWidget):
         )
         source_logs = self.source_activity.get_details(
             self.profile_id, self._context_part
+        )
+        archived_fetch = self._historical_portal_downloads(
+            diagnosis="Abruf" not in source_logs.get("diagnosis_viewer", {}),
+            tips="Abruf" not in source_logs.get("tips_writer", {}),
         )
         imported_types = {
             "tp_dashboard": SourceType.TP_DASHBOARD,
@@ -835,6 +889,12 @@ class WorkflowPage(QWidget):
                     self.context_source_dates[key].setText(
                         f"{kind}: {timestamp:%d.%m.%Y %H:%M} · {state}"
                     )
+                elif key in archived_fetch:
+                    newest, has_files = archived_fetch[key]
+                    self.context_source_dates[key].setText(
+                        f"Portalarchiv: {newest:%d.%m.%Y %H:%M}"
+                        + (" · Dateien vorhanden" if has_files else " · nur Abrufversuch")
+                    )
                 elif documents:
                     newest = max(f.imported_at for f in documents)
                     self.context_source_dates[key].setText(
@@ -857,7 +917,10 @@ class WorkflowPage(QWidget):
                         "Eingelesen", "Archiviert",
                     }
                 )
-                available = bool(documents or local_parsed)
+                available = bool(
+                    documents or local_parsed
+                    or (key in archived_fetch and archived_fetch[key][1])
+                )
                 legacy_only = bool(not available and key in legacy_imports)
                 count_label.setText(
                     str(counts[key]) if counts[key] else
