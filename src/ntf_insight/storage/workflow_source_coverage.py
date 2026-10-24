@@ -1,7 +1,7 @@
 """Belastbare Quelle-/FIN-Fortschrittsdaten für die fünf Workflow-Schritte.
 
 "lokal" = nachweislich vorhandene, referenzgeprüfte Download-/Archivdatei.
-"geparst" = aktuelle Dateiprüfsumme mit persistiertem fachlichem Parsergebnis.
+"geparst" = aktuelle Dateiprüfsumme mit nachweislich erfolgreichem oder\nteilweisem Parserlauf beliebiger Version und persistiertem fachlichem Ergebnis.
 Eine erfolgreiche Portalsuche ist NICHT gleichbedeutend mit einem Download,
 und ein Archivbeleg ist NICHT gleichbedeutend mit einem geparsten Datensatz.
 
@@ -99,9 +99,11 @@ class SourceCoverage:
 
 
 def _persisted(store: DuckDBStore) -> tuple[dict[str, tuple[str, str]], dict]:
-    """Index je SHA und Parser; gezählt nur mit persistiertem Ergebnis."""
+    """Je SHA den jüngsten *erfolgreichen* Lauf beliebiger Parser-Version merken.\n\n    Ein später fehlgeschlagener v4-Versuch macht einen gültigen\n    persistierten v1/v2/v3-Befund nicht wieder ungeparst.\n    """
     latest: dict[tuple[str, str], object] = {}
     for run in store.load_parse_runs():
+        if run.status not in (ParseStatus.SUCCESS, ParseStatus.PARTIAL):
+            continue
         key = (run.artifact_sha256, run.parser_name)
         old = latest.get(key)
         if old is None or (run.completed_at or run.started_at) >= (
@@ -149,8 +151,7 @@ def _was_parsed(
         return False, False
     run = latest.get((sha, parser.name))
     if (
-        run is None or run.parser_version != parser.version
-        or run.status not in (ParseStatus.SUCCESS, ParseStatus.PARTIAL)
+        run is None or run.status not in (ParseStatus.SUCCESS, ParseStatus.PARTIAL)
     ):
         return False, False
     if kind == "quicktest":
@@ -254,8 +255,7 @@ def get_workflow_coverage(
     for item in context_files:
         evidence.setdefault(item.category, {})[item.sha256] = item
 
-    # QEC: Pro Fall eine FIN/Referenz; nur passgenaues lokales JSON
-    # lässt sich mit dem aktuellen strukturierten Parser fortsetzen.
+    # QEC: Pro Fall eine FIN/Referenz; ein erfolgreiches Parsergebnis\n    # irgendeiner Version bleibt gültig. Nur ohne Erfolg wird nachverarbeitet.
     cases = {
         (str(r.get("fin") or "").upper(), str(r.get("reference") or ""))
         for r in qec_rows if r.get("fin") and r.get("reference")
