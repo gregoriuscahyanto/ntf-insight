@@ -416,41 +416,64 @@ class WorkflowPage(QWidget):
         self.context_scraper_buttons: dict[str, dict[str, QPushButton]] = {}
         self.context_import_buttons: dict[str, QPushButton] = {}
         self.context_counts: dict[str, QLabel] = {}
-        for index, (category, label) in enumerate(EVIDENCE_CATEGORIES[:4]):
-            scraper_grid.addWidget(QLabel(label), index, 0)
+        for column, heading in enumerate(
+            ("Quelle", "Abruf", "Abbruch", "Parser", "Datei", "Letzter Abruf / Import", "Bestand")
+        ):
+            scraper_grid.addWidget(QLabel(heading, objectName="PageSubtitle"), 0, column)
+        self.context_source_dates: dict[str, QLabel] = {}
+        self.context_source_names: dict[str, QLabel] = {}
+        for index, (category, label) in enumerate(EVIDENCE_CATEGORIES[:4], start=1):
+            name = QLabel(label)
+            self.context_source_names[category] = name
+            scraper_grid.addWidget(name, index, 0)
             buttons: dict[str, QPushButton] = {}
-            for j, (key, caption) in enumerate((
-                ("all", "Alle abrufen"),
-                ("selected", "Markierte"),
-                ("cancel", "Stop"),
-            ), start=1):
-                button = QPushButton(caption, objectName="WorkflowAction")
-                if category in ("diagnosis_viewer", "tips_writer"):
-                    button.clicked.connect(
-                        lambda _checked=False, c=category, k=key:
-                        self.action_requested.emit(f"context_scrape:{c}:{k}")
-                    )
-                else:
-                    button.setEnabled(False)
-                    button.setToolTip(
-                        "Ein automatisierter Scraper ist für diese Quelle "
-                        "im Repository noch nicht implementiert."
-                    )
-                    if key == "all":
-                        button.setText("Scraper offen")
-                    else:
-                        button.setVisible(False)
-                buttons[key] = button
-                scraper_grid.addWidget(button, index, j)
-            buttons["import"] = QPushButton("Dateien wählen …", objectName="WorkflowAction")
-            buttons["import"].clicked.connect(
+            fetch = QPushButton("Abrufen", objectName="WorkflowAction")
+            if category in ("diagnosis_viewer", "tips_writer"):
+                fetch.clicked.connect(
+                    lambda _checked=False, c=category:
+                    self.action_requested.emit(f"context_scrape:{c}:all")
+                )
+            else:
+                fetch.setEnabled(False)
+                fetch.setText("Nicht verfügbar")
+                fetch.setToolTip("Für diese Quelle existiert noch kein freigegebener Scraper.")
+            buttons["all"] = fetch
+            scraper_grid.addWidget(fetch, index, 1)
+            cancel = QPushButton("Stop", objectName="WorkflowAction")
+            cancel.setVisible(category in ("diagnosis_viewer", "tips_writer"))
+            cancel.clicked.connect(
+                lambda _checked=False, c=category:
+                self.action_requested.emit(f"context_scrape:{c}:cancel")
+            )
+            buttons["cancel"] = cancel
+            scraper_grid.addWidget(cancel, index, 2)
+            parser = QPushButton("Einlesen …", objectName="WorkflowAction")
+            parser.clicked.connect(
+                lambda _checked=False, c=category:
+                self.action_requested.emit(f"context_parse:{c}")
+            )
+            parser.setToolTip(
+                "Vorhandenen Quellenparser verwenden; Parserstatus wird "
+                "in Datenquellen angezeigt. Celonis-Dateien können bislang "
+                "nur als Original archiviert werden."
+            )
+            if category == "celonis":
+                parser.setText("Archivieren …")
+            buttons["parse"] = parser
+            scraper_grid.addWidget(parser, index, 3)
+            archive = QPushButton("+ Beleg", objectName="WorkflowAction")
+            archive.clicked.connect(
                 lambda _checked=False, c=category:
                 self.action_requested.emit(f"context_files:{c}")
             )
-            self.context_import_buttons[category] = buttons["import"]
-            scraper_grid.addWidget(buttons["import"], index, 4)
+            buttons["import"] = archive
+            self.context_import_buttons[category] = archive
+            scraper_grid.addWidget(archive, index, 4)
+            timestamp = QLabel("Noch kein Abruf", objectName="PageSubtitle")
+            self.context_source_dates[category] = timestamp
+            scraper_grid.addWidget(timestamp, index, 5)
             count = QLabel("0", objectName="PageSubtitle")
-            scraper_grid.addWidget(count, index, 5)
+            scraper_grid.addWidget(count, index, 6)
             self.context_counts[category] = count
             self.context_scraper_buttons[category] = buttons
         body.addLayout(scraper_grid)
@@ -524,15 +547,6 @@ class WorkflowPage(QWidget):
         self.context_review_button = QPushButton("Unterlagensammlung geprüft")
         self.context_review_button.clicked.connect(self._review)
         body.addWidget(self.context_review_button)
-        self.context_self_import_button = QPushButton("Sonstige Dateien importieren …")
-        self.context_self_import_button.setToolTip(
-            "Vorhandenen manuellen Quellenimport öffnen, ohne eine "
-            "zweite Importlogik zu erzeugen."
-        )
-        self.context_self_import_button.clicked.connect(
-            lambda: self.action_requested.emit("self_import")
-        )
-        body.addWidget(self.context_self_import_button)
         self.context_summary = QLabel(objectName="PageSubtitle")
         self.context_summary.setWordWrap(True)
         body.addWidget(self.context_summary)
@@ -567,13 +581,52 @@ class WorkflowPage(QWidget):
         body.addLayout(options)
         self.cluster_result_status = QLabel(objectName="PageSubtitle")
         body.addWidget(self.cluster_result_status)
+        self.cluster_tabs = QTabWidget()
+        self.cluster_tabs.setObjectName("ClusterMethodTabs")
+        self.cluster_tabs.setMinimumHeight(250)
+        self.cluster_tabs.setSizePolicy(
+            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding
+        )
         self.local_cluster_holder = QWidget()
+        self.local_cluster_holder.setSizePolicy(
+            QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Expanding
+        )
         self.local_cluster_layout = QVBoxLayout(self.local_cluster_holder)
         self.local_cluster_layout.setContentsMargins(0, 0, 0, 0)
-        self.local_cluster_layout.addWidget(
-            QLabel("Die vorhandene lokale Clusteranalyse wird hier eingebunden.")
+        self.cluster_tabs.addTab(self.local_cluster_holder, "Lokal · HDBSCAN / Cosinus")
+        self.chatgpt_cluster_page = QWidget()
+        review_layout = QVBoxLayout(self.chatgpt_cluster_page)
+        review_layout.setContentsMargins(5, 5, 5, 5)
+        self.chatgpt_cluster_summary = QLabel(
+            "Noch kein importiertes Ergebnis des zweiten ChatGPT-Durchlaufs.",
+            objectName="PageSubtitle",
         )
-        body.addWidget(self.local_cluster_holder, 1)
+        self.chatgpt_cluster_summary.setWordWrap(True)
+        review_layout.addWidget(self.chatgpt_cluster_summary)
+        self.chatgpt_cluster_table, self.chatgpt_cluster_model = _create_table((
+            "Cluster", "Titel", "Fälle", "Sicherheit",
+        ))
+        self.chatgpt_cluster_table.setMinimumHeight(110)
+        self.chatgpt_cluster_table.selectionModel().selectionChanged.connect(
+            lambda *_: self._show_chatgpt_cluster_details()
+        )
+        review_layout.addWidget(self.chatgpt_cluster_table, 1)
+        self.chatgpt_cluster_details = QLabel(objectName="PageSubtitle")
+        self.chatgpt_cluster_details.setWordWrap(True)
+        self.chatgpt_cluster_details.setMaximumHeight(80)
+        review_layout.addWidget(self.chatgpt_cluster_details)
+        self.chatgpt_case_table, self.chatgpt_case_model = _create_table((
+            "FIN", "QEC-Fall", "Cluster", "NTF-Einschätzung",
+            "Verursachungsbereich", "Fachstatus",
+        ))
+        self.chatgpt_case_table.setMinimumHeight(110)
+        review_layout.addWidget(self.chatgpt_case_table, 1)
+        self.cluster_tabs.addTab(self.chatgpt_cluster_page, "ChatGPT · Ergebnis anzeigen")
+        body.addWidget(self.cluster_tabs, 1)
+        for button in (self.cluster_export_button, self.cluster_import_button):
+            button.setMinimumHeight(52)
+            button.setMinimumWidth(245)
+            button.setObjectName("ClusterStartButton")
         self.review_buttons = {3: self.context_review_button}
         self.cluster_review_button = QPushButton("Clusteranalyse fachlich geprüft")
         self.cluster_review_button.clicked.connect(self._review)
@@ -590,6 +643,16 @@ class WorkflowPage(QWidget):
             if item.widget() is not None:
                 item.widget().setParent(None)
         layout.addWidget(widget)
+        widget.setSizePolicy(
+            QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Expanding
+        )
+        if hasattr(widget, "set_workflow_compact_mode"):
+            widget.set_workflow_compact_mode()
+        for scroll in widget.findChildren(QScrollArea):
+            scroll.setWidgetResizable(True)
+            scroll.setVerticalScrollBarPolicy(
+                Qt.ScrollBarPolicy.ScrollBarAsNeeded
+            )
         widget.show()
 
     def _refresh_project_selector(self) -> None:
