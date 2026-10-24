@@ -753,8 +753,10 @@ class WorkflowPage(QWidget):
             "additional": "Weitere Dokumente",
         }
         for index, (category, label) in enumerate(EVIDENCE_CATEGORIES[4:]):
-            col = 0
-            row = index
+            # Zwei kompakte Spalten: CDD mit mehreren Bedienelementen über
+            # die gesamte Breite, weitere sechs Kategorien in drei Zeilen.
+            row = 0 if index == 0 else 1 + (index - 1) // 2
+            col = 0 if index == 0 else (index - 1) % 2
             tech_frame = QFrame(objectName="TechnicalEvidenceRow")
             tech_frame.setProperty("evidenceState", "pending")
             group = QHBoxLayout(tech_frame)
@@ -806,10 +808,13 @@ class WorkflowPage(QWidget):
             count.setMinimumWidth(24)
             group.addWidget(count)
             self.context_counts[category] = count
-            tech_grid.addWidget(tech_frame, row, col)
+            tech_frame.setMinimumHeight(30)
+            tech_grid.addWidget(tech_frame, row, col, 1, 2 if index == 0 else 1)
+        tech_grid.setColumnStretch(0, 1)
+        tech_grid.setColumnStretch(1, 1)
         left.addLayout(tech_grid)
         left.addStretch(1)
-        middle.addLayout(left, 3)
+        middle.addLayout(left, 5)
 
         inventory = QVBoxLayout()
         inventory.addWidget(QLabel("Gesammelte Dateien", objectName="CardTitle"))
