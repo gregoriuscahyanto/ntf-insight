@@ -18,7 +18,7 @@ from PySide6.QtGui import QAction
 from PySide6.QtGui import QCursor
 from PySide6.QtWidgets import (
     QAbstractItemView, QCheckBox, QComboBox, QGridLayout, QHBoxLayout,
-    QHeaderView, QLabel, QLayout, QLineEdit, QMenu, QProgressBar,
+    QFrame, QHeaderView, QLabel, QLayout, QLineEdit, QMenu, QProgressBar,
     QPushButton, QScrollArea, QSizePolicy, QStackedWidget, QTabWidget, QTableView,
     QToolButton, QVBoxLayout, QWidget,
 )
@@ -118,6 +118,9 @@ class WorkflowPage(QWidget):
         self.first_package = None
         self._context_busy = False
         self._context_scrapers_busy: set[str] = set()
+        self._context_scrape_active: dict[str, str] = {}
+        self._context_parsers_busy: dict[str, str] = {}
+        self._context_stop_requested: set[tuple[str, str]] = set()
         self._transfer_started_at: float | None = None
 
 
@@ -381,8 +384,13 @@ class WorkflowPage(QWidget):
         )
         actions.addStretch(1)
         body.addLayout(actions)
+        donuts = QHBoxLayout()
+        donuts.setSpacing(16)
         self.qec_donut = WorkflowDonut("QEC-Berichte · eindeutige FINs")
-        body.addWidget(self.qec_donut)
+        self.qec_parsing_donut = WorkflowDonut("QEC-Parsing · eindeutige FINs")
+        donuts.addWidget(self.qec_donut)
+        donuts.addWidget(self.qec_parsing_donut)
+        body.addLayout(donuts)
         self.qec_coverage = QLabel(objectName="PageSubtitle")
         self.qec_coverage.setWordWrap(True)
         body.addWidget(self.qec_coverage)
@@ -448,141 +456,176 @@ class WorkflowPage(QWidget):
             "04 · Unterlagen für den zweiten ChatGPT-Durchlauf",
             "Quellen abrufen oder Dateien einsammeln · Unbekannte Scraper werden nicht simuliert.",
         )
-        scraper_grid = QGridLayout()
-        scraper_grid.setHorizontalSpacing(8)
-        scraper_grid.setVerticalSpacing(3)
+        scraper_grid = QVBoxLayout()
+        scraper_grid.setSpacing(4)
         self.context_scraper_buttons: dict[str, dict[str, QPushButton]] = {}
         self.context_import_buttons: dict[str, QPushButton] = {}
         self.context_technical_resume: dict[str, QPushButton] = {}
+        self.context_technical_parse: dict[str, QPushButton] = {}
         self.context_counts: dict[str, QLabel] = {}
-        for column, heading in enumerate((
-            "Quelle", "Abruf", "Stop", "Parser", "Datei",
-            "Letzter Abruf / Import", "Dokumente / FINs",
-        )):
-            scraper_grid.addWidget(QLabel(heading, objectName="PageSubtitle"), 0, column)
+        self.context_source_rows: dict[str, QFrame] = {}
+        self.context_technical_rows: dict[str, QFrame] = {}
         self.context_source_dates: dict[str, QLabel] = {}
         self.context_source_names: dict[str, QLabel] = {}
         self.context_coverage_bars: dict[str, QProgressBar] = {}
         self.context_operation_bars: dict[str, QProgressBar] = {}
         self.context_operation_labels: dict[str, QLabel] = {}
-        for index, (category, label) in enumerate(EVIDENCE_CATEGORIES[:4], start=1):
+
+        headings = (
+            ("Quelle", 105), ("Portalabruf", 168), ("Parser", 202),
+            ("Beleg", 75), ("Letzter Abruf / Import", 190),
+            ("Dokumente / FINs", 255),
+        )
+        header = QFrame()
+        header_grid = QGridLayout(header)
+        header_grid.setContentsMargins(9, 0, 9, 0)
+        header_grid.setHorizontalSpacing(8)
+        for column, (heading, minimum) in enumerate(headings):
+            title = QLabel(heading, objectName="PageSubtitle")
+            title.setMinimumWidth(minimum)
+            header_grid.addWidget(title, 0, column)
+        header_grid.setColumnStretch(5, 1)
+        scraper_grid.addWidget(header)
+
+        for category, label in EVIDENCE_CATEGORIES[:4]:
+            frame = QFrame(objectName="SourceCoverageRow")
+            frame.setProperty("coverageState", "pending")
+            grid = QGridLayout(frame)
+            grid.setContentsMargins(9, 6, 9, 6)
+            grid.setHorizontalSpacing(8)
+            grid.setVerticalSpacing(0)
+            for column, (_heading, minimum) in enumerate(headings):
+                grid.setColumnMinimumWidth(column, minimum)
+            grid.setColumnStretch(5, 1)
+            self.context_source_rows[category] = frame
             name = QLabel(label)
+            name.setWordWrap(True)
+            grid.addWidget(name, 0, 0)
             self.context_source_names[category] = name
-            scraper_grid.addWidget(name, index, 0)
+
             buttons: dict[str, QPushButton] = {}
             fetch_layout = QVBoxLayout()
-            fetch_layout.setSpacing(2)
-            fetch = QPushButton("Alle FINs neu abrufen", objectName="WorkflowAction")
-            fetch.setToolTip("Startet für ALLE FINs der aktuellen Auswahl einen erneuten Portalabruf. Vorhandene Ergebnisse bleiben erhalten; ein erneuter Abruf kann lange dauern.")
-            if category in ("diagnosis_viewer", "tips_writer"):
-                fetch.clicked.connect(
-                    lambda _checked=False, c=category:
-                    self.action_requested.emit(f"context_scrape:{c}:all")
-                )
-            else:
-                fetch.setEnabled(False)
-                fetch.setText("Kein Scraper")
-                fetch.setToolTip("Für diese Quelle existiert kein freigegebener Scraper.")
-            buttons["all"] = fetch
-            fetch_layout.addWidget(fetch)
-            resume_download = QPushButton("Nur fehlende FINs abrufen", objectName="WorkflowAction")
-            resume_download.setToolTip(
-                "Nur FINs ohne erfolgreichen Abrufstand oder mit "
-                "unvollständigem Portalabruf erneut abfragen. "
-                "Die tatsächliche Portal-Dokumentenzahl ist vorab unbekannt."
+            fetch_layout.setSpacing(4)
+            all_fetch = QPushButton("Alle FINs neu abrufen", objectName="WorkflowAction")
+            all_fetch.setMinimumHeight(32)
+            all_fetch.setToolTip(
+                "Erneuter Portalabruf der gesamten FIN-Kohorte; vor dem Start "
+                "wird eine Bestätigung abgefragt. Es werden keine Quellen gelöscht."
             )
-            resume_download.clicked.connect(
+            all_fetch.clicked.connect(
                 lambda _checked=False, c=category:
-                self.action_requested.emit(f"context_scrape:{c}:missing")
+                self._trigger_context_fetch(c, "all")
             )
-            resume_download.setVisible(category in ("diagnosis_viewer", "tips_writer"))
-            buttons["missing"] = resume_download
-            fetch_layout.addWidget(resume_download)
-            scraper_grid.addLayout(fetch_layout, index, 1)
-            cancel = QPushButton("Stop", objectName="WorkflowAction")
-            cancel.setVisible(category in ("diagnosis_viewer", "tips_writer"))
-            cancel.clicked.connect(
+            if category not in {"diagnosis_viewer", "tips_writer"}:
+                all_fetch.setText("Kein Scraper")
+                all_fetch.setEnabled(False)
+                all_fetch.setToolTip("Für diese Quelle ist kein Portalscraper verfügbar.")
+            buttons["all"] = all_fetch
+            fetch_layout.addWidget(all_fetch)
+
+            missing = QPushButton("Nur fehlende FINs abrufen", objectName="WorkflowAction")
+            missing.setMinimumHeight(32)
+            missing.setToolTip(
+                "Nur FINs ohne vollständigen Abrufstand erneut abfragen."
+            )
+            missing.clicked.connect(
                 lambda _checked=False, c=category:
-                self.action_requested.emit(f"context_scrape:{c}:cancel")
+                self._trigger_context_fetch(c, "missing")
             )
-            buttons["cancel"] = cancel
-            scraper_grid.addWidget(cancel, index, 2)
+            missing.setVisible(category in {"diagnosis_viewer", "tips_writer"})
+            buttons["missing"] = missing
+            fetch_layout.addWidget(missing)
+            grid.addLayout(fetch_layout, 0, 1)
+
             parser_layout = QVBoxLayout()
-            parser_layout.setSpacing(2)
-            parser = QPushButton("Dateien auswählen & einlesen …", objectName="WorkflowAction")
-            parser.clicked.connect(
-                lambda _checked=False, c=category:
-                self.action_requested.emit(f"context_parse:{c}")
+            parser_layout.setSpacing(4)
+            parse_all = QPushButton(
+                "Alle Dokumente neu parsen", objectName="WorkflowAction"
             )
-            parser.setToolTip(
-                "Vorhandene Quelldateien auswählen und mit dem lokalen Parser "
-                "strukturiert indexieren."
+            parse_all.setMinimumHeight(32)
+            parse_all.setToolTip(
+                "Alle verifizierten lokalen Dokumente dieser Quelle erneut "
+                "mit dem bestehenden Parser verarbeiten. Keine Portalabfrage."
+            )
+            parse_all.clicked.connect(
+                lambda _checked=False, c=category:
+                self._trigger_context_parse(c, "all")
             )
             if category == "celonis":
-                parser.setText("Einlesen (Archiv)")
-                parser.setToolTip(
-                    "Celonis-Originaldatei lokal archivieren. Ein strukturierter "
-                    "Celonis-Parser ist noch nicht verfügbar."
+                parse_all.setText("Originaldatei importieren …")
+                parse_all.setToolTip(
+                    "Celonis-Datei manuell auswählen und nur archivieren; "
+                    "kein strukturierter Parser verfügbar."
                 )
-            buttons["parse"] = parser
-            parser_layout.addWidget(parser)
-            resume_parse = QPushButton("Ausstehendes Parsing fortsetzen", objectName="WorkflowAction")
-            resume_parse.clicked.connect(
-                lambda _checked=False, c=category:
-                self.action_requested.emit(f"context_parse_resume:{c}")
+            buttons["parse"] = parse_all
+            parser_layout.addWidget(parse_all)
+
+            parse_missing = QPushButton(
+                "Ausstehendes Parsing fortsetzen", objectName="WorkflowAction"
             )
-            resume_parse.setToolTip(
-                "Nur dokumentiert heruntergeladene/archivierte Dateien "
-                "ohne erfolgreich gespeichertes Parsergebnis erneut einlesen."
+            parse_missing.setMinimumHeight(32)
+            parse_missing.setToolTip(
+                "Nur noch nicht erfolgreich geparste lokale Dokumente verarbeiten."
+            )
+            parse_missing.clicked.connect(
+                lambda _checked=False, c=category:
+                self._trigger_context_parse(c, "resume")
             )
             if category == "celonis":
-                resume_parse.setText("Parser fehlt")
-                resume_parse.setToolTip(
-                    "Keine strukturierte Celonis-Auswertung implementiert."
-                )
-                resume_parse.setEnabled(False)
-            buttons["resume_parse"] = resume_parse
-            parser_layout.addWidget(resume_parse)
-            scraper_grid.addLayout(parser_layout, index, 3)
+                parse_missing.setText("Parser fehlt")
+                parse_missing.setEnabled(False)
+            buttons["resume_parse"] = parse_missing
+            parser_layout.addWidget(parse_missing)
+            grid.addLayout(parser_layout, 0, 2)
+
             archive = QPushButton("+ Beleg", objectName="WorkflowAction")
+            archive.setMinimumHeight(68)
+            archive.setToolTip(
+                "Lokale Belegdateien in dieser Kategorie archivieren. "
+                "Strukturiertes Parsing separat starten."
+            )
             archive.clicked.connect(
                 lambda _checked=False, c=category:
                 self.action_requested.emit(f"context_files:{c}")
             )
             buttons["import"] = archive
             self.context_import_buttons[category] = archive
-            scraper_grid.addWidget(archive, index, 4)
+            grid.addWidget(archive, 0, 3)
+
             timestamp = QLabel("Noch kein Abruf", objectName="PageSubtitle")
             timestamp.setWordWrap(True)
             self.context_source_dates[category] = timestamp
-            scraper_grid.addWidget(timestamp, index, 5)
-            cell = QVBoxLayout()
-            cell.setSpacing(3)
+            grid.addWidget(timestamp, 0, 4)
+
+            stats = QVBoxLayout()
+            stats.setSpacing(3)
             count = QLabel("0 Dokumente", objectName="PageSubtitle")
             count.setWordWrap(True)
-            count.setMinimumWidth(205)
-            cell.addWidget(count)
+            stats.addWidget(count)
             bar = QProgressBar()
             bar.setTextVisible(False)
             bar.setMaximumHeight(8)
             bar.setRange(0, 100)
             bar.setValue(0)
-            cell.addWidget(bar)
+            stats.addWidget(bar)
             operation = QProgressBar()
             operation.setRange(0, 0)
             operation.setMaximumHeight(10)
             operation.hide()
-            cell.addWidget(operation)
+            stats.addWidget(operation)
             operation_label = QLabel(objectName="PageSubtitle")
             operation_label.setWordWrap(True)
             operation_label.hide()
-            cell.addWidget(operation_label)
+            stats.addWidget(operation_label)
+            grid.addLayout(stats, 0, 5)
+
+            self.context_coverage_bars[category] = bar
             self.context_operation_bars[category] = operation
             self.context_operation_labels[category] = operation_label
-            scraper_grid.addLayout(cell, index, 6)
-            self.context_coverage_bars[category] = bar
             self.context_counts[category] = count
             self.context_scraper_buttons[category] = buttons
+            scraper_grid.addWidget(frame)
+
         body.addLayout(scraper_grid)
 
         middle = QHBoxLayout()
