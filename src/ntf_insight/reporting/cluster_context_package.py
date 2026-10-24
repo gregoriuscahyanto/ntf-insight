@@ -40,6 +40,7 @@ class ClusterContextExport:
     category_count: int
     file_count: int
     included_files: int
+    analysis_id: str
 
 
 def _valid_entry(name: str) -> bool:
@@ -153,6 +154,9 @@ def export_cluster_context(
         raise ValueError("Erstes ChatGPT-Ergebnis gehört nicht zur gewählten KI-Basis.")
     evidence = store.list_files(profile_id, part_number)
     counts = store.counts(profile_id, part_number)
+    analysis_id = (
+        "Cluster-" + package_id[:12] + "-" + secrets.token_hex(4)
+    )
     files_manifest: list[dict] = []
     for index, item in enumerate(evidence, 1):
         label = f"D{index:04d}"
@@ -212,6 +216,7 @@ def export_cluster_context(
             "enthalten": verified_result is not None,
             "analyse_id": verified_result.analyse_id if verified_result else None,
         },
+        "analyse_id_zweiter_durchlauf": analysis_id,
         "inhalt_originaldateien": include_originals,
         "bestand": counts,
         "belege": files_manifest,
@@ -259,9 +264,7 @@ def export_cluster_context(
             # Die zweite Auswertung erhält dieselbe Paket-/Fallzuordnung,
             # aber eine neue eindeutige ID statt einer Kopie der 1.-Runde-Vorlage.
             followup_template = ergebnis_vorlage(package_id)
-            followup_template["analyse_id"] = (
-                "Cluster-" + package_id[:12] + "-" + secrets.token_hex(4)
-            )
+            followup_template["analyse_id"] = analysis_id
             _zip_text(
                 archive, "chatgpt_ergebnis_vorlage.json",
                 json.dumps(followup_template, ensure_ascii=False, indent=2),
@@ -308,4 +311,5 @@ def export_cluster_context(
         category_count=sum(value > 0 for value in counts.values()),
         file_count=len(evidence),
         included_files=len(evidence) if include_originals else 0,
+        analysis_id=analysis_id,
     )
