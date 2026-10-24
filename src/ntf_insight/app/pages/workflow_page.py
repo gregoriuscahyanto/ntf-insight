@@ -68,6 +68,7 @@ class WorkflowPage(QWidget):
         self.quicktests = quicktests
         self.mode = mode
         self.profile_id, part = progress_store.current_context()
+        self._context_part = part
         self.state = progress_store.load(self.profile_id, part)
         self.qec_root = progress_store.store.path.parent / "qec"
         self._all_rows: list[dict] = []
@@ -102,6 +103,7 @@ class WorkflowPage(QWidget):
         self.part_number = QLineEdit(part)
         self.part_number.setPlaceholderText("Sachnummer · alle")
         self.part_number.setMaximumWidth(215)
+        self.part_number.setMaxLength(120)
         self.part_number.setAccessibleName("Sachnummer zur QEC-Kohortenfilterung")
         self.part_number.editingFinished.connect(self._change_context)
         header.addWidget(self.part_number)
@@ -349,17 +351,21 @@ class WorkflowPage(QWidget):
         try:
             part = normalize_part_number(self.part_number.text())
         except ValueError:
+            self.part_number.setText(self._context_part)
             self.set_notice("Sachnummer enthält ungültige Zeichen oder ist zu lang.", error=True)
             return
         self.part_number.setText(part)
-        if (profile_id, part) != (self.profile_id, self.progress_store.current_context()[1]):
+        if (profile_id, part) != (self.profile_id, self._context_part):
             self.profile_id = profile_id
+            self._context_part = part
             self.progress_store.select_context(profile_id, part)
             self.state = self.progress_store.load(profile_id, part)
+            self._notice = ""
+            self._error_step = None
         self.refresh()
 
     def _save(self) -> None:
-        self.progress_store.save(self.profile_id, self.part_number.text(), self.state)
+        self.progress_store.save(self.profile_id, self._context_part, self.state)
         self.refresh()
 
     def _open_step(self, index: int) -> None:
@@ -397,7 +403,7 @@ class WorkflowPage(QWidget):
     def _rows_for_context(self) -> list[dict]:
         if self.profile_id != "coolant_pump":
             return []
-        part = self._part_key(self.part_number.text())
+        part = self._part_key(self._context_part)
         return [
             row for row in self._all_rows
             if not part or self._part_key(row.get("part_number", "")) == part
@@ -477,7 +483,7 @@ class WorkflowPage(QWidget):
             except ValueError:
                 continue
             reference = str(row["reference"] or "").strip()
-            if reference and (not reference.isdigit() or len(reference) > 14):
+            if not reference or not reference.isdigit() or len(reference) > 14:
                 continue
             target = QecTarget(
                 fin=parsed[0].fin,
