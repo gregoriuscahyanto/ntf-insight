@@ -60,6 +60,7 @@ class ImportSummary:
     files_archived: int = 0
     files_parsed: int = 0
     selected_failed_quicktests: int = 0
+    remaining_failed_quicktests: int | None = None
     files_pending: int = 0
     files_unchanged: int = 0
     files_failed: int = 0
@@ -113,13 +114,16 @@ class LocalBatchImporter:
         if not selected:
             if on_progress:
                 on_progress("Keine bereits bekannten, nicht parsebaren QuickTest-PDFs vorhanden.")
-            return ImportSummary(selected_failed_quicktests=0)
+            return ImportSummary(selected_failed_quicktests=0, remaining_failed_quicktests=0)
 
         verified: list[Path] = []
         damaged = 0
         for index, artifact in enumerate(failures, start=1):
             if should_cancel is not None and should_cancel():
-                return ImportSummary(cancelled=True, selected_failed_quicktests=selected)
+                return ImportSummary(
+                    cancelled=True, selected_failed_quicktests=selected,
+                    remaining_failed_quicktests=selected,
+                )
             # Check ONLY selected archive bytes; never inspect the entire
             # downloaded corpus, and never parse a modified archived original.
             path = Path(artifact.archived_path)
@@ -152,6 +156,9 @@ class LocalBatchImporter:
                 f"{damaged} archivierte QuickTest-Datei(en) wegen abweichender "
                 "SHA-256-Prüfsumme nicht erneut eingelesen."
             )
+        # Pure DB/archive metadata lookup: the user can immediately see how
+        # many known parser problems remain, without scanning downloads.
+        result.remaining_failed_quicktests = len(find_failed_quicktest_artifacts(self.sources))
         return result
 
     @staticmethod
