@@ -10,12 +10,16 @@ import hashlib
 import json
 import os
 import re
+import secrets
 import stat
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from zipfile import ZIP_DEFLATED, ZipFile, ZipInfo
 
+from ntf_insight.reporting.chatgpt_exchange import (
+    ChatGPTRueckgabe, ergebnis_vorlage,
+)
 from ntf_insight.storage.cluster_evidence_store import (
     CATEGORY_LABELS, ClusterEvidenceStore, MAX_EVIDENCE_BYTES,
 )
@@ -127,6 +131,7 @@ def export_cluster_context(
     destination: Path,
     *,
     include_originals: bool = False,
+    first_result: dict | None = None,
 ) -> ClusterContextExport:
     """Kontextpaket aus der verifizierten KI-Analysebasis und kategorisierten Belegen."""
     first_package = Path(first_package).absolute()
@@ -140,6 +145,12 @@ def export_cluster_context(
         raise ValueError("Analyse-ZIP außerhalb des NTF-Datenverzeichnisses speichern.")
 
     package_id = validate_first_package(first_package)
+    verified_result = (
+        ChatGPTRueckgabe.model_validate(first_result)
+        if first_result is not None else None
+    )
+    if verified_result is not None and verified_result.paket_id != package_id:
+        raise ValueError("Erstes ChatGPT-Ergebnis gehört nicht zur gewählten KI-Basis.")
     evidence = store.list_files(profile_id, part_number)
     counts = store.counts(profile_id, part_number)
     files_manifest: list[dict] = []
@@ -160,6 +171,8 @@ def export_cluster_context(
     instructions = (
         "NTF Insight · Zweiter ChatGPT-Durchlauf / Cluster-Kontext\n\n"
         "1. Die unveränderte KI-Ausgangsmatrix liegt unter basis/. "
+        "Die geprüfte Antwort des ersten ChatGPT-Durchlaufs liegt (sofern "
+        "vorhanden) unter voranalyse/erstes_chatgpt_ergebnis.json. "
         "DTC-Clusterbildung nutzt nur nachweislich geeignete Diagnosemerkmale "
         "VOR dem Bauteiltausch, keine SSL-/Lieferantenbewertung und keine "
         "Nach-Tausch-Ergebnisse als Clusterfeatures.\n"
@@ -175,8 +188,9 @@ def export_cluster_context(
         "ohne einen direkten, fachlich validierbaren Beleg.\n"
         "5. Antwort ausschließlich im Format chatgpt_ergebnis_schema.json "
         "erzeugen. Die paket_id aus chatgpt_ergebnis_vorlage.json muss "
-        "UNVERÄNDERT bleiben, aber eine NEUE analyse_id verwenden, damit "
-        "der Rückimport als weiterer Auswertungsstand möglich ist. "
+        "UNVERÄNDERT bleiben. Die Vorlage enthält bereits eine frische "
+        "analyse_id für die zweite Runde. Nicht die analyse_id der "
+        "voranalyse übernehmen. "
         "Zusätzliche Dokumentbelege dürfen nur dort aufgenommen werden, "
         "wo das Schema sie erlaubt; sonst in Freitext mit Beleg-ID aus dem "
         "Kontextmanifest referenzieren.\n\n"
@@ -189,7 +203,15 @@ def export_cluster_context(
         "schema_version": VERSION,
         "basis_paket_id": package_id,
         "profil": profile_id,
-        "sachnummer_wurde_lokal_gefiltert": bool(part_number.strip()),
+        # Die technische Unterlagenauswahl ist nach Sachnummer gruppiert,
+        # die vorhandene KI-Basis enthält weiterhin sämtliche exportierten Fälle.
+        "sachnummer_wurde_lokal_gefiltert": False,
+        "unterlagen_nach_sachnummer_zugeordnet": bool(part_number.strip()),
+        "basis_nicht_nach_sachnummer_gefiltert": True,
+        "erster_chatgpt_durchlauf": {
+            "enthalten": verified_result is not None,
+            "analyse_id": verified_result.analyse_id if verified_result else None,
+        },
         "inhalt_originaldateien": include_originals,
         "bestand": counts,
         "belege": files_manifest,
@@ -234,8 +256,25 @@ def export_cluster_context(
                     )
                 if total_bytes > MAX_PACKAGE_BYTES:
                     raise ValueError("Export überschreitet 1 GiB.")
-            for name in ("chatgpt_ergebnis_vorlage.json", "chatgpt_ergebnis_schema.json"):
-                _zip_text(archive, name, base.read(name).decode("utf-8-sig"))
+            # Die zweite Auswertung erhält dieselbe Paket-/Fallzuordnung,
+            # aber eine neue eindeutige ID statt einer Kopie der 1.-Runde-Vorlage.
+            followup_template = ergebnis_vorlage(package_id)
+            followup_template["analyse_id"] = (
+                "Cluster-" + package_id[:12] + "-" + secrets.token_hex(4)
+            )
+            _zip_text(
+                archive, "chatgpt_ergebnis_vorlage.json",
+                json.dumps(followup_template, ensure_ascii=False, indent=2),
+            )
+            _zip_text(
+                archive, "chatgpt_ergebnis_schema.json",
+                base.read("chatgpt_ergebnis_schema.json").decode("utf-8-sig"),
+            )
+            if verified_result is not None:
+                _zip_text(
+                    archive, "voranalyse/erstes_chatgpt_ergebnis.json",
+                    verified_result.model_dump_json(indent=2, exclude_none=True),
+                )
             if include_originals:
                 raw_root = store.archive.root.resolve()
                 for original, meta in zip(evidence, files_manifest):
