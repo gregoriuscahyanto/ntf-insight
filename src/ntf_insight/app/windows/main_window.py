@@ -169,6 +169,7 @@ class MainWindow(QMainWindow):
             self._project_delete_requested
         )
         pages["workflow"].navigate.connect(self._workflow_navigate)
+        pages["workflow"].step_loading.connect(self._workflow_step_busy)
         pages["workflow"].action_requested.connect(self._workflow_action)
         pages["workflow"].project_selected.connect(self._project_selected)
         pages["workflow"].cohort_updated.connect(self._sync_local_cluster)
@@ -1784,6 +1785,12 @@ class MainWindow(QMainWindow):
         elif action == "self_import":
             self.navigation.select_page("sources")
             source.archive_button.click()
+
+    def _workflow_step_busy(self, busy: bool) -> None:
+        if busy:
+            self._begin_loading("Workflow-Schritt wird geladen …")
+        else:
+            self._finish_loading()
 
     def _begin_loading(self, message: str) -> None:
         """Status vor teuren Seitenwechseln sichtbar machen."""
