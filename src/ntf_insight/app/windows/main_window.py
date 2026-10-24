@@ -7,7 +7,7 @@ from pathlib import Path
 
 from PySide6.QtCore import Qt, QTimer, QUrl
 from PySide6.QtGui import QDesktopServices
-from PySide6.QtWidgets import QFileDialog, QHBoxLayout, QMainWindow, QMessageBox, QStackedWidget, QWidget
+from PySide6.QtWidgets import QFileDialog, QHBoxLayout, QInputDialog, QMainWindow, QMessageBox, QStackedWidget, QWidget
 
 from ntf_insight.acquisition.qec_tool import QEC_START
 from ntf_insight.acquisition.diagnosis_viewer import parse_fins
@@ -35,7 +35,7 @@ from ntf_insight.storage.quicktest_store import QuickTestStore
 from ntf_insight.storage.source_knowledge_store import SourceKnowledgeStore
 from ntf_insight.storage.qec_workflow_store import QecWorkflowStore
 from ntf_insight.storage.workflow_progress import WorkflowProgressStore
-from ntf_insight.storage.workflow_projects import WorkflowProjectStore
+from ntf_insight.storage.workflow_projects import NTFProject, WorkflowProjectStore
 
 
 class MainWindow(QMainWindow):
@@ -157,6 +157,77 @@ class MainWindow(QMainWindow):
             analysis_export.first_package_exported.connect(self._first_export_completed)
             analysis_export.analysis_imported.connect(self._ai_import_completed)
         return pages
+
+    def _adopt_existing_qec(self) -> None:
+        """Bestehende QEC-Fälle zuordnen, niemals erneut importieren oder löschen."""
+        workflow = self.pages["workflow"]
+        if not self._portable_transfer_ready():
+            workflow.set_notice(
+                "Bestehenden Bestand erst nach Abschluss aller Transfers übernehmen.",
+                error=True,
+            )
+            return
+        if workflow.profile_id != "coolant_pump":
+            workflow.set_notice("QEC-Altbestandsübernahme ist zurzeit pumpenspezifisch.")
+            return
+        from collections import Counter
+        from ntf_insight.storage.cluster_evidence_store import part_key
+
+        candidates: dict[str, str] = {}
+        counts = Counter()
+        for row in workflow._all_rows:
+            original = str(row.get("part_number") or "").strip()
+            key = part_key(original)
+            if key:
+                candidates.setdefault(key, original)
+                counts[key] += 1
+        if not candidates:
+            workflow.set_notice(
+                "Keine importierten QEC-Fälle mit Sachnummer gefunden.", error=True
+            )
+            return
+        values = sorted(candidates, key=lambda k: (-counts[k], candidates[k]))
+        labels = [
+            f"{candidates[key]}  ·  {counts[key]} QEC-Fälle"
+            for key in values
+        ]
+        chosen, accepted = QInputDialog.getItem(
+            self, "Bestehenden Kühlmittelpumpen-Bestand zuordnen",
+            "Für welche Sachnummer soll ein Projekt angelegt werden?",
+            labels, 0, False,
+        )
+        if not accepted:
+            return
+        part = candidates[values[labels.index(chosen)]]
+        answer = QMessageBox.question(
+            self, "Vorhandene Daten übernehmen",
+            f"Projekt 'Kühlmittelpumpe [{part}]' anlegen und vorhandene QEC-"
+            "Fälle dieser Sachnummer zuordnen?\n\n"
+            "Die Fall-, FIN-, Diagnose- und Rohdaten bleiben unverändert. "
+            "Es wird nichts gelöscht und kein zweiter Import gestartet.\n\n"
+            "Quellen können weiterhin Daten anderer Sachnummern enthalten. "
+            "Ein projektbezogener Export muss diese Zuordnung prüfen.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if answer != QMessageBox.StandardButton.Yes:
+            return
+        store = workflow.project_store
+        project = store.get("coolant_pump", part)
+        if project is None:
+            try:
+                project = store.save(
+                    NTFProject("coolant_pump", part, "Kühlmittelpumpe", ()),
+                    create_only=True,
+                )
+            except ValueError as exc:
+                workflow.set_notice(str(exc), error=True)
+                return
+        self._project_selected(project.profile_id, project.part_number)
+        workflow.set_notice(
+            f"{counts[part_key(part)]} vorhandene QEC-Fälle der Sachnummer "
+            f"{part} sind jetzt im Projekt sichtbar; kein erneuter Import."
+        )
 
     def _project_selected(self, profile: str, part: str) -> None:
         if not self._portable_transfer_ready():
@@ -855,6 +926,9 @@ class MainWindow(QMainWindow):
             parts = action.split(":")
             if len(parts) == 3:
                 self._context_scrape(parts[1], parts[2])
+            return
+        if action == "adopt_legacy":
+            self._adopt_existing_qec()
             return
         if action in {"project_settings", "new_project"}:
             page = self.pages["project_settings"]
