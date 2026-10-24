@@ -1167,6 +1167,16 @@ class WorkflowPage(QWidget):
         if active:
             label.setToolTip(message)
             self._context_operation_started.setdefault(category, time.monotonic())
+            if ("parse", category) in self._context_stop_requested:
+                # Fortschrittsmeldungen des Workers dürfen den bereits
+                # angeforderten Abbruch nicht als normalen Job darstellen.
+                # Erst das finished-Signal beendet diesen Zustand.
+                bar.setRange(0, 0)
+                label.setText(
+                    "Abbruch angefordert · aktuelle Datei und "
+                    "Datenbanktransaktion werden sicher abgeschlossen"
+                )
+                return
             match = re.search(
                 r"(?:FIN-Fortschritt:\s*|(?:parsen|einlesen|archivieren|abgleichen)\s*\()(\d+)\s*/\s*(\d+)",
                 message, re.I,
