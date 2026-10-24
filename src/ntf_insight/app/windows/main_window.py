@@ -60,6 +60,7 @@ class MainWindow(QMainWindow):
         self._workflow_qec_download_pending = False
         self._workflow_last_qec_files: list[Path] = []
         self._workflow_quicktest_download_pending = False
+        self._context_scraper_failed: set[str] = set()
         self._context_worker = None
         self._project_transfer_worker = None
         self._project_import_result = None
@@ -788,6 +789,46 @@ class MainWindow(QMainWindow):
             self._workflow_qec_download_pending = False
             workflow.refresh_data()
 
+    def _context_parse(self, category: str) -> None:
+        """Vorhandenen Importparser nutzen, ohne selbst fachliche Daten zu erfinden."""
+        kind = {
+            "tp_dashboard": SourceType.TP_DASHBOARD,
+            "diagnosis_viewer": SourceType.SHORT_TEST,
+            "tips_writer": SourceType.TIPS_CASE,
+            "celonis": SourceType.OTHER,
+        }.get(category)
+        workflow = self.pages["workflow"]
+        source = self.pages["sources"]
+        if kind is None:
+            workflow.set_notice("Unbekannte Datenquelle.", error=True)
+            return
+        if not self._portable_transfer_ready() or source._worker is not None:
+            workflow.set_notice("Ein Quellenimport läuft bereits.", error=True)
+            return
+        filenames, _ = QFileDialog.getOpenFileNames(
+            self, f"{category} · Daten einlesen",
+            str(Path.home()), "Quelldateien (*.*)",
+        )
+        if not filenames:
+            return
+        before = source.source_type.currentIndex()
+        index = source.source_type.findData(kind)
+        try:
+            source.source_type.setCurrentIndex(index if index >= 0 else 0)
+            source._archive_paths([Path(name) for name in filenames])
+        finally:
+            source.source_type.setCurrentIndex(before)
+        if category == "celonis":
+            workflow.set_notice(
+                "Celonis-Dateien werden archiviert. Ein strukturierter "
+                "Celonis-Parser ist noch nicht implementiert."
+            )
+        else:
+            workflow.set_notice(
+                f"{len(filenames)} Datei(en) für vorhandenen Parser eingelesen. "
+                "Ergebnis und Fehlermeldungen unter Datenquellen prüfen."
+            )
+
     def _context_import(self, category: str) -> None:
         """Fachunterlagen unverändert im vorhandenen lokalen Rohdatenarchiv sammeln."""
         workflow = self.pages["workflow"]
@@ -1023,26 +1064,23 @@ class MainWindow(QMainWindow):
             )
             return
         if scope == "cancel":
+            self._context_scraper_failed.add(category)
+            workflow.source_activity.record(
+                workflow.profile_id, workflow._context_part, category,
+                "Abgebrochen",
+            )
             if category == "diagnosis_viewer":
                 cases._cancel_quicktest_download()
             elif cases.tips_download is not None:
                 cases.tips_download._cancel()
             return
-        if scope not in {"all", "selected"}:
-            workflow.set_notice("Unbekannte Scraper-Aktion.", error=True)
+        if scope != "all":
+            workflow.set_notice("Unbekannte Abrufaktion.", error=True)
             return
         if not self._portable_transfer_ready() or self._context_worker is not None:
             workflow.set_notice("Ein Import oder Download läuft bereits.", error=True)
             return
-        if scope == "selected":
-            indices = {
-                idx.row() for idx in workflow.qec_table.selectionModel().selectedRows()
-            }
-            rows = [
-                row for i, row in enumerate(workflow._scoped_rows) if i in indices
-            ]
-        else:
-            rows = workflow._scoped_rows
+        rows = workflow._scoped_rows
         raw_fins = sorted({str(row["fin"]).strip().upper() for row in rows})
         fins: list[str] = []
         for fin in raw_fins:
@@ -1053,8 +1091,8 @@ class MainWindow(QMainWindow):
         fins = sorted(set(fins))
         if not fins:
             workflow.set_notice(
-                "Keine gültigen FINs. Für 'Markierte' bitte zuvor "
-                "in Schritt 02 Tabellenzeilen auswählen.", error=True
+                "Keine gültigen FINs in der gewählten SSL-Endbefund-Auswahl.",
+                error=True
             )
             return
         if category == "diagnosis_viewer":
@@ -1069,28 +1107,46 @@ class MainWindow(QMainWindow):
             if panel is None:
                 workflow.set_notice("TIPS-Writer-Abruf nicht verfügbar.", error=True)
                 return
-            panel._start(fins, bulk=scope == "all")
+            panel._start(fins, bulk=True)
             worker = panel.worker
         if worker is None:
             # Nutzer hat SSO-/Mengenbestätigung abgebrochen.
             return
+        self._context_scraper_failed.discard(category)
+        workflow.source_activity.record(
+            workflow.profile_id, workflow._context_part, category, "Gestartet",
+        )
         workflow.set_context_scraper_busy(category, True)
+        workflow.refresh_context_files()
         workflow.set_notice(
             f"{category}: {len(fins)} FIN(s) werden mit dem vorhandenen "
             "SSO-Downloader abgerufen …"
         )
         worker.failed.connect(
-            lambda msg: self.pages["workflow"].set_notice(
-                "Quellenabruf fehlgeschlagen: " + msg, error=True
-            )
+            lambda msg, c=category: self._context_scraper_failed_notice(c, msg)
         )
         worker.finished.connect(
             lambda c=category: self._context_scraper_finished(c)
         )
 
+    def _context_scraper_failed_notice(self, category: str, message: str) -> None:
+        self._context_scraper_failed.add(category)
+        workflow = self.pages["workflow"]
+        workflow.source_activity.record(
+            workflow.profile_id, workflow._context_part, category, "Fehlgeschlagen",
+        )
+        workflow.set_notice("Quellenabruf fehlgeschlagen: " + message, error=True)
+        workflow.refresh_context_files()
+
     def _context_scraper_finished(self, category: str) -> None:
         workflow = self.pages["workflow"]
         workflow.set_context_scraper_busy(category, False)
+        if category not in self._context_scraper_failed:
+            workflow.source_activity.record(
+                workflow.profile_id, workflow._context_part, category,
+                "Abgeschlossen",
+            )
+        self._context_scraper_failed.discard(category)
         importing = False
         if category == "diagnosis_viewer":
             # Die vorhandene Downloadpipeline stößt ggf. einen Quellenimport an.
@@ -1111,6 +1167,9 @@ class MainWindow(QMainWindow):
         source = self.pages["sources"]
         if action.startswith("context_files:"):
             self._context_import(action.partition(":")[2])
+            return
+        if action.startswith("context_parse:"):
+            self._context_parse(action.partition(":")[2])
             return
         if action.startswith("context_scrape:"):
             parts = action.split(":")
