@@ -363,3 +363,45 @@ def test_cdd_resume_does_not_claim_unparsed_smrd_trigger_conditions(tmp_path):
     assert after.parsed_documents == 1
     assert not after.can_resume_parsing  # Kein SMR-D-Parser erfunden.
     assert "SMR-D" in after.note
+
+
+
+def test_incomplete_qec_report_is_downloaded_but_eligible_for_resume(tmp_path):
+    root = tmp_path / "data"
+    store, _knowledge, _evidence = _setup(root)
+    report = _write_qec(root)
+    data = json.loads(report.read_text(encoding="utf-8"))
+    data["vollstaendige_reiter"] = False
+    data["abschnitte"][0]["aus_vorherigem_abruf"] = True
+    report.write_text(json.dumps(data), encoding="utf-8")
+    coverage = get_workflow_coverage(store, root, _rows())["qec"]
+    assert coverage.local_documents == 1
+    assert coverage.parsed_documents == 0
+    assert coverage.missing_qec == (
+        (FIN_1, "12345"), (FIN_2, "23456"), (FIN_3, "34567"),
+    )
+    assert coverage.pending_paths == (report,)
+    assert "1 Berichte lokal" in coverage.display()
+
+
+def test_partial_qec_parser_stays_amber_instead_of_false_green(tmp_path):
+    root = tmp_path / "data"
+    store, knowledge, _ = _setup(root)
+    report = _write_qec(root)
+    data = json.loads(report.read_text(encoding="utf-8"))
+    data["vollstaendige_reiter"] = False
+    report.write_text(json.dumps(data), encoding="utf-8")
+    archived = RawArchive(root / "raw").archive(report, SourceType.QEC_REPORT)
+    store.save_artifact(archived)
+    parsed = QECJsonParser().parse(report)
+    knowledge.save_records(
+        archived.sha256, parsed.kind, parsed.records,
+        metadata=parsed.metadata,
+    )
+    _run(store, archived.sha256, QECJsonParser, ParseStatus.PARTIAL)
+    status = get_workflow_coverage(store, root, _rows())["qec"]
+    assert status.local_documents == 1
+    assert status.parsed_documents == 1
+    assert status.partial_documents == 1
+    assert status.partial_qec == frozenset({(FIN_1, "12345")})
+    assert (FIN_1, "12345") in status.missing_qec
