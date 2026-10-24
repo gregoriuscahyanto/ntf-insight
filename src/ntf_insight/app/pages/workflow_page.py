@@ -117,7 +117,6 @@ class WorkflowPage(QWidget):
         self.adopt_button.clicked.connect(
             lambda: self.action_requested.emit("adopt_legacy")
         )
-        header.addWidget(self.adopt_button)
         self.settings_button = QPushButton("Einstellungen")
         self.settings_button.clicked.connect(
             lambda: self.action_requested.emit("project_settings")
@@ -135,7 +134,11 @@ class WorkflowPage(QWidget):
         header.addWidget(self.project_import_button)
         outer.addLayout(header)
         self.project_ecus_label = QLabel(objectName="PageSubtitle")
-        outer.addWidget(self.project_ecus_label)
+        subheader = QHBoxLayout()
+        subheader.addWidget(self.project_ecus_label, 1)
+        self.adopt_button.setText("Vorhandenen QEC-Bestand übernehmen")
+        subheader.addWidget(self.adopt_button)
+        outer.addLayout(subheader)
 
         # API für bestehende Import-/GUI-Funktionen; editierbar ist nur das
         # Projekt auf der Einstellungsseite, nicht die globale Kopfzeile.
