@@ -960,7 +960,8 @@ class MainWindow(QMainWindow):
             self._workflow_qec_download_pending = False
             return
         workflow.set_download_busy(
-            True, f"QEC-Abruf für {len(targets)} Fall/ Fälle gestartet …"
+            True, f"QEC-Abruf für {len(targets)} Fall/Fälle gestartet …",
+            scope="selected" if selected_only else "missing" if missing_only else "all",
         )
         worker.progress.connect(workflow.qec_status.setText)
         worker.failed.connect(
