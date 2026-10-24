@@ -500,6 +500,7 @@ class MainWindow(QMainWindow):
                 f"{result.files_deleted} Archivobjekte. "
                 f"{result.shared_files_retained} gemeinsam verwendete "
                 "Quellobjekte geschützt."
+                + (" " + result.cleanup_warning if result.cleanup_warning else "")
             )
         else:
             message = (
