@@ -11,12 +11,12 @@ import io
 import json
 import re
 from collections import defaultdict
-from typing import Callable
-from zipfile import ZipFile, BadZipFile
 from datetime import datetime
 from pathlib import Path
-from typing import Literal
+from typing import Callable, Literal
+from zipfile import BadZipFile, ZipFile
 
+import duckdb
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from ntf_insight.storage.duckdb_store import DuckDBStore
@@ -309,14 +309,18 @@ class ChatGPTAnalyseStore:
         """
         if not requested:
             return {}
-        with self.store.connect() as con:
-            row = con.execute(
-                "SELECT a.payload_json,f.sha256 "
-                "FROM workflow_first_ai_packages f "
-                "JOIN source_artifacts a ON a.sha256=f.sha256 "
-                "WHERE f.paket_id=? ORDER BY f.registered_at DESC LIMIT 1",
-                [paket_id],
-            ).fetchone()
+        try:
+            with self.store.connect() as con:
+                row = con.execute(
+                    "SELECT a.payload_json,f.sha256 "
+                    "FROM workflow_first_ai_packages f "
+                    "JOIN source_artifacts a ON a.sha256=f.sha256 "
+                    "WHERE f.paket_id=? ORDER BY f.registered_at DESC LIMIT 1",
+                    [paket_id],
+                ).fetchone()
+        except duckdb.CatalogException:
+            # Standalone-Rückimport ohne einen registrierten Workflow-Export.
+            row = None
         if row is None:
             raise ValueError(
                 "Zur Prüfung der AE-/LB-Belegzeilen fehlt das ursprünglich "
