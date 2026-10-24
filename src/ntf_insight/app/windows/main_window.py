@@ -304,9 +304,15 @@ class MainWindow(QMainWindow):
     def _workflow_action(self, action: str) -> None:
         source = self.pages["sources"]
         if action == "cancel_import":
+            if not source.cancel_import_button.isEnabled():
+                self.pages["workflow"].note.setText("Kein laufender Quellenimport.")
+                return
             self.navigation.select_page("sources")
             source.cancel_import_button.click()
         elif action == "resume_import":
+            if not source.resume_import_button.isEnabled():
+                self.pages["workflow"].note.setText("Kein fortsetzbarer Import vorhanden.")
+                return
             self.navigation.select_page("sources")
             source.resume_import_button.click()
         elif action == "self_import":
