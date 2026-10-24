@@ -131,13 +131,13 @@ def test_one_clusteranalyse_tab_includes_autoexport_and_qec(tmp_path, monkeypatc
     app = QApplication.instance() or QApplication([])
     window = MainWindow()
     case_page = window.pages["cases"]
-    assert case_page.detail_tabs.count() == 5
-    assert case_page.detail_tabs.tabText(3) == "QuickTest-Gesamtauswertung"
-    assert case_page.detail_tabs.tabText(4) == "ECU · SW-Übersicht"
-    assert case_page.detail_tabs.indexOf(
-        case_page.autoexport_fin_workspace
-    ) == 0
-    assert case_page.detail_tabs.currentWidget() is case_page.cluster_workspace
+    assert case_page.detail_tabs.count() == 4
+    assert case_page.detail_tabs.tabText(2) == "QuickTest-Gesamtauswertung"
+    assert case_page.detail_tabs.tabText(3) == "ECU · SW-Übersicht"
+    assert case_page.detail_tabs.indexOf(case_page.autoexport_fin_workspace) == -1
+    assert case_page.cluster_workspace.parentWidget() is (
+        window.pages["workflow"].local_cluster_holder
+    )
     assert case_page.cluster_workspace is case_page.autoexport_fin_workspace
     assert case_page.cluster_workspace.method_combo.count() == 3
     assert case_page.cluster_workspace.plot is not None
