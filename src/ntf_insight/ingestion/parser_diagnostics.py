@@ -17,7 +17,9 @@ from zipfile import ZIP_DEFLATED, ZipFile
 from ntf_insight.ingestion.artifacts import ParseRun, ParseStatus, SourceType, sha256_file
 from ntf_insight.ingestion.downloaded_quicktests import list_downloaded_quicktests
 from ntf_insight.ingestion.qec_json import QECJsonParser, list_downloaded_qec_reports
-from ntf_insight.ingestion.real_source_parsers import QuickTestPdfParser
+from ntf_insight.ingestion.real_source_parsers import AutoExportParser, QuickTestPdfParser
+from ntf_insight.ingestion.reference_source_parsers import CandelaParser
+from ntf_insight.ingestion.tips_json import TipsJsonParser
 from ntf_insight.ingestion.service import SourceImportService
 from ntf_insight.storage.source_knowledge_store import SourceKnowledgeStore
 
@@ -51,6 +53,8 @@ def find_parser_problems(
     data_dir: Path,
     *,
     progress: Callable[[str], None] | None = None,
+    category: str | None = None,
+    scope_paths: tuple[Path, ...] | None = None,
 ) -> list[ParserProblem]:
     """Identify failed, incomplete or unrecognized downloaded sources.
 
@@ -60,6 +64,18 @@ def find_parser_problems(
     artifacts = {item.sha256: item for item in service.list_artifacts()}
     if not artifacts:
         return []
+    scope_shas: set[str] | None = None
+    if scope_paths is not None:
+        scope_shas = set()
+        for number, path in enumerate(scope_paths, 1):
+            path = Path(path)
+            if path.is_symlink() or not path.is_file():
+                continue
+            if path.stat().st_size > MAX_PACKAGE_BYTES * 16:
+                continue
+            scope_shas.add(sha256_file(path))
+            if progress and number % 25 == 0:
+                progress(f"Projektbezogene Quellen prüfen: {number}/{len(scope_paths)}")
 
     with service.store.connect() as con:
         quicktest_done = {
@@ -67,10 +83,12 @@ def find_parser_problems(
                 "SELECT artifact_sha256 FROM quicktest_sources"
             ).fetchall()
         }
-    qec_docs = {
-        doc["source_sha256"]
+    documents = {
+        doc["source_sha256"]: doc["source_kind"]
         for doc in SourceKnowledgeStore(service.store).documents()
-        if doc["source_kind"] == "qec_live_report"
+    }
+    qec_docs = {
+        sha for sha, kind in documents.items() if kind == "qec_live_report"
     }
     recent: dict[tuple[str, str], ParseRun] = {}
     for run in service.store.load_parse_runs():
@@ -99,44 +117,68 @@ def find_parser_problems(
 
     found: list[ParserProblem] = []
     root = service.archive.root.resolve()
+    parser_kinds = {
+        "quicktests": (QuickTestPdfParser, ".pdf", "quicktest"),
+        "qec": (QECJsonParser, ".json", "qec_live_report"),
+        "tp_dashboard": (AutoExportParser, ".csv", "autoexport_rows"),
+        "tips_writer": (TipsJsonParser, ".json", "tips_live_case"),
+        "cdd_smrd": (CandelaParser, ".cdd", "candela_services"),
+    }
     for sha, artifact in artifacts.items():
+        if scope_shas is not None and sha not in scope_shas:
+            continue
+        suffix = artifact.original_name.lower()
         kind = (
             "quicktests" if artifact.source_type == SourceType.SHORT_TEST
-            and artifact.original_name.lower().endswith(".pdf")
+            and suffix.endswith(".pdf")
             else "qec" if artifact.source_type == SourceType.QEC_REPORT
-            and artifact.original_name.lower().endswith(".json")
+            and suffix.endswith(".json")
+            else "tp_dashboard" if artifact.source_type == SourceType.TP_DASHBOARD
+            and suffix.endswith(".csv")
+            else "tips_writer" if artifact.source_type == SourceType.TIPS_CASE
+            and suffix.endswith(".json")
+            else "cdd_smrd" if artifact.source_type == SourceType.DIAGNOSTIC_DESCRIPTION
+            and suffix.endswith(".cdd")
             else downloaded.get(sha)
         )
-        if kind not in {"quicktests", "qec"}:
+        if category is None and kind not in {"quicktests", "qec"}:
+            continue  # Bestehender globaler Diagnostikexport unverändert.
+        if category is not None and kind != {
+            "diagnosis_viewer": "quicktests",
+            "tp_dashboard": "tp_dashboard",
+            "tips_writer": "tips_writer",
+            "cdd_smrd": "cdd_smrd",
+            "qec": "qec",
+        }.get(category):
             continue
-        parser_name, parser_version = (
-            (QuickTestPdfParser.name, QuickTestPdfParser.version)
-            if kind == "quicktests" else (QECJsonParser.name, QECJsonParser.version)
+        if kind not in parser_kinds:
+            continue
+        parser, suffix, stored_kind = parser_kinds[kind]
+        run = recent.get((sha, parser.name))
+        persisted = (
+            sha in quicktest_done if kind == "quicktests"
+            else sha in qec_docs if kind == "qec"
+            else documents.get(sha) == stored_kind
         )
-        run = recent.get((sha, parser_name))
-        persisted = sha in (quicktest_done if kind == "quicktests" else qec_docs)
         if run is not None and run.status == ParseStatus.FAILED:
             status = "fehlgeschlagen"
         elif run is not None and run.status == ParseStatus.PARTIAL:
             status = "teilweise"
+        elif run is not None and run.parser_version != parser.version:
+            status = "parser_version_veraltet"
         elif not persisted:
             status = "nicht_erkannt_oder_nicht_gespeichert"
         else:
             continue
-
         path = Path(artifact.archived_path).absolute()
         if path.is_symlink() or not path.resolve().is_relative_to(root) or not path.is_file():
-            # Never put an unexpected source path into an outbound package.
             continue
-        if path.suffix.lower() != (".pdf" if kind == "quicktests" else ".json"):
+        if path.suffix.lower() != suffix:
             continue
         found.append(ParserProblem(
-            artifact_sha256=sha,
-            kind=kind,
-            archived_path=path,
-            status=status,
-            parser_name=run.parser_name if run else parser_name,
-            parser_version=run.parser_version if run else parser_version,
+            artifact_sha256=sha, kind=kind, archived_path=path,
+            status=status, parser_name=run.parser_name if run else parser.name,
+            parser_version=run.parser_version if run else parser.version,
             size_bytes=artifact.size_bytes,
         ))
     return sorted(
@@ -156,6 +198,8 @@ def export_parser_diagnostics(
     *,
     include_originals: bool = False,
     progress: Callable[[str], None] | None = None,
+    category: str | None = None,
+    scope_paths: tuple[Path, ...] | None = None,
 ) -> ParserDiagnosticsResult:
     """Write one atomic, bounded ZIP, without exporting source names or FINs.
 
@@ -171,9 +215,12 @@ def export_parser_diagnostics(
         raise ValueError("Parser-Diagnosepaket muss die Endung .zip verwenden.")
     if progress:
         progress("Bereits archivierte Parser-Problemdateien ermitteln …")
-    problems = find_parser_problems(service, data_dir, progress=progress)
+    problems = find_parser_problems(
+        service, data_dir, progress=progress,
+        category=category, scope_paths=scope_paths,
+    )
     if not problems:
-        raise ValueError("Keine problematischen importierten QuickTest-/QEC-Dateien gefunden.")
+        raise ValueError("Keine problematischen importierten Dateien dieser Quelle gefunden.")
 
     selected = problems[:MAX_PROBLEM_FILES]
     manifest: list[dict[str, object]] = []
@@ -200,7 +247,11 @@ def export_parser_diagnostics(
                 "Die ZIP-Datei ist NICHT verschlüsselt.\n"
             ))
             for number, item in enumerate(selected, start=1):
-                suffix = ".pdf" if item.kind == "quicktests" else ".json"
+                suffix = {
+                    "quicktests": ".pdf", "qec": ".json",
+                    "tips_writer": ".json", "tp_dashboard": ".csv",
+                    "cdd_smrd": ".cdd",
+                }[item.kind]
                 entry_name = f"originale/{number:03d}{suffix}"
                 inclusion = False
                 if include_originals and item.size_bytes <= MAX_FILE_BYTES and (
@@ -219,7 +270,13 @@ def export_parser_diagnostics(
                     omitted += 1
                 manifest.append({
                     "nummer": number,
-                    "format": "quicktest_pdf" if item.kind == "quicktests" else "qec_json",
+                    "format": {
+                        "quicktests": "quicktest_pdf",
+                        "qec": "qec_json",
+                        "tips_writer": "tips_json",
+                        "tp_dashboard": "tp_dashboard_csv",
+                        "cdd_smrd": "candela_cdd",
+                    }[item.kind],
                     "sha256": item.artifact_sha256,
                     "dateigroesse_bytes": item.size_bytes,
                     "parser": item.parser_name,
