@@ -40,13 +40,13 @@ class WorkflowSourceActivity:
     def record(self, profile: str, part: str, category: str, result: str) -> None:
         if category not in CATEGORIES or result not in {
             "Gestartet", "Abgeschlossen", "Fehlgeschlagen", "Abgebrochen",
-            "Einlesen gestartet", "Eingelesen", "Archiviert",
+            "Einlesen gestartet", "Eingelesen", "Archiviert", "Teilweise",
         }:
             raise ValueError("Ungültiger Quellenabrufstatus.")
         with self.store.connect() as con:
             event_type = (
                 "Einlesen" if result in {
-                    "Einlesen gestartet", "Eingelesen", "Archiviert",
+                    "Einlesen gestartet", "Eingelesen", "Archiviert", "Teilweise",
                 } else "Abruf"
             )
             con.execute(
