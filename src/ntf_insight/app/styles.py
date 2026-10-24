@@ -175,40 +175,39 @@ QPushButton:hover {{
     background-color: {p["hover"]};
 }}
 
-/* Workflow-Kacheln: klickbar erkennbar, kompakt und themenkonform. */
+/* Status-Ampel: sparsame Farben nur für belegte Verarbeitungszustände. */
 QPushButton#WorkflowStep {{
     background-color: {p["surface"]};
     color: {p["text"]};
     border: 1px solid {p["border"]};
-    border-radius: 20px;
-    font-size: 14px;
+    border-bottom: 4px solid {p["border"]};
+    border-radius: 12px;
+    font-size: 12px;
     font-weight: 600;
-    padding: 12px 16px;
-    text-align: left;
-}}
-
-QPushButton#WorkflowStep[workflowState="active"] {{
-    border: 2px solid #22789a;
+    padding: 6px 4px;
+    text-align: center;
 }}
 
 QPushButton#WorkflowStep[workflowState="done"] {{
-    border: 2px solid #27815c;
+    border-bottom: 4px solid #26845c;
 }}
 
-QPushButton#WorkflowStep[workflowState="paused"] {{
-    border: 2px solid #b77822;
+QPushButton#WorkflowStep[workflowState="partial"] {{
+    border-bottom: 4px solid #bd8318;
+}}
+
+QPushButton#WorkflowStep[workflowState="error"] {{
+    border-bottom: 4px solid #b94242;
+}}
+
+QPushButton#WorkflowStep[isCurrent="true"] {{
+    background-color: {p["surface_alt"]};
+    border: 2px solid #22789a;
+    font-weight: 700;
 }}
 
 QPushButton#WorkflowStep:hover {{
-    background-color: {p["surface_alt"]};
-    border: 2px solid #22789a;
-}}
-
-QPushButton#WorkflowStep:pressed {{
-    background-color: {p["selection"]};
-}}
-
-QPushButton#WorkflowStep:focus {{
+    background-color: {p["hover"]};
     border: 2px solid #22789a;
 }}
 
@@ -217,6 +216,27 @@ QPushButton#WorkflowStep:disabled {{
     background-color: {p["surface_alt"]};
 }}
 
+QLabel#WorkflowArrow {{
+    color: {p["muted"]};
+    font-size: 20px;
+    font-weight: 700;
+}}
+
+QLabel#PageSubtitle[isError="true"] {{
+    color: #b94242;
+}}
+
+QProgressBar {{
+    border: 1px solid {p["border"]};
+    border-radius: 5px;
+    background-color: {p["surface_alt"]};
+    color: {p["text"]};
+}}
+
+QProgressBar::chunk {{
+    background-color: #2e8164;
+    border-radius: 4px;
+}}
 
 /* Neutral graphite primary action; no proprietary brand assets needed. */
 QPushButton#ClusterStartButton {{
