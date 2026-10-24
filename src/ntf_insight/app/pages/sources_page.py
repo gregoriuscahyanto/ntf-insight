@@ -179,6 +179,8 @@ class SourcesPage(QWidget):
         outer = QVBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
         scroll = QScrollArea()
+        # Arbeitsbereiche des zentralen Workflows gezielt sichtbar machen.
+        self.content_scroll = scroll
         scroll.setWidgetResizable(True)
         scroll.setFrameShape(QFrame.Shape.NoFrame)
         outer.addWidget(scroll)
