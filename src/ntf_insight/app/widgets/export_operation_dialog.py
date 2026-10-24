@@ -212,8 +212,6 @@ class ExportOperationDialog(QDialog):
         self._tick()
 
     def _done(self) -> None:
-        if not self._running and self.close_button.isVisible():
-            return
         elapsed = max(0, int(time.monotonic() - self._started_at))
         self._running = False
         self.clock.stop()
