@@ -880,7 +880,8 @@ class WorkflowPage(QWidget):
             "Originale sind nicht anonymisiert. Auch das importierte erste "
             "ChatGPT-Ergebnis kann vertrauliche Freitexte enthalten."
         )
-        options.addWidget(self.cluster_originals)
+        # Die Freigabe erfolgt ausschließlich im neuen Exportpopup.
+        self.cluster_originals.hide()
         self.cluster_export_button = self._add_action(
             options, "2. ChatGPT-Paket exportieren",
             lambda: self.action_requested.emit("cluster_export"),
