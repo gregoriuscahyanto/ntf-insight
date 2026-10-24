@@ -325,11 +325,11 @@ class WorkflowPage(QWidget):
              "Auswertung öffnen", "sources", "chatgpt"),
         )
         self.review_buttons: dict[int, QPushButton] = {}
-        for step, (title, hint, page, tab) in enumerate(targets, start=3):
+        for step, (title, hint, button_label, page, tab) in enumerate(targets, start=3):
             _, body = self._workspace(title, hint)
             actions = QHBoxLayout()
             self._add_action(
-                actions, "Detailansicht öffnen" if step == 5 else title.split("· ", 1)[-1] + " öffnen",
+                actions, button_label,
                 lambda _checked=False, p=page, t=tab: self.navigate.emit(p, t),
             )
             if step == 5:
