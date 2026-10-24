@@ -1082,7 +1082,7 @@ class WorkflowPage(QWidget):
     def _select_ssl_category(self, category: str, checked: bool) -> None:
         categories = self._ssl_categories()
         current = self.ssl_selection.selected(self.profile_id, self._context_part)
-        selected = set(categories if current is None else current)
+        selected = set(categories if current is None else current & categories)
         if checked:
             selected.add(category)
         else:
