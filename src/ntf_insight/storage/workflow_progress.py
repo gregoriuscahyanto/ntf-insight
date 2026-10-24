@@ -11,8 +11,8 @@ from dataclasses import dataclass
 
 from ntf_insight.storage.duckdb_store import DuckDBStore
 
-STEP_COUNT = 6
-MANUAL_STEPS = frozenset({3, 4, 5})
+STEP_COUNT = 5
+MANUAL_STEPS = frozenset({3, 4})
 DEFAULT_PROFILE = "coolant_pump"
 
 
