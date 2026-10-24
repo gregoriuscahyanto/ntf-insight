@@ -93,6 +93,7 @@ def find_parser_problems(
         sha for sha, kind in documents.items() if kind == "qec_live_report"
     }
     recent: dict[tuple[str, str], ParseRun] = {}
+    successful: dict[tuple[str, str], ParseRun] = {}
     for run in service.store.load_parse_runs():
         key = (run.artifact_sha256, run.parser_name)
         old = recent.get(key)
@@ -100,6 +101,12 @@ def find_parser_problems(
             old.completed_at or old.started_at
         ):
             recent[key] = run
+        if run.status in {ParseStatus.SUCCESS, ParseStatus.PARTIAL}:
+            older_good = successful.get(key)
+            if older_good is None or (run.completed_at or run.started_at) >= (
+                older_good.completed_at or older_good.started_at
+            ):
+                successful[key] = run
 
     # SourceType.OTHER includes invalid PDFs / JSON captured by automatic
     # detection. Attribute these only when their SHA matches a *real* local
@@ -162,16 +169,17 @@ def find_parser_problems(
             else sha in qec_docs if kind == "qec"
             else documents.get(sha) == stored_kind
         )
-        if run is not None and run.status == ParseStatus.FAILED:
-            status = "fehlgeschlagen"
-        elif run is not None and run.status == ParseStatus.PARTIAL:
+        good = successful.get((sha, parser.name))
+        if persisted and good is not None:
+            # Versionwechsel sind keine Parserfehler. Für Verbesserungen
+            # sind nur Teilergebnisse mit Hinweisen weiterhin interessant.
+            if good.status != ParseStatus.PARTIAL:
+                continue
             status = "teilweise"
-        elif run is not None and run.parser_version != parser.version:
-            status = "parser_version_veraltet"
-        elif not persisted:
-            status = "nicht_erkannt_oder_nicht_gespeichert"
+        elif run is not None and run.status == ParseStatus.FAILED:
+            status = "fehlgeschlagen"
         else:
-            continue
+            status = "nicht_erkannt_oder_nicht_gespeichert"
         path = Path(artifact.archived_path).absolute()
         if path.is_symlink() or not path.resolve().is_relative_to(root) or not path.is_file():
             continue
@@ -179,8 +187,9 @@ def find_parser_problems(
             continue
         found.append(ParserProblem(
             artifact_sha256=sha, kind=kind, archived_path=path,
-            status=status, parser_name=run.parser_name if run else parser.name,
-            parser_version=run.parser_version if run else parser.version,
+            status=status,
+            parser_name=(good or run).parser_name if (good or run) else parser.name,
+            parser_version=(good or run).parser_version if (good or run) else parser.version,
             size_bytes=artifact.size_bytes,
         ))
     return sorted(
