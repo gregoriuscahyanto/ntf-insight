@@ -539,6 +539,12 @@ class SourcesPage(QWidget):
                 and self.portable_backup_panel.worker is not None
             )
         ):
+            QMessageBox.warning(
+                self, "Fehler-ZIP derzeit nicht möglich",
+                "Lokale Quelldaten sind nicht verfügbar oder es läuft "
+                "noch eine Verarbeitung. Bitte den Vorgang abschließen "
+                "und den ZIP-Export erneut starten.",
+            )
             return
         choice = QMessageBox(self)
         choice.setWindowTitle("Vertrauliche Parser-Proben exportieren?")
