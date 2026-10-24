@@ -540,6 +540,17 @@ def test_qec_actions_match_source_table_and_parser_zip(tmp_path, monkeypatch):
     assert page.qec_parse_all_button.text() == "Alle QEC-Berichte neu parsen"
     assert page.qec_parse_resume_button.text() == "Ausstehendes Parsing fortsetzen"
     assert "ZIP" in page.qec_problem_zip_button.text()
+    assert page.cancel_download_button.isHidden()
+    actions = []
+    page.action_requested.connect(actions.append)
+    page.set_download_busy(True, scope="missing")
+    assert page.download_missing_button.text() == "Abruf stoppen"
+    assert not page.download_all_button.isEnabled()
+    page._trigger_qec_download("missing")
+    assert actions[-1] == "qec_download_cancel"
+    assert not page.download_missing_button.isEnabled()
+    page.set_download_busy(False)
+    assert page.download_missing_button.text() == "Download fortsetzen"
     assert "problem_zip" in page.context_scraper_buttons["diagnosis_viewer"]
     assert "problem_zip" in page.context_scraper_buttons["tips_writer"]
     assert "problem_zip" in page.context_scraper_buttons["tp_dashboard"]
