@@ -43,6 +43,7 @@ from ntf_insight.ingestion.reference_source_parsers import (
 from ntf_insight.ingestion.service import SourceImportService
 from ntf_insight.ingestion.source_detection import detect_source_type
 from ntf_insight.ingestion.qec_json import QECJsonParser
+from ntf_insight.ingestion.tips_json import TipsJsonParser
 from ntf_insight.ingestion.fin_zip_import import is_fin_export, prepare_fin_export, install_fin_export
 from ntf_insight.ingestion.qec_primary import validate_single_qec_list
 from ntf_insight.storage.quicktest_store import QuickTestStore
@@ -609,6 +610,8 @@ class LocalBatchImporter:
                 reference_parser = None
                 if artifact.source_type == SourceType.QEC_REPORT and suffix == ".json":
                     reference_parser = QECJsonParser()
+                elif artifact.source_type == SourceType.TIPS_CASE and suffix == ".json":
+                    reference_parser = TipsJsonParser()
                 elif artifact.source_type == SourceType.DIAGNOSTIC_DESCRIPTION and suffix == ".cdd":
                     reference_parser = CandelaParser()
                 elif artifact.source_type == SourceType.PART_HISTORY and suffix == ".pdf":
