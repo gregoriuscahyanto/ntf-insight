@@ -176,6 +176,11 @@ class WorkflowPage(QWidget):
         self._fin_findings: dict[str, str] = {}
         self.context_files = []
         self.first_package = None
+        self._ai_export_ready = False
+        self._ai_export_pulse_on = False
+        self._ai_export_timer = QTimer(self)
+        self._ai_export_timer.setInterval(750)
+        self._ai_export_timer.timeout.connect(self._toggle_ai_export_pulse)
         self._context_busy = False
         self._context_scrapers_busy: set[str] = set()
         self._context_scrape_active: dict[str, str] = {}
@@ -2045,6 +2050,53 @@ class WorkflowPage(QWidget):
             self.qec_status.setText(message)
         self._refresh_controls()
 
+    @staticmethod
+    def _set_button_state(button: QPushButton, key: str, value: str) -> None:
+        if button.property(key) == value:
+            return
+        button.setProperty(key, value)
+        button.style().unpolish(button)
+        button.style().polish(button)
+        button.update()
+
+    def _toggle_ai_export_pulse(self) -> None:
+        self._ai_export_pulse_on = not self._ai_export_pulse_on
+        self._set_button_state(
+            self.ai_export_button, "attention",
+            "on" if self._ai_export_pulse_on else "off",
+        )
+
+    def _update_ai_button_states(self) -> None:
+        # Nur wenn 01 und 02 wirklich vollständig sind, und nur bis zum
+        # ersten registrierten Analyseexport. Auf anderen Tabs keine Animation.
+        pulse = (
+            self._ai_export_ready
+            and self.first_package is None
+            and self.state.step == 2
+        )
+        if pulse:
+            if not self._ai_export_timer.isActive():
+                self._ai_export_pulse_on = False
+                self._toggle_ai_export_pulse()
+                self._ai_export_timer.start()
+        else:
+            self._ai_export_timer.stop()
+            self._ai_export_pulse_on = False
+            self._set_button_state(self.ai_export_button, "attention", "off")
+
+        imported = bool(
+            self.first_package is not None and self.first_package.analysis_id
+        )
+        self._set_button_state(
+            self.ai_import_button, "resultImported",
+            "true" if imported else "false",
+        )
+        self.ai_import_button.setToolTip(
+            "ChatGPT-Ergebnis für dieses Projekt erfolgreich importiert"
+            if imported else
+            "JSON-Ergebnis des zuvor exportierten Analysepakets importieren"
+        )
+
     def _refresh_controls(self) -> None:
         paused = False
         has_rows = bool(self._scoped_rows)
@@ -2221,6 +2273,7 @@ class WorkflowPage(QWidget):
         )
         self.ai_export_button.setEnabled(not paused and has_rows)
         self.ai_import_button.setEnabled(not paused)
+        self._update_ai_button_states()
         for button in self.review_buttons.values():
             button.setEnabled(not paused)
 
@@ -2262,6 +2315,7 @@ class WorkflowPage(QWidget):
             statuses[0] = "error"
         elif self._error_step is not None:
             statuses[self._error_step] = "error"
+        self._ai_export_ready = statuses[0] == "done" and statuses[1] == "done"
         self.progress.setValue(round(fraction / STEP_COUNT * 100))
         self.progress_label.setText(
             f"{stats['cases']} QEC-Fälle · {total} FINs · "
