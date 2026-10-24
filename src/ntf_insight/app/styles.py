@@ -259,6 +259,22 @@ QPushButton#ClusterStartButton:disabled {{
     border: 1px solid {p["border"]};
 }}
 
+/* Gefährliche Aktion als klare, unaufdringliche rote Kontur. */
+QPushButton#DangerButton {{
+    background-color: {p["surface"]};
+    color: #b94242;
+    border: 1px solid #b94242;
+    font-weight: 600;
+}}
+QPushButton#DangerButton:hover {{
+    background-color: {p["surface_alt"]};
+    border: 2px solid #b94242;
+}}
+QPushButton#DangerButton:disabled {{
+    color: {p["subtle"]};
+    border: 1px solid {p["border"]};
+}}
+
 QPushButton:disabled {{
     color: {p["subtle"]};
 }}
