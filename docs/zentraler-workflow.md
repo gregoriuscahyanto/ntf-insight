@@ -166,6 +166,11 @@ Projektkonfiguration und keine Ursachenfeststellung.
   ChatGPT-Zuordnungen. Die Projekt-Datenbank ist gefiltert;
   *bekannte weitere Projekte* werden nicht als fremde Tabellenzeilen
   exportiert. Es gibt keinen neuen Parserlauf.
+- **Mehrere QEC-FIN-Listen** für verschiedene Sachnummern sind erlaubt;
+  für dieselbe Sachnummer sind widersprüchliche aktive QEC-Master gesperrt.
+  Die Workflow-Tabelle zeigt die Vereinigung aller aktiven QEC-Listen und
+  filtert erst danach die Fälle der ausgewählten Projektsachnummer.
+  QEC-Entscheidungen bleiben weiterhin über die konkrete Quell-SHA gebunden.
 - **Projekt-Import** überprüft Hüllenformat, SHA-256-Prüfsummen und den
   enthaltenen portablen Datenstand. Das neue Projekt wird zur bestehenden
   Datenbank hinzugefügt, ohne andere Projekte oder deren Dateien zu
