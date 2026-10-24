@@ -642,7 +642,6 @@ def test_qec_and_underlagen_share_compact_no_scroll_layout(tmp_path, monkeypatch
     )
     assert page.context_source_rows["celonis"].layout().itemAtPosition(0, 3)
     # CDD über zwei Spalten; übrige sechs Kategorien in nur drei Zeilen.
-    technical_grid = page.context_technical_rows["cdd_smrd"].parentWidget()
     assert page.context_technical_rows["cdd_smrd"].minimumHeight() >= 30
     assert page.context_technical_rows["additional"].isVisible()
     source_rows = list(page.context_source_rows.values())
@@ -650,5 +649,51 @@ def test_qec_and_underlagen_share_compact_no_scroll_layout(tmp_path, monkeypatch
         previous.geometry().bottom() < following.geometry().top()
         for previous, following in zip(source_rows, source_rows[1:])
     )
+    window.close()
+    app.processEvents()
+
+
+def test_chatgpt_buttons_pulse_only_after_two_green_steps_and_turn_green_on_import(
+    tmp_path, monkeypatch,
+):
+    from dataclasses import replace
+    from types import SimpleNamespace
+
+    app, window = _window(tmp_path, monkeypatch)
+    page = window.pages["workflow"]
+    page.state = replace(page.state, step=2)
+    page._ai_export_ready = False
+    page.first_package = None
+    page._update_ai_button_states()
+    assert not page._ai_export_timer.isActive()
+
+    # Beide vorherigen Stufen erfolgreich, Export noch nie angelegt.
+    page._ai_export_ready = True
+    page._update_ai_button_states()
+    assert page._ai_export_timer.isActive()
+    assert page.ai_export_button.property("attention") == "on"
+    assert page.ai_import_button.property("resultImported") == "false"
+
+    # Ein exportiertes Paket beendet die Animation; importierte Ergebnis-JSON
+    # schaltet ausschließlich den zugehörigen Importbutton grün.
+    page.first_package = SimpleNamespace(
+        paket_id="synthetic", analysis_id=None,
+    )
+    page._update_ai_button_states()
+    assert not page._ai_export_timer.isActive()
+    assert page.ai_export_button.property("attention") == "off"
+    assert page.ai_import_button.property("resultImported") == "false"
+    page.first_package = SimpleNamespace(
+        paket_id="synthetic", analysis_id="synthetic-result",
+    )
+    page._update_ai_button_states()
+    assert page.ai_import_button.property("resultImported") == "true"
+
+    page.state = replace(page.state, step=3)
+    page._update_ai_button_states()
+    assert not page._ai_export_timer.isActive()
+    page.first_package = None
+    page._ai_export_ready = False
+    page._update_ai_button_states()
     window.close()
     app.processEvents()
