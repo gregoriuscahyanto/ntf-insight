@@ -1766,6 +1766,19 @@ class MainWindow(QMainWindow):
         workflow = self.pages["workflow"]
         source = self.pages["sources"]
         if action.startswith("parser_diagnostics:"):
+            if not self._portable_transfer_ready():
+                workflow.set_notice(
+                    "Fehler-ZIP erst nach Abschluss laufender Abrufe, Parser- "
+                    "oder Projekttransfers erstellen.",
+                    error=True,
+                )
+                QMessageBox.warning(
+                    self, "Fehler-ZIP derzeit gesperrt",
+                    "Ein Abruf, Parser oder Datentransfer ist noch aktiv. "
+                    "Bitte den laufenden Vorgang abschließen, bevor ein "
+                    "Fehlerpaket erzeugt wird.",
+                )
+                return
             category = action.partition(":")[2]
             coverage = workflow._source_coverage.get(category)
             if coverage is None or not coverage.local_paths:
