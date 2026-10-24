@@ -2044,8 +2044,14 @@ class WorkflowPage(QWidget):
         self.note.style().unpolish(self.note)
         self.note.style().polish(self.note)
         if error:
-            # Fehlerampel sofort aktualisieren, nicht erst beim nächsten Klick.
-            self.refresh()
+            # Ein Hinweis darf keinen weiteren DuckDB-Zugriff auslösen:
+            # eine fremde Windows-Dateisperre muss als Hinweis sichtbar bleiben.
+            # Die Fehlerampel nur mit bereits geladenen Daten aktualisieren.
+            if hasattr(self, "cards") and 0 <= self.state.step < len(self.cards):
+                card = self.cards[self.state.step]
+                card.setProperty("workflowState", "error")
+                card.style().unpolish(card)
+                card.style().polish(card)
 
     def set_import_state(self, busy: bool, *, can_resume: bool = False) -> None:
         self._import_busy = busy
