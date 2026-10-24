@@ -196,10 +196,12 @@ class WorkflowPage(QWidget):
 
         header = QHBoxLayout()
         self.project_title = QLabel(objectName="PageTitle")
+        self.project_title.setStyleSheet("font-size: 23px;")
         header.addWidget(self.project_title, 1)
         self.project_combo = QComboBox()
         self.project_combo.setAccessibleName("Aktives Sachnummern-Projekt")
-        self.project_combo.setMinimumWidth(130)
+        self.project_combo.setMinimumWidth(200)
+        self.project_combo.setMaximumWidth(225)
         self.project_combo.currentIndexChanged.connect(self._project_combo_changed)
         header.addWidget(self.project_combo)
         self.new_project_button = QPushButton("+ Neues Projekt")
@@ -226,6 +228,11 @@ class WorkflowPage(QWidget):
             lambda: self.action_requested.emit("project_import")
         )
         header.addWidget(self.project_import_button)
+        for action in (
+            self.new_project_button, self.settings_button,
+            self.project_export_button, self.project_import_button,
+        ):
+            action.setObjectName("ProjectHeaderAction")
         outer.addLayout(header)
         self.project_transfer_bar = QProgressBar()
         self.project_transfer_bar.setRange(0, 100)
