@@ -516,6 +516,9 @@ class WorkflowPage(QWidget):
         self.note.setProperty("isError", error)
         self.note.style().unpolish(self.note)
         self.note.style().polish(self.note)
+        if error:
+            # Fehlerampel sofort aktualisieren, nicht erst beim nächsten Klick.
+            self.refresh()
 
     def set_import_state(self, busy: bool, *, can_resume: bool = False) -> None:
         self._import_busy = busy
