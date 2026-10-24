@@ -242,10 +242,14 @@ def export_ki_analysepaket(
     artifacts = service.list_artifacts()
     if target_fins is not None:
         ids = {case.case_id for case in cases}
+        matching_report_shas = {
+            str(doc["source_sha256"]) for doc in documents
+        }
         artifacts = [
             item for item in artifacts if (
                 str(item.vin_hint or "").upper() in target_fins
                 or str(item.case_id_hint or "") in ids
+                or item.sha256 in matching_report_shas
             )
         ]
     if mit_qec_originalen:
