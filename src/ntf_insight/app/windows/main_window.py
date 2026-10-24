@@ -11,7 +11,7 @@ from PySide6.QtCore import Qt, QEventLoop, QTimer, QUrl
 from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import (
     QApplication, QDialog, QFileDialog, QGraphicsBlurEffect, QHBoxLayout,
-    QInputDialog, QMainWindow, QMessageBox, QProgressDialog, QPushButton,
+    QInputDialog, QMainWindow, QMessageBox, QPushButton,
     QStackedWidget, QVBoxLayout, QWidget,
 )
 
@@ -38,6 +38,7 @@ from ntf_insight.app.pages.source_knowledge_page import SourceKnowledgePage
 from ntf_insight.app.pages.supplier_page import SupplierPage
 from ntf_insight.app.widgets.navigation import NavigationPanel
 from ntf_insight.app.widgets.loading_overlay import LoadingOverlay
+from ntf_insight.app.widgets.export_operation_dialog import ExportOperationDialog
 from ntf_insight.ingestion.manual_entry import ManualCaseService
 from ntf_insight.storage.duckdb_store import DuckDBStore
 from ntf_insight.storage.dtc_review_store import DtcReviewStore
@@ -71,9 +72,13 @@ class MainWindow(QMainWindow):
         self._context_scraper_failed: set[str] = set()
         self._context_worker = None
         self._project_transfer_worker = None
-        self._project_transfer_dialog = None
+        self._project_transfer_dialog: ExportOperationDialog | None = None
+        self._first_export_dialog: ExportOperationDialog | None = None
+        self._second_export_dialog: ExportOperationDialog | None = None
+        self._portable_export_dialog: ExportOperationDialog | None = None
+        self._fin_export_dialog: ExportOperationDialog | None = None
         self._project_transfer_failure: str | None = None
-        self._diagnostics_dialog: QProgressDialog | None = None
+        self._diagnostics_dialog: ExportOperationDialog | None = None
         self._diagnostics_path: Path | None = None
         self._diagnostics_error_text: str | None = None
         self._diagnostics_started_at = 0.0
@@ -347,25 +352,28 @@ class MainWindow(QMainWindow):
             )
         )
 
-    def _show_operation_progress(self, title: str, message: str) -> QProgressDialog:
-        """Gemeinsamer modaler Fortschritt für ZIP, Projekt-Export und -Import."""
+    def _show_export_prompt(
+        self, title: str, message: str, *,
+        options: tuple[tuple[str, str, bool], ...] = (),
+    ) -> ExportOperationDialog:
+        """Eine einheitliche Karte über dem ausgegrauten Workflow."""
         self._begin_loading(message)
-        dialog = QProgressDialog(message, "", 0, 0, self)
-        dialog.setWindowTitle(title)
-        dialog.setCancelButton(None)  # ZIP-/Datenbanktransaktion nie unsicher abbrechen.
-        dialog.setMinimumWidth(510)
-        dialog.setMinimumDuration(0)
-        dialog.setAutoClose(False)
-        dialog.setAutoReset(False)
-        dialog.setWindowModality(Qt.WindowModality.WindowModal)
-        dialog.setWindowFlags(
-            Qt.WindowType.Dialog | Qt.WindowType.CustomizeWindowHint
-            | Qt.WindowType.WindowTitleHint
+        dialog = ExportOperationDialog(
+            title, message, options=options, parent=self,
         )
-        dialog.show()
+        dialog.finished.connect(self._finish_loading)
+        dialog.finished.connect(dialog.deleteLater)
+        dialog.open()
         return dialog
 
-    def _close_operation_progress(self, dialog: QProgressDialog) -> None:
+    def _show_operation_progress(
+        self, title: str, message: str,
+    ) -> ExportOperationDialog:
+        dialog = self._show_export_prompt(title, message)
+        dialog.begin(message)
+        return dialog
+
+    def _close_operation_progress(self, dialog: ExportOperationDialog) -> None:
         dialog.close()
         dialog.deleteLater()
         self._finish_loading()
@@ -411,8 +419,6 @@ class MainWindow(QMainWindow):
 
     def _diagnostics_ended(self) -> None:
         dialog, self._diagnostics_dialog = self._diagnostics_dialog, None
-        if dialog is not None:
-            self._close_operation_progress(dialog)
         path, self._diagnostics_path = self._diagnostics_path, None
         error, self._diagnostics_error_text = self._diagnostics_error_text, None
         if error is not None:
@@ -420,36 +426,23 @@ class MainWindow(QMainWindow):
                 "Fehler-ZIP konnte nicht erstellt werden: " + error,
                 error=True,
             )
-            QMessageBox.critical(
-                self, "Fehler-ZIP nicht erstellt",
-                "Es wurde kein neues Diagnosepaket gespeichert.\n\n" + error,
-            )
+            if dialog is not None:
+                dialog.fail(error)
             return
         if path is None or not path.exists() or path.stat().st_size <= 0:
-            QMessageBox.critical(
-                self, "Fehler-ZIP nicht gefunden",
-                "Der Export hat keine überprüfbare, nicht leere ZIP-Datei "
-                "am angegebenen Ziel hinterlassen.",
-            )
+            message = "Der Export hat keine überprüfbare, nicht leere ZIP-Datei hinterlassen."
+            if dialog is not None:
+                dialog.fail(message)
+            self.pages["workflow"].set_notice(message, error=True)
             return
         self.pages["workflow"].set_notice(
             f"Parser-Diagnose-ZIP gespeichert: {path}",
         )
-        confirmation = QMessageBox(self)
-        confirmation.setWindowTitle("Fehler-ZIP erfolgreich erstellt")
-        confirmation.setIcon(QMessageBox.Icon.Information)
-        confirmation.setText(
-            f"Die ZIP-Datei ist vollständig gespeichert.\n\n"
-            f"Speicherort: {path}\n"
-            f"Größe: {path.stat().st_size:,} Byte"
-        )
-        open_folder = confirmation.addButton(
-            "Ordner öffnen", QMessageBox.ButtonRole.ActionRole
-        )
-        confirmation.addButton(QMessageBox.StandardButton.Ok)
-        confirmation.exec()
-        if confirmation.clickedButton() is open_folder:
-            QDesktopServices.openUrl(QUrl.fromLocalFile(str(path.parent)))
+        if dialog is not None:
+            dialog.complete(
+                path,
+                details="ZIP-Integrität geprüft. Originale nur nach Freigabe weitergeben.",
+            )
 
     def _project_transfer_export(self) -> None:
         workflow = self.pages["workflow"]
@@ -573,6 +566,11 @@ class MainWindow(QMainWindow):
     def _project_transfer_completed(self, result: object) -> None:
         workflow = self.pages["workflow"]
         if hasattr(result, "path"):
+            if self._project_transfer_dialog is not None:
+                self._project_transfer_dialog.complete(
+                    result.path,
+                    details="Projektpaket vollständig lokal erstellt.",
+                )
             warning = (
                 "Ein QEC-Original kann weitere Sachnummern enthalten. "
                 if result.shared_source_warning else ""
@@ -584,6 +582,10 @@ class MainWindow(QMainWindow):
                 + warning
             )
         else:
+            if self._project_transfer_dialog is not None:
+                self._project_transfer_dialog.complete(
+                    None, details="Projekt wurde lokal importiert.",
+                )
             self._project_import_result = result
             workflow.set_notice(
                 f"Projekt importiert: {result.part_number} · "
@@ -592,26 +594,23 @@ class MainWindow(QMainWindow):
 
     def _project_transfer_failed(self, message: str) -> None:
         self._project_transfer_failure = message
+        if self._project_transfer_dialog is not None:
+            self._project_transfer_dialog.fail(message)
         self.pages["workflow"].set_notice(
             "Projekttransfer nicht ausgeführt: " + message, error=True
         )
 
     def _project_transfer_finished(self) -> None:
         self.pages["workflow"].finish_project_transfer_progress()
-        dialog, self._project_transfer_dialog = self._project_transfer_dialog, None
-        if dialog is not None:
-            self._close_operation_progress(dialog)
+        # Erfolgs- oder Fehlerkarte bleibt offen, bis der Nutzer den
+        # Speicherort gesehen bzw. auf „Dateiordner öffnen“ geklickt hat.
+        self._project_transfer_dialog = None
         worker, self._project_transfer_worker = self._project_transfer_worker, None
         if worker is not None:
             worker.deleteLater()
         self._portable_transfer_busy(False)
         result, self._project_import_result = self._project_import_result, None
-        if self._project_transfer_failure:
-            error, self._project_transfer_failure = self._project_transfer_failure, None
-            QMessageBox.critical(
-                self, "Projekttransfer fehlgeschlagen",
-                "Das Projektpaket wurde nicht vollständig verarbeitet.\n\n" + error,
-            )
+        self._project_transfer_failure = None
         if result is not None:
             self._reload_data()
             self._project_selected(result.profile_id, result.part_number)
