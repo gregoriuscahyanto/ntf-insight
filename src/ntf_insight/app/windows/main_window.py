@@ -256,7 +256,13 @@ class MainWindow(QMainWindow):
 
     def _workflow_action(self, action: str) -> None:
         source = self.pages["sources"]
-        if action == "self_import":
+        if action == "cancel_import":
+            self.navigation.select_page("sources")
+            source.cancel_import_button.click()
+        elif action == "resume_import":
+            self.navigation.select_page("sources")
+            source.resume_import_button.click()
+        elif action == "self_import":
             self.navigation.select_page("sources")
             source.archive_button.click()
         elif action == "qec":
