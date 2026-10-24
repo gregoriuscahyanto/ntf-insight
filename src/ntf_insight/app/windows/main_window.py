@@ -446,7 +446,7 @@ class MainWindow(QMainWindow):
         open_folder = confirmation.addButton(
             "Ordner öffnen", QMessageBox.ButtonRole.ActionRole
         )
-        confirmation.addButton(QMessageBox.StandardButton.OK)
+        confirmation.addButton(QMessageBox.StandardButton.Ok)
         confirmation.exec()
         if confirmation.clickedButton() is open_folder:
             QDesktopServices.openUrl(QUrl.fromLocalFile(str(path.parent)))
