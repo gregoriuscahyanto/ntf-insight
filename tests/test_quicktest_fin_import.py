@@ -297,18 +297,11 @@ def test_fin_case_overview_shows_readonly_quicktest_timeline_without_qec(
     assert not page.export_button.isEnabled()
     assert not page.history_button.isEnabled()
 
-    from PySide6.QtWidgets import QLabel
-
-    from ntf_insight.app.widgets.status_card import StatusCard
-
-    cards = window.pages["dashboard"].findChildren(StatusCard)
-    totals = {}
-    for card in cards:
-        labels = card.findChildren(QLabel)
-        totals[labels[0].text()] = labels[1].text()
-    assert totals["Fahrzeuge"] == "1"
-    assert totals["NTF-Fälle"] == "0"
-    assert totals["QuickTests"] == "1"
+    # Die neue Übersicht zeigt nur registrierte Projekte, während FINs ohne
+    # QEC-Fall weiterhin vollständig in der Fall-/Diagnoseansicht erscheinen.
+    from ntf_insight.app.pages.dashboard_page import project_overview_rows
+    assert project_overview_rows(window.manual_service.store) == []
+    assert window.pages["dashboard"].table.columnCount() >= 9
 
     page.case_search.setText("NOT-A-FIN")
     assert page.case_proxy.rowCount() == 0
