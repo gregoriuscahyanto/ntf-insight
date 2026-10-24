@@ -778,8 +778,37 @@ class WorkflowPage(QWidget):
         counts = {name: 0 for name in CATEGORY_LABELS}
         for file in self.context_files:
             counts[file.category] += 1
+        activities = self.source_activity.get(
+            self.profile_id, self._context_part
+        )
         for key, count_label in self.context_counts.items():
             count_label.setText(str(counts[key]))
+            if key in self.context_source_dates:
+                activity = activities.get(key)
+                documents = [f for f in self.context_files if f.category == key]
+                if activity:
+                    timestamp, state = activity
+                    label = timestamp.strftime("%d.%m.%Y %H:%M")
+                    self.context_source_dates[key].setText(
+                        f"Abrufversuch: {label} · {state}"
+                    )
+                elif documents:
+                    newest = max(f.imported_at for f in documents)
+                    self.context_source_dates[key].setText(
+                        "Dateiimport: " + newest.strftime("%d.%m.%Y %H:%M")
+                    )
+                else:
+                    self.context_source_dates[key].setText(
+                        "Noch kein Abruf / Import"
+                    )
+                self.context_source_names[key].setStyleSheet(
+                    "color: #268763; font-weight: 600;"
+                    if documents else ""
+                )
+                count_label.setStyleSheet(
+                    "color: #268763; font-weight: 600;"
+                    if documents else ""
+                )
         self.context_model.set_rows([
             (
                 CATEGORY_LABELS[item.category], item.original_name,
@@ -787,6 +816,9 @@ class WorkflowPage(QWidget):
                 item.sha256[:12],
                 item.imported_at.strftime("%d.%m.%Y %H:%M"),
             )
+            for item in self.context_files
+        ], row_states=[
+            "success" if item.source_path.is_file() else "error"
             for item in self.context_files
         ])
         self.context_summary.setText(
@@ -1192,6 +1224,10 @@ class WorkflowPage(QWidget):
         self.qec_import_button.setEnabled(not paused and not self._import_busy)
         for button in self.context_import_buttons.values():
             button.setEnabled(not paused and not self._context_busy)
+        for buttons in self.context_scraper_buttons.values():
+            buttons["parse"].setEnabled(
+                not paused and not self._context_busy and not self._import_busy
+            )
         self.cluster_originals.setEnabled(not paused and not self._context_busy)
         has_first = self.first_package is not None
         has_first_result = bool(has_first and self.first_package.analysis_id)
