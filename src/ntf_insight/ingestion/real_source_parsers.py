@@ -447,7 +447,7 @@ class QuickTestPdfParser:
     """Complete QuickTest parser, including ECU and DTC snapshot details."""
 
     name = "quicktest_pdf"
-    version = "3.0.0"
+    version = "4.0.0"
 
     def __init__(self, source_sha: str) -> None:
         self.source_sha = source_sha
