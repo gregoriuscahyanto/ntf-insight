@@ -550,7 +550,7 @@ class AutoExportFinWorkspace(QWidget):
 
         plot_header = QHBoxLayout()
         plot_header.addWidget(QLabel(
-            "FIN-Punktwolke · 3D-Diagnoseähnlichkeit (drehbar)", objectName="CardTitle",
+            "FIN-Punktwolke · Ziehen: drehen · Strg + Mausrad: zoomen", objectName="CardTitle",
         ))
         plot_header.addStretch(1)
         plot_header.addWidget(QLabel("Verfahren"))
