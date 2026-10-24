@@ -25,7 +25,7 @@ from ntf_insight.storage.workflow_source_coverage import get_workflow_coverage
 
 
 HEADERS = (
-    "Projekt", "FINs", "QEC-Fälle", "NTF", "QEC-Berichte",
+    "Projekt", "FINs", "QEC-Fälle", "Tauschfälle", "NTF", "QEC-Berichte",
     "Unterlagen", "Geparst", "Cluster", "Status",
 )
 
@@ -42,6 +42,14 @@ def project_overview_rows(store: DuckDBStore) -> list[dict]:
         by_part[part_key(str(item.get("part_number") or ""))].append(item)
     evidence = ClusterEvidenceStore(store)
     progress = WorkflowProgressStore(store)
+    # Ein Tauschfall erfordert einen tatsächlich gespeicherten Tauscheintrag,
+    # nicht nur einen QEC-Schadteilfall.
+    confirmed_swaps: dict[tuple[str, str], int] = defaultdict(int)
+    for case in store.load_cases():
+        part = part_key(str(getattr(case, "qec_part_number", "") or ""))
+        if not part or case.investigated_replacement() is None:
+            continue
+        confirmed_swaps[(case.component_profile_id or "coolant_pump", part)] += 1
     with store.connect() as con:
         tables = {
             name for (name,) in con.execute(
@@ -93,6 +101,9 @@ def project_overview_rows(store: DuckDBStore) -> list[dict]:
             "part": project.part_number,
             "fins": stats["fins"],
             "cases": stats["cases"],
+            "swaps": confirmed_swaps.get(
+                (project.profile_id, part_key(project.part_number)), 0,
+            ),
             "ntf": stats["ntf"],
             "reports": stats["downloaded"],
             "documents": originals,
@@ -184,8 +195,8 @@ class DashboardPage(QWidget):
         self.table.setRowCount(len(rows))
         for index, row in enumerate(rows):
             values = (
-                row["title"], row["fins"], row["cases"], row["ntf"],
-                row["reports"], row["documents"], row["parsed"],
+                row["title"], row["fins"], row["cases"], row["swaps"],
+                row["ntf"], row["reports"], row["documents"], row["parsed"],
                 row["clusters"], f"Schritt {row['step']}/5",
             )
             for column, value in enumerate(values):
