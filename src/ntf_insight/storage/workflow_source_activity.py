@@ -6,7 +6,9 @@ from datetime import datetime, timezone
 from ntf_insight.storage.cluster_evidence_store import part_key
 from ntf_insight.storage.duckdb_store import DuckDBStore
 
-CATEGORIES = frozenset({"tp_dashboard", "diagnosis_viewer", "tips_writer", "celonis"})
+CATEGORIES = frozenset({
+    "tp_dashboard", "diagnosis_viewer", "tips_writer", "celonis", "cdd_smrd",
+})
 
 
 class WorkflowSourceActivity:
