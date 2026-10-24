@@ -19,8 +19,9 @@ class NavigationPanel(QFrame):
     theme_selected = Signal(str)
 
     ITEMS = (
+        ("workflow", "Workflow"),
         ("dashboard", "Übersicht"),
-        ("sources", "Datenquellen"),
+        ("sources", "Datenquellen (alt)"),
         ("knowledge", "Quellenwissen"),
         ("cases", "Fälle / FIN"),
         ("dtcs", "DTC-Explorer"),
