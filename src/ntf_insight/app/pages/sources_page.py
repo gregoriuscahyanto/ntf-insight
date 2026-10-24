@@ -59,10 +59,12 @@ class _SourceImportWorker(QThread):
         vin_hint: str | None = None,
         only_new: bool = False,
         local_kind: str | None = None,
+        retry_failed_quicktests: bool = False,
     ) -> None:
         super().__init__()
         self.only_new = only_new
         self.local_kind = local_kind
+        self.retry_failed_quicktests = retry_failed_quicktests
         self._cancel_event = Event()
         self.sources = sources
         self.paths = paths
@@ -76,16 +78,23 @@ class _SourceImportWorker(QThread):
 
     def run(self) -> None:
         try:
-            summary = LocalBatchImporter(self.sources).import_paths(
-                self.paths,
-                on_progress=self.progress.emit,
-                forced_source_type=self.forced_type,
-                source_system=self.source_system,
-                vin_hint=self.vin_hint,
-                only_new=self.only_new,
-                local_kind=self.local_kind,
-                should_cancel=self._cancel_event.is_set,
-            )
+            importer = LocalBatchImporter(self.sources)
+            if self.retry_failed_quicktests:
+                summary = importer.retry_failed_quicktests(
+                    on_progress=self.progress.emit,
+                    should_cancel=self._cancel_event.is_set,
+                )
+            else:
+                summary = importer.import_paths(
+                    self.paths,
+                    on_progress=self.progress.emit,
+                    forced_source_type=self.forced_type,
+                    source_system=self.source_system,
+                    vin_hint=self.vin_hint,
+                    only_new=self.only_new,
+                    local_kind=self.local_kind,
+                    should_cancel=self._cancel_event.is_set,
+                )
         except Exception as exc:
             self.failed.emit(f"{type(exc).__name__}: {exc}")
             return
@@ -278,9 +287,10 @@ class SourcesPage(QWidget):
             "Alle bereits heruntergeladenen QuickTests einlesen"
         )
         self.local_quicktests_button.setToolTip(
-            "Sucht lokale PDFs unter quicktests/<FIN>/ und archiviert sie mit "
-            "FIN-Prüfung durch den bestehenden QuickTest-Parser. "
-            "Bereits bekannte Berichte werden nicht doppelt gezählt."
+            "Vollständiger Abgleich aller lokalen PDFs unter quicktests/<FIN>/. "
+            "Nach einem Parser-Versionswechsel werden auch früher mit v2 "
+            "erfolgreich geparste PDFs erneut geprüft. Für eine gezielte "
+            "Fehlerbereinigung zuerst den separaten Fehler-Button verwenden."
         )
         self.local_quicktests_button.setEnabled(
             self.data_dir is not None and self.import_service is not None
@@ -305,15 +315,40 @@ class SourcesPage(QWidget):
         local_row.addWidget(self.cancel_import_button)
         self.resume_import_button = QPushButton("Import fortsetzen")
         self.resume_import_button.setToolTip(
-            "Durchsucht die zuletzt gewählte lokale Quellenart erneut; "
-            "unveränderte erfolgreich eingelesene oder bekannte fehlerhafte "
-            "Dateien werden übersprungen."
+            "Setzt den zuletzt gewählten lokalen Import fort. Im QuickTest-Fehlermodus "
+            "werden nur die weiterhin problematischen Archivdateien neu geprüft."
         )
         self.resume_import_button.setEnabled(False)
         self.resume_import_button.clicked.connect(self._resume_import)
         local_row.addWidget(self.resume_import_button)
         local_row.addStretch(1)
         layout.addLayout(local_row)
+
+        # Unlike the full scanner, this action selects only stored parser
+        # problems from the SHA archive (no traversal of quicktests/<FIN>).
+        failed_row = QHBoxLayout()
+        self.failed_quicktests_button = QPushButton(
+            "Nur fehlerhafte QuickTests erneut einlesen"
+        )
+        self.failed_quicktests_button.setToolTip(
+            "Verarbeitet ausschließlich bereits protokollierte fehlgeschlagene, "
+            "unvollständige oder nicht gespeicherte QuickTest-PDFs aus dem "
+            "lokalen Rohdatenarchiv. Erfolgreiche v2-Dateien werden NICHT "
+            "erneut geparst. Mehrfaches Wiederholen ist möglich."
+        )
+        self.failed_quicktests_button.setEnabled(
+            self.data_dir is not None and self.import_service is not None
+        )
+        self.failed_quicktests_button.clicked.connect(self._import_failed_quicktests)
+        failed_row.addWidget(self.failed_quicktests_button)
+        failed_note = QLabel(
+            "Ohne vollständigen Datei-Scan · v2-Erfolge bleiben erhalten · "
+            "Komplettabgleich mit v3 später über „Alle bereits heruntergeladenen QuickTests einlesen“",
+            objectName="PageSubtitle",
+        )
+        failed_note.setWordWrap(True)
+        failed_row.addWidget(failed_note, 1)
+        layout.addLayout(failed_row)
 
         self.drop_zone = FileDropZone()
         self.drop_zone.setEnabled(self.import_service is not None)
@@ -433,6 +468,13 @@ class SourcesPage(QWidget):
         self.source_type.setCurrentIndex(0)
         self._archive_paths(paths, only_new=True, local_kind="quicktests")
 
+    def _import_failed_quicktests(self) -> None:
+        if self.data_dir is None or self.import_service is None:
+            return
+        # The worker chooses only previously failed SHA archive artifacts.
+        # Never enumerate all downloaded PDFs or reparse successful v2 sources.
+        self._archive_paths([], retry_failed_quicktests=True)
+
     def _import_existing_qec(self) -> None:
         if self.data_dir is None or self._worker is not None:
             return
@@ -460,6 +502,8 @@ class SourcesPage(QWidget):
             self._import_existing_quicktests()
         elif self._resume_kind == "qec":
             self._import_existing_qec()
+        elif self._resume_kind == "quicktest_errors":
+            self._import_failed_quicktests()
 
     def _export_parser_problems(self) -> None:
         if (
@@ -528,6 +572,7 @@ class SourcesPage(QWidget):
         self.problem_zip_button.setEnabled(False)
         self.archive_button.setEnabled(False)
         self.local_quicktests_button.setEnabled(False)
+        self.failed_quicktests_button.setEnabled(False)
         self.local_qec_button.setEnabled(False)
         self.resume_import_button.setEnabled(False)
         self.import_status.setText("Lokale Parser-Probleme sammeln und ZIP erstellen …")
@@ -560,6 +605,7 @@ class SourcesPage(QWidget):
         self.problem_zip_button.setEnabled(self.import_service is not None and self.data_dir is not None)
         self.archive_button.setEnabled(self.import_service is not None)
         self.local_quicktests_button.setEnabled(self.import_service is not None and self.data_dir is not None)
+        self.failed_quicktests_button.setEnabled(self.import_service is not None and self.data_dir is not None)
         self.local_qec_button.setEnabled(self.import_service is not None and self.data_dir is not None)
         self.resume_import_button.setEnabled(self._resume_kind is not None)
 
@@ -637,9 +683,12 @@ class SourcesPage(QWidget):
     def _archive_paths(
         self, paths: list[Path], *,
         only_new: bool = False, local_kind: str | None = None,
+        retry_failed_quicktests: bool = False,
     ) -> None:
         if (
-            self.import_service is None or not paths or self._worker is not None
+            self.import_service is None
+            or (not paths and not retry_failed_quicktests)
+            or self._worker is not None
             or self._diagnostics_worker is not None
             or (
                 self.ki_analyse_panel is not None
@@ -655,22 +704,31 @@ class SourcesPage(QWidget):
         ):
             return
 
-        forced = self.source_type.currentData()
+        forced = (SourceType.SHORT_TEST if retry_failed_quicktests
+                  else self.source_type.currentData())
         forced_type = forced if isinstance(forced, SourceType) else None
         if only_new:
             self._resume_kind = local_kind
+        elif retry_failed_quicktests:
+            self._resume_kind = "quicktest_errors"
         self.cancel_import_button.setEnabled(True)
         self.resume_import_button.setEnabled(False)
         self.problem_zip_button.setEnabled(False)
         self.archive_button.setEnabled(False)
         self.local_quicktests_button.setEnabled(False)
+        self.failed_quicktests_button.setEnabled(False)
         self.local_qec_button.setEnabled(False)
         self.drop_zone.setEnabled(False)
         self.retry_button.setEnabled(False)
         self.delete_button.setEnabled(False)
-        self.import_status.setText(
-            f"{len(paths)} Datei(en)/ZIP-Paket(e) werden lokal geprüft und importiert …"
-        )
+        if retry_failed_quicktests:
+            self.import_status.setText(
+                "Nur bekannte fehlerhafte QuickTests aus dem Rohdatenarchiv auswählen …"
+            )
+        else:
+            self.import_status.setText(
+                f"{len(paths)} Datei(en)/ZIP-Paket(e) werden lokal geprüft und importiert …"
+            )
         self._pending_reload = False
         self._quicktests_added = 0
         self._worker = _SourceImportWorker(
@@ -681,6 +739,7 @@ class SourcesPage(QWidget):
             self.vin_hint.text().strip() or None,
             only_new=only_new,
             local_kind=local_kind,
+            retry_failed_quicktests=retry_failed_quicktests,
         )
         self._worker.progress.connect(self.import_status.setText)
         self._worker.imported.connect(self._import_completed)
@@ -719,6 +778,19 @@ class SourcesPage(QWidget):
                 + "; ".join(summary.issues[:2])
                 + ")"
             )
+        if self._worker is not None and self._worker.retry_failed_quicktests:
+            if not summary.selected_failed_quicktests and not summary.cancelled:
+                text = (
+                    "Keine bereits protokollierten fehlerhaften QuickTest-PDFs gefunden. "
+                    "Erfolgreiche v2-Berichte wurden nicht angefasst."
+                )
+            else:
+                text = (
+                    f"Nur Fehlerdateien geprüft: "
+                    f"{summary.selected_failed_quicktests} zuvor problematische QuickTest-PDFs · "
+                    f"{summary.remaining_failed_quicktests} weiterhin problematisch · "
+                    + text
+                )
         self.import_status.setText(text)
         self._quicktests_added = summary.quicktests_saved
         self._pending_reload = bool(
@@ -742,10 +814,13 @@ class SourcesPage(QWidget):
         )
         self.resume_import_button.setEnabled(
             self.import_service is not None and self.data_dir is not None
-            and self._resume_kind in {"quicktests", "qec"}
+            and self._resume_kind in {"quicktests", "qec", "quicktest_errors"}
         )
         self.archive_button.setEnabled(self.import_service is not None)
         self.local_quicktests_button.setEnabled(
+            self.import_service is not None and self.data_dir is not None
+        )
+        self.failed_quicktests_button.setEnabled(
             self.import_service is not None and self.data_dir is not None
         )
         self.local_qec_button.setEnabled(

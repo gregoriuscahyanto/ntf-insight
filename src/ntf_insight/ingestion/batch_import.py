@@ -25,6 +25,7 @@ from ntf_insight.ingestion.artifacts import (
     ParseRun, ParseStatus, SourceArtifact, SourceType, sha256_file,
 )
 from ntf_insight.ingestion.parser_execution import ParserExecutionService
+from ntf_insight.ingestion.failed_quicktests import find_failed_quicktest_artifacts
 from ntf_insight.ingestion.real_source_parsers import (
     AutoExportParser,
     ParsedSource,
@@ -58,6 +59,8 @@ MAX_COMPRESSION_RATIO = 200
 class ImportSummary:
     files_archived: int = 0
     files_parsed: int = 0
+    selected_failed_quicktests: int = 0
+    remaining_failed_quicktests: int | None = None
     files_pending: int = 0
     files_unchanged: int = 0
     files_failed: int = 0
@@ -92,6 +95,71 @@ class LocalBatchImporter:
         self.execution = ParserExecutionService(sources.store)
         self.quicktests = QuickTestStore(sources.store)
         self.knowledge = SourceKnowledgeStore(sources.store)
+
+    def retry_failed_quicktests(
+        self,
+        on_progress: Callable[[str], None] | None = None,
+        should_cancel: Callable[[], bool] | None = None,
+    ) -> ImportSummary:
+        """Retry only stored failed/partial/non-persisted PDFs from the raw archive.
+
+        This intentionally bypasses the complete quicktests/<FIN> directory
+        search and the version-triggered reprocessing of successful v2 files.
+        The regular, complete QuickTest import remains a separate action.
+        """
+        if on_progress:
+            on_progress("Fehlerhafte QuickTests anhand der gespeicherten Parser-Läufe ermitteln …")
+        failures = find_failed_quicktest_artifacts(self.sources)
+        selected = len(failures)
+        if not selected:
+            if on_progress:
+                on_progress("Keine bereits bekannten, nicht parsebaren QuickTest-PDFs vorhanden.")
+            return ImportSummary(selected_failed_quicktests=0, remaining_failed_quicktests=0)
+
+        verified: list[Path] = []
+        damaged = 0
+        for index, artifact in enumerate(failures, start=1):
+            if should_cancel is not None and should_cancel():
+                return ImportSummary(
+                    cancelled=True, selected_failed_quicktests=selected,
+                    remaining_failed_quicktests=selected,
+                )
+            # Check ONLY selected archive bytes; never inspect the entire
+            # downloaded corpus, and never parse a modified archived original.
+            path = Path(artifact.archived_path)
+            if sha256_file(path) != artifact.sha256:
+                damaged += 1
+            else:
+                verified.append(path)
+            if on_progress and (index % 25 == 0 or index == selected):
+                on_progress(
+                    f"Nur Fehlerdateien: {index}/{selected} Archivprüfsummen geprüft …"
+                )
+
+        if not verified:
+            result = ImportSummary(
+                selected_failed_quicktests=selected, files_failed=damaged,
+            )
+        else:
+            result = self.import_paths(
+                verified,
+                on_progress=on_progress,
+                # The archive may still label an older failed detection as
+                # OTHER. These files are known QuickTest parser attempts.
+                forced_source_type=SourceType.SHORT_TEST,
+                should_cancel=should_cancel,
+            )
+            result.selected_failed_quicktests = selected
+            result.files_failed += damaged
+        if damaged:
+            result.issues.append(
+                f"{damaged} archivierte QuickTest-Datei(en) wegen abweichender "
+                "SHA-256-Prüfsumme nicht erneut eingelesen."
+            )
+        # Pure DB/archive metadata lookup: the user can immediately see how
+        # many known parser problems remain, without scanning downloads.
+        result.remaining_failed_quicktests = len(find_failed_quicktest_artifacts(self.sources))
+        return result
 
     @staticmethod
     def _validate_zip(path: Path) -> None:
