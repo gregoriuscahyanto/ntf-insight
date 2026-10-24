@@ -101,7 +101,8 @@ class KIAnalysepaketPanel(QWidget):
         ))
         description = QLabel(
             "Erstellt EINE ZIP mit verknüpften QEC-Befundmerkmalen, "
-            "QuickTest-/CPC3-DTCs, TIPS-Abdeckung, Fall- und Zeitbezug "
+            "QuickTest-/CPC3-DTCs, AutoExport-Diagnosehistorie, Werkstatt- und "
+            "TIPS-Abdeckung sowie Fall- und Zeitbezug "
             "und einer Excel-Übersicht. Original-PDFs, QEC-JSONs und "
             "Anhänge sind nur bei ausdrücklicher Auswahl enthalten. "
             "Die echte FIN-/QEC-Zuordnung bleibt ausschließlich lokal.",
@@ -111,11 +112,13 @@ class KIAnalysepaketPanel(QWidget):
         layout.addWidget(description)
 
         self.include_text = QCheckBox(
-            "QEC-/TIPS-Originalfreitext beifügen (vertraulich, nur nach Freigabe)",
+            "QEC-/TIPS-/Werkstatt-/Lieferanten-Freitexte beifügen (vertraulich)",
         )
         self.include_text.setToolTip(
-            "Nur nach interner Freigabe wählen. Freitext ist NICHT automatisch "
-            "anonymisiert und kann FINs, Personen und geschützte Angaben enthalten."
+            "Nur nach interner Freigabe wählen. Erweitert auch AutoExport-"
+            "Werkstatttexte, DTC-Klartexte und Lieferantenbefundnotizen. "
+            "Freitext ist NICHT automatisch anonymisiert und kann FINs, "
+            "Personen und geschützte Angaben enthalten."
         )
         self.include_text.setChecked(False)
         layout.addWidget(self.include_text)
@@ -248,11 +251,14 @@ class KIAnalysepaketPanel(QWidget):
         if not (originals or text):
             return True
         relevant = (
-            "vollständige QEC-Originalberichte UND Anhänge" if originals
-            else "QEC-/TIPS-Originalfreitexte"
+            "vollständige QEC-Originalberichte und Anhänge SOWIE "
+            "QEC-/TIPS-/Werkstatt-/Lieferanten-Freitexte"
+            if originals and text else
+            "vollständige QEC-Originalberichte UND Anhänge" if originals else
+            "QEC-/TIPS-/Werkstatt-/Lieferanten-Freitexte"
         )
         reply = QMessageBox.warning(
-            self, "Freigabe erforderlich · nicht anonymisierte QEC-Daten",
+            self, "Freigabe erforderlich · nicht anonymisierte Analyseinhalte",
             "Du möchtest " + relevant + " in eine ZIP-Datei übernehmen.\n\n"
             "Die Inhalte können echte FINs, Seriennummern, Namen und "
             "vertrauliche Mercedes-Benz-Befunde enthalten. "
