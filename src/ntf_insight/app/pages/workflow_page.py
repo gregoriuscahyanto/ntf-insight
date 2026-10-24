@@ -79,6 +79,8 @@ class WorkflowPage(QWidget):
         self._notice = ""
         self._error_step: int | None = None
         self._busy = False
+        self._import_busy = False
+        self._import_can_resume = False
         self.analysis_store = ChatGPTAnalyseStore(progress_store.store) if qec_store else None
 
         outer = QVBoxLayout(self)
@@ -216,6 +218,17 @@ class WorkflowPage(QWidget):
         )
         actions.addStretch(1)
         body.addLayout(actions)
+        import_controls = QHBoxLayout()
+        self.cancel_import_button = self._add_action(
+            import_controls, "Import abbrechen",
+            lambda: self.action_requested.emit("qec_list_cancel"),
+        )
+        self.resume_import_button = self._add_action(
+            import_controls, "Import fortsetzen",
+            lambda: self.action_requested.emit("qec_list_resume"),
+        )
+        import_controls.addStretch(1)
+        body.addLayout(import_controls)
         self.source_label = QLabel(objectName="PageSubtitle")
         body.addWidget(self.source_label)
         self.fin_search = QLineEdit()
@@ -504,6 +517,11 @@ class WorkflowPage(QWidget):
         self.note.style().unpolish(self.note)
         self.note.style().polish(self.note)
 
+    def set_import_state(self, busy: bool, *, can_resume: bool = False) -> None:
+        self._import_busy = busy
+        self._import_can_resume = can_resume
+        self._refresh_controls()
+
     def set_download_busy(self, busy: bool, message: str = "") -> None:
         self._busy = busy
         if message:
@@ -516,7 +534,11 @@ class WorkflowPage(QWidget):
         self.previous_button.setEnabled(not paused and self.state.step > 0)
         self.next_button.setEnabled(not paused and self.state.step < STEP_COUNT - 1)
         self.pause_button.setText("Fortsetzen" if paused else "Pausieren")
-        self.qec_import_button.setEnabled(not paused)
+        self.qec_import_button.setEnabled(not paused and not self._import_busy)
+        self.cancel_import_button.setEnabled(self._import_busy)
+        self.resume_import_button.setEnabled(
+            not paused and not self._import_busy and self._import_can_resume
+        )
         self.qec_portal_button.setEnabled(not paused and self.profile_id == "coolant_pump")
         self.qec_export_button.setEnabled(not paused and has_rows)
         self.download_all_button.setEnabled(not paused and not self._busy and has_rows)
