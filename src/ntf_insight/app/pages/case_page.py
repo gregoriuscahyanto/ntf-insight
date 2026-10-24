@@ -1007,10 +1007,17 @@ class CasePage(QWidget):
             )
         return None
 
-    def _start_quicktest_download(self, *, selected_only: bool) -> None:
+    def _start_quicktest_download(
+        self, *, selected_only: bool, fins_override: list[str] | None = None,
+    ) -> None:
+        """FIN-Kohorte aus dem Workflow darf die Falltabelle gezielt einschränken."""
         if self._quicktest_worker is not None or self.quicktest_download_root is None:
             return
-        fins = self.case_model.selected_fins() if selected_only else self.case_model.all_fins()
+        fins = (
+            list(fins_override) if fins_override is not None
+            else self.case_model.selected_fins() if selected_only
+            else self.case_model.all_fins()
+        )
         if not fins:
             return
         valid_fins: list[str] = []
