@@ -490,3 +490,41 @@ def test_source_operation_buttons_toggle_to_stop_and_restore(tmp_path, monkeypat
     assert page.context_technical_resume["cdd_smrd"].text() == "Parsing fortsetzen"
     window.close()
     app.processEvents()
+
+
+def test_source_row_colors_and_live_document_progress(tmp_path, monkeypatch):
+    from ntf_insight.storage.workflow_source_coverage import SourceCoverage
+
+    app, window = _window(tmp_path, monkeypatch)
+    page = window.pages["workflow"]
+    page._source_coverage["tp_dashboard"] = SourceCoverage(
+        "tp_dashboard", 171, 161, 161, 1, 1,
+    )
+    page._source_coverage["diagnosis_viewer"] = SourceCoverage(
+        "diagnosis_viewer", 171, 169, 167, 2345, 1579,
+    )
+    page._update_coverage_labels()
+    assert page.context_source_rows["tp_dashboard"].property("coverageState") == "partial"
+    assert page.context_source_rows["diagnosis_viewer"].property("coverageState") == "partial"
+    page._source_coverage["tp_dashboard"] = SourceCoverage(
+        "tp_dashboard", 171, 171, 171, 1, 1,
+    )
+    page._update_coverage_labels()
+    assert page.context_source_rows["tp_dashboard"].property("coverageState") == "done"
+
+    page.set_context_operation(
+        "diagnosis_viewer", True, "FIN-Fortschritt: 12/171 bearbeitet",
+    )
+    bar = page.context_operation_bars["diagnosis_viewer"]
+    assert bar.maximum() == 171 and bar.value() == 12
+    assert page.context_operation_labels["diagnosis_viewer"].isHidden() is False
+    page.set_context_operation("diagnosis_viewer", False)
+    assert bar.isHidden()
+    page.set_context_operation(
+        "tp_dashboard", True, "Lokale Quelle parsen (1/2) …",
+    )
+    assert page.context_operation_bars["tp_dashboard"].maximum() == 2
+    assert page.context_operation_bars["tp_dashboard"].value() == 1
+    page.set_context_operation("tp_dashboard", False)
+    window.close()
+    app.processEvents()
