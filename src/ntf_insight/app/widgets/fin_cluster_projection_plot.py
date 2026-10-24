@@ -253,10 +253,16 @@ class FinClusterProjectionPlot(QFrame):
         super().mouseReleaseEvent(event)
 
     def wheelEvent(self, event) -> None:  # noqa: N802
-        if event.angleDelta().y():
+        # Das Mausrad soll in Workflow 05 die Seite scrollen. Nur explizit
+        # STRG + Mausrad veraendert die 3D-Vergoesserung; ignorierte Wheel-
+        # Events werden von Qt an den uebergeordneten Scrollbereich geleitet.
+        if (
+            event.angleDelta().y()
+            and event.modifiers() & Qt.KeyboardModifier.ControlModifier
+        ):
             multiplier = 1.12 if event.angleDelta().y() > 0 else 1 / 1.12
             self.zoom = max(0.7, min(8, self.zoom * multiplier))
             self._project()
             event.accept()
             return
-        super().wheelEvent(event)
+        event.ignore()

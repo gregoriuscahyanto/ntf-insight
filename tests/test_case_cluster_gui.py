@@ -101,7 +101,9 @@ def test_case_page_and_unified_cluster_workspace_navigate_in_both_directions(
     cases.find_similar_button.click()
 
     cluster = cases.cluster_workspace
-    assert cases.detail_tabs.currentWidget() is cluster
+    assert window.stack.currentWidget() is window.pages["workflow"]
+    assert window.pages["workflow"].workspaces.currentIndex() == 4
+    assert window.pages["workflow"].local_cluster_widget is cluster
     assert cluster._focused_case_id == selected
 
     other = next(case_id for case_id in cluster.by_id if case_id != selected)
@@ -115,7 +117,7 @@ def test_case_page_and_unified_cluster_workspace_navigate_in_both_directions(
     assert cases.selector.currentData() == other
     assert cases.case_search.text() == ""
     assert cases.detail_tabs.currentWidget() is cases.analysis_tab
-    assert window.stack.currentWidget() is cases
+    assert window.stack.currentWidget() is window.pages["workflow"]
 
     window.close()
     app.processEvents()

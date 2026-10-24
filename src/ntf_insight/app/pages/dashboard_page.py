@@ -1,87 +1,232 @@
-"""Dashboard page."""
+"""Projektübersicht für alle registrierten NTF-Workflows.
 
+Die Daten werden in einem separaten Thread aus derselben lokalen DuckDB
+ermittelt. Ein QEC-Schadteilfall ist nicht automatisch ein belegter Teiletausch.
+"""
 from __future__ import annotations
 
-from PySide6.QtWidgets import QGridLayout, QLabel, QVBoxLayout, QWidget
+from collections import defaultdict
+from pathlib import Path
 
-from ntf_insight.analysis.recurrence import analyze_recurrence
-from ntf_insight.app.widgets.status_card import StatusCard
-from ntf_insight.domain.enums import RootCauseCategory
-from ntf_insight.storage.repositories import CaseRepository
-from ntf_insight.storage.quicktest_store import QuickTestStore
+from PySide6.QtCore import QThread, Signal, Qt
+from PySide6.QtWidgets import (
+    QAbstractItemView, QHeaderView, QLabel, QPushButton, QTableWidget,
+    QTableWidgetItem, QVBoxLayout, QWidget,
+)
+
+from ntf_insight.storage.cluster_evidence_store import (
+    ClusterEvidenceStore, part_key,
+)
+from ntf_insight.storage.duckdb_store import DuckDBStore
+from ntf_insight.storage.qec_workflow_store import QecWorkflowStore
+from ntf_insight.storage.workflow_projects import WorkflowProjectStore
+from ntf_insight.storage.workflow_progress import WorkflowProgressStore
+from ntf_insight.storage.workflow_source_coverage import get_workflow_coverage
+
+
+HEADERS = (
+    "Projekt", "FINs", "QEC-Fälle", "Tauschfälle", "NTF", "QEC-Berichte",
+    "Unterlagen", "Geparst", "Cluster", "Status",
+)
+
+
+def project_overview_rows(store: DuckDBStore) -> list[dict]:
+    """Belegte Werte je Projekt; keine globalen Dokumente mehrfach hochzählen."""
+    root = Path(store.path).parent
+    projects = WorkflowProjectStore(store).list_projects()
+    if not projects:
+        return []
+    all_qec = QecWorkflowStore(store).rows(root / "qec")
+    by_part: dict[str, list[dict]] = defaultdict(list)
+    for item in all_qec:
+        by_part[part_key(str(item.get("part_number") or ""))].append(item)
+    evidence = ClusterEvidenceStore(store)
+    progress = WorkflowProgressStore(store)
+    # Ein Tauschfall erfordert einen tatsächlich gespeicherten Tauscheintrag,
+    # nicht nur einen QEC-Schadteilfall.
+    confirmed_swaps: dict[tuple[str, str], int] = defaultdict(int)
+    for case in store.load_cases():
+        part = part_key(str(getattr(case, "qec_part_number", "") or ""))
+        if not part or case.investigated_replacement() is None:
+            continue
+        confirmed_swaps[(case.component_profile_id or "coolant_pump", part)] += 1
+    with store.connect() as con:
+        tables = {
+            name for (name,) in con.execute(
+                "SELECT table_name FROM information_schema.tables "
+                "WHERE table_schema='main'"
+            ).fetchall()
+        }
+        cluster_counts = {}
+        if {
+            "chatgpt_cluster", "workflow_ai_rounds", "workflow_second_ai_exports"
+        }.issubset(tables):
+            clusters = con.execute(
+                "WITH recent AS ("
+                "SELECT e.profile_id,e.part_key,r.analyse_id,"
+                "ROW_NUMBER() OVER (PARTITION BY e.profile_id,e.part_key "
+                "ORDER BY r.registered_at DESC,r.analyse_id DESC) AS pos "
+                "FROM workflow_ai_rounds r "
+                "JOIN workflow_second_ai_exports e "
+                "ON e.analyse_id=r.analyse_id AND e.paket_id=r.paket_id "
+                "WHERE r.round_number=2) "
+                "SELECT r.profile_id,r.part_key,COUNT(DISTINCT c.cluster_id) "
+                "FROM recent r LEFT JOIN chatgpt_cluster c "
+                "ON c.analyse_id=r.analyse_id "
+                "WHERE r.pos=1 GROUP BY r.profile_id,r.part_key"
+            ).fetchall()
+            cluster_counts = {(p, k): int(v) for p, k, v in clusters}
+
+    overview = []
+    for project in projects:
+        cohort = (
+            by_part.get(part_key(project.part_number), [])
+            if project.profile_id == "coolant_pump" else []
+        )
+        scoped_evidence = evidence.list_files(
+            project.profile_id, project.part_number,
+        )
+        coverage = get_workflow_coverage(
+            store, root, cohort, scoped_evidence,
+        )
+        categories = ("tp_dashboard", "diagnosis_viewer", "tips_writer", "celonis")
+        originals = sum(coverage[key].local_documents for key in categories)
+        parsed = sum(coverage[key].parsed_documents for key in categories)
+        # Technische Originale haben kein eigenes Downloader-Inventar.
+        manual_technical = {
+            (item.category, item.sha256)
+            for item in scoped_evidence if item.category not in categories
+        }
+        originals += len(manual_technical)
+        parsed += coverage["cdd_smrd"].parsed_documents
+        stats = QecWorkflowStore.summarize_rows(cohort)
+        state = progress.load(project.profile_id, project.part_number)
+        overview.append({
+            "title": project.title,
+            "profile": project.profile_id,
+            "part": project.part_number,
+            "fins": stats["fins"],
+            "cases": stats["cases"],
+            "swaps": confirmed_swaps.get(
+                (project.profile_id, part_key(project.part_number)), 0,
+            ),
+            "ntf": stats["ntf"],
+            "reports": stats["downloaded"],
+            "documents": originals,
+            "parsed": parsed,
+            "clusters": cluster_counts.get(
+                (project.profile_id, part_key(project.part_number)), 0,
+            ),
+            "step": state.step + 1,
+        })
+    return overview
+
+
+class _OverviewWorker(QThread):
+    loaded = Signal(object)
+    failed = Signal(str)
+
+    def __init__(self, path: Path) -> None:
+        super().__init__()
+        self.path = Path(path)
+
+    def run(self) -> None:
+        try:
+            self.loaded.emit(project_overview_rows(DuckDBStore(self.path)))
+        except Exception as exc:
+            self.failed.emit(type(exc).__name__)
 
 
 class DashboardPage(QWidget):
-    """Overview page backed by the current case repository."""
+    """Überblick über alle Projekte; Doppelklick öffnet den jeweiligen Workflow."""
 
-    def __init__(
-        self,
-        repository: CaseRepository,
-        mode: str = "demo",
-        quicktests: QuickTestStore | None = None,
-    ) -> None:
+    project_selected = Signal(str, str)
+    loading_finished = Signal()
+
+    def __init__(self, repository, mode="local", quicktests=None) -> None:
         super().__init__()
-
-        cases = repository.list_cases()
-        fin_ids = {case.vin for case in cases}
-        fin_ids.update(quicktests.list_fins() if quicktests is not None else [])
-        quicktest_total = (
-            quicktests.statistics()["reports"] if quicktests is not None else 0
-        )
-        recurrence_results = [analyze_recurrence(case) for case in cases]
-        recurrence_count = sum(
-            result.assessable and result.has_recurrence for result in recurrence_results
-        )
-        unresolved_count = sum(
-            case.assessment is None
-            or case.assessment.root_cause == RootCauseCategory.UNKNOWN
-            for case in cases
-        )
-
+        self.store = quicktests.store if quicktests is not None else None
+        self._worker: _OverviewWorker | None = None
+        self._records: list[dict] = []
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(32, 28, 32, 28)
-        layout.setSpacing(18)
-
-        title = QLabel("Übersicht", objectName="PageTitle")
-        subtitle_text = (
-            "Aktuell werden fiktive Demo-Fälle angezeigt, bis echte Quelldateien importiert wurden."
-            if mode == "demo"
-            else "Aktuelle Werte werden aus dem lokalen NTF-Insight-Datenspeicher geladen."
+        layout.setContentsMargins(25, 20, 25, 20)
+        layout.setSpacing(12)
+        layout.addWidget(QLabel("Projektübersicht", objectName="PageTitle"))
+        self.table = QTableWidget(0, len(HEADERS))
+        self.table.setHorizontalHeaderLabels(HEADERS)
+        self.table.setSelectionBehavior(
+            QAbstractItemView.SelectionBehavior.SelectRows
         )
-        subtitle = QLabel(
-            subtitle_text,
-            objectName="PageSubtitle",
+        self.table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        self.table.setAlternatingRowColors(True)
+        self.table.verticalHeader().hide()
+        self.table.horizontalHeader().setSectionResizeMode(
+            0, QHeaderView.ResizeMode.Stretch
         )
-        layout.addWidget(title)
-        layout.addWidget(subtitle)
-
-        cards = QGridLayout()
-        cards.setHorizontalSpacing(14)
-        cards.setVerticalSpacing(14)
-        cards.addWidget(StatusCard("Fahrzeuge", str(len(fin_ids)), "FIN mit Diagnosen oder NTF-Fall"), 0, 0)
-        cards.addWidget(StatusCard("NTF-Fälle", str(len(cases)), "Aktueller Analyseumfang"), 0, 1)
-        cards.addWidget(StatusCard("Wiederholungen", str(recurrence_count), "Gleicher DTC nach Tausch"), 0, 2)
-        cards.addWidget(StatusCard("Ungeklärt", str(unresolved_count), "Weitere Evidenz erforderlich"), 0, 3)
-        cards.addWidget(
-            StatusCard(
-                "QuickTests", str(quicktest_total),
-                "FIN-basierte Diagnoseberichte (auch ohne QEC-Fall)"
-            ),
-            1, 0,
+        for index in range(1, len(HEADERS)):
+            self.table.horizontalHeader().setSectionResizeMode(
+                index, QHeaderView.ResizeMode.ResizeToContents
+            )
+        self.table.cellDoubleClicked.connect(self._open_row)
+        layout.addWidget(self.table, 1)
+        self.status = QLabel("", objectName="PageSubtitle")
+        self.status.hide()
+        layout.addWidget(self.status)
+        self.open_button = QPushButton("Ausgewählten Workflow öffnen")
+        self.open_button.clicked.connect(
+            lambda: self._open_row(self.table.currentRow(), 0)
         )
-        layout.addLayout(cards)
-
-        next_title = QLabel("Pipeline-Status", objectName="PageTitle")
-        next_title.setStyleSheet("font-size: 18px;")
-        layout.addWidget(next_title)
-
-        next_steps = QLabel(
-            "Domänenmodell, Fall-Timeline und Vorher-/Nachher-Analyse sind in die Desktop-App integriert. "
-            "Der QuickTest-Parser liest FIN-Diagnosen auch ohne Schadteilfall. "
-            "QEC-Fälle, Werkstattdaten und weitere Quellen ergänzen die "
-            "Vorher-/Nachher-Analyse, sobald eine eindeutige Zuordnung vorliegt.",
-            objectName="PageSubtitle",
+        layout.addWidget(self.open_button)
+        self.open_button.setEnabled(False)
+        self.table.itemSelectionChanged.connect(
+            lambda: self.open_button.setEnabled(self.table.currentRow() >= 0)
         )
-        next_steps.setWordWrap(True)
-        layout.addWidget(next_steps)
-        layout.addStretch(1)
+
+    def refresh_async(self) -> bool:
+        if self.store is None:
+            self._loaded([])
+            return False
+        if self._worker is not None:
+            return True
+        worker = _OverviewWorker(self.store.path)
+        self._worker = worker
+        worker.loaded.connect(self._loaded)
+        worker.failed.connect(self._failed)
+        worker.finished.connect(self._finished)
+        worker.start()
+        return True
+
+    def _loaded(self, rows: list[dict]) -> None:
+        self._records = rows
+        self.table.setRowCount(len(rows))
+        for index, row in enumerate(rows):
+            values = (
+                row["title"], row["fins"], row["cases"], row["swaps"],
+                row["ntf"], row["reports"], row["documents"], row["parsed"],
+                row["clusters"], f"Schritt {row['step']}/5",
+            )
+            for column, value in enumerate(values):
+                item = QTableWidgetItem(str(value))
+                if column:
+                    item.setTextAlignment(
+                        Qt.AlignmentFlag.AlignCenter
+                    )
+                self.table.setItem(index, column, item)
+        self.status.setVisible(not bool(rows))
+        self.status.setText("Noch keine Projekte angelegt." if not rows else "")
+        self.loading_finished.emit()
+
+    def _failed(self, reason: str) -> None:
+        self.status.setText("Projektübersicht konnte nicht geladen werden: " + reason)
+        self.status.show()
+        self.loading_finished.emit()
+
+    def _finished(self) -> None:
+        worker, self._worker = self._worker, None
+        if worker is not None:
+            worker.deleteLater()
+
+    def _open_row(self, row: int, _column: int) -> None:
+        if 0 <= row < len(self._records):
+            info = self._records[row]
+            self.project_selected.emit(info["profile"], info["part"])

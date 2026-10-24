@@ -43,6 +43,7 @@ from ntf_insight.ingestion.reference_source_parsers import (
 from ntf_insight.ingestion.service import SourceImportService
 from ntf_insight.ingestion.source_detection import detect_source_type
 from ntf_insight.ingestion.qec_json import QECJsonParser
+from ntf_insight.ingestion.tips_json import TipsJsonParser
 from ntf_insight.ingestion.fin_zip_import import is_fin_export, prepare_fin_export, install_fin_export
 from ntf_insight.ingestion.qec_primary import validate_single_qec_list
 from ntf_insight.storage.quicktest_store import QuickTestStore
@@ -236,24 +237,15 @@ class LocalBatchImporter:
         if only_new and local_kind not in {"quicktests", "qec"}:
             raise ValueError("Inkrementeller Import benötigt QuickTests oder QEC als Quellenart.")
 
-        # Completed state is persisted in DuckDB and survives app restarts.
-        # Failed files are also skipped when unchanged; a manual retry or
-        # future parser-version bump explicitly retries them.
+        # Resume überspringt nur nachweislich erfolgreich geparste SHA-Dateien
+        # (beliebige Parser-Version). Fehlversuche werden ausdrücklich erneut
+        # versucht; ein neuer Parser v4 darf alte v1-Erfolge nicht zurücksetzen.
         already_done: set[str] = set()
         if only_new:
             expected_name, expected_version = (
                 (QuickTestPdfParser.name, QuickTestPdfParser.version)
                 if local_kind == "quicktests" else (QECJsonParser.name, QECJsonParser.version)
             )
-            recent: dict[str, ParseRun] = {}
-            for run in self.sources.store.load_parse_runs():
-                if run.parser_name != expected_name or run.parser_version != expected_version:
-                    continue
-                previous = recent.get(run.artifact_sha256)
-                if previous is None or (run.completed_at or run.started_at) >= (
-                    previous.completed_at or previous.started_at
-                ):
-                    recent[run.artifact_sha256] = run
             if local_kind == "quicktests":
                 with self.sources.store.connect() as connection:
                     persisted = {
@@ -267,11 +259,13 @@ class LocalBatchImporter:
                     for document in self.knowledge.documents()
                     if document["source_kind"] == "qec_live_report"
                 }
-            for sha, run in recent.items():
-                if run.status == ParseStatus.FAILED or (
-                    run.status in {ParseStatus.SUCCESS, ParseStatus.PARTIAL} and sha in persisted
+            for run in self.sources.store.load_parse_runs():
+                if (
+                    run.parser_name == expected_name
+                    and run.status in {ParseStatus.SUCCESS, ParseStatus.PARTIAL}
+                    and run.artifact_sha256 in persisted
                 ):
-                    already_done.add(sha)
+                    already_done.add(run.artifact_sha256)
 
         def stop_requested() -> bool:
             return should_cancel is not None and should_cancel()
@@ -600,7 +594,7 @@ class LocalBatchImporter:
                 case_fin[case.vin].append(case)
             allowed_fins = set(case_fin)
 
-            for artifact in others:
+            for source_position, artifact in enumerate(others, 1):
                 if stop_requested():
                     summary.cancelled = True
                     break
@@ -609,6 +603,8 @@ class LocalBatchImporter:
                 reference_parser = None
                 if artifact.source_type == SourceType.QEC_REPORT and suffix == ".json":
                     reference_parser = QECJsonParser()
+                elif artifact.source_type == SourceType.TIPS_CASE and suffix == ".json":
+                    reference_parser = TipsJsonParser()
                 elif artifact.source_type == SourceType.DIAGNOSTIC_DESCRIPTION and suffix == ".cdd":
                     reference_parser = CandelaParser()
                 elif artifact.source_type == SourceType.PART_HISTORY and suffix == ".pdf":
@@ -618,7 +614,10 @@ class LocalBatchImporter:
                 elif artifact.source_type == SourceType.AUTOEXPORT_SUMMARY and suffix == ".csv":
                     reference_parser = AutoExportSummaryParser()
                 if reference_parser is not None:
-                    progress(f"Referenzquelle einlesen: {reference_parser.name} …")
+                    progress(
+                        f"Referenzquelle einlesen ({source_position}/{len(others)}) "
+                        f"· {reference_parser.name} …"
+                    )
                     try:
                         catalog, _ = self.execution.execute(
                             artifact, reference_parser
@@ -691,7 +690,7 @@ class LocalBatchImporter:
                 if parser is None:
                     summary.files_pending += 1
                     continue
-                progress(f"Lokale Quelle parsen ({summary.files_parsed + 1}/{len(artifacts)}) …")
+                progress(f"Lokale Quelle parsen ({source_position}/{len(others)}) …")
                 try:
                     result, _ = self.execution.execute(artifact, parser)
                 except Exception as exc:

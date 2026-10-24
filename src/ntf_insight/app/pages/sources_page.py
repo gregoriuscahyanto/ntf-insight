@@ -109,12 +109,16 @@ class _ParserDiagnosticsWorker(QThread):
     def __init__(
         self, sources: SourceImportService, data_dir: Path,
         destination: Path, *, include_originals: bool,
+        category: str | None = None,
+        scope_paths: tuple[Path, ...] | None = None,
     ) -> None:
         super().__init__()
         self.sources = sources
         self.data_dir = data_dir
         self.destination = destination
         self.include_originals = include_originals
+        self.category = category
+        self.scope_paths = scope_paths
 
     def run(self) -> None:
         try:
@@ -122,6 +126,7 @@ class _ParserDiagnosticsWorker(QThread):
                 self.sources, self.data_dir, self.destination,
                 include_originals=self.include_originals,
                 progress=self.progress.emit,
+                category=self.category, scope_paths=self.scope_paths,
             )
         except Exception as exc:
             self.failed.emit(f"{type(exc).__name__}: {exc}")
@@ -179,6 +184,8 @@ class SourcesPage(QWidget):
         outer = QVBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
         scroll = QScrollArea()
+        # Arbeitsbereiche des zentralen Workflows gezielt sichtbar machen.
+        self.content_scroll = scroll
         scroll.setWidgetResizable(True)
         scroll.setFrameShape(QFrame.Shape.NoFrame)
         outer.addWidget(scroll)
@@ -505,7 +512,10 @@ class SourcesPage(QWidget):
         elif self._resume_kind == "quicktest_errors":
             self._import_failed_quicktests()
 
-    def _export_parser_problems(self) -> None:
+    def _export_parser_problems(
+        self, *, category: str | None = None,
+        scope_paths: tuple[Path, ...] | None = None,
+    ) -> None:
         if (
             self.import_service is None or self.data_dir is None
             or self._worker is not None or self._diagnostics_worker is not None
@@ -527,7 +537,7 @@ class SourcesPage(QWidget):
         choice.setIcon(QMessageBox.Icon.Warning)
         choice.setText(
             "Es werden ausschließlich problematische, bereits archivierte "
-            "QuickTest-/QEC-Dateien ermittelt. Wähle ein Diagnose-ZIP ohne "
+            "Quelldateien ermittelt. Wähle ein Diagnose-ZIP ohne "
             "Originaldaten oder ein ZIP mit unveränderten Dateien.\n\n"
             "Originaldateien können echte FINs, Diagnose- und Lieferanteninformationen "
             "enthalten. Das ZIP ist nicht verschlüsselt; eine Anonymisierung "
@@ -579,6 +589,7 @@ class SourcesPage(QWidget):
         self._diagnostics_worker = _ParserDiagnosticsWorker(
             self.import_service, self.data_dir, target,
             include_originals=include_originals,
+            category=category, scope_paths=scope_paths,
         )
         self._diagnostics_worker.progress.connect(self.import_status.setText)
         self._diagnostics_worker.completed.connect(self._diagnostics_completed)

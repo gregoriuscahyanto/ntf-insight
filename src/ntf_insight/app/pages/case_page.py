@@ -81,6 +81,7 @@ class CasePage(QWidget):
     """Inspect FIN/case combinations and edit persistent manual information."""
 
     case_saved = Signal(str)
+    cluster_requested = Signal(str)
     quicktests_downloaded = Signal(object)
     qec_reports_downloaded = Signal(object)
 
@@ -166,7 +167,8 @@ class CasePage(QWidget):
         )
         # Compatibility alias for local FIN navigation and prior tests.
         self.autoexport_fin_workspace = self.cluster_workspace
-        self.detail_tabs.addTab(self.cluster_workspace, "Clusteranalyse")
+        # Die Clustering-Oberfläche wird vom MainWindow in Workflow 05
+        # eingehängt; Fälle/FIN enthält nur noch Fall- und Diagnoseansichten.
         self.cluster_workspace.fin_requested.connect(
             self._open_autoexport_fin_history
         )
@@ -1007,10 +1009,18 @@ class CasePage(QWidget):
             )
         return None
 
-    def _start_quicktest_download(self, *, selected_only: bool) -> None:
+    def _start_quicktest_download(
+        self, *, selected_only: bool, fins_override: list[str] | None = None,
+        retry_missing: bool = False,
+    ) -> None:
+        """FIN-Kohorte aus dem Workflow darf die Falltabelle gezielt einschränken."""
         if self._quicktest_worker is not None or self.quicktest_download_root is None:
             return
-        fins = self.case_model.selected_fins() if selected_only else self.case_model.all_fins()
+        fins = (
+            list(fins_override) if fins_override is not None
+            else self.case_model.selected_fins() if selected_only
+            else self.case_model.all_fins()
+        )
         if not fins:
             return
         valid_fins: list[str] = []
@@ -1030,7 +1040,7 @@ class CasePage(QWidget):
             return
 
         # No need to ask for credentials when all FINs were attempted recently.
-        new_requests = self.quicktest_retry_24h.isChecked() or any(
+        new_requests = retry_missing or self.quicktest_retry_24h.isChecked() or any(
             recently_attempted(self.quicktest_download_root, fin) is None
             for fin in valid_fins
         )
@@ -1046,7 +1056,7 @@ class CasePage(QWidget):
             self.quicktest_download_root,
             self.quicktest_download_root.parent / "edge-diagnosis-viewer-profile",
             login=login,
-            retry_recent=self.quicktest_retry_24h.isChecked(),
+            retry_recent=retry_missing or self.quicktest_retry_24h.isChecked(),
         )
         self.quicktest_password.clear()
         self._refresh_shared_credentials_status()
@@ -1136,7 +1146,7 @@ class CasePage(QWidget):
         """Show the selected true QEC/NTF case in the local scatter tab."""
         case_id = self.selector.currentData()
         if isinstance(case_id, str) and self.cluster_workspace.focus_case(case_id):
-            self.detail_tabs.setCurrentWidget(self.cluster_workspace)
+            self.cluster_requested.emit(case_id)
 
     def _on_quicktest_fin_changed(self) -> None:
         """Follow an explicit FIN selection from the QuickTest browser."""

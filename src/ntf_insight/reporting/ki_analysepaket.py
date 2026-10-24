@@ -193,6 +193,7 @@ def export_ki_analysepaket(
     mit_freitext: bool = False,
     mit_qec_originalen: bool = False,
     progress: Callable[[str], None] | None = None,
+    selected_fins: set[str] | frozenset[str] | None = None,
 ) -> AnalysepaketErgebnis:
     """Export structured local evidence, with no source files or source IDs.
 
@@ -213,15 +214,44 @@ def export_ki_analysepaket(
         if progress:
             progress(note)
 
+    target_fins = (
+        {str(fin).strip().upper() for fin in selected_fins}
+        if selected_fins is not None else None
+    )
+    if target_fins is not None and not target_fins:
+        raise ValueError("Keine FINs mit gewähltem SSL-Endbefund für den Export.")
     advance("Lokale QEC-Fälle und Datenbankstände erfassen …")
     cases: list[NTFCase] = service.store.load_cases()
+    if target_fins is not None:
+        cases = [case for case in cases if case.vin.upper() in target_fins]
+        if not cases:
+            raise ValueError(
+                "Für die ausgewählten FINs gibt es keine importierten "
+                "QEC-Fälle im Fallmodell."
+            )
     QuickTestStore(service.store)
     SourceKnowledgeStore(service.store)
     documents = [
         doc for doc in SourceKnowledgeStore(service.store).documents()
         if doc["source_kind"] == "qec_live_report"
+        and (
+            target_fins is None
+            or str(doc.get("metadata", {}).get("fin") or "").upper() in target_fins
+        )
     ]
     artifacts = service.list_artifacts()
+    if target_fins is not None:
+        ids = {case.case_id for case in cases}
+        matching_report_shas = {
+            str(doc["source_sha256"]) for doc in documents
+        }
+        artifacts = [
+            item for item in artifacts if (
+                str(item.vin_hint or "").upper() in target_fins
+                or str(item.case_id_hint or "") in ids
+                or item.sha256 in matching_report_shas
+            )
+        ]
     if mit_qec_originalen:
         # Important: original QEC downloads not yet processed into DuckDB
         # must not disappear from an explicitly requested evidence package.
@@ -241,6 +271,8 @@ def export_ki_analysepaket(
                 unreadable += 1
                 continue
             fin = report_path.parent.parent.name
+            if target_fins is not None and fin.upper() not in target_fins:
+                continue
             reference = report_path.parent.name.removeprefix("ref_")
             if (
                 not isinstance(raw, dict) or raw.get("schema_version") != 2
@@ -301,6 +333,21 @@ def export_ki_analysepaket(
             con.execute("SELECT case_id,decision FROM qec_workflow_decisions").fetchall()
             if has_qec_decisions else []
         )
+    if target_fins is not None:
+        allowed_report_ids = {str(row[0]) for row in reports if row[1] in target_fins}
+        reports = [row for row in reports if row[0] in allowed_report_ids]
+        dtcs = [row for row in dtcs if row[0] in allowed_report_ids]
+        software = [row for row in software if row[0] in allowed_report_ids]
+        report_shas = {doc["source_sha256"] for doc in documents}
+        qec_rows = [row for row in qec_rows if row[0] in report_shas]
+        tips_counts = {
+            fin: count for fin, count in tips_counts.items()
+            if str(fin).upper() in target_fins
+        }
+        case_ids = {case.case_id for case in cases}
+        saved_qec_decisions = [
+            row for row in saved_qec_decisions if row[0] in case_ids
+        ]
     if len(qec_rows) > MAX_QEC_RECORDS:
         raise ValueError("Mehr als 200.000 QEC-Detailzeilen; Export bitte eingrenzen.")
 
@@ -317,7 +364,10 @@ def export_ki_analysepaket(
             )
         }
     )
-    fins = {fin for fin in fins if fin}
+    fins = {
+        fin for fin in fins if fin
+        and (target_fins is None or str(fin).upper() in target_fins)
+    }
     secret = secrets.token_bytes(32)
     paket_id = secrets.token_hex(16)
     aliases = {
@@ -823,6 +873,8 @@ def export_ki_analysepaket(
         "anonymisiert_garantiert": False,
         "fachfreitexte_enthalten": mit_freitext,
         "datenreihen": stats,
+        "ssl_fin_filter_aktiv": target_fins is not None,
+        "fin_filter_anzahl": len(fins) if target_fins is not None else None,
         "dateien_sha256": {
             name: hashlib.sha256(data).hexdigest()
             for name, data in files.items()

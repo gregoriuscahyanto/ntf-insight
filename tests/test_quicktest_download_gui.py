@@ -47,7 +47,7 @@ def test_checkbox_is_interactive_and_selection_button_only_activates_when_checke
     app, page = _case_page(tmp_path, monkeypatch, two_cases=True)
     assert page.case_model.HEADERS[0] == "Auswahl"
     assert page.case_model.HEADERS[-1] == "QuickTest-Abruf-Datum"
-    assert page.detail_tabs.tabText(1) == "FIN / Fallanalyse"
+    assert page.detail_tabs.tabText(0) == "FIN / Fallanalyse"
     assert page.quicktest_download_all_button.isEnabled()
     assert not page.quicktest_download_selected_button.isEnabled()
     page.show()

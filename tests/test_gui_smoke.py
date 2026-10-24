@@ -30,11 +30,14 @@ def test_main_window_can_be_constructed(tmp_path, monkeypatch) -> None:
     assert "clusters" not in window.navigation.buttons
     assert hasattr(window.pages["cases"], "cluster_workspace")
     assert window.pages["cases"].cluster_workspace.plot is not None
-    assert window.pages["cases"].detail_tabs.tabText(0) == "Clusteranalyse"
-    assert window.pages["cases"].detail_tabs.count() == 5
-    assert window.pages["cases"].detail_tabs.tabText(3) == "QuickTest-Gesamtauswertung"
-    assert window.pages["cases"].detail_tabs.tabText(4) == "ECU · SW-Übersicht"
-    assert window.pages["cases"].detail_tabs.tabText(1) == "FIN / Fallanalyse"
+    assert window.pages["cases"].detail_tabs.count() == 4
+    assert window.pages["cases"].detail_tabs.tabText(0) == "FIN / Fallanalyse"
+    assert window.pages["cases"].detail_tabs.tabText(2) == "QuickTest-Gesamtauswertung"
+    assert window.pages["cases"].detail_tabs.tabText(3) == "ECU · SW-Übersicht"
+    assert window.pages["workflow"].local_cluster_widget is (
+        window.pages["cases"].cluster_workspace
+    )
+    assert "project_settings" in window.pages
     assert window.pages["cases"].cluster_workspace is (
         window.pages["cases"].autoexport_fin_workspace
     )

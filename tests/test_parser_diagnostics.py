@@ -120,3 +120,55 @@ def test_archivquelle_nach_manipulation_nicht_unbemerkt_exportieren(tmp_path):
             include_originals=True,
         )
     assert not (tmp_path / "diagnose-ungueltig.zip").exists()
+
+
+def test_parser_export_filters_only_selected_project_source(tmp_path):
+    service, qt, qec = setup_bad_reports(tmp_path)
+    found = find_parser_problems(
+        service, tmp_path, category="qec", scope_paths=(qec,),
+    )
+    assert len(found) == 1
+    assert found[0].kind == "qec"
+    package = tmp_path / "projekt-qec.zip"
+    result = export_parser_diagnostics(
+        service, tmp_path, package, category="qec",
+        scope_paths=(qec,),
+    )
+    assert result.problems_found == 1
+    with ZipFile(package) as archive:
+        manifest = json.loads(archive.read("diagnose.json"))
+        assert len(manifest["dateien"]) == 1
+        assert manifest["dateien"][0]["format"] == "qec_json"
+        assert FIN not in archive.read("diagnose.json").decode("utf-8")
+
+
+def test_parser_diagnostics_supports_tp_tips_and_cdd_without_originals(tmp_path):
+    from ntf_insight.ingestion.artifacts import SourceType
+
+    service = make_sources(tmp_path)
+    paths = {}
+    for name, kind, category in [
+        ("dashboard.csv", SourceType.TP_DASHBOARD, "tp_dashboard"),
+        ("tips.json", SourceType.TIPS_CASE, "tips_writer"),
+        ("candela.cdd", SourceType.DIAGNOSTIC_DESCRIPTION, "cdd_smrd"),
+    ]:
+        path = tmp_path / name
+        path.write_text(name + ": invalid synthetic parser test", encoding="utf-8")
+        service.import_raw(path, kind)
+        paths[category] = path
+    for category, path in paths.items():
+        problems = find_parser_problems(
+            service, tmp_path, category=category, scope_paths=(path,),
+        )
+        assert len(problems) == 1
+        assert problems[0].status == "nicht_erkannt_oder_nicht_gespeichert"
+    package = tmp_path / "tp-fehler.zip"
+    result = export_parser_diagnostics(
+        service, tmp_path, package,
+        category="tp_dashboard", scope_paths=(paths["tp_dashboard"],),
+    )
+    assert result.entries_documented == 1
+    with ZipFile(package) as archive:
+        assert set(archive.namelist()) == {"diagnose.json", "HINWEISE.txt"}
+        manifest = json.loads(archive.read("diagnose.json"))
+        assert manifest["dateien"][0]["format"] == "tp_dashboard_csv"

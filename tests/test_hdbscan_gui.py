@@ -126,10 +126,11 @@ def test_hdbscan_tools_are_in_single_cluster_workspace(tmp_path, monkeypatch) ->
     app = QApplication.instance() or QApplication([])
     window = MainWindow()
     page = window.pages["cases"]
-    assert page.detail_tabs.count() == 5
-    assert page.detail_tabs.tabText(3) == "QuickTest-Gesamtauswertung"
-    assert page.detail_tabs.tabText(4) == "ECU · SW-Übersicht"
-    assert page.detail_tabs.tabText(0) == "Clusteranalyse"
+    assert page.detail_tabs.count() == 4
+    assert page.detail_tabs.tabText(2) == "QuickTest-Gesamtauswertung"
+    assert page.detail_tabs.tabText(3) == "ECU · SW-Übersicht"
+    assert page.detail_tabs.indexOf(page.cluster_workspace) == -1
+    assert window.pages["workflow"].local_cluster_widget is page.cluster_workspace
     panel = page.cluster_workspace
     assert panel.method_combo.currentData() == "leaf"
     assert panel.method_combo.count() == 3

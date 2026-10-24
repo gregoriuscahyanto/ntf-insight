@@ -175,6 +175,119 @@ QPushButton:hover {{
     background-color: {p["hover"]};
 }}
 
+/* Feste, kompakte Quelldatenaktionen ohne abgeschnittene Beschriftungen. */
+QPushButton#WorkflowAction[sourceCompact="true"] {{
+    font-size: 12px;
+    padding: 3px 5px;
+    border-radius: 6px;
+}}
+QPushButton#ProjectHeaderAction {{
+    font-size: 12px;
+    padding: 6px 8px;
+    border-radius: 7px;
+}}
+QFrame#SourceTableHeader {{
+    background: transparent;
+    border: none;
+}}
+
+/* Flächige Quellenampel: eindeutige Statusrückmeldung unabhängig von Textfarbe. */
+QFrame#SourceCoverageRow, QFrame#TechnicalEvidenceRow {{
+    background-color: {p["surface"]};
+    border: 1px solid {p["border"]};
+    border-radius: 8px;
+}}
+QFrame#SourceCoverageRow[coverageState="partial"] {{
+    background-color: #fff0d2;
+    border: 1px solid #bd8318;
+}}
+QFrame#SourceCoverageRow[coverageState="done"],
+QFrame#TechnicalEvidenceRow[evidenceState="done"] {{
+    background-color: #d9eee2;
+    border: 1px solid #26845c;
+}}
+QFrame#SourceCoverageRow[coverageState="error"] {{
+    background-color: #fbe2e2;
+    border: 1px solid #b94242;
+}}
+QFrame#SourceCoverageRow[coverageState="partial"] QLabel,
+QFrame#SourceCoverageRow[coverageState="done"] QLabel,
+QFrame#TechnicalEvidenceRow[evidenceState="done"] QLabel {{
+    background: transparent;
+    color: #25323a;
+}}
+
+/* Status-Ampel: sparsame Farben nur für belegte Verarbeitungszustände. */
+QPushButton#WorkflowStep {{
+    background-color: {p["surface"]};
+    color: {p["text"]};
+    border: 1px solid {p["border"]};
+    border-bottom: 4px solid {p["border"]};
+    border-radius: 12px;
+    font-size: 12px;
+    font-weight: 600;
+    padding: 6px 4px;
+    text-align: center;
+}}
+
+QPushButton#WorkflowStep[workflowState="done"] {{
+    background-color: #d6efe0;
+    color: #164a35;
+    border: 2px solid #26845c;
+    border-bottom: 4px solid #26845c;
+}}
+
+QPushButton#WorkflowStep[workflowState="partial"] {{
+    background-color: #fff1d2;
+    color: #66440b;
+    border: 2px solid #bd8318;
+    border-bottom: 4px solid #bd8318;
+}}
+
+QPushButton#WorkflowStep[workflowState="error"] {{
+    background-color: #fbe1e1;
+    color: #7e2424;
+    border: 2px solid #b94242;
+    border-bottom: 4px solid #b94242;
+}}
+
+QPushButton#WorkflowStep[isCurrent="true"] {{
+    border: 2px solid #22789a;
+    font-weight: 700;
+}}
+
+QPushButton#WorkflowStep:hover {{
+    background-color: {p["hover"]};
+    border: 2px solid #22789a;
+}}
+
+QPushButton#WorkflowStep:disabled {{
+    color: {p["muted"]};
+    background-color: {p["surface_alt"]};
+}}
+
+QLabel#WorkflowArrow {{
+    color: {p["muted"]};
+    font-size: 20px;
+    font-weight: 700;
+}}
+
+QLabel#PageSubtitle[isError="true"] {{
+    color: #b94242;
+}}
+
+QProgressBar {{
+    border: 1px solid {p["border"]};
+    border-radius: 5px;
+    background-color: {p["surface_alt"]};
+    color: {p["text"]};
+}}
+
+QProgressBar::chunk {{
+    background-color: #2e8164;
+    border-radius: 4px;
+}}
+
 /* Neutral graphite primary action; no proprietary brand assets needed. */
 QPushButton#ClusterStartButton {{
     background-color: #252a2e;
@@ -193,6 +306,37 @@ QPushButton#ClusterStartButton:hover {{
 QPushButton#ClusterStartButton:disabled {{
     background-color: {p["surface_alt"]};
     color: {p["muted"]};
+    border: 1px solid {p["border"]};
+}}
+
+/* Dezenter 750-ms-Aufmerksamkeitsimpuls nur bei fertigem QEC-Workflow. */
+QPushButton#ClusterStartButton[attention="on"] {{
+    background-color: #237c5c;
+    color: #ffffff;
+    border: 2px solid #a3dbbd;
+}}
+QPushButton#ClusterStartButton[resultImported="true"] {{
+    background-color: #d9eee2;
+    color: #164a35;
+    border: 2px solid #26845c;
+}}
+QPushButton#ClusterStartButton[resultImported="true"]:hover {{
+    background-color: #cae8d7;
+}}
+
+/* Gefährliche Aktion als klare, unaufdringliche rote Kontur. */
+QPushButton#DangerButton {{
+    background-color: {p["surface"]};
+    color: #b94242;
+    border: 1px solid #b94242;
+    font-weight: 600;
+}}
+QPushButton#DangerButton:hover {{
+    background-color: {p["surface_alt"]};
+    border: 2px solid #b94242;
+}}
+QPushButton#DangerButton:disabled {{
+    color: {p["subtle"]};
     border: 1px solid {p["border"]};
 }}
 

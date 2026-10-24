@@ -685,6 +685,10 @@ class DiagnosisViewerDownloader:
                         break
                     result, page = self._one_fin(context, page, fin, progress, cancel)
                     results_by_fin[fin] = result
+                    progress(
+                        f"FIN-Fortschritt: {len(results_by_fin)}/{len(validated)} "
+                        f"bearbeitet · zuletzt {fin}: {result.status}"
+                    )
                     if result.status == "Abgebrochen":
                         break
             finally:

@@ -8,6 +8,7 @@ from PySide6.QtWidgets import (
     QMessageBox, QPushButton, QProgressBar, QVBoxLayout, QWidget,
 )
 
+from ntf_insight.storage.cluster_evidence_store import part_key
 from ntf_insight.storage.qec_workflow_store import QecWorkflowStore, VALID_DECISIONS
 
 
@@ -16,6 +17,7 @@ class QecWorkflowPanel(QWidget):
         super().__init__()
         self.workflow = workflow
         self.qec_root = Path(data_dir) / "qec"
+        self.project_part = ""
         body = QVBoxLayout(self)
         body.setContentsMargins(0, 4, 0, 6)
         body.setSpacing(10)
@@ -77,15 +79,34 @@ class QecWorkflowPanel(QWidget):
         body.addWidget(self.handoff_note)
         self.refresh()
 
+    def set_project_scope(self, part_number: str) -> None:
+        self.project_part = part_number.strip()
+        self.refresh()
+
     def refresh(self) -> None:
-        source = self.workflow.active_source()
+        sources = self.workflow.active_sources()
         rows = self.workflow.rows(self.qec_root)
+        if self.project_part:
+            key = part_key(self.project_part)
+            rows = [
+                row for row in rows if part_key(row["part_number"]) == key
+            ]
         self._rows = rows
-        self.source_label.setText(
-            f"Aktuelle QEC-FIN-Liste: {source.original_name} · SHA-256 {source.sha256[:12]}…"
-            if source else "Keine aktive QEC-generierte FIN-Liste. "
-                           "Bitte eine QEC-Excel-Datei unter Datenquellen importieren."
-        )
+        if len(sources) == 1:
+            source = sources[0]
+            source_text = (
+                f"QEC-Liste: {source.original_name} · SHA-256 {source.sha256[:12]}…"
+            )
+        elif sources:
+            source_text = f"{len(sources)} aktive QEC-Listen, nach Sachnummer getrennt"
+        else:
+            source_text = (
+                "Keine aktive QEC-generierte FIN-Liste. "
+                "Bitte die QEC-Excel-Datei importieren."
+            )
+        if self.project_part:
+            source_text += " · Projekt-Sachnummer: " + self.project_part
+        self.source_label.setText(source_text)
         stats = self.workflow.summarize_rows(rows)
         self.step1.setText(f"01  QEC-generierte FIN-Liste · {stats['fins']} FINs / {stats['cases']} Fälle")
         self.step2.setText(
@@ -114,7 +135,7 @@ class QecWorkflowPanel(QWidget):
         if index >= 0:
             self.case_selector.setCurrentIndex(index)
         self.case_selector.blockSignals(False)
-        enabled = bool(source and rows)
+        enabled = bool(sources and rows)
         for control in (self.case_selector, self.decision, self.reason,
                         self.save_button, self.export_button, self.handoff_button):
             control.setEnabled(enabled)
@@ -135,12 +156,13 @@ class QecWorkflowPanel(QWidget):
         self.reason.setText(row["reason"] if row else "")
 
     def _save(self) -> None:
-        source = self.workflow.active_source()
-        if source is None or not self.case_selector.currentData():
+        selected = self.case_selector.currentData()
+        row = next((item for item in self._rows if item["case_id"] == selected), None)
+        if row is None:
             return
         try:
             self.workflow.set_decision(
-                source.sha256, self.case_selector.currentData(),
+                row["source_sha256"], selected,
                 self.decision.currentData(), self.reason.text(),
             )
         except (OSError, ValueError) as exc:
@@ -158,7 +180,9 @@ class QecWorkflowPanel(QWidget):
         if path.suffix.lower() != ".csv":
             path = path.with_suffix(".csv")
         try:
-            count = self.workflow.export_csv(path, self.qec_root)
+            count = self.workflow.export_csv(
+                path, self.qec_root, part_number=self.project_part,
+            )
         except (OSError, ValueError):
             QMessageBox.warning(self, "CSV-Export", "Die Datei konnte nicht gespeichert werden.")
             return
@@ -171,7 +195,9 @@ class QecWorkflowPanel(QWidget):
             "für die spätere Clusteranalyse vormerken?",
         ) != QMessageBox.StandardButton.Yes:
             return
-        count = self.workflow.handoff_ntf(self.qec_root)
+        count = self.workflow.handoff_ntf(
+            self.qec_root, part_number=self.project_part,
+        )
         self.handoff_note.setText(
             f"{count} bestätigte NTF-FINs lokal vorgemerkt. "
             "Die Clusteranalyse wird in einem folgenden Schritt angebunden."

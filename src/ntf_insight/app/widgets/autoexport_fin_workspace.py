@@ -13,8 +13,8 @@ from time import perf_counter
 from PySide6.QtCore import QModelIndex, Qt, QThread, Signal
 from PySide6.QtWidgets import (
     QAbstractItemView, QCheckBox, QComboBox, QFrame, QHBoxLayout,
-    QLabel, QLineEdit, QPlainTextEdit, QPushButton, QScrollArea,
-    QSpinBox, QTableView, QVBoxLayout, QWidget, QFileDialog, QMessageBox,
+    QLabel, QLayout, QLineEdit, QPlainTextEdit, QPushButton, QScrollArea,
+    QSizePolicy, QSpinBox, QTableView, QVBoxLayout, QWidget, QFileDialog, QMessageBox,
 )
 
 from ntf_insight.analysis.cluster_dtc_filters import ClusterDtcFilter
@@ -256,6 +256,8 @@ class AutoExportFinWorkspace(QWidget):
         self._pump_swap_dates = self._qec_evidence.pump_swap_dates
         self._finding_counts = finding_counts(cases)
         self._running_qec_cases = self._all_qec_cases
+        self._workflow_part_number = ""
+        self._workflow_allowed_fins: frozenset[str] | None = None
         self._quicktest_fins = tuple(quicktest_fins)
         self._tp_dashboard_fins = (
             source.tp_dashboard_fins()
@@ -277,7 +279,11 @@ class AutoExportFinWorkspace(QWidget):
         shell = QVBoxLayout(self)
         shell.setContentsMargins(0, 0, 0, 0)
         scroll = QScrollArea(self)
+        self._embedded_scroll = scroll
         scroll.setWidgetResizable(True)
+        scroll.setVerticalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAsNeeded
+        )
         scroll.setFrameShape(QFrame.Shape.NoFrame)
         shell.addWidget(scroll)
         content = QWidget()
@@ -286,7 +292,8 @@ class AutoExportFinWorkspace(QWidget):
         body.setContentsMargins(22, 18, 22, 25)
         body.setSpacing(12)
 
-        body.addWidget(QLabel("Clusteranalyse", objectName="PageTitle"))
+        self._page_heading = QLabel("Clusteranalyse", objectName="PageTitle")
+        body.addWidget(self._page_heading)
         intro = QLabel(
             "AutoExport und QEC werden über die FIN zusammengeführt. "
             "Ein Fahrzeug zählt genau einmal. Die Cluster zeigen "
@@ -294,6 +301,7 @@ class AutoExportFinWorkspace(QWidget):
             objectName="PageSubtitle",
         )
         intro.setWordWrap(True)
+        self._intro_label = intro
         body.addWidget(intro)
 
         total_auto = self.population_metrics.get("autoexport_unique_fins", 0)
@@ -461,6 +469,7 @@ class AutoExportFinWorkspace(QWidget):
         overview_stack.addLayout(overview)
 
         separator = QFrame()
+        self._coverage_separator = separator
         separator.setFrameShape(QFrame.Shape.HLine)
         separator.setStyleSheet("color: #DDE3E8;")
         overview_stack.addWidget(separator)
@@ -468,11 +477,13 @@ class AutoExportFinWorkspace(QWidget):
         # Four overlapping source coverages require FOUR independent donuts.
         # A shared pie would misleadingly count the same FIN multiple times.
         coverage_header = QHBoxLayout()
-        coverage_header.addWidget(QLabel(
+        self._coverage_header_label = QLabel(
             "Quellenabdeckung der analysierten FINs", objectName="CardTitle",
-        ))
+        )
+        coverage_header.addWidget(self._coverage_header_label)
         coverage_header.addStretch(1)
-        coverage_header.addWidget(QLabel("Sachnummer"))
+        self._coverage_part_label = QLabel("Sachnummer")
+        coverage_header.addWidget(self._coverage_part_label)
         self.part_number_combo = QComboBox()
         for number in part_numbers(self._all_qec_cases):
             self.part_number_combo.addItem(number, number)
@@ -489,6 +500,7 @@ class AutoExportFinWorkspace(QWidget):
         source_row = QHBoxLayout()
         source_row.setSpacing(8)
         self.coverage_donuts: dict[str, FinCoverageDonut] = {}
+        self._source_coverage_items: list[QWidget] = []
         for key, label, color in (
             ("part", "FINs mit Sachnummer", "#4C6580"),
             ("qec", "FINs mit QEC-Fall", "#1D70A5"),
@@ -507,6 +519,7 @@ class AutoExportFinWorkspace(QWidget):
             stack.addWidget(donut, 0)
             stack.setAlignment(donut, Qt.AlignmentFlag.AlignHCenter)
             source_row.addWidget(indicator, 1)
+            self._source_coverage_items.append(indicator)
         overview_stack.addLayout(source_row)
         self.coverage_note = QLabel(
             "Die vier Angaben können sich überschneiden: Ein Fahrzeug "
@@ -537,7 +550,7 @@ class AutoExportFinWorkspace(QWidget):
 
         plot_header = QHBoxLayout()
         plot_header.addWidget(QLabel(
-            "FIN-Punktwolke · 3D-Diagnoseähnlichkeit (drehbar)", objectName="CardTitle",
+            "FIN-Punktwolke · Ziehen: drehen · Strg + Mausrad: zoomen", objectName="CardTitle",
         ))
         plot_header.addStretch(1)
         plot_header.addWidget(QLabel("Verfahren"))
@@ -727,12 +740,110 @@ class AutoExportFinWorkspace(QWidget):
             f"{count} echte Cluster-Repräsentanten lokal in Excel gespeichert."
         )
 
+    def set_workflow_compact_mode(self) -> None:
+        """Im Fünf-Schritte-Workflow überflüssige Doppelbeschreibungen ausblenden."""
+        for label in (
+            self._page_heading, self._intro_label, self.population_note,
+            self.summary_note, self.priority_note, self.coverage_note,
+            self._coverage_header_label, self._coverage_part_label,
+            self._coverage_separator, self.part_number_combo,
+        ):
+            label.hide()
+        for indicator in self._source_coverage_items:
+            indicator.hide()
+        # Im Workflow liegt der gesamte lokale Bereich bereits in der
+        # QScrollArea der Station 05. Den INNEREN Scrollbereich entfernen,
+        # statt QScrollArea in QScrollArea zu verschachteln.
+        old_scroll = self._embedded_scroll
+        if old_scroll is not None:
+            content = old_scroll.takeWidget()
+            if content is not None:
+                shell = self.layout()
+                shell.removeWidget(old_scroll)
+                old_scroll.hide()
+                old_scroll.setParent(None)
+                content.setParent(self)
+                content.setSizePolicy(
+                    QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Minimum
+                )
+                body = content.layout()
+                if body is not None:
+                    body.setSizeConstraint(
+                        QLayout.SizeConstraint.SetMinimumSize
+                    )
+                shell.addWidget(content)
+                shell.setSizeConstraint(
+                    QLayout.SizeConstraint.SetMinimumSize
+                )
+                content.show()  # setParent() versteckt QWidget sonst.
+                self._embedded_content = content
+                self._embedded_scroll = None
+                old_scroll.deleteLater()
+        self.setMinimumHeight(0)
+        self.setSizePolicy(
+            QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Minimum
+        )
+
+    def set_workflow_allowed_fins(self, fins: set[str] | None) -> None:
+        """Stage 01 SSL-Auswahl begrenzt echte lokale Cluster-Features."""
+        selected = (
+            frozenset(str(fin).upper() for fin in fins)
+            if fins is not None else None
+        )
+        if selected == self._workflow_allowed_fins:
+            return
+        self._workflow_allowed_fins = selected
+        self.only_qec.setChecked(True)
+        self.only_qec.setEnabled(selected is None)
+        self._invalidate()
+        self._update_finding_summary()
+        self.status.setText(
+            f"SSL-Kohorte: {len(selected) if selected is not None else 'alle'} FINs. "
+            "Lokale Clusteranalyse neu starten."
+        )
+
+    def set_workflow_part_number(self, number: str) -> None:
+        """Sachnummer aus dem Workflow als echten QEC-Kohortenfilter setzen.
+
+        Dieser Filter beeinflusst die in den Clusterlauf übernommenen QEC-Anker,
+        nicht bloß den Abdeckungsring. Ohne QEC-Anker ist keine eingeschränkte
+        Pumpen-FIN-Kohorte belegbar.
+        """
+        from ntf_insight.storage.workflow_progress import normalize_part_number
+
+        new_number = normalize_part_number(number)
+        if new_number == self._workflow_part_number:
+            return
+        self._workflow_part_number = new_number
+        self.only_qec.setChecked(True)
+        self._invalidate()
+        self._update_finding_summary()
+        self.status.setText(
+            f"Workflow-Sachnummer: {new_number or 'alle'} · Analyse neu starten."
+        )
+
     def _matched_qec_cases(self) -> tuple[NTFCase, ...]:
-        return selected_qec_cases(
+        cases = selected_qec_cases(
             self._all_qec_cases,
             exact_findings=self._dtc_filter.include_findings,
             excluded_findings=self._dtc_filter.exclude_findings,
         )
+        if self._workflow_part_number:
+            def key(value: str) -> str:
+                return "".join(
+                    char for char in str(value).strip().upper() if char.isalnum()
+                )
+            cases = tuple(
+                case for case in cases
+                if key(getattr(case, "qec_part_number", "") or "")
+                == key(self._workflow_part_number)
+            )
+        if self._workflow_allowed_fins is not None:
+            cases = tuple(
+                case for case in cases
+                if case.vin.strip().upper() in self._workflow_allowed_fins
+            )
+        return tuple(cases)
 
     def _update_finding_summary(self) -> None:
         cases = self._matched_qec_cases()
@@ -824,7 +935,9 @@ class AutoExportFinWorkspace(QWidget):
         self._run_results = {}
         self.result = None
         self._show_empty()
-        self._analysis_scoped_to_qec = self.only_qec.isChecked()
+        self._analysis_scoped_to_qec = (
+            self.only_qec.isChecked() or self._workflow_allowed_fins is not None
+        )
         self._running_qec_cases = self._matched_qec_cases()
         if self.workflow_handoff_only.isChecked():
             self._running_qec_cases = tuple(
@@ -874,7 +987,7 @@ class AutoExportFinWorkspace(QWidget):
         self._task = None
         self.start_button.setEnabled(True)
         self.filter_button.setEnabled(True)
-        self.only_qec.setEnabled(True)
+        self.only_qec.setEnabled(self._workflow_allowed_fins is None)
         self.workflow_handoff_only.setEnabled(bool(self._handed_off_fins))
         self.qec_anchor_mode.setEnabled(True)
         self.min_cluster_size.setEnabled(True)
