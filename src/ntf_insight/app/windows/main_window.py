@@ -133,6 +133,7 @@ class MainWindow(QMainWindow):
         pages["workflow"].navigate.connect(self._workflow_navigate)
         pages["workflow"].action_requested.connect(self._workflow_action)
         pages["workflow"].project_selected.connect(self._project_selected)
+        pages["workflow"].cohort_updated.connect(self._sync_local_cluster)
         pages["workflow"].mount_local_cluster(pages["cases"].cluster_workspace)
         if pages["sources"].qec_workflow is not None:
             pages["sources"].qec_workflow.set_project_scope(
@@ -433,10 +434,16 @@ class MainWindow(QMainWindow):
 
     def _sync_local_cluster(self) -> None:
         workflow = self.pages["workflow"]
+        widget = self.pages["cases"].cluster_workspace
         if workflow.profile_id == "coolant_pump":
-            self.pages["cases"].cluster_workspace.set_workflow_part_number(
-                workflow._context_part
+            widget.set_workflow_part_number(workflow._context_part)
+            rows = workflow._rows_for_context()
+            allowed = workflow.ssl_selection.allowed_fins(
+                workflow.profile_id, workflow._context_part, rows,
             )
+            widget.set_workflow_allowed_fins(allowed)
+        else:
+            widget.set_workflow_allowed_fins(set())
 
     def _open_cluster_from_case(self, case_id: str) -> None:
         workflow = self.pages["workflow"]
@@ -487,6 +494,7 @@ class MainWindow(QMainWindow):
             )
             return
         workflow.refresh_ai_chain()
+        workflow.refresh_data()
         if linked:
             workflow.set_notice(
                 f"{round_number}. ChatGPT-Ergebnis automatisch im Projekt verknüpft."
@@ -1218,7 +1226,7 @@ class MainWindow(QMainWindow):
             if not workflow._scoped_rows or source.workflow_store is None:
                 workflow.set_notice("Keine QEC-FINs zum Export vorhanden.", error=True)
                 return
-            part = workflow.part_number.text().strip()
+            part = workflow._context_part
             safe_part = "".join(
                 char if char.isalnum() else "_" for char in part
             )[:36] or "alle"
@@ -1256,19 +1264,18 @@ class MainWindow(QMainWindow):
             if panel is None:
                 workflow.set_notice("ChatGPT-Austausch ist nicht verfügbar.", error=True)
                 return
-            if action == "ai_export" and workflow.part_number.text().strip():
-                answer = QMessageBox.question(
-                    self, "Analysepaket und Sachnummer",
-                    "Der vorhandene ChatGPT-Export umfasst aktuell ALLE importierten "
-                    "Fälle, nicht nur die angezeigte Sachnummer. "
-                    "Auch pseudonymisierte Daten dürfen nur nach Unternehmensfreigabe "
-                    "weitergegeben werden.\n\n"
-                    "Trotzdem einen vollständigen lokalen Export erstellen?",
-                    QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-                    QMessageBox.StandardButton.No,
-                )
-                if answer != QMessageBox.StandardButton.Yes:
+            if action == "ai_export":
+                fins = {
+                    str(row["fin"]).upper() for row in workflow._scoped_rows
+                }
+                if not fins:
+                    workflow.set_notice(
+                        "Keine FINs für den ersten ChatGPT-Export gewählt. "
+                        "In Schritt 01 SSL-Endbefunde auswählen.",
+                        error=True,
+                    )
                     return
+                panel.prepare_workflow_cohort(fins)
             if action == "ai_import":
                 self._pending_ai_round = 1
             (panel.export_button if action == "ai_export" else panel.import_button).click()
