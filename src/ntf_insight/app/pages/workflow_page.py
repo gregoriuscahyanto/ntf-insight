@@ -9,10 +9,8 @@ from __future__ import annotations
 from collections import Counter, defaultdict
 import json
 from dataclasses import replace
-from datetime import datetime
-from pathlib import Path
 
-from PySide6.QtCore import QSortFilterProxyModel, Qt, Signal
+from PySide6.QtCore import QSortFilterProxyModel, QTimer, Qt, Signal
 from PySide6.QtGui import QAction
 from PySide6.QtGui import QCursor
 from PySide6.QtWidgets import (
@@ -35,7 +33,7 @@ from ntf_insight.storage.workflow_ai_chain import WorkflowAIChainStore
 from ntf_insight.storage.workflow_projects import WorkflowProjectStore
 from ntf_insight.storage.workflow_source_activity import WorkflowSourceActivity
 from ntf_insight.storage.workflow_ssl_selection import (
-    MISSING, MULTIPLE, WorkflowSSLSelection, fin_ssl_groups,
+    WorkflowSSLSelection, fin_ssl_groups,
 )
 from ntf_insight.storage.workflow_progress import (
     STEP_COUNT, WorkflowProgressStore, normalize_part_number,
@@ -64,6 +62,7 @@ class WorkflowPage(QWidget):
     navigate = Signal(str, str)
     action_requested = Signal(str)
     project_selected = Signal(str, str)
+    cohort_updated = Signal()
 
     STEPS = (
         ("QEC-FIN-Liste", "QEC-Kohorte", "sources", "qec_list"),
@@ -926,6 +925,7 @@ class WorkflowPage(QWidget):
             self.profile_id, self._context_part, categories,
             categories if selected else set(),
         )
+        self.cohort_updated.emit()
         self.refresh()
 
     def _select_ssl_category(self, category: str, checked: bool) -> None:
@@ -939,7 +939,8 @@ class WorkflowPage(QWidget):
         self.ssl_selection.save(
             self.profile_id, self._context_part, categories, selected,
         )
-        self.refresh()
+        self.cohort_updated.emit()
+        QTimer.singleShot(0, self.refresh)
 
     def _refresh_ssl_menu(self) -> None:
         categories = self._ssl_categories()
