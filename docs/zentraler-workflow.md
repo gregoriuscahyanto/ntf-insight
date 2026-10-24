@@ -292,3 +292,38 @@ Neustart in den neuen Workflow migriert und nicht als Sperre weitergeführt.
 - Die zwei zentralen Bedienelemente für den zweiten ZIP-Export und
   JSON-Rückimport sind groß hervorgehoben. Beide Durchläufe bleiben
   paket-/analyse-ID-gebunden.
+
+
+### Projekt entfernen oder vollständig löschen (Projekteinstellungen)
+
+Die Einstellungen haben zwei Aktionen mit **Warnung, ausdrücklicher Bestätigung
+und exakter Wiedereingabe der Sachnummer**. Bei laufenden Imports/Downloads,
+KI-Exporten oder Datentransfers sind beide Aktionen gesperrt.
+
+- **Projekt entfernen** entfernt ausschließlich den Projekt-Registrierungseintrag
+  (Profil, Sachnummer, Name und ECU-Einstellungen). QEC-Quellen, FIN-/Falldaten,
+  Unterlagen, Workflowfortschritt und ChatGPT-Auswertungen bleiben im lokalen
+  Datenbestand. Dieselbe Sachnummer kann später wieder als Projekt aufgenommen
+  werden.
+- **Projekt vollständig löschen** entfernt die eindeutig diesem Profil/
+  dieser Sachnummer zugeordneten Fall-/QEC-Entscheidungen, FIN-QuickTests,
+  manuelle Bewertungen, ChatGPT-Paket- und Auswertungsdaten, Workflow- und
+  Unterlagenzuordnungen sowie exklusive lokale Archivdateien.
+  **Gemeinsame QEC-/TP-Quelldateien oder überlappende FIN-/KI-Zuordnungen
+  führen zum vollständigen Abbruch der Aktion.** Globale ECU-Diagnose-
+  referenzen, die nicht eindeutig einer Sachnummer gehören, bleiben erhalten.
+  Der Vorgang erfindet keine Quellzuordnung: Wenn sich vorhandene Daten
+  nicht zuverlässig einem einzelnen Projekt zuordnen lassen, wird die
+  Löschung abgelehnt statt Daten anderer Projekte zu gefährden.
+- **Dateisicherheit:** Eindeutig betroffene lokale Dateien werden erst in
+  einen reversiblen Quarantäneordner verschoben. Anschließend wird die
+  Datenbanktransaktion abgeschlossen und erst dann werden die Dateien
+  endgültig gelöscht. Bei einem transaktionalen Fehler erfolgt Rollback
+  und Rückverschiebung; bei nicht automatisch wiederherstellbaren Dateifehlern
+  erscheint der Quarantänepfad im Fehlertext.
+
+**Vor vollständigem Löschen** immer ein freigegebenes Projekt-Backup oder
+ein lokales vollständiges Backup anlegen und dessen Inhalt prüfen.
+Ein exportiertes \`.ntfproject\` ist selbst vertraulich, nicht verschlüsselt
+und nicht durch die Projektlöschung betroffen, wenn es außerhalb der lokalen
+App-Datenablage gespeichert ist.
