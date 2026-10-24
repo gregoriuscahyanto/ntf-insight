@@ -72,6 +72,11 @@ class MainWindow(QMainWindow):
         self._workflow_quicktest_download_pending = False
         self._context_scraper_failed: set[str] = set()
         self._context_worker = None
+        # Importauswahl darf während des Parsings vorgemerkt werden; keine
+        # zweite DuckDB-Schreiboperation vor Abschluss des aktiven Workers.
+        self._pending_context_imports: list[
+            tuple[str, str, str, tuple[Path, ...]]
+        ] = []
         self._project_transfer_worker = None
         self._project_transfer_dialog: ExportOperationDialog | None = None
         self._first_export_dialog: ExportOperationDialog | None = None
@@ -1357,6 +1362,9 @@ class MainWindow(QMainWindow):
         workflow = self.pages["workflow"]
         workflow.set_context_operation(category, False)
         workflow.set_context_parser_busy(category, False)
+        # QTimer lässt erst alle finished-Slots (auch SourcesPage._worker=None)
+        # ablaufen; erst danach darf ein vorgemerkter Import DuckDB öffnen.
+        QTimer.singleShot(0, self._drain_pending_context_imports)
 
     def _resume_source_parsing(self, category: str) -> None:
         """Nur nicht indexierte vorhandene Dateien über bestehende Parser nachholen."""
@@ -1586,13 +1594,28 @@ class MainWindow(QMainWindow):
         workflow.refresh_context_files()
 
     def _context_import(self, category: str) -> None:
-        """Fachunterlagen unverändert im vorhandenen lokalen Rohdatenarchiv sammeln."""
+        """Fachunterlagen auswählen; laufendes Parsing nicht unterbrechen."""
         workflow = self.pages["workflow"]
         if category not in CATEGORY_LABELS:
             workflow.set_notice("Unbekannte Unterlagenkategorie.", error=True)
             return
-        if not self._portable_transfer_ready() or self._context_worker is not None:
-            workflow.set_notice("Ein Import oder Download läuft bereits.", error=True)
+        source = self.pages["sources"]
+        parsing = (
+            source._worker is not None and bool(workflow._context_parsers_busy)
+        )
+        importing = isinstance(self._context_worker, ClusterEvidenceImportWorker)
+        # Projekttransfers/Exporte bleiben exklusiv. Nur ein laufender Parser
+        # oder ein weiterer Unterlagenimport erlaubt das Vormerken.
+        if (
+            self._project_transfer_worker is not None
+            or self._project_delete_worker is not None
+            or self._context_worker is not None and not importing
+            or not (parsing or importing or self._portable_transfer_ready())
+        ):
+            workflow.set_notice(
+                "Ein Import, Download oder exklusiver Datentransfer läuft bereits.",
+                error=True,
+            )
             return
         files, _ = QFileDialog.getOpenFileNames(
             self, f"{CATEGORY_LABELS[category]} auswählen",
@@ -1600,20 +1623,51 @@ class MainWindow(QMainWindow):
         )
         if not files:
             return
+        paths = tuple(Path(name) for name in files)
+        context = (workflow.profile_id, workflow._context_part)
+        if parsing or importing or self._pending_context_imports:
+            # Projekt und Sachnummer bei der Auswahl festhalten, nicht erst
+            # beim späteren Abarbeiten der Warteschlange ermitteln.
+            self._pending_context_imports.append(
+                (*context, category, paths)
+            )
+            workflow.set_notice(
+                f"{len(paths)} Datei(en) für {CATEGORY_LABELS[category]} "
+                "vorgemerkt. "
+                f"{len(self._pending_context_imports)} Auftrag/Aufträge in "
+                "der Warteschlange; Import nach dem aktiven Vorgang."
+            )
+            if not parsing and not importing:
+                QTimer.singleShot(0, self._drain_pending_context_imports)
+            return
+        self._start_context_evidence_import(*context, category, paths)
+
+    def _start_context_evidence_import(
+        self, profile: str, part: str, category: str,
+        paths: tuple[Path, ...],
+    ) -> None:
+        """Genau einen Unterlagenimport mit eigener Worker-Lebensdauer starten."""
+        workflow = self.pages["workflow"]
         worker = ClusterEvidenceImportWorker(
-            workflow.context_store, workflow.profile_id, workflow._context_part,
-            category, [Path(name) for name in files],
+            workflow.context_store, profile, part, category, list(paths),
         )
         self._context_worker = worker
         workflow.set_context_busy(True)
         workflow.set_notice(
-            f"{len(files)} Datei(en) werden lokal als "
+            f"{len(paths)} Datei(en) werden lokal als "
             f"{CATEGORY_LABELS[category]} archiviert …"
         )
         worker.completed.connect(self._context_import_completed)
         worker.failed.connect(self._context_failed)
         worker.finished.connect(self._context_worker_finished)
         worker.start()
+
+    def _drain_pending_context_imports(self) -> None:
+        """FIFO nur nach Freigabe aller aktiven Datenbank-Worker fortsetzen."""
+        if not self._pending_context_imports or not self._portable_transfer_ready():
+            return
+        profile, part, category, paths = self._pending_context_imports.pop(0)
+        self._start_context_evidence_import(profile, part, category, paths)
 
     def _context_import_completed(self, count: int) -> None:
         workflow = self.pages["workflow"]
@@ -1637,6 +1691,7 @@ class MainWindow(QMainWindow):
         workflow.set_context_busy(False)
         workflow.refresh_context_files()
         workflow.refresh()
+        QTimer.singleShot(0, self._drain_pending_context_imports)
 
     def _context_export(self) -> None:
         """Die zweite ChatGPT-Runde verwendet dieselbe Exportkarte."""
