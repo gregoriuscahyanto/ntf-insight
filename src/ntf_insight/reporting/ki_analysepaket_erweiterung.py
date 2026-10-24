@@ -219,7 +219,7 @@ def build_zusatztabellen(
                         "haeufigkeit": _number(data.get("FrequencyCounter")),
                         "dtc_text_opt_in": str(data.get("EcuFaultTxt") or "")[:4000] if mit_freitext else "",
                         "softwarestand": sw, "hardwarestand": hw,
-                        "ecu_teilenummer": _code(data.get("EcuHwPartnumberCd")),
+                        "ecu_teilenummer_id": teil_id(data.get("EcuHwPartnumberCd")),
                     })
                     if sw or hw:
                         ecu_versions.append({
@@ -346,7 +346,11 @@ def build_zusatztabellen(
                 "befund_id": f"LB{len(supplier_rows) + 1:06d}",
                 "befunddatum": _event_timestamp(finding),
                 "lieferant_id": pseudonym("lieferant", finding.supplier, "L"),
-                "ergebnis_nachtraeglich": _code(getattr(finding.result, "value", finding.result)),
+                "ergebnis_nachtraeglich": (
+                    str(getattr(finding.result, "value", finding.result))
+                    if str(getattr(finding.result, "value", finding.result))
+                    in {"NTF", "Fault Found", "Other", "Unknown"} else ""
+                ),
                 "beanstandung_reproduziert": (
                     "ja" if finding.complaint_reproduced is True else
                     "nein" if finding.complaint_reproduced is False else "unbekannt"
@@ -380,6 +384,15 @@ def build_zusatztabellen(
         fid = fall_ids[case.case_id]
         qt = qt_by_case[fid]
         auto = quality_auto[fid]
+        sessions = Counter(
+            _relative(_event_timestamp(event), case.investigated_replacement())[0]
+            for event in case.diagnostic_sessions
+        )
+        no_dtc_post_sessions = sum(
+            _relative(_event_timestamp(event), case.investigated_replacement())[0]
+            == "nach_tausch" and event.dtc_count == 0
+            for event in case.diagnostic_sessions
+        )
         quality_rows.append({
             "fall_id": fid, "fahrzeug_id": fahrzeug_ids[case.vin],
             "tauschanker_vorhanden": int(case.investigated_replacement() is not None),
@@ -390,6 +403,16 @@ def build_zusatztabellen(
             "autoexport_dtc_nach_positiv": auto["nach_tausch"],
             "autoexport_dtc_unklar": auto["zeitlich_unklar"] + auto["kein_tausch"],
             "beidseitige_quicktests": int(qt["vor_tausch"] > 0 and qt["nach_tausch"] > 0),
+            "diagnosesitzungen_fallmodell_vor": sessions["vor_tausch"],
+            "diagnosesitzungen_fallmodell_nach": sessions["nach_tausch"],
+            "diagnosesitzungen_fallmodell_unklar": (
+                sessions["zeitlich_unklar"] + sessions["kein_tausch"]
+            ),
+            "diagnosesitzungen_fallmodell_nach_ohne_dtc": no_dtc_post_sessions,
+            "beidseitig_vollstaendige_sitzungen": int(
+                (qt["vor_tausch"] + sessions["vor_tausch"] > 0)
+                and (qt["nach_tausch"] + sessions["nach_tausch"] > 0)
+            ),
             "hinweis": "AutoExport-DTC-Zeilen sind KEIN vollstaendiger Test",
         })
 
@@ -412,7 +435,7 @@ def build_zusatztabellen(
         "beobachtung_id", "fahrzeug_id", "quelle_id", "quellzeile",
         "diagnosezeitpunkt", "zeitpraezision", "km", "steuergeraet", "dtc_code",
         "dtc_status", "haeufigkeit", "dtc_text_opt_in",
-        "softwarestand", "hardwarestand", "ecu_teilenummer",
+        "softwarestand", "hardwarestand", "ecu_teilenummer_id",
     ), dtcs)
     add_table("autoexport_fallbezug", (
         "fall_id", "beobachtung_id", "lage_zum_pumpentausch", "tage_relativ_zum_tausch",
@@ -447,7 +470,10 @@ def build_zusatztabellen(
         "quicktests_nach", "quicktests_zeitlich_unklar",
         "vollstaendige_fahrzeug_nachtests_ohne_dtc", "autoexport_dtc_vor_positiv",
         "autoexport_dtc_nach_positiv", "autoexport_dtc_unklar",
-        "beidseitige_quicktests", "hinweis",
+        "beidseitige_quicktests", "diagnosesitzungen_fallmodell_vor",
+        "diagnosesitzungen_fallmodell_nach", "diagnosesitzungen_fallmodell_unklar",
+        "diagnosesitzungen_fallmodell_nach_ohne_dtc",
+        "beidseitig_vollstaendige_sitzungen", "hinweis",
     ), quality_rows)
     add_table("lieferantenbefunde_NICHT_CLUSTER", (
         "fall_id", "fahrzeug_id", "befund_id", "befunddatum",
