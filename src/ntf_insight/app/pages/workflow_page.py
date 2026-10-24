@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from PySide6.QtCore import QSettings, Signal
+from PySide6.QtCore import QSettings, Signal, QTimer
 from PySide6.QtWidgets import (
     QFileDialog, QFrame, QGridLayout, QHBoxLayout, QLabel, QLineEdit,
     QPushButton, QProgressBar, QVBoxLayout, QWidget,
@@ -163,8 +163,22 @@ class WorkflowPage(QWidget):
         self.import_status.setMaximumHeight(42)
         self.import_status.setWordWrap(True)
         root.addWidget(self.import_status)
-        source_page.import_status.textChanged.connect(self._status_changed)
+        self._last_running = False
+        self._poll_timer = QTimer(self)
+        self._poll_timer.setInterval(600)
+        self._poll_timer.timeout.connect(self._poll)
+        self._poll_timer.start()
         self.refresh()
+
+    def _poll(self) -> None:
+        running = self.source_page._worker is not None
+        message = self.source_page.import_status.text()
+        if message != self.import_status.text():
+            self._status_changed(message)
+        if self._last_running and not running:
+            self.refresh()
+        self._last_running = running
+        self._sync_controls()
 
     def _save_component(self) -> None:
         QSettings().setValue("workflow/bauteil", self.component.text().strip())
