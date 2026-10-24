@@ -7,7 +7,6 @@ Rohdatenparser, QEC-Downloader und ChatGPT-Vertrag werden nicht dupliziert.
 from __future__ import annotations
 
 from dataclasses import replace
-from pathlib import Path
 
 from PySide6.QtCore import QSortFilterProxyModel, Qt, Signal
 from PySide6.QtGui import QCursor
@@ -146,7 +145,6 @@ class WorkflowPage(QWidget):
             self.profile.addItem(label, item.profile_id)
         self.profile.setCurrentIndex(max(0, self.profile.findData(self.profile_id)))
         self.profile.currentIndexChanged.connect(self._change_context)
-        header.addWidget(self.profile)
         self.part_number = QLineEdit(part)
         self.part_number.setPlaceholderText("Sachnummer · alle")
         self.part_number.setMaximumWidth(215)
