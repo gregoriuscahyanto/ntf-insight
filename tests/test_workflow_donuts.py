@@ -186,7 +186,8 @@ def test_source_activity_distinguishes_download_from_manual_import(tmp_path, mon
     assert "Einlesen:" in page.context_source_dates["tp_dashboard"].text()
     assert "selected" not in page.context_scraper_buttons["diagnosis_viewer"]
     assert page.context_scraper_buttons["tp_dashboard"]["parse"].text() == "Alle Dokumente neu parsen"
-    assert page.context_scraper_buttons["celonis"]["parse"].text() == "Originaldatei importieren …"
+    assert page.context_scraper_buttons["celonis"]["parse"].text() == "Kein Parser"
+    assert not page.context_scraper_buttons["celonis"]["parse"].isEnabled()
     assert not hasattr(page, "context_self_import_button")
     assert page.cluster_tabs.count() == 2
     assert page.cluster_tabs.tabText(1).startswith("ChatGPT")
