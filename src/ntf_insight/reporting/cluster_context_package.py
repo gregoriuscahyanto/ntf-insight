@@ -214,6 +214,12 @@ def export_cluster_context(
             base_manifest = json.loads(base.read("manifest.json"))
             if base_manifest.get("paket_id") != package_id:
                 raise ValueError("Analysepaket wurde seit der Auswahl verändert.")
+            if not include_originals and not base_manifest.get("pseudonymisiert", False):
+                raise ValueError(
+                    "Die gewählte KI-Basis enthält Freitext/Originaldaten. "
+                    "Bitte eine pseudonymisierte Basis auswählen oder "
+                    "Originale nach Unternehmensfreigabe ausdrücklich aktivieren."
+                )
             for info in infos:
                 # Bereits pseudonymisierte Daten und gegebenenfalls vom Nutzer
                 # freigegebene Originale der Basis exakt und ohne Umbenennung erhalten.
