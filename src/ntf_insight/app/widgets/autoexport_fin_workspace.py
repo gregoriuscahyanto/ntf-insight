@@ -13,7 +13,7 @@ from time import perf_counter
 from PySide6.QtCore import QModelIndex, Qt, QThread, Signal
 from PySide6.QtWidgets import (
     QAbstractItemView, QCheckBox, QComboBox, QFrame, QHBoxLayout,
-    QLabel, QLineEdit, QPlainTextEdit, QPushButton, QScrollArea,
+    QLabel, QLayout, QLineEdit, QPlainTextEdit, QPushButton, QScrollArea,
     QSizePolicy, QSpinBox, QTableView, QVBoxLayout, QWidget, QFileDialog, QMessageBox,
 )
 
@@ -751,13 +751,36 @@ class AutoExportFinWorkspace(QWidget):
             label.hide()
         for indicator in self._source_coverage_items:
             indicator.hide()
-        self._embedded_scroll.setWidgetResizable(True)
-        self._embedded_scroll.setVerticalScrollBarPolicy(
-            Qt.ScrollBarPolicy.ScrollBarAsNeeded
-        )
+        # Im Workflow liegt der gesamte lokale Bereich bereits in der
+        # QScrollArea der Station 05. Den INNEREN Scrollbereich entfernen,
+        # statt QScrollArea in QScrollArea zu verschachteln.
+        old_scroll = self._embedded_scroll
+        if old_scroll is not None:
+            content = old_scroll.takeWidget()
+            if content is not None:
+                shell = self.layout()
+                shell.removeWidget(old_scroll)
+                old_scroll.hide()
+                old_scroll.setParent(None)
+                content.setParent(self)
+                content.setSizePolicy(
+                    QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Minimum
+                )
+                body = content.layout()
+                if body is not None:
+                    body.setSizeConstraint(
+                        QLayout.SizeConstraint.SetMinimumSize
+                    )
+                shell.addWidget(content)
+                shell.setSizeConstraint(
+                    QLayout.SizeConstraint.SetMinimumSize
+                )
+                self._embedded_content = content
+                self._embedded_scroll = None
+                old_scroll.deleteLater()
         self.setMinimumHeight(0)
         self.setSizePolicy(
-            QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Expanding
+            QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Minimum
         )
 
     def set_workflow_allowed_fins(self, fins: set[str] | None) -> None:
