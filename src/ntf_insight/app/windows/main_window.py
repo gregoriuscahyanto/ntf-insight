@@ -2,9 +2,14 @@
 
 from __future__ import annotations
 
-from PySide6.QtCore import Qt, QTimer
-from PySide6.QtWidgets import QHBoxLayout, QMainWindow, QMessageBox, QStackedWidget, QWidget
+from pathlib import Path
 
+from PySide6.QtCore import Qt, QTimer, QUrl
+from PySide6.QtGui import QDesktopServices
+from PySide6.QtWidgets import QFileDialog, QHBoxLayout, QMainWindow, QMessageBox, QStackedWidget, QWidget
+
+from ntf_insight.acquisition.qec_tool import QEC_START
+from ntf_insight.ingestion.artifacts import SourceType
 from ntf_insight.app.bootstrap import load_application_data
 from ntf_insight.app.pages.case_page import CasePage
 from ntf_insight.app.pages.dashboard_page import DashboardPage
@@ -41,6 +46,8 @@ class MainWindow(QMainWindow):
             DuckDBStore(self.application_data.paths.database_path)
         )
         self._case_quicktest_import_pending = False
+        self._workflow_source_import_pending = False
+        self._workflow_qec_download_pending = False
 
         root = QWidget(objectName="AppRoot")
         layout = QHBoxLayout(root)
@@ -102,6 +109,14 @@ class MainWindow(QMainWindow):
         )
         pages["workflow"].navigate.connect(self._workflow_navigate)
         pages["workflow"].action_requested.connect(self._workflow_action)
+        if pages["cases"].qec_download is not None:
+            pages["cases"].qec_download.downloads_completed.connect(
+                lambda _results: pages["workflow"].refresh_data()
+            )
+        if pages["sources"].ki_analyse_panel is not None:
+            pages["sources"].ki_analyse_panel.analysis_updated.connect(
+                pages["workflow"].refresh_data
+            )
         pages["cases"].case_saved.connect(self._reload_after_manual_change)
         pages["cases"].quicktests_downloaded.connect(self._import_downloaded_case_quicktests)
         pages["cases"].qec_reports_downloaded.connect(self._import_downloaded_case_quicktests)
@@ -190,7 +205,15 @@ class MainWindow(QMainWindow):
         )
 
     def _reload_after_source_import(self, summary: str, quicktests_saved: int = 0) -> None:
-        """Refresh all views while preserving case analysis after case-led downloads."""
+        """Quellen neu laden, Workflow-Kontext bei workflowgestarteten Imports behalten."""
+        if self._workflow_source_import_pending or self._workflow_qec_download_pending:
+            self._workflow_source_import_pending = False
+            self._workflow_qec_download_pending = False
+            self._case_quicktest_import_pending = False
+            self._reload_data()
+            self.navigation.select_page("workflow")
+            self.pages["workflow"].set_notice(summary)
+            return
         from_case_download = self._case_quicktest_import_pending
         current_case = (
             self.pages["cases"].selector.currentData() if from_case_download else None
@@ -301,42 +324,176 @@ class MainWindow(QMainWindow):
 
         self.navigation.select_page(page)
 
-    def _workflow_action(self, action: str) -> None:
+    def _workflow_start_import(self, action: str) -> None:
+        """Bestehenden Quellenimport verwenden; Ergebnis im Workflow anzeigen."""
         source = self.pages["sources"]
-        if action == "cancel_import":
-            if not source.cancel_import_button.isEnabled():
-                self.pages["workflow"].note.setText("Kein laufender Quellenimport.")
+        workflow = self.pages["workflow"]
+        if source._worker is not None or source._diagnostics_worker is not None:
+            workflow.set_notice("Ein anderer Quellenimport läuft bereits.", error=True)
+            return
+        if action == "qec_list_import":
+            files, _ = QFileDialog.getOpenFileNames(
+                self, "QEC-generierte FIN-Liste auswählen",
+                str(Path.home()), "QEC Excel (*.xlsx)",
+            )
+            if not files:
                 return
-            self.navigation.select_page("sources")
-            source.cancel_import_button.click()
-        elif action == "resume_import":
-            if not source.resume_import_button.isEnabled():
-                self.pages["workflow"].note.setText("Kein fortsetzbarer Import vorhanden.")
+            before = source.source_type.currentIndex()
+            index = source.source_type.findData(SourceType.VEHICLE_CASE_LIST)
+            try:
+                source.source_type.setCurrentIndex(index if index >= 0 else 0)
+                source._archive_paths([Path(file) for file in files])
+            finally:
+                source.source_type.setCurrentIndex(before)
+        else:
+            source._import_existing_qec()
+
+        worker = source._worker
+        if worker is None:
+            workflow.set_notice(source.import_status.text(), error=True)
+            return
+        self._workflow_source_import_pending = True
+        workflow.set_notice("QEC-Quelldaten werden importiert …")
+        worker.progress.connect(workflow.set_notice)
+        worker.failed.connect(self._workflow_import_failed)
+
+    def _workflow_import_failed(self, message: str) -> None:
+        self._workflow_source_import_pending = False
+        self.pages["workflow"].set_notice(
+            "QEC-Import fehlgeschlagen: " + message, error=True
+        )
+
+    def _workflow_start_qec_download(self, *, selected_only: bool) -> None:
+        """Vorhandener QEC-Worker, aber exakt auf die Workflow-Sachnummer gefiltert."""
+        workflow = self.pages["workflow"]
+        cases = self.pages["cases"]
+        panel = cases.qec_download
+        source = self.pages["sources"]
+        if panel is None:
+            workflow.set_notice("QEC-Berichtsabruf ist nicht eingerichtet.", error=True)
+            return
+        if panel.worker is not None or source._worker is not None:
+            workflow.set_notice("Download/Import läuft bereits.", error=True)
+            return
+        targets = workflow.qec_targets(selected_only=selected_only)
+        if not targets:
+            workflow.set_notice(
+                "Keine gültige FIN mit passender QEC-Referenz ausgewählt.", error=True
+            )
+            return
+        self._workflow_qec_download_pending = True
+        panel._start(targets, bulk=not selected_only)
+        worker = panel.worker
+        if worker is None:
+            # Abbruch im Bestätigungs- oder SSO-Dialog, keine Datenänderung.
+            self._workflow_qec_download_pending = False
+            return
+        workflow.set_download_busy(
+            True, f"QEC-Abruf für {len(targets)} Fall/ Fälle gestartet …"
+        )
+        worker.progress.connect(workflow.qec_status.setText)
+        worker.failed.connect(
+            lambda message: workflow.set_notice("QEC-Abruf: " + message, error=True)
+        )
+        worker.finished.connect(self._workflow_qec_finished)
+
+    def _workflow_qec_finished(self) -> None:
+        workflow = self.pages["workflow"]
+        workflow.set_download_busy(False)
+        # Wenn der Worker Dateien erzeugt hat, folgt deren Quellenimport.
+        if not self._case_quicktest_import_pending:
+            self._workflow_qec_download_pending = False
+            workflow.refresh_data()
+
+    def _workflow_action(self, action: str) -> None:
+        workflow = self.pages["workflow"]
+        source = self.pages["sources"]
+        if action in {"qec_list_import", "qec_import_local"}:
+            self._workflow_start_import(action)
+        elif action == "qec_list_portal":
+            if not QDesktopServices.openUrl(QUrl(QEC_START)):
+                workflow.set_notice(
+                    "QEC-Portal konnte nicht im Browser geöffnet werden.", error=True
+                )
+            else:
+                workflow.set_notice(
+                    "QEC-FIN-Liste im Portal nach Sachnummer filtern, "
+                    "als Excel speichern und anschließend hier importieren. "
+                    "Der direkte Sachnummer-Abruf ist noch nicht implementiert."
+                )
+        elif action == "qec_list_csv":
+            if not workflow._scoped_rows or source.workflow_store is None:
+                workflow.set_notice("Keine QEC-FINs zum Export vorhanden.", error=True)
                 return
-            self.navigation.select_page("sources")
-            source.resume_import_button.click()
+            part = workflow.part_number.text().strip()
+            safe_part = "".join(
+                char if char.isalnum() else "_" for char in part
+            )[:36] or "alle"
+            filename, _ = QFileDialog.getSaveFileName(
+                self, "Gefilterte QEC-FIN-Liste lokal speichern",
+                str(Path.home() / f"QEC_FIN_{safe_part}.csv"), "CSV (*.csv)",
+            )
+            if not filename:
+                return
+            dest = Path(filename)
+            if dest.suffix.lower() != ".csv":
+                dest = dest.with_suffix(".csv")
+            try:
+                count = source.workflow_store.export_csv(
+                    dest, workflow.qec_root, part_number=part,
+                )
+            except (OSError, ValueError) as exc:
+                QMessageBox.warning(self, "QEC-FIN-Export", str(exc))
+                return
+            workflow.set_notice(
+                f"{count} QEC-Fälle lokal exportiert. "
+                "Die Datei enthält echte FINs: nur intern freigegeben weitergeben."
+            )
+        elif action in {"qec_download_all", "qec_download_selected"}:
+            self._workflow_start_qec_download(
+                selected_only=action == "qec_download_selected"
+            )
+        elif action == "qec_download_cancel":
+            panel = self.pages["cases"].qec_download
+            if panel is not None and panel.cancel_button.isEnabled():
+                panel.cancel_button.click()
+                workflow.qec_status.setText("QEC-Abruf wird sicher angehalten …")
+        elif action in {"ai_export", "ai_import"}:
+            panel = source.ki_analyse_panel
+            if panel is None:
+                workflow.set_notice("ChatGPT-Austausch ist nicht verfügbar.", error=True)
+                return
+            if action == "ai_export" and workflow.part_number.text().strip():
+                answer = QMessageBox.question(
+                    self, "Analysepaket und Sachnummer",
+                    "Der vorhandene ChatGPT-Export umfasst aktuell ALLE importierten "
+                    "Fälle, nicht nur die angezeigte Sachnummer. "
+                    "Auch pseudonymisierte Daten dürfen nur nach Unternehmensfreigabe "
+                    "weitergegeben werden.\n\n"
+                    "Trotzdem einen vollständigen lokalen Export erstellen?",
+                    QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                    QMessageBox.StandardButton.No,
+                )
+                if answer != QMessageBox.StandardButton.Yes:
+                    return
+            (panel.export_button if action == "ai_export" else panel.import_button).click()
+        elif action in {"pc_export", "pc_import"}:
+            panel = source.portable_backup_panel
+            if panel is not None:
+                (
+                    panel.export_button if action == "pc_export"
+                    else panel.restore_button
+                ).click()
         elif action == "self_import":
             self.navigation.select_page("sources")
             source.archive_button.click()
-        elif action == "qec":
-            self._workflow_navigate("sources", "qec_decision")
-        elif action in {"pc_export", "pc_import"}:
-            self.navigation.select_page("sources")
-            panel = source.portable_backup_panel
-            if panel is not None:
-                (panel.export_button if action == "pc_export" else panel.restore_button).click()
-        elif action in {"ai_export", "ai_import"}:
-            self.navigation.select_page("sources")
-            panel = source.ki_analyse_panel
-            if panel is not None:
-                (panel.export_button if action == "ai_export" else panel.import_button).click()
 
     def show_page(self, key: str) -> None:
         page = self.pages.get(key)
         if page is None:
             return
         if key == "workflow":
-            page.refresh()
+            page.refresh_data()
         if key == "cases":
             page.cluster_workspace.refresh_review_priorities()
             page._refresh_quicktest_download_dates()
