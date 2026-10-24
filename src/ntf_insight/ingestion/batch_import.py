@@ -601,7 +601,7 @@ class LocalBatchImporter:
                 case_fin[case.vin].append(case)
             allowed_fins = set(case_fin)
 
-            for artifact in others:
+            for source_position, artifact in enumerate(others, 1):
                 if stop_requested():
                     summary.cancelled = True
                     break
@@ -621,7 +621,10 @@ class LocalBatchImporter:
                 elif artifact.source_type == SourceType.AUTOEXPORT_SUMMARY and suffix == ".csv":
                     reference_parser = AutoExportSummaryParser()
                 if reference_parser is not None:
-                    progress(f"Referenzquelle einlesen: {reference_parser.name} …")
+                    progress(
+                        f"Referenzquelle einlesen ({source_position}/{len(others)}) "
+                        f"· {reference_parser.name} …"
+                    )
                     try:
                         catalog, _ = self.execution.execute(
                             artifact, reference_parser
@@ -694,7 +697,7 @@ class LocalBatchImporter:
                 if parser is None:
                     summary.files_pending += 1
                     continue
-                progress(f"Lokale Quelle parsen ({summary.files_parsed + 1}/{len(artifacts)}) …")
+                progress(f"Lokale Quelle parsen ({source_position}/{len(others)}) …")
                 try:
                     result, _ = self.execution.execute(artifact, parser)
                 except Exception as exc:
