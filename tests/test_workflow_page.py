@@ -34,7 +34,7 @@ def test_workflow_is_non_scrolling_with_resumable_steps(tmp_path, monkeypatch):
     assert window.navigation.buttons["workflow"].isChecked()
     assert not workflow.findChildren(QScrollArea)
     assert len(workflow.cards) == 6
-    assert len(workflow.tool_buttons) == 6
+    assert len(workflow.tool_buttons) == 8
     workflow.part_number.setText("A 222 333")
     workflow._change_context()
     workflow._move(1)
@@ -69,7 +69,7 @@ def test_workflow_actions_reuse_existing_source_panels(tmp_path, monkeypatch):
     source = window.pages["sources"]
     assert source.portable_backup_panel is not None
     assert source.ki_analyse_panel is not None
-    for key in ("pc_export", "pc_import", "ai_export", "ai_import", "self_import"):
+    for key in ("pc_export", "pc_import", "ai_export", "ai_import", "self_import", "cancel_import", "resume_import"):
         assert actions[key].isEnabled()
     window.pages["workflow"]._open_step(4)
     assert window.navigation.buttons["cases"].isChecked()
