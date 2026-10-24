@@ -106,7 +106,8 @@ def _source_stack(column: int, buttons: list[QPushButton]) -> QWidget:
     """Fixe Buttonhöhe und einheitliche vertikale Abstände ohne Abschneiden."""
     width = _SOURCE_COLUMNS[column][1]
     assert width is not None
-    holder = QWidget()
+    holder = QWidget(objectName="SourceActionStack")
+    holder.setStyleSheet("QWidget#SourceActionStack { background: transparent; }")
     holder.setFixedWidth(width)
     layout = QVBoxLayout(holder)
     layout.setContentsMargins(0, 0, 0, 0)
@@ -2274,13 +2275,13 @@ class WorkflowPage(QWidget):
                 "Noch keine aktive QEC-FIN-Liste. Bitte Original-Excel importieren."
             )
         qec_coverage = self._source_coverage.get("qec")
-        self.qec_status.setText(
-            self.qec_status.text() if self._busy else
-            f"{downloaded}/{total} FINs mit Bericht\n"
-            f"{qec_coverage.parsed_cases or 0}/{total} FINs geparst"
-            if qec_coverage is not None else
-            f"{downloaded}/{total} FINs mit Bericht"
-        )
+        if not self._busy:
+            self.qec_status.setText(
+                f"{downloaded}/{total} FINs mit Bericht\n"
+                f"{qec_coverage.parsed_cases or 0}/{total} FINs geparst"
+                if qec_coverage is not None else
+                f"{downloaded}/{total} FINs mit Bericht"
+            )
         self.ntf_status.setText(
             f"NTF: {stats['ntf']} · Kein NTF: {stats['not_ntf']} · "
             f"Offen: {stats['open']} · ChatGPT-Vorschläge getrennt von QEC-Entscheidungen"
