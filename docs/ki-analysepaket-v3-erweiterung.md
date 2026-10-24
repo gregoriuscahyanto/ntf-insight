@@ -21,4 +21,4 @@ Keine echten FINs, QEC-Referenzen, Teil-, Serien- und Chargennummern oder SHA-Qu
 
 ## Status / Abnahme
 
-Der zusaetzliche Modulbaustein ist noch nicht mit `export_ki_analysepaket` verbunden und darf nicht als produktiv wirksame Erweiterung bezeichnet werden. Vor Merge benoetigt: Integration, synthetische Export- und Datenschutztests, CI und lokaler Windows-Smoketest.
+Der zusaetzliche Modulbaustein ist in `export_ki_analysepaket` eingebunden. Synthetische Export- und Datenschutztests wurden hinzugefuegt; bis eine erfolgreiche CI-Pruefung und die fachliche Abnahme belegt sind, bleibt PR #52 ein Entwurf. Kein Hochladen von Unternehmensdaten in GitHub Actions. Ein lokaler Windows-Smoketest mit freigegebenen synthetischen Daten kann die GitHub-CI ergaenzen.
