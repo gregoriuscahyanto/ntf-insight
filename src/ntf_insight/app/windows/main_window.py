@@ -48,6 +48,7 @@ class MainWindow(QMainWindow):
         self._case_quicktest_import_pending = False
         self._workflow_source_import_pending = False
         self._workflow_qec_download_pending = False
+        self._workflow_last_qec_files: list[Path] = []
 
         root = QWidget(objectName="AppRoot")
         layout = QHBoxLayout(root)
@@ -212,6 +213,9 @@ class MainWindow(QMainWindow):
             self._case_quicktest_import_pending = False
             self._reload_data()
             self.navigation.select_page("workflow")
+            self.pages["workflow"].set_import_state(
+                False, can_resume=bool(self._workflow_last_qec_files)
+            )
             self.pages["workflow"].set_notice(summary)
             return
         from_case_download = self._case_quicktest_import_pending
@@ -331,18 +335,27 @@ class MainWindow(QMainWindow):
         if source._worker is not None or source._diagnostics_worker is not None:
             workflow.set_notice("Ein anderer Quellenimport läuft bereits.", error=True)
             return
-        if action == "qec_list_import":
-            files, _ = QFileDialog.getOpenFileNames(
-                self, "QEC-generierte FIN-Liste auswählen",
-                str(Path.home()), "QEC Excel (*.xlsx)",
-            )
-            if not files:
-                return
+        if action in {"qec_list_import", "qec_list_resume"}:
+            if action == "qec_list_import":
+                files, _ = QFileDialog.getOpenFileNames(
+                    self, "QEC-generierte FIN-Liste auswählen",
+                    str(Path.home()), "QEC Excel (*.xlsx)",
+                )
+                if not files:
+                    return
+                self._workflow_last_qec_files = [Path(file) for file in files]
+            else:
+                if not self._workflow_last_qec_files:
+                    workflow.set_notice("Kein letzter QEC-Dateiimport vorhanden.")
+                    return
             before = source.source_type.currentIndex()
             index = source.source_type.findData(SourceType.VEHICLE_CASE_LIST)
             try:
                 source.source_type.setCurrentIndex(index if index >= 0 else 0)
-                source._archive_paths([Path(file) for file in files])
+                source._archive_paths(
+                    self._workflow_last_qec_files,
+                    only_new=action == "qec_list_resume",
+                )
             finally:
                 source.source_type.setCurrentIndex(before)
         else:
@@ -353,15 +366,28 @@ class MainWindow(QMainWindow):
             workflow.set_notice(source.import_status.text(), error=True)
             return
         self._workflow_source_import_pending = True
+        workflow.set_import_state(True)
         workflow.set_notice("QEC-Quelldaten werden importiert …")
         worker.progress.connect(workflow.set_notice)
         worker.failed.connect(self._workflow_import_failed)
+        worker.finished.connect(self._workflow_import_finished)
 
     def _workflow_import_failed(self, message: str) -> None:
         self._workflow_source_import_pending = False
+        self.pages["workflow"].set_import_state(
+            False, can_resume=bool(self._workflow_last_qec_files)
+        )
         self.pages["workflow"].set_notice(
             "QEC-Import fehlgeschlagen: " + message, error=True
         )
+
+    def _workflow_import_finished(self) -> None:
+        # Erfolgreiche Imports bauen die Seite bereits über sources_updated neu.
+        if self._workflow_source_import_pending:
+            self._workflow_source_import_pending = False
+            self.pages["workflow"].set_import_state(
+                False, can_resume=bool(self._workflow_last_qec_files)
+            )
 
     def _workflow_start_qec_download(self, *, selected_only: bool) -> None:
         """Vorhandener QEC-Worker, aber exakt auf die Workflow-Sachnummer gefiltert."""
@@ -408,8 +434,14 @@ class MainWindow(QMainWindow):
     def _workflow_action(self, action: str) -> None:
         workflow = self.pages["workflow"]
         source = self.pages["sources"]
-        if action in {"qec_list_import", "qec_import_local"}:
+        if action in {"qec_list_import", "qec_list_resume", "qec_import_local"}:
             self._workflow_start_import(action)
+        elif action == "qec_list_cancel":
+            if source.cancel_import_button.isEnabled():
+                source.cancel_import_button.click()
+                workflow.set_notice(
+                    "QEC-Import wird nach der aktuellen Datei unterbrochen."
+                )
         elif action == "qec_list_portal":
             if not QDesktopServices.openUrl(QUrl(QEC_START)):
                 workflow.set_notice(
