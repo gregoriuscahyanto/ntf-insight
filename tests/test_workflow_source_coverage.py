@@ -36,10 +36,10 @@ def _setup(root: Path):
     return store, knowledge, evidence
 
 
-def _run(store: DuckDBStore, sha: str, parser, status=ParseStatus.SUCCESS):
+def _run(\n    store: DuckDBStore, sha: str, parser, status=ParseStatus.SUCCESS,\n    *, version: str | None = None,\n):
     store.save_parse_run(ParseRun(
         artifact_sha256=sha,
-        parser_name=parser.name, parser_version=parser.version,
+        parser_name=parser.name, parser_version=version or parser.version,
         status=status,
         started_at=datetime(2026, 10, 10, tzinfo=timezone.utc),
         completed_at=datetime(2026, 10, 10, tzinfo=timezone.utc),
@@ -293,7 +293,7 @@ def test_workflow_buttons_show_actual_counts_and_resume_only_missing(tmp_path, m
     assert page.context_scraper_buttons["diagnosis_viewer"]["missing"].isEnabled()
     assert not page.context_scraper_buttons["celonis"]["resume_parse"].isEnabled()
     assert page.context_scraper_buttons["tips_writer"]["resume_parse"].text() == (
-        "Ausstehendes Parsing fortsetzen"
+        "Parsing fortsetzen"
     )
     window.close()
     app.processEvents()
@@ -438,3 +438,78 @@ def test_source_row_traffic_light_requires_complete_fins_and_parsing():
     assert status(SourceCoverage(
         "tp_dashboard", 171, 171, 171, 1, 1, partial_documents=1,
     )) == "partial"
+
+
+def test_old_successful_parser_versions_are_counted_and_not_retried(tmp_path):
+    """v1-Erfolg mit gespeichertem Ergebnis bleibt auch nach v4-Fehler gültig."""
+    root = tmp_path / "data"
+    store, knowledge, evidence = _setup(root)
+    qec = _write_qec(root)
+    artifact = RawArchive(root / "raw").archive(qec, SourceType.QEC_REPORT)
+    store.save_artifact(artifact)
+    parsed = QECJsonParser().parse(qec)
+    knowledge.save_records(
+        artifact.sha256, parsed.kind, parsed.records, metadata=parsed.metadata,
+    )
+    _run(store, artifact.sha256, QECJsonParser, version="historisch-v1")
+    _run(
+        store, artifact.sha256, QECJsonParser, ParseStatus.FAILED,
+        version=QECJsonParser.version,
+    )
+    coverage = get_workflow_coverage(store, root, _rows())["qec"]
+    assert coverage.parsed_documents == 1
+    assert coverage.parsed_cases == 1
+    assert coverage.pending_paths == ()
+    assert not coverage.can_resume_parsing
+    assert (FIN_1, "12345") in coverage.parsed_qec
+
+    tips = _write_tips(root)
+    tips_artifact = RawArchive(root / "raw").archive(tips, SourceType.TIPS_CASE)
+    store.save_artifact(tips_artifact)
+    tips_catalog = TipsJsonParser().parse(tips)
+    knowledge.save_records(
+        tips_artifact.sha256, tips_catalog.kind,
+        tips_catalog.records, metadata=tips_catalog.metadata,
+    )
+    _run(store, tips_artifact.sha256, TipsJsonParser, version="v2")
+    tips_cov = get_workflow_coverage(store, root, _rows())["tips_writer"]
+    assert tips_cov.parsed_documents == 1
+    assert not tips_cov.pending_paths
+
+    tp = root / "tp.csv"
+    tp.write_text("DiagStartDt;EcuFaultNm;Fin\n", encoding="utf-8")
+    evidence.add_files("coolant_pump", "A111222", "tp_dashboard", [tp])
+    files = evidence.list_files("coolant_pump", "A111222")
+    tp_artifact = next(
+        item for item in store.load_artifacts()
+        if item.original_name == "tp.csv"
+    )
+    knowledge.save_records(
+        tp_artifact.sha256, "autoexport_rows",
+        [{"category": "autoexport_dtc", "fin": FIN_1,
+          "source_location": "row:1", "label": "Test", "data": {}}],
+        metadata={"source_type": "tp_dashboard", "raw_schema_version": 2},
+    )
+    _run(store, tp_artifact.sha256, AutoExportParser, version="v1")
+    tp_cov = get_workflow_coverage(store, root, _rows(), files)["tp_dashboard"]
+    assert tp_cov.parsed_documents == 1
+    assert tp_cov.parsed_cases == 1
+    assert not tp_cov.pending_paths
+
+
+def test_failed_or_untried_source_is_pending_regardless_of_new_parser_version(
+    tmp_path,
+):
+    root = tmp_path / "data"
+    store, knowledge, _ = _setup(root)
+    qec = _write_qec(root)
+    source = RawArchive(root / "raw").archive(qec, SourceType.QEC_REPORT)
+    store.save_artifact(source)
+    _run(
+        store, source.sha256, QECJsonParser,
+        ParseStatus.FAILED, version="v1",
+    )
+    pending = get_workflow_coverage(store, root, _rows())["qec"]
+    assert pending.parsed_documents == 0
+    assert pending.pending_paths == (qec,)
+    assert pending.can_resume_parsing
