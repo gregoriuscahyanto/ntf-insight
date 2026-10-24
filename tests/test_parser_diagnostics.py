@@ -153,7 +153,7 @@ def test_parser_diagnostics_supports_tp_tips_and_cdd_without_originals(tmp_path)
         ("candela.cdd", SourceType.DIAGNOSTIC_DESCRIPTION, "cdd_smrd"),
     ]:
         path = tmp_path / name
-        path.write_text("invalid synthetic parser test", encoding="utf-8")
+        path.write_text(name + ": invalid synthetic parser test", encoding="utf-8")
         service.import_raw(path, kind)
         paths[category] = path
     for category, path in paths.items():
