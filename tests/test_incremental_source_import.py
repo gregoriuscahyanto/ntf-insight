@@ -179,7 +179,7 @@ def test_cancel_during_archive_leaves_raw_files_and_no_incomplete_case(tmp_path)
     assert not next_run.cancelled
 
 
-def test_unrecognized_qec_keeps_failed_parser_checkpoint_for_resume(tmp_path):
+def test_unrecognized_qec_retries_failed_checkpoint_on_resume(tmp_path):
     source = service_for(tmp_path)
     path = tmp_path / "qec" / FIN / "ref_123456" / "qec.json"
     path.parent.mkdir(parents=True)
@@ -194,5 +194,35 @@ def test_unrecognized_qec_keeps_failed_parser_checkpoint_for_resume(tmp_path):
     second = LocalBatchImporter(source).import_paths(
         [path], only_new=True, local_kind="qec",
     )
-    assert second.files_unchanged == 1
-    assert second.files_failed == 0
+    assert second.files_unchanged == 0
+    assert second.files_failed == 1
+    assert len(source.store.load_parse_runs(artifact.sha256)) >= 2
+
+
+def test_incremental_import_never_reparses_older_success_just_for_version(tmp_path):
+    from datetime import datetime, timezone
+    from ntf_insight.ingestion.artifacts import ParseRun
+
+    source = service_for(tmp_path)
+    importer = LocalBatchImporter(source)
+    path = qec_file(tmp_path)
+    first = importer.import_paths([path], only_new=True, local_kind="qec")
+    assert first.files_parsed == 1
+    sha = source.list_artifacts()[0].sha256
+    for run in source.store.load_parse_runs(sha):
+        if run.status in (ParseStatus.SUCCESS, ParseStatus.PARTIAL):
+            source.store.save_parse_run(
+                run.model_copy(update={"parser_version": "historisch-v1"})
+            )
+    source.store.save_parse_run(ParseRun(
+        artifact_sha256=sha, parser_name="qec_json",
+        parser_version="v4",
+        status=ParseStatus.FAILED,
+        started_at=datetime.now(timezone.utc),
+        completed_at=datetime.now(timezone.utc),
+        error_message="Synthetischer Test eines späteren Fehlversuchs",
+    ))
+    resumed = importer.import_paths([path], only_new=True, local_kind="qec")
+    assert resumed.files_unchanged == 1
+    assert resumed.files_parsed == 0
+    assert resumed.files_failed == 0
