@@ -211,3 +211,31 @@ def test_failed_export_never_replaces_existing_zip(tmp_path):
         )
     assert destination.read_bytes() == old_bytes
     assert not list(tmp_path.glob(".ntf-parser-diagnose-*.zip"))
+
+
+def test_project_diagnostics_avoids_unrelated_global_pdf_scan(
+    tmp_path, monkeypatch,
+):
+    import ntf_insight.ingestion.parser_diagnostics as diagnostics
+
+    service, quicktest, _qec = setup_bad_reports(tmp_path)
+    monkeypatch.setattr(
+        diagnostics, "list_downloaded_quicktests",
+        lambda _root: (_ for _ in ()).throw(
+            AssertionError("Unrelated vehicle archives must not be scanned")
+        ),
+    )
+    monkeypatch.setattr(
+        diagnostics, "list_downloaded_qec_reports",
+        lambda _root: (_ for _ in ()).throw(
+            AssertionError("Unrelated QEC archives must not be scanned")
+        ),
+    )
+    progress = []
+    found = find_parser_problems(
+        service, tmp_path, progress=progress.append,
+        category="diagnosis_viewer", scope_paths=(quicktest,),
+    )
+    assert len(found) == 1
+    assert found[0].kind == "quicktests"
+    assert any("Projektdateien prüfen: 1/1" in msg for msg in progress)
