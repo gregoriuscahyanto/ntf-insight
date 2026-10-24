@@ -136,6 +136,8 @@ def test_project_page_opens_new_project_and_configures_ecus(tmp_path, monkeypatc
     assert workflow.local_cluster_widget is window.pages["cases"].cluster_workspace
     assert not hasattr(workflow, "context_base_button")
     assert not hasattr(workflow, "context_export_button")
+    window.show()
+    app.processEvents()
     workflow.new_project_button.click()
     assert window.stack.currentWidget() is workflow
     assert "project_settings" not in window.navigation.buttons
