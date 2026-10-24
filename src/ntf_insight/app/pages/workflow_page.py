@@ -21,10 +21,11 @@ class WorkflowPage(QWidget):
     navigate = Signal(str, str)
     action_requested = Signal(str)
 
+    # Jede Station hat ein eigenes Navigationsziel im vorhandenen Arbeitsbereich.
     STEPS = (
-        ("QEC-FIN-Liste", "Kohorte & Sachnummer", "sources", "qec"),
-        ("QEC-Befundung", "Berichte & Prüfung", "sources", "qec"),
-        ("NTF-Entscheidung", "NTF / Kein NTF / Offen", "sources", "qec"),
+        ("QEC-FIN-Liste", "Kohorte & Sachnummer", "sources", "qec_list"),
+        ("QEC-Befundung", "Berichte abrufen", "cases", "qec_reports"),
+        ("NTF-Entscheidung", "NTF / Kein NTF / Offen", "sources", "qec_decision"),
         ("CPC3 / Diagnosen", "TP · QuickTest · TIPS", "cases", "quicktests"),
         ("Clusteranalyse", "Muster & Wiederkehr", "cases", "cluster"),
         ("Auswertung", "Bericht & ChatGPT", "sources", "chatgpt"),
@@ -90,14 +91,18 @@ class WorkflowPage(QWidget):
             button = QPushButton()
             button.setObjectName("WorkflowStep")
             button.setProperty("workflowState", "pending")
-            button.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
-            button.setMinimumHeight(96)
+            button.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+            button.setMinimumHeight(108)
+            button.setMaximumHeight(132)
             button.setCursor(Qt.CursorShape.PointingHandCursor)
             button.setAccessibleName(f"Schritt {index + 1}: {name}")
             button.clicked.connect(lambda _checked=False, n=index: self._open_step(n))
             self.cards.append(button)
             grid.addWidget(button, index // 3, index % 3)
-        shell.addLayout(grid, 1)
+        shell.addLayout(grid)
+        self.step_hint = QLabel(objectName="PageSubtitle")
+        shell.addWidget(self.step_hint)
+        shell.addStretch(1)
 
         decision_row = QHBoxLayout()
         self.decision_label = QLabel()
@@ -176,8 +181,9 @@ class WorkflowPage(QWidget):
     def _move(self, delta: int) -> None:
         if self.state.paused:
             return
-        self.state = replace(self.state, step=max(0, min(5, self.state.step + delta)))
-        self._save()
+        target = max(0, min(len(self.STEPS) - 1, self.state.step + delta))
+        if target != self.state.step:
+            self._open_step(target)
 
     def _toggle_pause(self) -> None:
         self.state = replace(self.state, paused=not self.state.paused)
@@ -239,23 +245,25 @@ class WorkflowPage(QWidget):
             if self.state.paused and i == self.state.step:
                 state = "paused"
             button.setProperty("workflowState", state)
-            button.setStyleSheet(
-                "QPushButton#WorkflowStep {"
-                + ("border: 2px solid #22789a;" if state == "active" else
-                   "border: 2px solid #b45309;" if state == "paused" else
-                   "border: 1px solid #277c55;" if state == "done" else
-                   "border: 1px solid #9ca3af;")
-                + "border-radius: 25px; padding: 12px; text-align: left; }"
-            )
+            # Dynamische Statusfarben stammen aus dem zentralen Hell-/Dunkel-Theme.
+            button.style().unpolish(button)
+            button.style().polish(button)
             lamp = "●" if state == "active" else "✓" if state == "done" else (
                 "Ⅱ" if state == "paused" else "○"
             )
             button.setText(
                 f"{lamp}   {i + 1:02d}  {self.STEPS[i][0]}\n"
-                f"       {counts[i]}"
+                f"       {counts[i]}\n"
+                "       ↗ Arbeitsbereich öffnen"
             )
             button.setEnabled(not self.state.paused)
-            button.setToolTip(self.STEPS[i][1])
+            button.setToolTip(
+                f"{self.STEPS[i][1]} – Anklicken öffnet direkt die passende Funktion."
+            )
+        self.step_hint.setText(
+            f"Aktuell: {self.STEPS[self.state.step][0]} · "
+            "Kachel oder Weiter anklicken, um den Arbeitsschritt zu öffnen."
+        )
         self.decision_label.setText(
             f"NTF {stats.get('ntf', 0)} · Kein NTF {stats.get('not_ntf', 0)}"
             f" · Offen {stats.get('open', 0)}  |  "
