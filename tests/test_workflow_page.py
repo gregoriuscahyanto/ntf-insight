@@ -340,7 +340,7 @@ def test_context_scrapers_use_only_current_qec_part_with_single_fetch_action(
 
     monkeypatch.setattr(tips, "_start", fake_tips_start)
     assert "selected" not in page.context_scraper_buttons["tips_writer"]
-    assert page.context_scraper_buttons["tips_writer"]["parse"].text() == "Alle Dokumente neu parsen"
+    assert page.context_scraper_buttons["tips_writer"]["parse"].text() == "Alle neu parsen"
     window._context_scrape("tips_writer", "all")
     assert calls[-1] == ("tips", ["WDD12345678901234"], True)
     assert "Abruf" in page.context_source_dates["tips_writer"].text()
@@ -464,7 +464,8 @@ def test_source_operation_buttons_toggle_to_stop_and_restore(tmp_path, monkeypat
     )
     buttons = page.context_scraper_buttons["diagnosis_viewer"]
     assert "cancel" not in buttons
-    assert buttons["import"].minimumHeight() >= 64
+    assert buttons["import"].height() == 30
+    assert buttons["problem_zip"].height() == 30
 
     page.set_context_scraper_busy("diagnosis_viewer", True, "missing")
     assert buttons["missing"].text() == "Abruf stoppen"
@@ -474,7 +475,7 @@ def test_source_operation_buttons_toggle_to_stop_and_restore(tmp_path, monkeypat
     assert received[-1] == ("abruf", "diagnosis_viewer", "cancel")
     assert not buttons["missing"].isEnabled()
     page.set_context_scraper_busy("diagnosis_viewer", False)
-    assert buttons["missing"].text() == "Nur fehlende FINs abrufen"
+    assert buttons["missing"].text() == "Fehlende abrufen"
 
     page.set_context_parser_busy("diagnosis_viewer", True, "all")
     assert buttons["parse"].text() == "Parsing stoppen"
@@ -482,7 +483,7 @@ def test_source_operation_buttons_toggle_to_stop_and_restore(tmp_path, monkeypat
     page._trigger_context_parse("diagnosis_viewer", "all")
     assert received[-1] == ("parsing_stop", "diagnosis_viewer")
     page.set_context_parser_busy("diagnosis_viewer", False)
-    assert buttons["parse"].text() == "Alle Dokumente neu parsen"
+    assert buttons["parse"].text() == "Alle neu parsen"
 
     page.set_context_parser_busy("cdd_smrd", True, "resume")
     assert page.context_technical_resume["cdd_smrd"].text() == "Parsing stoppen"
@@ -534,10 +535,10 @@ def test_qec_actions_match_source_table_and_parser_zip(tmp_path, monkeypatch):
     app, window = _window(tmp_path, monkeypatch)
     page = window.pages["workflow"]
     assert page.qec_action_row.objectName() == "SourceCoverageRow"
-    assert page.download_all_button.text().startswith("Alle QEC-Berichte")
+    assert page.download_all_button.text() == "Alle QEC abrufen"
     assert page.download_missing_button.text() == "Download fortsetzen"
-    assert page.download_selected_button.text() == "Markierte herunterladen"
-    assert page.qec_parse_all_button.text() == "Alle QEC-Berichte neu parsen"
+    assert page.download_selected_button.text() == "Markierte abrufen"
+    assert page.qec_parse_all_button.text() == "Alle QEC parsen"
     assert page.qec_parse_resume_button.text() == "Parsing fortsetzen"
     assert "ZIP" in page.qec_problem_zip_button.text()
     assert page.cancel_download_button.isHidden()
