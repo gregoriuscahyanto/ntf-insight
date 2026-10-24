@@ -142,7 +142,7 @@ def _excel_summary(tables: dict[str, tuple[tuple[str, ...], list[dict]]], stats:
     summary.append(["QuickTest-Berichte", stats["quicktests"]])
     summary.append(["DTC-Beobachtungen", stats["dtcs"]])
     summary.append(["QEC-JSON-Berichte", stats["qec_berichte"]])
-    summary.append(["Freitext aus QEC/TIPS", "Enthalten" if stats["freitexte"] else "Nicht enthalten"])
+    summary.append(["QEC/TIPS/AutoExport/Lieferanten-Freitext", "Enthalten" if stats["freitexte"] else "Nicht enthalten"])
     summary.append(["Hinweis", "Private Zuordnung bleibt lokal; Freitext kann echte Identifikatoren enthalten."])
     summary.append(["Methodik", "Clustermerkmale vor Tausch; spätere Befunde/Bewertungen separat."])
     for sheet_name, table_name in (
@@ -804,7 +804,7 @@ def export_ki_analysepaket(
         "Seltene technische Konstellationen koennen reidentifizierend sein.\n"
         "Alle technischen Daten unterliegen der Unternehmensfreigabe.\n"
         + (
-            "ERHOEHTER SCHUTZBEDARF: QEC-Originaltexte und/oder TIPS-Freitexte\n"
+            "ERHOEHTER SCHUTZBEDARF: QEC-/TIPS-/AutoExport-/Lieferanten-Freitexte\n"
             "sind enthalten und NICHT anonymisiert! Nicht ungeprueft hochladen.\n"
             if (mit_freitext or mit_qec_originalen) else
             "Ohne QEC-/TIPS-Originalfreitext; Detailfelder fehlen absichtlich.\n"
