@@ -113,6 +113,15 @@ class MainWindow(QMainWindow):
         self.navigation.select_page("workflow")
 
     def closeEvent(self, event) -> None:  # noqa: N802
+        if (
+            self._project_transfer_worker is not None
+            or self.pages["sources"]._diagnostics_worker is not None
+        ):
+            # Der modale Fortschrittsdialog sperrt die Oberfläche, aber auch
+            # Alt+F4/Taskleisten-Schließen darf keinen noch laufenden ZIP-
+            # bzw. DuckDB-Transferthread zerstören.
+            event.ignore()
+            return
         if self._project_delete_worker is not None:
             event.ignore()
             QMessageBox.warning(
