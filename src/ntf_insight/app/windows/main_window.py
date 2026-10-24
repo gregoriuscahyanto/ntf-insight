@@ -804,10 +804,14 @@ class MainWindow(QMainWindow):
             "diagnosis_viewer": SourceType.SHORT_TEST,
             "tips_writer": SourceType.TIPS_CASE,
             "celonis": SourceType.OTHER,
+            "cdd_smrd": None,  # Candela-CDD erkannt, SMR-D archiviert.
         }.get(category)
         workflow = self.pages["workflow"]
         source = self.pages["sources"]
-        if kind is None:
+        if category not in {
+            "tp_dashboard", "diagnosis_viewer", "tips_writer",
+            "celonis", "cdd_smrd",
+        }:
             workflow.set_notice("Unbekannte Datenquelle.", error=True)
             return
         if not self._portable_transfer_ready() or source._worker is not None:
@@ -833,8 +837,9 @@ class MainWindow(QMainWindow):
         worker = source._worker
         if worker is not None:
             worker.completed.connect(
-                lambda summary, ctx=context, cat=category:
-                self._context_parse_completed(cat, ctx, summary)
+                lambda summary, ctx=context, cat=category,
+                paths=tuple(Path(name) for name in filenames):
+                self._context_parse_completed(cat, ctx, summary, paths)
             )
             worker.failed.connect(
                 lambda _message, ctx=context, cat=category:
@@ -848,12 +853,13 @@ class MainWindow(QMainWindow):
             )
         else:
             workflow.set_notice(
-                f"{len(filenames)} Datei(en) für vorhandenen Parser eingelesen. "
-                "Ergebnis und Fehlermeldungen unter Datenquellen prüfen."
+                f"{len(filenames)} Datei(en) zur Einleseprüfung ausgewählt. "
+                "Ergebnis und ggf. Parserprobleme unter Datenquellen prüfen."
             )
 
     def _context_parse_completed(
         self, category: str, context: tuple[str, str], summary: object,
+        paths: tuple[Path, ...] = (),
     ) -> None:
         workflow = self.pages["workflow"]
         result = (
@@ -865,6 +871,19 @@ class MainWindow(QMainWindow):
         )
         workflow.source_activity.record(context[0], context[1], category, result)
         workflow.refresh_context_files()
+        if summary.files_archived and paths and self._context_worker is None:
+            # Derselbe nachweisliche Beleg wird auch der ausgewählten
+            # Sachnummernsammlung zugeordnet – ohne zweiten Parserlauf.
+            worker = ClusterEvidenceImportWorker(
+                workflow.context_store, context[0], context[1],
+                category, list(paths),
+            )
+            self._context_worker = worker
+            workflow.set_context_busy(True)
+            worker.completed.connect(self._context_import_completed)
+            worker.failed.connect(self._context_failed)
+            worker.finished.connect(self._context_worker_finished)
+            worker.start()
 
     def _context_parse_failed(
         self, category: str, context: tuple[str, str],
