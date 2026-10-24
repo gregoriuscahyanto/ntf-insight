@@ -1323,7 +1323,17 @@ class WorkflowPage(QWidget):
                             f"{event_type}: {when:%d.%m.%Y %H:%M} · {state}"
                         )
                 if descriptions:
-                    self.context_source_dates[key].setText("\n".join(descriptions))
+                    # Nur der jüngste Zeitstempel, vollständiger Verlauf im Tooltip.
+                    newest = max(
+                        (item for item in log.values() if item is not None),
+                        key=lambda item: item[0],
+                    )
+                    self.context_source_dates[key].setText(
+                        f"Zuletzt: {newest[0]:%d.%m.%Y %H:%M}"
+                    )
+                    self.context_source_dates[key].setToolTip(
+                        "\n".join(descriptions)
+                    )
                 elif activity:
                     timestamp, state = activity
                     kind = (
@@ -1332,24 +1342,26 @@ class WorkflowPage(QWidget):
                         } else "Abruf"
                     )
                     self.context_source_dates[key].setText(
-                        f"{kind}: {timestamp:%d.%m.%Y %H:%M} · {state}"
+                        f"{kind}: {timestamp:%d.%m.%Y %H:%M}"
                     )
+                    self.context_source_dates[key].setToolTip(state)
                 elif key in archived_fetch:
                     newest, has_files = archived_fetch[key]
                     self.context_source_dates[key].setText(
-                        f"Portalarchiv: {newest:%d.%m.%Y %H:%M}"
-                        + (" · Dateien vorhanden" if has_files else " · nur Abrufversuch")
+                        f"Portal: {newest:%d.%m.%Y %H:%M}"
+                    )
+                    self.context_source_dates[key].setToolTip(
+                        "Dateien vorhanden" if has_files else "Nur Abrufversuch"
                     )
                 elif documents:
                     newest = max(f.imported_at for f in documents)
                     self.context_source_dates[key].setText(
-                        "Dateiimport: " + newest.strftime("%d.%m.%Y %H:%M")
+                        "Import: " + newest.strftime("%d.%m.%Y %H:%M")
                     )
                 elif key in legacy_imports:
                     newest = legacy_imports[key]
                     self.context_source_dates[key].setText(
-                        "Import (projektübergreifend): "
-                        + newest.strftime("%d.%m.%Y %H:%M")
+                        "Import: " + newest.strftime("%d.%m.%Y %H:%M")
                     )
                 else:
                     self.context_source_dates[key].setText(
