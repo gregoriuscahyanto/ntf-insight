@@ -1582,6 +1582,10 @@ class WorkflowPage(QWidget):
         self.qec_coverage.setText(
             self._coverage_error or qec_coverage.display()
         )
+        self._set_traffic_property(
+            self.qec_action_row, "coverageState",
+            self._source_traffic_state(qec_coverage),
+        )
         self.qec_parse_progress.setValue(
             round(100 * (qec_coverage.parsed_cases or 0)
                   / max(1, qec_coverage.total_cases or 0))
@@ -2063,11 +2067,25 @@ class WorkflowPage(QWidget):
             )
         )
         qec_parsing_busy = "qec" in self._context_parsers_busy
+        self.qec_parse_all_button.setText(
+            "Parsing stoppen" if qec_parsing_busy
+            and self._context_parsers_busy.get("qec") == "all"
+            else "Alle QEC-Berichte neu parsen"
+        )
+        self.qec_parse_all_button.setEnabled(
+            qec_parsing_busy and self._context_parsers_busy.get("qec") == "all"
+            and ("parse", "qec") not in self._context_stop_requested
+            or not qec_parsing_busy and not self._busy and not self._import_busy
+            and bool(qec_coverage and qec_coverage.local_paths)
+        )
         self.qec_parse_resume_button.setText(
-            "Parsing stoppen" if qec_parsing_busy else "Parsing fortsetzen"
+            "Parsing stoppen" if qec_parsing_busy
+            and self._context_parsers_busy.get("qec") == "resume"
+            else "Ausstehendes Parsing fortsetzen"
         )
         self.qec_parse_resume_button.setEnabled(
-            qec_parsing_busy and ("parse", "qec") not in self._context_stop_requested
+            qec_parsing_busy and self._context_parsers_busy.get("qec") == "resume"
+            and ("parse", "qec") not in self._context_stop_requested
             or not qec_parsing_busy and not paused and not self._busy
             and not self._import_busy and bool(
                 qec_coverage is not None and qec_coverage.can_resume_parsing
