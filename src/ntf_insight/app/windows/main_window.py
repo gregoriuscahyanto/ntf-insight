@@ -1409,6 +1409,20 @@ class MainWindow(QMainWindow):
                 error=True
             )
             return
+        if scope == "all":
+            answer = QMessageBox.question(
+                self, "Alle FINs erneut abrufen?",
+                f"Du startest für {len(fins)} FINs einen vollständigen erneuten "
+                f"Abruf aus {category}. Das kann viel Zeit benötigen und "
+                "zusätzliche Portalabfragen auslösen. Bereits vorhandene "
+                "Dateien werden nicht absichtlich gelöscht.\n\n"
+                "Stattdessen können auch nur fehlende FINs abgerufen werden. "
+                "Vollständigen Neuabruf wirklich starten?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No,
+            )
+            if answer != QMessageBox.StandardButton.Yes:
+                return
         if category == "diagnosis_viewer":
             cases._start_quicktest_download(
                 selected_only=False, fins_override=fins,
