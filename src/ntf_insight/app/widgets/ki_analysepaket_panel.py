@@ -6,6 +6,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Callable
 
+import duckdb
 from PySide6.QtCore import QThread, Signal
 from PySide6.QtWidgets import (
     QAbstractItemView, QCheckBox, QFileDialog, QHBoxLayout, QHeaderView,
@@ -432,15 +433,15 @@ class KIAnalysepaketPanel(QWidget):
         if not self._can_start():
             return False
         path = Path(path)
-        if not path.is_file() or path.stat().st_size > MAX_JSON_SIZE:
-            self._import_failed("JSON-Datei fehlt oder ist zu groß.")
-            return False
         try:
+            if not path.is_file() or path.stat().st_size > MAX_JSON_SIZE:
+                self._import_failed("JSON-Datei fehlt oder ist zu groß.")
+                return False
             payload = json.loads(path.read_text(encoding="utf-8-sig"))
             paket_id = payload["paket_id"]
             self.analysis_store._mapping(paket_id, None)
             mapping_path = None
-        except (OSError, json.JSONDecodeError, KeyError, ValueError, TypeError) as exc:
+        except (OSError, UnicodeError, duckdb.Error, KeyError, ValueError, TypeError) as exc:
             # Nur bei tatsächlich fehlender DB-Zuordnung lokale CSV anbieten.
             # Die private Datei darf niemals extern hochgeladen werden.
             if "Paketzuordnung nicht" not in str(exc):
