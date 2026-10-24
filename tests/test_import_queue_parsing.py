@@ -84,3 +84,30 @@ def test_database_lock_during_refresh_does_not_escape_qt_callback(
     finally:
         window.close()
         app.processEvents()
+
+
+def test_requested_parse_stop_remains_visible_during_late_progress(
+    tmp_path, monkeypatch,
+):
+    app, window = _window(tmp_path, monkeypatch)
+    workflow = window.pages["workflow"]
+    try:
+        workflow.set_context_parser_busy("tp_dashboard", True, "all")
+        workflow._context_stop_requested.add(("parse", "tp_dashboard"))
+        workflow.set_context_operation(
+            "tp_dashboard", True, "Abbruch angefordert",
+        )
+        label = workflow.context_operation_labels["tp_dashboard"]
+        assert "Abbruch angefordert" in label.text()
+        # Auch spätere Worker-Signale ohne Dateizähler dürfen den
+        # Stopphinweis nicht durch "Dauer unbekannt" überschreiben.
+        workflow.set_context_operation(
+            "tp_dashboard", True, "Verknüpfte Fälle dauerhaft speichern …",
+        )
+        assert "Abbruch angefordert" in label.text()
+        workflow.set_context_operation("tp_dashboard", False)
+        workflow.set_context_parser_busy("tp_dashboard", False)
+        assert not label.text()
+    finally:
+        window.close()
+        app.processEvents()
