@@ -734,17 +734,9 @@ def test_chatgpt_buttons_pulse_only_after_two_green_steps_and_turn_green_on_impo
 def test_parser_zip_progress_modal_reports_eta_and_visible_failure(
     tmp_path, monkeypatch,
 ):
-    from PySide6.QtWidgets import QMessageBox
-
     app, window = _window(tmp_path, monkeypatch)
     window.show()
     app.processEvents()
-    warnings = []
-    monkeypatch.setattr(
-        QMessageBox, "critical",
-        lambda _parent, title, message: warnings.append((title, message)),
-    )
-
     window._diagnostics_started("Fehler-ZIP erstellen …")
     assert window._diagnostics_dialog is not None
     assert window._loading_overlay.isVisible()
@@ -757,11 +749,14 @@ def test_parser_zip_progress_modal_reports_eta_and_visible_failure(
     window._diagnostics_failed("synthetischer Dateizugriffsfehler")
     window._diagnostics_ended()
     assert window._diagnostics_dialog is None
+    assert dialog.isVisible() and dialog.close_button.isVisible()
+    assert "synthetischer" in dialog.labelText()
+    assert not dialog.folder_button.isVisible()
+    assert window._loading_overlay.isVisible()
+    dialog.close()
+    app.processEvents()
     assert not window._loading_overlay.isVisible()
     assert window.stack.graphicsEffect() is None
-    assert len(warnings) == 1
-    assert "nicht erstellt" in warnings[0][0]
-    assert "synthetischer" in warnings[0][1]
     window.close()
     app.processEvents()
 
@@ -769,27 +764,25 @@ def test_parser_zip_progress_modal_reports_eta_and_visible_failure(
 def test_parser_zip_success_shows_real_destination_and_folder_action(
     tmp_path, monkeypatch,
 ):
-    from PySide6.QtWidgets import QMessageBox
-
     app, window = _window(tmp_path, monkeypatch)
     window.show()
     app.processEvents()
-    messages = []
-    monkeypatch.setattr(
-        QMessageBox, "exec",
-        lambda instance: messages.append(instance.text()) or 0,
-    )
     destination = tmp_path / "synthetic-parser-errors.zip"
     destination.write_bytes(b"synthetic nonempty file")
     window._diagnostics_started("ZIP erstellen")
+    dialog = window._diagnostics_dialog
     window._diagnostics_progress("ZIP-Dateien schreiben: 1/1")
     window._diagnostics_saved(str(destination))
     window._diagnostics_ended()
     assert window._diagnostics_dialog is None
+    assert dialog.isVisible()
+    assert dialog.folder_button.isVisible()
+    assert str(destination) in dialog.destination_label.text()
+    assert "Byte" in dialog.destination_label.text()
+    assert window._loading_overlay.isVisible()
+    dialog.close()
+    app.processEvents()
     assert not window._loading_overlay.isVisible()
-    assert len(messages) == 1
-    assert str(destination) in messages[0]
-    assert "Byte" in messages[0]
     window.close()
     app.processEvents()
 
@@ -808,10 +801,91 @@ def test_project_transfer_uses_same_blurred_progress_overlay(tmp_path, monkeypat
     assert dialog.maximum() == 100
     assert dialog.value() == 40
     assert "Projektdateien sammeln" in dialog.labelText()
+    destination = tmp_path / "synthetic-project.ntfproject"
+    destination.write_bytes(b"synthetic project package")
+    dialog.complete(destination)
+    assert dialog.folder_button.isVisible()
+    assert str(destination) in dialog.destination_label.text()
     window._project_transfer_dialog = None
-    window._close_operation_progress(dialog)
+    dialog.close()
+    app.processEvents()
     assert not window._loading_overlay.isVisible()
     assert window.stack.graphicsEffect() is None
+    window.close()
+    app.processEvents()
+
+
+def test_first_chatgpt_dialog_has_both_optins_unchecked_and_safely_passes_choices(
+    tmp_path, monkeypatch,
+):
+    from PySide6.QtWidgets import QFileDialog
+
+    app, window = _window(tmp_path, monkeypatch)
+    window.show()
+    app.processEvents()
+    panel = window.pages["sources"].ki_analyse_panel
+    assert panel._use_shared_export_dialog
+    panel.export_options_requested.emit()
+    dialog = window._first_export_dialog
+    assert dialog is not None and dialog.isVisible()
+    assert window._loading_overlay.isVisible()
+    assert not dialog.checkboxes["text"].isChecked()
+    assert not dialog.checkboxes["originals"].isChecked()
+    assert "QEC-/TIPS-/Werkstatt-/Lieferanten" in dialog.checkboxes["text"].text()
+    assert "Vollständige QEC" in dialog.checkboxes["originals"].text()
+
+    chosen = tmp_path / "chatgpt-erste-runde.zip"
+    monkeypatch.setattr(
+        QFileDialog, "getSaveFileName",
+        lambda *_args, **_kwargs: (str(chosen), ""),
+    )
+    calls = []
+    monkeypatch.setattr(
+        panel, "start_export",
+        lambda path, **kwargs: calls.append((path, kwargs)) or False,
+    )
+    dialog.checkboxes["text"].setChecked(True)
+    dialog.checkboxes["originals"].setChecked(True)
+    dialog.start_button.click()
+    assert len(calls) == 1
+    assert calls[0] == (chosen, {
+        "mit_freitext": True,
+        "mit_qec_originalen": True,
+    })
+    assert not dialog._running  # Nur ein erfolgreich gestarteter Export sperrt.
+    dialog.close()
+    app.processEvents()
+    assert window._first_export_dialog is None
+    assert not window._loading_overlay.isVisible()
+    window.close()
+    app.processEvents()
+
+
+def test_export_dialog_keeps_completed_file_and_estimated_remaining_time(
+    tmp_path, monkeypatch,
+):
+    from ntf_insight.app.widgets.export_operation_dialog import (
+        ExportOperationDialog,
+    )
+
+    app, window = _window(tmp_path, monkeypatch)
+    window.show()
+    app.processEvents()
+    dialog = window._show_operation_progress(
+        "Zweiter ChatGPT-Export", "Paket vorbereiten …",
+    )
+    assert isinstance(dialog, ExportOperationDialog)
+    dialog.update_message("KI-Basis kopieren: 2/8")
+    assert dialog.maximum() == 8 and dialog.value() == 2
+    assert "Restzeit" in dialog.time_label.text() or "geschätzt" in dialog.time_label.text()
+    directory = tmp_path / "FINs"
+    directory.mkdir()
+    dialog.complete_directory(directory, details="Sammel-Export erfolgreich.")
+    assert dialog.folder_button.isVisible()
+    assert str(directory) in dialog.destination_label.text()
+    dialog.close()
+    app.processEvents()
+    assert not window._loading_overlay.isVisible()
     window.close()
     app.processEvents()
 
