@@ -186,3 +186,71 @@ def test_local_qec_csv_export_filters_part_without_false_download_claims(tmp_pat
     assert "WDD12345678901234" in text
     assert "WDD12345678901235" not in text
     assert "QEC-Fall" in text
+
+
+
+def test_step_four_collects_all_requested_categories_without_page_scroll(
+    tmp_path, monkeypatch,
+):
+    app, window = _window(tmp_path, monkeypatch)
+    page = window.pages["workflow"]
+    page.cards[3].click()
+    assert page.workspaces.currentIndex() == 3
+    assert window.stack.currentWidget() is page
+    assert not page.findChildren(QScrollArea)
+    from ntf_insight.storage.cluster_evidence_store import CATEGORY_LABELS
+    assert len(CATEGORY_LABELS) == 11
+    assert set(page.context_import_buttons) == set(CATEGORY_LABELS)
+    assert set(page.context_scraper_buttons) == {
+        "tp_dashboard", "diagnosis_viewer", "tips_writer", "celonis",
+    }
+    assert not page.context_scraper_buttons["tp_dashboard"]["all"].isEnabled()
+    assert not page.context_scraper_buttons["celonis"]["all"].isEnabled()
+    assert page.context_originals.isChecked() is False
+    assert not page.context_export_button.isEnabled()
+    assert page.context_model.rowCount() == 0
+
+    # Keine Windows-Dateidialoge im Offscreen-Test öffnen.
+    page.action_requested.disconnect()
+    actions = []
+    page.action_requested.connect(actions.append)
+    page.context_import_buttons["cdd_smrd"].click()
+    assert actions == ["context_files:cdd_smrd"]
+    page.context_base_button.click()
+    assert actions[-1] == "context_base"
+    page.set_context_base(tmp_path / "analyse.zip")
+    assert page.context_export_button.isEnabled()
+    page.context_export_button.click()
+    assert actions[-1] == "context_export"
+    window.close()
+    app.processEvents()
+
+
+def test_context_collection_shows_provenance_and_part_specific_status(
+    tmp_path, monkeypatch,
+):
+    app, window = _window(tmp_path, monkeypatch)
+    page = window.pages["workflow"]
+    document = tmp_path / "cpc3.cdd"
+    document.write_text("Synthetisches CPC3-Testdokument", encoding="utf-8")
+    page.part_number.setText("A 123 456")
+    page._change_context()
+    count = page.context_store.add_files(
+        "coolant_pump", "A123456", "cdd_smrd", [document],
+    )
+    assert count == 1
+    page.refresh_context_files()
+    page.refresh()
+    assert page.context_model.rowCount() == 1
+    assert page.context_counts["cdd_smrd"].text() == "1"
+    assert page.cards[3].property("workflowState") == "partial"
+    page.cards[3].click()
+    page.context_review_button.click()
+    assert 3 in page.state.reviewed_steps
+    assert page.cards[3].property("workflowState") == "done"
+    page.part_number.setText("B 987 654")
+    page._change_context()
+    assert page.context_model.rowCount() == 0
+    assert page.cards[3].property("workflowState") == "pending"
+    window.close()
+    app.processEvents()
