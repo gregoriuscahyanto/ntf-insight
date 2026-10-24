@@ -210,9 +210,15 @@ def export_ki_analysepaket(
     if target.exists() or mapping_path.exists():
         raise FileExistsError("Analyse-ZIP oder lokale Zuordnung existiert bereits.")
 
+    phase_number = 0
+    phase_total = 7 + int(mit_qec_originalen)
+
     def advance(note: str) -> None:
+        nonlocal phase_number
+        phase_number += 1
         if progress:
-            progress(note)
+            # Arbeitsschritte, keine vorgetäuschte Byte- oder Datensatzquote.
+            progress(f"Analyseschritt {phase_number}/{phase_total}: {note}")
 
     target_fins = (
         {str(fin).strip().upper() for fin in selected_fins}
