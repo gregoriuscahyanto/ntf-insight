@@ -455,6 +455,9 @@ class WorkflowPage(QWidget):
         )
         export.addWidget(self.context_export_button)
         body.addLayout(export)
+        self.context_review_button = QPushButton("Unterlagensammlung geprüft")
+        self.context_review_button.clicked.connect(self._review)
+        body.addWidget(self.context_review_button)
         self.context_summary = QLabel(objectName="PageSubtitle")
         self.context_summary.setWordWrap(True)
         body.addWidget(self.context_summary)
@@ -494,6 +497,7 @@ class WorkflowPage(QWidget):
             actions.addStretch(1)
             detail.addLayout(actions)
             detail.addStretch(1)
+        self.review_buttons[3] = self.context_review_button
         self.review_button = self.review_buttons[4]
 
     def set_context_base(self, path: Path | None) -> None:
@@ -559,6 +563,7 @@ class WorkflowPage(QWidget):
             self.state = self.progress_store.load(profile_id, part)
             self._notice = ""
             self._error_step = None
+            self.set_context_base(None)
         self.refresh_context_files()
         self.refresh()
 
@@ -584,7 +589,7 @@ class WorkflowPage(QWidget):
         self._save()
 
     def _review(self) -> None:
-        if self.state.paused or self.state.step not in (4, 5):
+        if self.state.paused or self.state.step not in (3, 4, 5):
             return
         reviews = set(self.state.reviewed_steps)
         if self.state.step in reviews:
@@ -730,6 +735,13 @@ class WorkflowPage(QWidget):
         self.context_originals.setEnabled(not paused and not self._context_busy)
         self.context_export_button.setEnabled(
             not paused and not self._context_busy and self.context_base_path is not None
+        )
+        self.context_review_button.setEnabled(
+            not paused and not self._context_busy and bool(self.context_files)
+        )
+        self.context_review_button.setText(
+            "Bestätigung zurücknehmen" if 3 in self.state.reviewed_steps
+            else "Unterlagensammlung als geprüft markieren"
         )
         self.context_remove_button.setEnabled(
             not paused and not self._context_busy and bool(
