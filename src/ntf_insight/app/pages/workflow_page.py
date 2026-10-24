@@ -1212,6 +1212,8 @@ class WorkflowPage(QWidget):
         """Auswahl wechselt Kontext und Prüffortschritt, nicht die globalen Rohdaten."""
         from ntf_insight.storage.workflow_progress import normalize_part_number
         part = normalize_part_number(part)
+        if (profile, part) != (self.profile_id, self._context_part):
+            self._reset_ntf_filters()
         self.profile_id, self._context_part = profile, part
         idx = self.profile.findData(profile)
         if idx >= 0:
@@ -1643,6 +1645,7 @@ class WorkflowPage(QWidget):
             return
         self.part_number.setText(part)
         if (profile_id, part) != (self.profile_id, self._context_part):
+            self._reset_ntf_filters()
             self.profile_id = profile_id
             self._context_part = part
             self.progress_store.select_context(profile_id, part)
@@ -2584,7 +2587,10 @@ class WorkflowPage(QWidget):
             f"({accepted} bestätigt · {rejected} abgelehnt · "
             f"{imported - accepted - rejected} ungeprüft). "
             "SSL-Endbefund, QEC-Entscheidung und ChatGPT-Prüfstatus "
-            "sind unabhängige Angaben."
+            "sind unabhängige Angaben.\n"
+            "Fachentscheidung: Datenquellen → QEC-Prüfworkflow → "
+            "Bewertung speichern. ChatGPT-Prüfung: Datenquellen → "
+            "ChatGPT-Auswertung → Vorschlag bestätigen/ablehnen."
         )
         source_documents = sum(
             s.local_documents for category, s in self._source_coverage.items()
