@@ -184,7 +184,8 @@ def test_case_workspace_has_only_one_clustering_tab(tmp_path, monkeypatch) -> No
     assert cases.cluster_workspace is window.pages["workflow"].local_cluster_widget
     assert tabs.indexOf(cases.cluster_workspace) == -1
     assert cases.cluster_workspace.method_combo.count() == 3
-    assert cases.cluster_workspace.start_button.isEnabled()
+    # Im neuen Projektworkflow startet Clustering erst mit gewählter Sachnummer.
+    assert not cases.cluster_workspace.start_button.isEnabled()
     window.close()
     app.processEvents()
 
