@@ -1380,6 +1380,7 @@ class MainWindow(QMainWindow):
         if category == "diagnosis_viewer":
             cases._start_quicktest_download(
                 selected_only=False, fins_override=fins,
+                retry_missing=scope == "missing",
             )
             worker = cases._quicktest_worker
             if worker is not None:
