@@ -969,6 +969,17 @@ class MainWindow(QMainWindow):
             workflow.source_activity.record(
                 context[0], context[1], category, "Einlesen gestartet",
             )
+        if category != "qec":
+            workflow.set_context_operation(
+                category, True, f"{len(paths)} ausstehende Dateien werden geparst …"
+            )
+            worker.progress.connect(
+                lambda message, cat=category:
+                workflow.set_context_operation(cat, True, message)
+            )
+            worker.finished.connect(
+                lambda cat=category: workflow.set_context_operation(cat, False)
+            )
         worker.imported.connect(
             lambda summary, ctx=context, cat=category:
             self._resume_source_parsing_completed(cat, ctx, summary)
