@@ -15,6 +15,7 @@ from ntf_insight.ingestion.real_source_parsers import AutoExportParser, QuickTes
 from ntf_insight.ingestion.tips_json import TipsJsonParser
 from ntf_insight.storage.cluster_evidence_store import ClusterEvidenceStore
 from ntf_insight.storage.duckdb_store import DuckDBStore
+from ntf_insight.storage.quicktest_store import QuickTestStore
 from ntf_insight.storage.source_knowledge_store import SourceKnowledgeStore
 from ntf_insight.storage.workflow_source_coverage import get_workflow_coverage
 
@@ -30,17 +31,8 @@ def _setup(root: Path):
     store = DuckDBStore(root / "ntf-insight.duckdb")
     knowledge = SourceKnowledgeStore(store)
     evidence = ClusterEvidenceStore(store)
-    with store.connect() as con:
-        con.execute("""
-            CREATE TABLE IF NOT EXISTS quicktest_reports (
-                report_id VARCHAR PRIMARY KEY, fin VARCHAR NOT NULL
-            )
-        """)
-        con.execute("""
-            CREATE TABLE IF NOT EXISTS quicktest_sources (
-                artifact_sha256 VARCHAR PRIMARY KEY,report_id VARCHAR NOT NULL
-            )
-        """)
+    # Gleiche produktive Tabellenstruktur wie beim echten Quellenimport.
+    QuickTestStore(store)
     return store, knowledge, evidence
 
 
@@ -157,7 +149,13 @@ def test_counts_qec_quicktest_tips_are_source_based_and_project_scoped(tmp_path)
     report_sha = RawArchive(root / "raw").archive(pdf, SourceType.SHORT_TEST)
     store.save_artifact(report_sha)
     with store.connect() as con:
-        con.execute("INSERT INTO quicktest_reports VALUES (?,?)", ["QT1", FIN_1])
+        con.execute(
+            "INSERT INTO quicktest_reports "
+            "(report_id,fin,vin,diagnosed_at,mileage_km,ecu_count,dtc_count,"
+            "header_json,first_source_sha256,imported_at) "
+            "VALUES (?,?,?,CURRENT_TIMESTAMP,?,?,?, ?,?,CURRENT_TIMESTAMP)",
+            ["QT1", FIN_1, FIN_1, None, 0, 0, "{}", report_sha.sha256],
+        )
         con.execute(
             "INSERT INTO quicktest_sources VALUES (?,?)", [report_sha.sha256, "QT1"],
         )
@@ -214,7 +212,7 @@ def test_tp_csv_document_parser_and_celonis_archive_are_separate(tmp_path):
     coverage = get_workflow_coverage(store, root, _rows(), files)
     assert coverage["tp_dashboard"].parsed_documents == 1
     assert coverage["tp_dashboard"].parsed_cases == 1
-    assert coverage["tp_dashboard"].downloaded_cases is None
+    assert coverage["tp_dashboard"].downloaded_cases == 1
 
     cel = tmp_path / "celonis.xlsx"
     cel.write_bytes(b"synthetisches xlsx zum Archivtest")
