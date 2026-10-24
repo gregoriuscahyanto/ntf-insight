@@ -137,11 +137,19 @@ def test_project_page_opens_new_project_and_configures_ecus(tmp_path, monkeypatc
     assert not hasattr(workflow, "context_base_button")
     assert not hasattr(workflow, "context_export_button")
     workflow.new_project_button.click()
-    assert window.stack.currentWidget() is settings
+    assert window.stack.currentWidget() is workflow
+    assert "project_settings" not in window.navigation.buttons
+    assert window._project_dialog is not None
+    assert window._project_dialog.isVisible()
+    assert window._modal_shade.isVisible()
     settings.part_edit.setText("A 123 456")
     settings.ecus_edit.setPlainText("CPC3\nMCM")
     settings.save_button.click()
     assert window.stack.currentWidget() is workflow
+    assert window._project_dialog is not None
+    assert not window._project_dialog.isVisible()
+    assert not window._modal_shade.isVisible()
+    assert workflow.project_combo.currentData() == ("coolant_pump", "A 123 456")
     assert "Kühlmittelpumpe [A 123 456]" in workflow.project_title.text()
     assert "CPC3" in workflow.project_ecus_label.text()
     assert "MCM" in workflow.project_ecus_label.text()
