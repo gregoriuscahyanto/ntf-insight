@@ -208,8 +208,10 @@ def test_project_settings_confirmation_requires_exact_part_number(tmp_path, monk
     monkeypatch.setattr(
         QInputDialog, "getText", lambda *_a, **_k: ("A 111 222", True),
     )
-    widget.remove_button.click()
-    widget.delete_button.click()
+    assert widget.remove_button.isEnabled()
+    assert widget.delete_button.isEnabled()
+    widget._confirm_project_deletion(False)
+    widget._confirm_project_deletion(True)
     assert requested == [
         ("coolant_pump", "A 111 222", False),
         ("coolant_pump", "A 111 222", True),
