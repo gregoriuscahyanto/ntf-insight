@@ -54,6 +54,7 @@ SCOPED_TABLES = frozenset({
     "workflow_first_ai_packages", "workflow_second_ai_exports",
     "workflow_ai_rounds", "workflow_progress", "workflow_current_context",
     "workflow_projects", "workflow_ssl_selection", "workflow_source_activity",
+    "workflow_source_log",
     "dtc_manual_review_marks", "confirmed_root_causes",
 })
 
@@ -187,6 +188,7 @@ def _scope_snapshot(database: Path, data_root: Path, profile: str, part: str) ->
         _project_rows(con, "workflow_second_ai_exports", profile, key, available)
         _project_rows(con, "workflow_ssl_selection", profile, key, available)
         _project_rows(con, "workflow_source_activity", profile, key, available)
+        _project_rows(con, "workflow_source_log", profile, key, available)
         _retain(con, "workflow_current_context", "profile_id", set(), available)
 
         package_ids = {
