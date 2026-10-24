@@ -3,8 +3,8 @@ from __future__ import annotations
 
 from PySide6.QtCore import Signal
 from PySide6.QtWidgets import (
-    QComboBox, QFormLayout, QHBoxLayout, QLabel, QLineEdit, QMessageBox,
-    QPlainTextEdit, QPushButton, QVBoxLayout, QWidget,
+    QComboBox, QFormLayout, QHBoxLayout, QInputDialog, QLabel, QLineEdit,
+    QMessageBox, QPlainTextEdit, QPushButton, QVBoxLayout, QWidget,
 )
 
 from ntf_insight.components.registry import list_component_profiles
@@ -23,6 +23,7 @@ class ProjectSettingsPage(QWidget):
     """Neue Sachnummer erzeugt ein eigenes Projekt, nicht eine neue globale DB."""
 
     project_selected = Signal(str, str)
+    project_delete_requested = Signal(str, str, bool)
 
     def __init__(self, projects: WorkflowProjectStore) -> None:
         super().__init__(objectName="ProjectSettingsPage")
@@ -81,6 +82,29 @@ class ProjectSettingsPage(QWidget):
         buttons.addWidget(self.open_button)
         buttons.addStretch(1)
         outer.addLayout(buttons)
+        deletion_row = QHBoxLayout()
+        self.remove_button = QPushButton("Projekt entfernen")
+        self.remove_button.setToolTip(
+            "Nur die Projektregistrierung löschen. QEC-Fälle, Berichte und "
+            "gespeicherte Auswertungen bleiben lokal erhalten."
+        )
+        self.remove_button.clicked.connect(
+            lambda: self._confirm_project_deletion(False)
+        )
+        deletion_row.addWidget(self.remove_button)
+        self.delete_button = QPushButton("Projekt vollständig löschen")
+        self.delete_button.setToolTip(
+            "Eindeutig zugeordnete Analysen, Fälle, Berichte und exklusive "
+            "Originale löschen. Bei gemeinsam genutzten Quellen wird "
+            "die Löschung vollständig verweigert."
+        )
+        self.delete_button.setObjectName("DangerButton")
+        self.delete_button.clicked.connect(
+            lambda: self._confirm_project_deletion(True)
+        )
+        deletion_row.addWidget(self.delete_button)
+        deletion_row.addStretch(1)
+        outer.addLayout(deletion_row)
         self.status = QLabel(objectName="PageSubtitle")
         self.status.setWordWrap(True)
         outer.addWidget(self.status)
@@ -102,12 +126,19 @@ class ProjectSettingsPage(QWidget):
         self.project_selector.blockSignals(False)
         if not self._is_new:
             self._load_selection()
+        self._refresh_delete_buttons()
 
     def _set_default_component(self) -> None:
         if self._is_new:
             self.component_edit.setText(
                 _component_label(str(self.profile_combo.currentData() or "coolant_pump"))
             )
+
+    def _refresh_delete_buttons(self) -> None:
+        selected = self.project_selector.currentData()
+        enabled = (not self._is_new and selected is not None)
+        self.remove_button.setEnabled(enabled)
+        self.delete_button.setEnabled(enabled)
 
     def _load_selection(self, *_args) -> None:
         selected = self.project_selector.currentData()
@@ -117,6 +148,7 @@ class ProjectSettingsPage(QWidget):
         if project is None:
             return
         self._is_new = False
+        self._refresh_delete_buttons()
         index = self.profile_combo.findData(project.profile_id)
         if index >= 0:
             self.profile_combo.setCurrentIndex(index)
@@ -134,6 +166,7 @@ class ProjectSettingsPage(QWidget):
 
     def start_new(self) -> None:
         self._is_new = True
+        self._refresh_delete_buttons()
         self.profile_combo.setEnabled(True)
         self.part_edit.setReadOnly(False)
         self.part_edit.clear()
@@ -150,6 +183,69 @@ class ProjectSettingsPage(QWidget):
     def select_project(self, profile: str, part: str) -> None:
         self._is_new = False
         self.refresh_projects(select=(profile, part))
+
+    def _confirm_project_deletion(self, complete: bool) -> None:
+        """Zwei Bestätigungen; Sachnummer muss wortgetreu eingegeben werden."""
+        if self._is_new:
+            return
+        selected = self.project_selector.currentData()
+        if selected is None:
+            return
+        project = self.projects.get(*selected)
+        if project is None:
+            QMessageBox.warning(
+                self, "Projekt löschen", "Projekt wurde nicht gefunden."
+            )
+            self.refresh_projects()
+            return
+        if complete:
+            description = (
+                "Projektkonfiguration, projektspezifische Analysen, "
+                "FIN-/Fall- und Diagnosedaten sowie ausschließlich diesem "
+                "Projekt zugehörige archivierte Dateien werden gelöscht.\n\n"
+                "Wenn QEC-/TP-Originale, FINs oder KI-Pakete mit anderen "
+                "Projekten geteilt werden, wird der Vorgang vollständig "
+                "abgebrochen. Globale, nicht eindeutig zuordenbare "
+                "technische Referenzdaten bleiben geschützt.\n\n"
+                "Die Löschung ist nicht rückgängig zu machen. Bitte vorher "
+                "einen Projekt-Export bzw. eine vollständige Sicherung erstellen."
+            )
+        else:
+            description = (
+                "Es wird ausschließlich die Projektregistrierung mit Name, "
+                "Sachnummernzuordnung und ECU-Einstellungen entfernt.\n\n"
+                "Bereits importierte QEC-Fälle, FINs, Unterlagen, "
+                "Workflowfortschritt und Analysedaten bleiben erhalten. "
+                "Das Projekt kann später erneut angelegt werden."
+            )
+        message = (
+            f"{'VOLLSTÄNDIG LÖSCHEN' if complete else 'PROJEKT ENTFERNEN'}\n"
+            f"{project.title}\n\n{description}\n\nFortfahren?"
+        )
+        answer = QMessageBox.question(
+            self, "Projekt löschen", message,
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if answer != QMessageBox.StandardButton.Yes:
+            return
+        verification, ok = QInputDialog.getText(
+            self, "Sachnummer bestätigen",
+            "Zur Bestätigung die Sachnummer exakt eingeben:\n"
+            + project.part_number,
+        )
+        if not ok:
+            return
+        if verification != project.part_number:
+            QMessageBox.warning(
+                self, "Abgebrochen",
+                "Die eingegebene Sachnummer stimmt nicht exakt überein. "
+                "Es wurde nichts gelöscht.",
+            )
+            return
+        self.project_delete_requested.emit(
+            project.profile_id, project.part_number, complete
+        )
 
     def _draft_project(self) -> NTFProject:
         return NTFProject(
