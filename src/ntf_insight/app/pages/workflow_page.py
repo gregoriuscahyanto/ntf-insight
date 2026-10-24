@@ -943,7 +943,7 @@ class WorkflowPage(QWidget):
         if active:
             # Die Quellen melden bearbeitete FINs bzw. lokale Parser-Positionen.
             # Nur bei bekanntem Nenner einen Prozentwert anzeigen.
-            match = re.search(r"(?:FIN-Fortschritt:\\s*|parsen \\()(\\d+)\\s*/\\s*(\\d+)", message, re.I)
+            match = re.search(r"(?:FIN-Fortschritt:\s*|parsen \()(\d+)\s*/\s*(\d+)", message, re.I)
             if match and int(match.group(2)) > 0:
                 done, total = map(int, match.groups())
                 bar.setRange(0, total)
