@@ -536,7 +536,7 @@ def test_qec_actions_match_source_table_and_parser_zip(tmp_path, monkeypatch):
     page = window.pages["workflow"]
     assert page.qec_action_row.objectName() == "SourceCoverageRow"
     assert page.download_all_button.text() == "Alle QEC abrufen"
-    assert page.download_missing_button.text() == "Download fortsetzen"
+    assert page.download_missing_button.text() == "Abruf fortsetzen"
     assert page.download_selected_button.text() == "Markierte abrufen"
     assert page.qec_parse_all_button.text() == "Alle QEC parsen"
     assert page.qec_parse_resume_button.text() == "Parsing fortsetzen"
@@ -551,7 +551,7 @@ def test_qec_actions_match_source_table_and_parser_zip(tmp_path, monkeypatch):
     assert actions[-1] == "qec_download_cancel"
     assert not page.download_missing_button.isEnabled()
     page.set_download_busy(False)
-    assert page.download_missing_button.text() == "Download fortsetzen"
+    assert page.download_missing_button.text() == "Abruf fortsetzen"
     assert "problem_zip" in page.context_scraper_buttons["diagnosis_viewer"]
     assert "problem_zip" in page.context_scraper_buttons["tips_writer"]
     assert "problem_zip" in page.context_scraper_buttons["tp_dashboard"]
