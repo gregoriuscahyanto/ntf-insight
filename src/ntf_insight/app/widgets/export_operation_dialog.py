@@ -47,7 +47,9 @@ class ExportOperationDialog(QDialog):
             "QLabel#ExportDialogTitle { color: #0c243d;"
             "font-weight: bold; font-size: 17px; }"
             "QProgressBar { min-height: 15px; border-radius: 5px; }"
-            "QCheckBox { spacing: 8px; }"
+            "QDialog#NTFExportOperationDialog QLabel { color: #203047; }"
+            "QDialog#NTFExportOperationDialog QCheckBox {"
+            "spacing: 8px; color: #203047; }"
         )
         self._running = False
         self._started_at = 0.0
