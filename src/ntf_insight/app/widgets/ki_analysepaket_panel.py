@@ -354,7 +354,13 @@ class KIAnalysepaketPanel(QWidget):
         )
         if not filename:
             return
-        path = Path(filename)
+        self.import_from_path(Path(filename))
+
+    def import_from_path(self, path: Path) -> None:
+        """Import ohne zweiten Dateidialog, z. B. für Workflow 05."""
+        if not self._can_start():
+            return
+        path = Path(path)
         if not path.is_file() or path.stat().st_size > MAX_JSON_SIZE:
             QMessageBox.warning(self, "Ungültige Datei", "JSON-Datei fehlt oder ist zu groß.")
             return
