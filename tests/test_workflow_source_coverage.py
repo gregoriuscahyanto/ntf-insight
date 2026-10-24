@@ -405,3 +405,17 @@ def test_partial_qec_parser_stays_amber_instead_of_false_green(tmp_path):
     assert status.partial_documents == 1
     assert status.partial_qec == frozenset({(FIN_1, "12345")})
     assert (FIN_1, "12345") in status.missing_qec
+
+
+
+def test_progress_rejects_invalid_fin_as_local_archive_path(tmp_path):
+    root = tmp_path / "data"
+    store, _, _ = _setup(root)
+    malicious_rows = [{
+        "fin": "..", "reference": "1",
+        "case_id": "invalid", "part_number": "A111222",
+    }]
+    progress = get_workflow_coverage(store, root, malicious_rows)
+    assert progress["diagnosis_viewer"].total_cases == 0
+    assert progress["tips_writer"].total_cases == 0
+    assert progress["qec"].local_documents == 0
