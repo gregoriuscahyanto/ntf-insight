@@ -138,7 +138,8 @@ def test_qec_download_donut_and_semantic_row_highlights(tmp_path, monkeypatch):
             Qt.ItemDataRole.BackgroundRole,
         )
         assert isinstance(brush, QBrush)
-    assert page.qec_model._row_states == ["success", "muted", "muted"]
+    assert page.qec_model._row_states == ["warning", "muted", "muted"]
+    assert page.qec_model.rows[0][-1] == "Ausstehend"
     page._chatgpt_by_case = {
         "QA-1": {"bewertung": {
             "ntf_bewertung": "NTF plausibel",
