@@ -164,7 +164,10 @@ def fully_delete_project(
 
     # Aktive QEC-Quellen sind potenziell geteilt. Nicht nur DB-Zeilen,
     # sondern den tatsächlichen Inhalt jeder unveränderlichen Excel prüfen.
-    qec_rows = QecWorkflowStore(store).rows(root / "qec")
+    qec_rows = (
+        QecWorkflowStore(store).rows(root / "qec")
+        if project.profile_id == "coolant_pump" else []
+    )
     ours = [r for r in qec_rows if part_key(r["part_number"]) == key]
     our_cases = {str(r["case_id"]) for r in ours}
     our_fins = {str(r["fin"]).upper() for r in ours}
@@ -206,6 +209,11 @@ def fully_delete_project(
                 raise ValueError("Ein gespeicherter Fall ist nicht lesbar.") from exc
             case_part = part_key(str(payload.get("qec_part_number") or ""))
             case_profile = str(payload.get("component_profile_id") or "")
+            if case_id in our_cases and case_profile and case_profile != project.profile_id:
+                raise ValueError(
+                    "Widersprüchliche Profilzuordnung eines QEC-Falls. "
+                    "Vollständiges Löschen verweigert."
+                )
             if case_part == key and not case_profile and case_id not in our_cases:
                 raise ValueError(
                     "Ein Fall dieser Sachnummer hat keine eindeutige "
@@ -385,11 +393,19 @@ def fully_delete_project(
                         [profile, key],
                     )
             if "workflow_progress" in available:
-                con.execute(
-                    "DELETE FROM workflow_progress WHERE profile_id=? "
-                    "AND regexp_replace(upper(part_number),'[^A-Z0-9]','','g')=?",
-                    [profile, key],
-                )
+                stored_numbers = [
+                    row[0] for row in con.execute(
+                        "SELECT part_number FROM workflow_progress "
+                        "WHERE profile_id=?", [profile],
+                    ).fetchall()
+                ]
+                for saved_part in stored_numbers:
+                    if part_key(saved_part) == key:
+                        con.execute(
+                            "DELETE FROM workflow_progress WHERE "
+                            "profile_id=? AND part_number=?",
+                            [profile, saved_part],
+                        )
             con.execute(
                 "DELETE FROM workflow_projects WHERE profile_id=? AND part_key=?",
                 [profile, key],
