@@ -716,3 +716,88 @@ def test_chatgpt_buttons_pulse_only_after_two_green_steps_and_turn_green_on_impo
     page._update_ai_button_states()
     window.close()
     app.processEvents()
+
+
+def test_parser_zip_progress_modal_reports_eta_and_visible_failure(
+    tmp_path, monkeypatch,
+):
+    from PySide6.QtWidgets import QMessageBox
+
+    app, window = _window(tmp_path, monkeypatch)
+    window.show()
+    app.processEvents()
+    warnings = []
+    monkeypatch.setattr(
+        QMessageBox, "critical",
+        lambda _parent, title, message: warnings.append((title, message)),
+    )
+
+    window._diagnostics_started("Fehler-ZIP erstellen …")
+    assert window._diagnostics_dialog is not None
+    assert window._loading_overlay.isVisible()
+    assert window.stack.graphicsEffect() is not None
+    window._diagnostics_progress("ZIP-Dateien schreiben: 2/5")
+    dialog = window._diagnostics_dialog
+    assert dialog.maximum() == 5
+    assert dialog.value() == 2
+    assert "2/5" in dialog.labelText()
+    window._diagnostics_failed("synthetischer Dateizugriffsfehler")
+    window._diagnostics_ended()
+    assert window._diagnostics_dialog is None
+    assert not window._loading_overlay.isVisible()
+    assert window.stack.graphicsEffect() is None
+    assert len(warnings) == 1
+    assert "nicht erstellt" in warnings[0][0]
+    assert "synthetischer" in warnings[0][1]
+    window.close()
+    app.processEvents()
+
+
+def test_parser_zip_success_shows_real_destination_and_folder_action(
+    tmp_path, monkeypatch,
+):
+    from PySide6.QtWidgets import QMessageBox
+
+    app, window = _window(tmp_path, monkeypatch)
+    window.show()
+    app.processEvents()
+    messages = []
+    monkeypatch.setattr(
+        QMessageBox, "exec",
+        lambda instance: messages.append(instance.text()) or 0,
+    )
+    destination = tmp_path / "synthetic-parser-errors.zip"
+    destination.write_bytes(b"synthetic nonempty file")
+    window._diagnostics_started("ZIP erstellen")
+    window._diagnostics_progress("ZIP-Dateien schreiben: 1/1")
+    window._diagnostics_saved(str(destination))
+    window._diagnostics_ended()
+    assert window._diagnostics_dialog is None
+    assert not window._loading_overlay.isVisible()
+    assert len(messages) == 1
+    assert str(destination) in messages[0]
+    assert "Byte" in messages[0]
+    window.close()
+    app.processEvents()
+
+
+def test_project_transfer_uses_same_blurred_progress_overlay(tmp_path, monkeypatch):
+    app, window = _window(tmp_path, monkeypatch)
+    window.show()
+    app.processEvents()
+    dialog = window._show_operation_progress(
+        "Projekt exportieren", "Projektpaket vorbereiten …",
+    )
+    window._project_transfer_dialog = dialog
+    assert window._loading_overlay.isVisible()
+    assert window.stack.graphicsEffect() is not None
+    window._project_transfer_progress(40, "Projektdateien sammeln")
+    assert dialog.maximum() == 100
+    assert dialog.value() == 40
+    assert "Projektdateien sammeln" in dialog.labelText()
+    window._project_transfer_dialog = None
+    window._close_operation_progress(dialog)
+    assert not window._loading_overlay.isVisible()
+    assert window.stack.graphicsEffect() is None
+    window.close()
+    app.processEvents()
