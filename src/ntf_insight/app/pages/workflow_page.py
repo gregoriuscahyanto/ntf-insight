@@ -646,8 +646,12 @@ class WorkflowPage(QWidget):
         for index, (category, label) in enumerate(EVIDENCE_CATEGORIES[4:]):
             col = 0
             row = index
-            group = QHBoxLayout()
+            tech_frame = QFrame(objectName="TechnicalEvidenceRow")
+            tech_frame.setProperty("evidenceState", "pending")
+            group = QHBoxLayout(tech_frame)
+            group.setContentsMargins(7, 3, 7, 3)
             group.setSpacing(3)
+            self.context_technical_rows[category] = tech_frame
             name = QLabel(short_labels.get(category, label))
             name.setToolTip("Dateien werden unverändert lokal und mit SHA-256 archiviert.")
             group.addWidget(name, 1)
@@ -658,8 +662,9 @@ class WorkflowPage(QWidget):
                     "einlesen; SMR-D bleibt zunächst Original-Inventar."
                 )
                 parser.clicked.connect(
-                    lambda: self.action_requested.emit("context_parse:cdd_smrd")
+                    lambda: self._trigger_context_parse("cdd_smrd", "files")
                 )
+                self.context_technical_parse[category] = parser
                 group.addWidget(parser)
                 resume = QPushButton("Parsing fortsetzen", objectName="WorkflowAction")
                 resume.setToolTip(
@@ -668,9 +673,7 @@ class WorkflowPage(QWidget):
                     "SMR-D ist nicht unterstützt."
                 )
                 resume.clicked.connect(
-                    lambda: self.action_requested.emit(
-                        "context_parse_resume:cdd_smrd"
-                    )
+                    lambda: self._trigger_context_parse("cdd_smrd", "resume")
                 )
                 self.context_technical_resume[category] = resume
                 group.addWidget(resume)
@@ -687,7 +690,7 @@ class WorkflowPage(QWidget):
             count.setMinimumWidth(24)
             group.addWidget(count)
             self.context_counts[category] = count
-            tech_grid.addLayout(group, row, col)
+            tech_grid.addWidget(tech_frame, row, col)
         left.addLayout(tech_grid)
         left.addStretch(1)
         middle.addLayout(left, 3)
@@ -999,14 +1002,52 @@ class WorkflowPage(QWidget):
             bar.setRange(0, 100)
             bar.setValue(0)
 
-    def set_context_scraper_busy(self, category: str, busy: bool) -> None:
+    def _trigger_context_fetch(self, category: str, scope: str) -> None:
+        if category in self._context_scrapers_busy:
+            if self._context_scrape_active.get(category) == scope:
+                self._context_stop_requested.add(("scrape", category))
+                self.action_requested.emit(f"context_scrape:{category}:cancel")
+                self._refresh_controls()
+            return
+        self.action_requested.emit(f"context_scrape:{category}:{scope}")
+
+    def _trigger_context_parse(self, category: str, scope: str) -> None:
+        if category in self._context_parsers_busy:
+            if self._context_parsers_busy[category] == scope:
+                self._context_stop_requested.add(("parse", category))
+                self.action_requested.emit(f"context_parse_cancel:{category}")
+                self._refresh_controls()
+            return
+        if scope == "all":
+            self.action_requested.emit(f"context_parse_all:{category}")
+        elif scope == "files":
+            self.action_requested.emit(f"context_parse:{category}")
+        else:
+            self.action_requested.emit(f"context_parse_resume:{category}")
+
+    def set_context_parser_busy(
+        self, category: str, busy: bool, scope: str = "resume",
+    ) -> None:
+        if busy:
+            self._context_parsers_busy[category] = scope
+        else:
+            self._context_parsers_busy.pop(category, None)
+            self._context_stop_requested.discard(("parse", category))
+        self._refresh_controls()
+
+    def set_context_scraper_busy(
+        self, category: str, busy: bool, scope: str = "all",
+    ) -> None:
         self.set_context_operation(
             category, busy, "Portalabruf läuft · Dauer hängt von Portal und SSO ab"
         )
         if busy:
             self._context_scrapers_busy.add(category)
+            self._context_scrape_active[category] = scope
         else:
             self._context_scrapers_busy.discard(category)
+            self._context_scrape_active.pop(category, None)
+            self._context_stop_requested.discard(("scrape", category))
         self._refresh_controls()
 
     def _historical_portal_downloads(
@@ -1738,19 +1779,56 @@ class WorkflowPage(QWidget):
         for button in self.context_import_buttons.values():
             button.setEnabled(not paused and not self._context_busy)
         for category, buttons in self.context_scraper_buttons.items():
+            coverage = self._source_coverage.get(category)
+            busy = category in self._context_parsers_busy
+            active = self._context_parsers_busy.get(category)
+            stop_pending = ("parse", category) in self._context_stop_requested
             blocked = self._context_busy or self._import_busy
-            buttons["parse"].setEnabled(not paused and not blocked)
-            status = self._source_coverage.get(category)
+            buttons["parse"].setText(
+                "Parsing stoppen" if busy and active == "all"
+                else "Einlesen stoppen" if busy and active == "files"
+                else "Originaldatei importieren …" if category == "celonis"
+                else "Alle Dokumente neu parsen"
+            )
+            buttons["resume_parse"].setText(
+                "Parsing stoppen" if busy and active == "resume"
+                else "Parser fehlt" if category == "celonis"
+                else "Ausstehendes Parsing fortsetzen"
+            )
+            buttons["parse"].setEnabled(
+                busy and active in {"all", "files"} and not stop_pending
+                or not busy and not blocked and (
+                    category == "celonis"
+                    or bool(coverage and coverage.local_paths)
+                )
+            )
             buttons["resume_parse"].setEnabled(
-                not paused and not blocked and status is not None
-                and status.can_resume_parsing
+                busy and active == "resume" and not stop_pending
+                or not busy and not blocked and bool(
+                    coverage and coverage.can_resume_parsing
+                )
             )
         for category, button in self.context_technical_resume.items():
             status = self._source_coverage.get(category)
+            active = self._context_parsers_busy.get(category)
+            stop_pending = ("parse", category) in self._context_stop_requested
+            button.setText(
+                "Parsing stoppen" if active == "resume" else "Parsing fortsetzen"
+            )
             button.setEnabled(
-                not paused and not self._context_busy and not self._import_busy
+                active == "resume" and not stop_pending
+                or active is None and not self._context_busy and not self._import_busy
                 and bool(status and status.can_resume_parsing)
             )
+            parse_button = self.context_technical_parse.get(category)
+            if parse_button is not None:
+                parse_button.setText(
+                    "Einlesen stoppen" if active == "files" else "Einlesen"
+                )
+                parse_button.setEnabled(
+                    active == "files" and not stop_pending
+                    or active is None and not self._context_busy and not self._import_busy
+                )
         self.cluster_originals.setEnabled(not paused and not self._context_busy)
         has_first = self.first_package is not None
         has_first_result = bool(has_first and self.first_package.analysis_id)
@@ -1785,15 +1863,27 @@ class WorkflowPage(QWidget):
         )
         for category in ("diagnosis_viewer", "tips_writer"):
             buttons = self.context_scraper_buttons[category]
+            active = self._context_scrape_active.get(category)
             busy = category in self._context_scrapers_busy
-            buttons["all"].setEnabled(not paused and not busy and bool(self._scoped_rows))
+            stop_pending = ("scrape", category) in self._context_stop_requested
             status = self._source_coverage.get(category)
+            buttons["all"].setText(
+                "Abruf stoppen" if active == "all" else "Alle FINs neu abrufen"
+            )
+            buttons["missing"].setText(
+                "Abruf stoppen" if active == "missing"
+                else "Nur fehlende FINs abrufen"
+            )
+            buttons["all"].setEnabled(
+                busy and active == "all" and not stop_pending
+                or not busy and not self._import_busy and bool(self._scoped_rows)
+            )
             buttons["missing"].setEnabled(
-                not paused and not busy and bool(
+                busy and active == "missing" and not stop_pending
+                or not busy and not self._import_busy and bool(
                     status is not None and status.missing_fins
                 )
             )
-            buttons["cancel"].setEnabled(busy)
         self.cancel_import_button.setEnabled(self._import_busy)
         self.resume_import_button.setEnabled(
             not paused and not self._import_busy and self._import_can_resume
