@@ -327,7 +327,7 @@ def test_context_scrapers_use_only_current_qec_part_with_single_fetch_action(
     cases._quicktest_worker = None
     quicktest_worker.finished.emit()
     assert page.context_scraper_buttons["diagnosis_viewer"]["all"].text() == (
-        "Alle FINs neu abrufen"
+        "FINs neu abrufen"
     )
 
     tips = cases.tips_download
@@ -642,6 +642,10 @@ def test_qec_and_underlagen_share_compact_no_scroll_layout(tmp_path, monkeypatch
         for frame in page.context_source_rows.values()
     )
     assert page.context_source_rows["celonis"].layout().itemAtPosition(0, 3)
+    assert buttons["all"].text() == "FINs neu abrufen"
+    # Sicherstellen, dass auch ein Qt-Refresh die kurze Beschriftung beibehält.
+    page._refresh_controls()
+    assert buttons["all"].text() == "FINs neu abrufen"
     # CDD über zwei Spalten; übrige sechs Kategorien in nur drei Zeilen.
     assert page.context_technical_rows["cdd_smrd"].minimumHeight() >= 30
     assert page.context_technical_rows["additional"].isVisible()
