@@ -5,13 +5,13 @@ from dataclasses import replace
 
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
-    QComboBox, QFrame, QGridLayout, QHBoxLayout, QLabel, QLineEdit,
+    QComboBox, QGridLayout, QHBoxLayout, QLabel, QLineEdit,
     QProgressBar, QPushButton, QSizePolicy, QVBoxLayout, QWidget,
 )
 
 from ntf_insight.components.registry import list_component_profiles
 from ntf_insight.storage.workflow_progress import (
-    WorkflowProgressStore, WorkflowProgress, normalize_part_number,
+    WorkflowProgressStore, normalize_part_number,
 )
 
 
