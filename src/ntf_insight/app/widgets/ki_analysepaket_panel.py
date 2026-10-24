@@ -86,6 +86,10 @@ class KIAnalysepaketPanel(QWidget):
     analysis_updated = Signal()
     first_package_export_started = Signal(object)
     first_package_exported = Signal(object)
+    export_options_requested = Signal()
+    export_progress = Signal(str)
+    export_failed = Signal(str)
+    export_finished = Signal()
     analysis_imported = Signal(object)
 
     def __init__(
@@ -98,6 +102,7 @@ class KIAnalysepaketPanel(QWidget):
         self.import_worker: ChatGPTImportWorker | None = None
         self._guard: Callable[[], bool] | None = None
         self._next_workflow_fins: set[str] | None = None
+        self._use_shared_export_dialog = False
         self._visible: list[dict] = []
 
         layout = QVBoxLayout(self)
@@ -153,7 +158,7 @@ class KIAnalysepaketPanel(QWidget):
             "CSV-Clusterdateien und Excel-Übersicht, vollständige einheitliche "
             "ChatGPT-Ergebnisvorlage, lokale private Pseudonymzuordnung."
         )
-        self.export_button.clicked.connect(self._export)
+        self.export_button.clicked.connect(self._request_export)
         row.addWidget(self.export_button)
         row.addStretch(1)
         layout.addLayout(row)
@@ -284,14 +289,19 @@ class KIAnalysepaketPanel(QWidget):
         """Einmaliger FIN-Filter für den nächsten Workflow-ZIP-Export."""
         self._next_workflow_fins = set(fins)
 
+    def _request_export(self) -> None:
+        """MainWindow owns the shared export card, standalone panel stays usable."""
+        if self._use_shared_export_dialog:
+            self.export_options_requested.emit()
+        else:
+            self._export()
+
+    def use_shared_export_dialog(self) -> None:
+        self._use_shared_export_dialog = True
+
     def _export(self) -> None:
-        selected = self._next_workflow_fins
-        self._next_workflow_fins = None
+        """Standalone fallback used by isolated source-panel dialogs."""
         if not self._can_start():
-            return
-        with_text = self.include_text.isChecked()
-        with_originals = self.include_qec_originale.isChecked()
-        if not self._confirm_confidential(originals=with_originals, text=with_text):
             return
         filename, _ = QFileDialog.getSaveFileName(
             self, "KI-Analysepaket für Fallclusterung erstellen",
@@ -302,15 +312,47 @@ class KIAnalysepaketPanel(QWidget):
         )
         if not filename:
             return
-        destination = Path(filename)
+        self.start_export(
+            Path(filename),
+            mit_freitext=self.include_text.isChecked(),
+            mit_qec_originalen=self.include_qec_originale.isChecked(),
+        )
+
+    def start_export(
+        self, destination: Path, *,
+        mit_freitext: bool = False,
+        mit_qec_originalen: bool = False,
+    ) -> bool:
+        """Explicit selection from the modal dialog, never an implicit opt-in."""
+        if not self._can_start():
+            return False
+        if not self._confirm_confidential(
+            originals=mit_qec_originalen, text=mit_freitext,
+        ):
+            return False
+        destination = Path(destination)
         if destination.suffix.lower() != ".zip":
             destination = destination.with_suffix(".zip")
+        mapping = destination.with_name(
+            destination.stem + "_NICHT_HOCHLADEN_ZUORDNUNG.csv"
+        )
+        if destination.exists() or mapping.exists():
+            QMessageBox.warning(
+                self, "Analyse-Ziel bereits vorhanden",
+                "ZIP oder private Pseudonymzuordnung existiert bereits. "
+                "Bitte einen neuen Namen wählen; die Zuordnung wird nicht ersetzt.",
+            )
+            return False
+        selected = self._next_workflow_fins
+        self._next_workflow_fins = None
         self.worker = KIAnalyseWorker(
-            self.service, destination, mit_freitext=with_text,
-            mit_qec_originalen=with_originals,
+            self.service, destination,
+            mit_freitext=mit_freitext,
+            mit_qec_originalen=mit_qec_originalen,
             selected_fins=selected,
         )
         self.worker.progress.connect(self.status.setText)
+        self.worker.progress.connect(self.export_progress.emit)
         self.worker.completed.connect(self._completed)
         self.worker.failed.connect(self._failed)
         self.worker.finished.connect(self._finished)
@@ -322,6 +364,7 @@ class KIAnalysepaketPanel(QWidget):
         self.first_package_export_started.emit(destination)
         self.transfer_busy.emit(True)
         self.worker.start()
+        return True
 
     def _completed(self, result) -> None:
         extra = (
@@ -345,6 +388,7 @@ class KIAnalysepaketPanel(QWidget):
 
     def _failed(self, message: str) -> None:
         self.status.setText("KI-Analyseexport fehlgeschlagen: " + message)
+        self.export_failed.emit(message)
 
     def _finished(self) -> None:
         worker, self.worker = self.worker, None
@@ -355,6 +399,7 @@ class KIAnalysepaketPanel(QWidget):
         self.include_text.setEnabled(True)
         self.include_qec_originale.setEnabled(True)
         self.transfer_busy.emit(False)
+        self.export_finished.emit()
 
     def _import_result(self) -> None:
         if not self._can_start():
