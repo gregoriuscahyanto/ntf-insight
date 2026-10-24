@@ -7,7 +7,6 @@ Rohdatenparser, QEC-Downloader und ChatGPT-Vertrag werden nicht dupliziert.
 from __future__ import annotations
 
 from dataclasses import replace
-from pathlib import Path
 
 from PySide6.QtCore import QSortFilterProxyModel, Qt, Signal
 from PySide6.QtGui import QCursor
@@ -77,6 +76,7 @@ class WorkflowPage(QWidget):
         self._source_name = ""
         self._data_error = ""
         self._notice = ""
+        self._error_step: int | None = None
         self._busy = False
         self.analysis_store = ChatGPTAnalyseStore(progress_store.store) if qec_store else None
 
@@ -319,6 +319,10 @@ class WorkflowPage(QWidget):
             )
             if step == 5:
                 self._add_action(
+                    actions, "Eigene Dateien importieren",
+                    lambda: self.action_requested.emit("self_import"),
+                )
+                self._add_action(
                     actions, "PC-Export",
                     lambda: self.action_requested.emit("pc_export"),
                 )
@@ -362,6 +366,8 @@ class WorkflowPage(QWidget):
         if self.state.paused or not 0 <= index < STEP_COUNT:
             return
         self.state = replace(self.state, step=index)
+        self._error_step = None
+        self._notice = ""
         self._save()
 
     def _move(self, delta: int) -> None:
@@ -384,13 +390,17 @@ class WorkflowPage(QWidget):
         self.state = replace(self.state, reviewed_steps=tuple(sorted(reviews)))
         self._save()
 
+    @staticmethod
+    def _part_key(value: str) -> str:
+        return "".join(char for char in normalize_part_number(value) if char.isalnum())
+
     def _rows_for_context(self) -> list[dict]:
         if self.profile_id != "coolant_pump":
             return []
-        part = normalize_part_number(self.part_number.text())
+        part = self._part_key(self.part_number.text())
         return [
             row for row in self._all_rows
-            if not part or normalize_part_number(row.get("part_number", "")) == part
+            if not part or self._part_key(row.get("part_number", "")) == part
         ]
 
     def refresh_data(self) -> None:
@@ -482,6 +492,7 @@ class WorkflowPage(QWidget):
 
     def set_notice(self, message: str, *, error: bool = False) -> None:
         self._notice = message
+        self._error_step = self.state.step if error else None
         self.note.setText(message)
         self.note.setProperty("isError", error)
         self.note.style().unpolish(self.note)
@@ -541,6 +552,10 @@ class WorkflowPage(QWidget):
         ]
         fraction = sum(1 if status == "done" else 0.5 if status == "partial" else 0
                        for status in statuses)
+        if self._data_error:
+            statuses[0] = "error"
+        elif self._error_step is not None:
+            statuses[self._error_step] = "error"
         self.progress.setValue(round(fraction / STEP_COUNT * 100))
         self.progress_label.setText(
             f"{stats['cases']} QEC-Fälle · {total} FINs · "
@@ -568,7 +583,7 @@ class WorkflowPage(QWidget):
             "Geprüft" if statuses[4] == "done" else "Offen",
             "Geprüft" if statuses[5] == "done" else "Offen",
         )
-        lamps = {"done": "●", "partial": "●", "pending": "○"}
+        lamps = {"done": "●", "partial": "●", "pending": "○", "error": "!"}
         for i, button in enumerate(self.cards):
             status = statuses[i]
             button.setProperty("workflowState", status)
