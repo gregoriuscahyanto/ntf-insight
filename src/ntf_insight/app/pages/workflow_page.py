@@ -25,6 +25,10 @@ from ntf_insight.reporting.chatgpt_exchange import ChatGPTAnalyseStore
 from ntf_insight.storage.cluster_evidence_store import (
     CATEGORY_LABELS, ClusterEvidenceStore, EVIDENCE_CATEGORIES,
 )
+from ntf_insight.storage.workflow_ai_chain import WorkflowAIChainStore
+from ntf_insight.storage.workflow_projects import (
+    NTFProject, WorkflowProjectStore,
+)
 from ntf_insight.storage.workflow_progress import (
     STEP_COUNT, WorkflowProgressStore, normalize_part_number,
 )
@@ -49,16 +53,16 @@ def _create_table(headers: tuple[str, ...]) -> tuple[QTableView, SimpleTableMode
 class WorkflowPage(QWidget):
     """Die Startseite bleibt geöffnet; Stationen ändern den lokalen Inhalt."""
 
-    navigate = Signal(str, str)  # Nur für bereits bestehende Detailansichten ab Schritt 4
+    navigate = Signal(str, str)
     action_requested = Signal(str)
+    project_selected = Signal(str, str)
 
     STEPS = (
         ("QEC-FIN-Liste", "QEC-Kohorte", "sources", "qec_list"),
         ("QEC-Befundung", "Berichte", "cases", "qec_reports"),
         ("NTF-Entscheidung", "Prüfung", "sources", "qec_decision"),
         ("Unterlagen", "CPC3 / TP", "workflow", "evidence"),
-        ("Clusteranalyse", "Muster", "cases", "cluster"),
-        ("Auswertung", "Ergebnis", "sources", "chatgpt"),
+        ("Clusteranalyse", "Lokal + ChatGPT", "workflow", "cluster"),
     )
 
     def __init__(
@@ -87,8 +91,10 @@ class WorkflowPage(QWidget):
         self._import_can_resume = False
         self.analysis_store = ChatGPTAnalyseStore(progress_store.store) if qec_store else None
         self.context_store = ClusterEvidenceStore(progress_store.store)
+        self.project_store = WorkflowProjectStore(progress_store.store)
+        self.ai_chain = WorkflowAIChainStore(progress_store.store)
         self.context_files = []
-        self.context_base_path: Path | None = None
+        self.first_package = None
         self._context_busy = False
         self._context_scrapers_busy: set[str] = set()
 
@@ -98,9 +104,38 @@ class WorkflowPage(QWidget):
         outer.setSpacing(7)
 
         header = QHBoxLayout()
-        header.addWidget(QLabel("NTF · Analyseworkflow", objectName="PageTitle"))
-        header.addStretch(1)
-        self.profile = QComboBox()
+        self.project_title = QLabel(objectName="PageTitle")
+        header.addWidget(self.project_title, 1)
+        self.project_combo = QComboBox()
+        self.project_combo.setAccessibleName("Aktives Sachnummern-Projekt")
+        self.project_combo.setMinimumWidth(130)
+        self.project_combo.currentIndexChanged.connect(self._project_combo_changed)
+        header.addWidget(self.project_combo)
+        self.new_project_button = QPushButton("+ Neues Projekt")
+        self.new_project_button.clicked.connect(
+            lambda: self.action_requested.emit("new_project")
+        )
+        header.addWidget(self.new_project_button)
+        self.settings_button = QPushButton("Einstellungen")
+        self.settings_button.clicked.connect(
+            lambda: self.action_requested.emit("project_settings")
+        )
+        header.addWidget(self.settings_button)
+        self.pc_export_button = QPushButton("PC-Export")
+        self.pc_export_button.clicked.connect(
+            lambda: self.action_requested.emit("pc_export")
+        )
+        header.addWidget(self.pc_export_button)
+        self.pc_import_button = QPushButton("PC-Import")
+        self.pc_import_button.clicked.connect(
+            lambda: self.action_requested.emit("pc_import")
+        )
+        header.addWidget(self.pc_import_button)
+        outer.addLayout(header)
+
+        # API für bestehende Import-/GUI-Funktionen; editierbar ist nur das
+        # Projekt auf der Einstellungsseite, nicht die globale Kopfzeile.
+        self.profile = QComboBox(self)
         self.profile.setAccessibleName("Bauteilprofil")
         for item in list_component_profiles():
             label = (
@@ -118,8 +153,7 @@ class WorkflowPage(QWidget):
         self.part_number.setMaxLength(120)
         self.part_number.setAccessibleName("Sachnummer zur QEC-Kohortenfilterung")
         self.part_number.editingFinished.connect(self._change_context)
-        header.addWidget(self.part_number)
-        outer.addLayout(header)
+        self._refresh_project_selector()
 
         self.progress = QProgressBar()
         self.progress.setRange(0, 100)
