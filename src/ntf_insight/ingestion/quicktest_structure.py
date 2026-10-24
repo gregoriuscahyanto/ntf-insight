@@ -70,20 +70,23 @@ def _ecu_header(lines: list[tuple[str, int]], index: int) -> dict[str, str] | No
     line = lines[index][0]
     if " - " not in line:
         return None
-    # XENTRY 2025/2026 can insert a NUL-only PDF cell between the ECU
-    # heading and its "General information" block. Long ECU descriptions
-    # occasionally wrap one trailing character onto the next PDF text line.
-    # Do not invent missing ECUs: only accept a real code/location heading.
-    adjacent_general = (
-        index + 1 < len(lines)
-        and lines[index + 1][0].casefold() == "general information"
+    # XENTRY PDF cells sometimes wrap the ECU description onto one or two
+    # additional lines before "General information", even when the trailing
+    # fragment is long. We still require the actual code/location heading;
+    # never synthesize an unknown ECU to satisfy the reported count.
+    follows_general = any(
+        index + offset < len(lines)
+        and lines[index + offset][0].casefold() == "general information"
+        and all(
+            not re.match(
+                r"^(?:QuickTest\\s+\\d+|ECUS\\s*\\(|FAULT CODES\\s*\\()",
+                lines[intermediate][0], re.I,
+            )
+            for intermediate in range(index + 1, index + offset)
+        )
+        for offset in (1, 2, 3)
     )
-    wrapped_general = (
-        index + 2 < len(lines)
-        and len(lines[index + 1][0]) <= 2
-        and lines[index + 2][0].casefold() == "general information"
-    )
-    if not (adjacent_general or wrapped_general or LEGACY_ECU.fullmatch(line)):
+    if not (follows_general or LEGACY_ECU.fullmatch(line)):
         return None
     head, _, name = line.partition(" - ")
     if "-" not in head:
