@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from collections import Counter, defaultdict
 import json
+import time
 from dataclasses import replace
 from datetime import datetime
 
@@ -116,6 +117,7 @@ class WorkflowPage(QWidget):
         self.first_package = None
         self._context_busy = False
         self._context_scrapers_busy: set[str] = set()
+        self._transfer_started_at: float | None = None
 
 
         outer = QVBoxLayout(self)
@@ -155,6 +157,14 @@ class WorkflowPage(QWidget):
         )
         header.addWidget(self.project_import_button)
         outer.addLayout(header)
+        self.project_transfer_bar = QProgressBar()
+        self.project_transfer_bar.setRange(0, 100)
+        self.project_transfer_bar.setFormat("Projekttransfer: %p %")
+        self.project_transfer_bar.hide()
+        outer.addWidget(self.project_transfer_bar)
+        self.project_transfer_eta = QLabel(objectName="PageSubtitle")
+        self.project_transfer_eta.hide()
+        outer.addWidget(self.project_transfer_eta)
         self.project_ecus_label = QLabel(objectName="PageSubtitle")
         subheader = QHBoxLayout()
         subheader.addWidget(self.project_ecus_label, 1)
@@ -878,6 +888,31 @@ class WorkflowPage(QWidget):
                 f"{imported} Ergebnis(se) validiert importiert."
             )
         self._refresh_controls()
+
+    def update_project_transfer_progress(self, percent: int, phase: str) -> None:
+        """Phasen-Fortschritt; ETA ist eine Schätzung, keine feste Zusage."""
+        if self._transfer_started_at is None:
+            self._transfer_started_at = time.monotonic()
+        self.project_transfer_bar.show()
+        self.project_transfer_eta.show()
+        if percent < 0:
+            self.project_transfer_bar.setRange(0, 0)
+            self.project_transfer_eta.setText(phase + " · Dauer derzeit nicht abschätzbar")
+            return
+        self.project_transfer_bar.setRange(0, 100)
+        self.project_transfer_bar.setValue(min(100, max(0, percent)))
+        elapsed = max(0., time.monotonic() - self._transfer_started_at)
+        if 10 <= percent < 100 and elapsed >= 2:
+            remaining = round(elapsed / percent * (100 - percent))
+            eta = f" · grob noch {remaining // 60} min {remaining % 60:02d} s"
+        else:
+            eta = " · Restzeit noch nicht belastbar" if percent < 100 else ""
+        self.project_transfer_eta.setText(phase + f" ({percent} %)" + eta)
+
+    def finish_project_transfer_progress(self) -> None:
+        self._transfer_started_at = None
+        self.project_transfer_bar.hide()
+        self.project_transfer_eta.hide()
 
     def set_context_busy(self, busy: bool) -> None:
         self._context_busy = busy
