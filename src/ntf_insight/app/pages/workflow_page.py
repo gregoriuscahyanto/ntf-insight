@@ -1056,6 +1056,8 @@ class WorkflowPage(QWidget):
             f"{len(counts)} Kategorien · "
             "Dateien werden nicht automatisch an ChatGPT gesendet."
         )
+        if self._source_coverage:
+            self._update_coverage_labels()
 
     def _change_context(self) -> None:
         profile_id = self.profile.currentData()
