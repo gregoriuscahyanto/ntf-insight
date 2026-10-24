@@ -256,6 +256,7 @@ class AutoExportFinWorkspace(QWidget):
         self._pump_swap_dates = self._qec_evidence.pump_swap_dates
         self._finding_counts = finding_counts(cases)
         self._running_qec_cases = self._all_qec_cases
+        self._workflow_part_number = ""
         self._quicktest_fins = tuple(quicktest_fins)
         self._tp_dashboard_fins = (
             source.tp_dashboard_fins()
@@ -727,12 +728,39 @@ class AutoExportFinWorkspace(QWidget):
             f"{count} echte Cluster-Repräsentanten lokal in Excel gespeichert."
         )
 
+    def set_workflow_part_number(self, number: str) -> None:
+        """Sachnummer aus dem Workflow als echten QEC-Kohortenfilter setzen.
+
+        Dieser Filter beeinflusst die in den Clusterlauf übernommenen QEC-Anker,
+        nicht bloß den Abdeckungsring. Ohne QEC-Anker ist keine eingeschränkte
+        Pumpen-FIN-Kohorte belegbar.
+        """
+        from ntf_insight.storage.workflow_progress import normalize_part_number
+
+        new_number = normalize_part_number(number)
+        if new_number == self._workflow_part_number:
+            return
+        self._workflow_part_number = new_number
+        self.only_qec.setChecked(True)
+        self._invalidate()
+        self._update_finding_summary()
+        self.status.setText(
+            f"Workflow-Sachnummer: {new_number or 'alle'} · Analyse neu starten."
+        )
+
     def _matched_qec_cases(self) -> tuple[NTFCase, ...]:
-        return selected_qec_cases(
+        cases = selected_qec_cases(
             self._all_qec_cases,
             exact_findings=self._dtc_filter.include_findings,
             excluded_findings=self._dtc_filter.exclude_findings,
         )
+        if self._workflow_part_number:
+            cases = tuple(
+                case for case in cases
+                if str(getattr(case, "qec_part_number", "") or "").strip().upper()
+                == self._workflow_part_number
+            )
+        return tuple(cases)
 
     def _update_finding_summary(self) -> None:
         cases = self._matched_qec_cases()
