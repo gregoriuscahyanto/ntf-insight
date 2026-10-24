@@ -286,6 +286,7 @@ def test_context_scrapers_use_only_current_qec_part_with_single_fetch_action(
     from PySide6.QtCore import QObject, Signal
 
     class FakeWorker(QObject):
+        progress = Signal(str)
         failed = Signal(str)
         finished = Signal()
 
