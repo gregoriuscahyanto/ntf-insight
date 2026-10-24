@@ -256,3 +256,46 @@ def test_tips_json_download_can_be_resumed_through_existing_import_service(tmp_p
     assert result2.files_parsed >= 0  # Normaler Neuimport bleibt separate Aktion.
     coverage2 = get_workflow_coverage(store, root, _rows())
     assert coverage2["tips_writer"].parsed_documents == 1
+
+
+
+def test_workflow_buttons_show_actual_counts_and_resume_only_missing(tmp_path, monkeypatch):
+    import os
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from PySide6.QtWidgets import QApplication
+    from ntf_insight.app.windows.main_window import MainWindow
+
+    root = tmp_path / "app-data"
+    monkeypatch.setenv("NTF_INSIGHT_DATA_DIR", str(root))
+    app = QApplication.instance() or QApplication([])
+    window = MainWindow()
+    page = window.pages["workflow"]
+    rows = [
+        dict(
+            row,
+            finding="Elektrischer Fehler",
+            tp_dashboard=False, decision="Offen", reason="", report=False,
+        )
+        for row in _rows()
+    ]
+    monkeypatch.setattr(page.qec_store, "rows", lambda _root: rows)
+    monkeypatch.setattr(page.qec_store, "active_sources", lambda: [])
+    _write_qec(root)
+    page.part_number.setText("A111222")
+    page._change_context()
+    page.refresh_data()
+    assert page.qec_parse_resume_button.isEnabled()
+    assert page.download_missing_button.isEnabled()
+    assert "1 Berichte lokal" in page.qec_coverage.text()
+    assert "0 geparst" in page.qec_coverage.text()
+    assert "QEC-Fälle: 1/3" in page.qec_coverage.text()
+    assert page.qec_model.rows[0][-1] == "Ausstehend"
+    assert "diagnosis_viewer" in page.context_counts
+    assert "3" in page.context_counts["diagnosis_viewer"].text()
+    assert page.context_scraper_buttons["diagnosis_viewer"]["missing"].isEnabled()
+    assert not page.context_scraper_buttons["celonis"]["resume_parse"].isEnabled()
+    assert page.context_scraper_buttons["tips_writer"]["resume_parse"].text() == (
+        "Parsing fortsetzen"
+    )
+    window.close()
+    app.processEvents()
