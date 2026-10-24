@@ -670,7 +670,9 @@ def export_ki_analysepaket(
         {"thema": "FIN-Identitaet", "regel": "Nur Pseudonyme in ZIP. Die eindeutige Zuordnung wird getrennt und lokal gespeichert."},
         {"thema": "QEC-Freitext", "regel": "Standard ohne Freitext. Optionaler Freitext ist NICHT anonymisiert; interne Freigabe erforderlich."},
         {"thema": "SMR-D", "regel": "Ohne strukturellen Parser nur Inventar-/Vollstaendigkeitsnachweis, keine vorgetaeuschten SMR-D-Diagnosefeatures."},
-        {"thema": "Dateien", "regel": "Keine PDF-, JSON-, XML-, SMR-D-, TIPS-Originale, Anhaenge, CSV-Rohquellen, ZIP-Archive oder Pfade enthalten."},
+        {"thema": "Dateien", "regel": "Keine AutoExport-Rohdateien oder internen Quellpfade enthalten. QEC-JSON-Originale und zugehoerige Anhaenge nur mit expliziter Opt-in-Originaloption."},
+        {"thema": "AutoExport", "regel": "AutoExport-Beobachtungen nur ueber autoexport_fallbezug mit Lage vor_tausch als zusaetzliche Diagnosefeatures nutzen; keine vollstaendigen Null-DTC-QuickTests unterstellen."},
+        {"thema": "Lieferantenbelege", "regel": "Lieferantenbefunde und -dokumente sind nachgelagerte Beweismittel, niemals Clustereingaben. Externe originale Lieferantenquellen werden nur inventarisiert."},
         {"thema": "Quelle", "regel": "Strukturierte Daten aus der lokalen NTF-Insight-DuckDB. Nicht belegte oder mehrdeutige Verknuepfung bleibt offen."},
         {"thema": "Einsatz", "regel": "Dieses Paket ist nicht automatisch freigegeben/anonym. Datenschutz und Informationsschutz vor Upload pruefen."},
     ]
@@ -746,6 +748,8 @@ def export_ki_analysepaket(
         "Cluster anhand VOR-Tausch-DTCs und zulässiger technischer Merkmale bilden.\n"
         "QEC-/SSL-Endbefunde, Nach-Tausch-DTCs und NTF-Klassifikationen\n"
         "nur für Ursachenprüfung/Validierung verwenden (keine Leakage).\n"
+        "AutoExport-DTCs nur mit autoexport_fallbezug.csv und vor_tausch nutzen.\n"
+        "Lieferantenbefunde und -dokumente nur nach Clustering auswerten.\n"
         "NTF-Bewertung: NTF plausibel / NTF fraglich / Kein reiner NTF /\n"
         "Nicht bewertbar / Nicht bewertet. Keine unbelegte Schuldzuweisung.\n"
         "Sicherheit der Zuordnung: Belegt / Plausibel / Offen.\n"
@@ -785,7 +789,17 @@ def export_ki_analysepaket(
         "   ungeprueft als Cluster-Features verwenden!\n"
         "5. bewertungen_NICHT_CLUSTER.csv erst NACH dem Clustering ansehen.\n"
         "6. CHATGPT_ANWEISUNG.txt, chatgpt_ergebnis_vorlage.json und\n"
-        "   chatgpt_ergebnis_schema.json geben das Rückgabeformat vor.\n\n"
+        "   chatgpt_ergebnis_schema.json geben das Rückgabeformat vor.\n"
+        "7. autoexport_diagnosen.csv nur ueber autoexport_fallbezug.csv\n"
+        "   mit Lage vor_tausch als zusaetzliche DTC-Features nutzen.\n"
+        "8. werkstatt_historie.csv, pumpentausch_historie.csv,\n"
+        "   fall_ereignisse.csv, ecu_versionshistorie.csv, autoexport_tips.csv\n"
+        "   und diagnose_qualitaet.csv pruefen; keine Ergebnis-Leakage.\n"
+        "9. lieferantenbefunde_NICHT_CLUSTER.csv und\n"
+        "   lieferantenquellen_bestand_NICHT_CLUSTER.csv erst NACH\n"
+        "   der Clusterbildung als Pruefbelege auswerten.\n"
+        "10. QEC-Anlagen sind nur bei aktiviertem Original-Opt-in enthalten.\n"
+        "   Eigenstaendige Lieferanten-Originale sind nur inventarisiert.\n\n"
         "WARNUNG: Pseudonymisierung ist KEINE garantierte Anonymisierung.\n"
         "Seltene technische Konstellationen koennen reidentifizierend sein.\n"
         "Alle technischen Daten unterliegen der Unternehmensfreigabe.\n"
