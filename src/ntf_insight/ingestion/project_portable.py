@@ -512,6 +512,7 @@ def _unpack_project(source: Path, root: Path) -> tuple[dict, Path]:
 
 def import_project(
     source: Path, data_dir: Path,
+    *, progress: Callable[[int, str], None] | None = None,
 ) -> ProjectImportResult:
     """Merge a new project into the local DuckDB; other projects stay intact.
 
@@ -521,11 +522,17 @@ def import_project(
     source, root = Path(source).absolute(), Path(data_dir).absolute()
     if root.is_symlink() or source.is_relative_to(root) or not source.is_file():
         raise ValueError("Projektpaket muss außerhalb des Datenordners liegen.")
+    if progress:
+        progress(2, "Projektpaket und Manifest prüfen")
     with tempfile.TemporaryDirectory(prefix="ntf-project-import-") as tmp:
         staging = Path(tmp)
         manifest, package = _unpack_project(source, staging)
+        if progress:
+            progress(20, "Originaldaten und Prüfsummen validieren")
         project_root = staging / "imported"
         restore_portable_backup(package, project_root)
+        if progress:
+            progress(45, "Projektidentität und lokale Konflikte prüfen")
         incoming_db = project_root / DATABASE_NAME
         profile = manifest.get("profil")
         part = manifest.get("sachnummer")
@@ -567,6 +574,8 @@ def import_project(
         MLFeedbackStore(target_store.path)
 
         # Read the fully verified staged project and locate every file first.
+        if progress:
+            progress(55, "Projektdateien zuordnen und Konflikte prüfen")
         staged_files: list[tuple[Path, Path]] = []
         for folder in DATA_FOLDERS:
             source_folder = project_root / folder
@@ -594,6 +603,8 @@ def import_project(
                             raise ValueError("Gleichnamiger lokaler Bericht hat anderen Inhalt.")
                     else:
                         staged_files.append((path, target))
+        if progress:
+            progress(70, f"{len(staged_files)} Projektdateien sicher übernehmen")
         copied: list[Path] = []
         try:
             for path, target in staged_files:
@@ -601,6 +612,8 @@ def import_project(
                 shutil.copy2(path, target)
                 copied.append(target)
 
+            if progress:
+                progress(82, "Projekttabellen transaktional übernehmen")
             with duckdb.connect(str(target_store.path)) as con:
                 con.execute(
                     f"ATTACH '{str(incoming_db).replace(chr(39), chr(39)*2)}' "
@@ -698,8 +711,12 @@ def import_project(
             for target in copied:
                 target.unlink(missing_ok=True)
             raise
+        if progress:
+            progress(95, "Übernahme prüfen und Abschluss vorbereiten")
         with duckdb.connect(str(incoming_db), read_only=True) as source_db:
             count = source_db.execute(
                 "SELECT COUNT(*) FROM case_snapshots"
             ).fetchone()[0]
+    if progress:
+        progress(100, "Projektimport erfolgreich abgeschlossen")
     return ProjectImportResult(profile, part, count, len(staged_files))
