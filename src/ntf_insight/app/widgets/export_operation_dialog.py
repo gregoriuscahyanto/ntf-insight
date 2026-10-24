@@ -209,6 +209,22 @@ class ExportOperationDialog(QDialog):
             + ("\n" + details if details else "")
         )
 
+    def complete_directory(self, directory: Path, *, details: str = "") -> None:
+        """Mehrere FIN-ZIPs: Ordner statt fiktiver einzelner ZIP-Datei öffnen."""
+        directory = Path(directory)
+        if not directory.is_dir():
+            self.fail("Der Exportordner konnte nicht gefunden werden.")
+            return
+        self._done()
+        self._destination = directory / "FIN-Exporte"
+        self.folder_button.show()
+        self.destination_label.setText(f"Speicherordner: {directory}")
+        self.destination_label.show()
+        self.status.setText(
+            "Vorgang erfolgreich abgeschlossen."
+            + ("\n" + details if details else "")
+        )
+
     def fail(self, message: str) -> None:
         self._done()
         self._destination = None
