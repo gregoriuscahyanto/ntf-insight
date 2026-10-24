@@ -125,20 +125,37 @@ class QecWorkflowStore:
     def overview(self, qec_root: Path) -> dict[str, int]:
         return self.summarize_rows(self.rows(qec_root))
 
-    def export_csv(self, destination: Path, qec_root: Path) -> int:
+    def export_csv(
+        self, destination: Path, qec_root: Path, *, part_number: str = "",
+    ) -> int:
+        """Lokale QEC-FIN-Liste – optional exakt zur gewählten Sachnummer.
+
+        Das ist ein lokaler CSV-Export vorhandener QEC-Daten, kein automatischer
+        Download aus dem QEC-Portal. Formeln aus Quelldaten bleiben Excel-sicher.
+        """
+        def normalize(value: str) -> str:
+            return "".join(char for char in str(value).upper() if char.isalnum())
+
+        def safe(value: object) -> object:
+            text = str(value or "")
+            return "'" + text if text.lstrip().startswith(("=", "+", "-", "@")) else text
+
         rows = self.rows(qec_root)
+        if part_number.strip():
+            part = normalize(part_number)
+            rows = [row for row in rows if normalize(row["part_number"]) == part]
         with Path(destination).open("w", newline="", encoding="utf-8-sig") as handle:
             writer = csv.writer(handle, delimiter=";")
             writer.writerow(("FIN", "QEC-Fall", "Referenz", "Sachnummer",
                              "TP-Dashboard", "SSL-Endbefund", "QEC-Bericht vorhanden",
                              "NTF-Bewertung", "Begründung"))
             for row in rows:
-                writer.writerow((
+                writer.writerow(tuple(map(safe, (
                     row["fin"], row["case_id"], row["reference"], row["part_number"],
                     "Vorhanden" if row["tp_dashboard"] else "Kein TP-Dashboard-Eintrag",
                     row["finding"], "Ja" if row["report"] else "Nein",
                     row["decision"], row["reason"],
-                ))
+                ))))
         return len(rows)
 
     def handoff_ntf(self, qec_root: Path) -> int:
