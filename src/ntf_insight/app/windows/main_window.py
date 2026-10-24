@@ -9,6 +9,12 @@ from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import QFileDialog, QHBoxLayout, QMainWindow, QMessageBox, QStackedWidget, QWidget
 
 from ntf_insight.acquisition.qec_tool import QEC_START
+from ntf_insight.acquisition.diagnosis_viewer import parse_fins
+from ntf_insight.reporting.cluster_context_package import validate_first_package
+from ntf_insight.storage.cluster_evidence_store import CATEGORY_LABELS
+from ntf_insight.app.workers.cluster_context_workers import (
+    ClusterContextExportWorker, ClusterEvidenceImportWorker,
+)
 from ntf_insight.ingestion.artifacts import SourceType
 from ntf_insight.app.bootstrap import load_application_data
 from ntf_insight.app.pages.case_page import CasePage
@@ -49,6 +55,8 @@ class MainWindow(QMainWindow):
         self._workflow_source_import_pending = False
         self._workflow_qec_download_pending = False
         self._workflow_last_qec_files: list[Path] = []
+        self._workflow_quicktest_download_pending = False
+        self._context_worker = None
 
         root = QWidget(objectName="AppRoot")
         layout = QHBoxLayout(root)
@@ -181,6 +189,7 @@ class MainWindow(QMainWindow):
                 )
             )
             and not self._case_quicktest_import_pending
+            and self._context_worker is None
             and cases._quicktest_worker is None
             and (qec is None or qec.worker is None)
             and (tips is None or tips.worker is None)
@@ -207,9 +216,14 @@ class MainWindow(QMainWindow):
 
     def _reload_after_source_import(self, summary: str, quicktests_saved: int = 0) -> None:
         """Quellen neu laden, Workflow-Kontext bei workflowgestarteten Imports behalten."""
-        if self._workflow_source_import_pending or self._workflow_qec_download_pending:
+        if (
+            self._workflow_source_import_pending
+            or self._workflow_qec_download_pending
+            or self._workflow_quicktest_download_pending
+        ):
             self._workflow_source_import_pending = False
             self._workflow_qec_download_pending = False
+            self._workflow_quicktest_download_pending = False
             self._case_quicktest_import_pending = False
             self._reload_data()
             self.navigation.select_page("workflow")
@@ -332,7 +346,10 @@ class MainWindow(QMainWindow):
         """Bestehenden Quellenimport verwenden; Ergebnis im Workflow anzeigen."""
         source = self.pages["sources"]
         workflow = self.pages["workflow"]
-        if source._worker is not None or source._diagnostics_worker is not None:
+        if (
+            source._worker is not None or source._diagnostics_worker is not None
+            or self._context_worker is not None
+        ):
             workflow.set_notice("Ein anderer Quellenimport läuft bereits.", error=True)
             return
         if action in {"qec_list_import", "qec_list_resume"}:
@@ -431,9 +448,269 @@ class MainWindow(QMainWindow):
             self._workflow_qec_download_pending = False
             workflow.refresh_data()
 
+    def _context_import(self, category: str) -> None:
+        """Fachunterlagen unverändert im vorhandenen lokalen Rohdatenarchiv sammeln."""
+        workflow = self.pages["workflow"]
+        if category not in CATEGORY_LABELS:
+            workflow.set_notice("Unbekannte Unterlagenkategorie.", error=True)
+            return
+        if not self._portable_transfer_ready() or self._context_worker is not None:
+            workflow.set_notice("Ein Import oder Download läuft bereits.", error=True)
+            return
+        files, _ = QFileDialog.getOpenFileNames(
+            self, f"{CATEGORY_LABELS[category]} auswählen",
+            str(Path.home()), "Technische Dokumente (*.*)",
+        )
+        if not files:
+            return
+        worker = ClusterEvidenceImportWorker(
+            workflow.context_store, workflow.profile_id, workflow._context_part,
+            category, [Path(name) for name in files],
+        )
+        self._context_worker = worker
+        workflow.set_context_busy(True)
+        workflow.set_notice(
+            f"{len(files)} Datei(en) werden lokal als "
+            f"{CATEGORY_LABELS[category]} archiviert …"
+        )
+        worker.completed.connect(self._context_import_completed)
+        worker.failed.connect(self._context_failed)
+        worker.finished.connect(self._context_worker_finished)
+        worker.start()
+
+    def _context_import_completed(self, count: int) -> None:
+        workflow = self.pages["workflow"]
+        workflow.refresh_context_files()
+        workflow.refresh()
+        workflow.set_notice(f"{count} neue Unterlage(n) archiviert, Duplikate übersprungen.")
+
+    def _context_failed(self, message: str) -> None:
+        self.pages["workflow"].set_notice(
+            "Unterlagenverarbeitung: " + message, error=True
+        )
+
+    def _context_worker_finished(self) -> None:
+        worker, self._context_worker = self._context_worker, None
+        if worker is not None:
+            worker.deleteLater()
+        workflow = self.pages["workflow"]
+        workflow.set_context_busy(False)
+        workflow.refresh_context_files()
+        workflow.refresh()
+
+    def _context_choose_base(self) -> None:
+        workflow = self.pages["workflow"]
+        if self._context_worker is not None:
+            return
+        filename, _ = QFileDialog.getOpenFileName(
+            self, "Erstes KI-Analysepaket als Clusterbasis wählen",
+            str(Path.home()), "NTF KI-Analysepaket (*.zip)",
+        )
+        if not filename:
+            return
+        try:
+            package_id = validate_first_package(Path(filename))
+        except (OSError, ValueError) as exc:
+            workflow.set_notice(
+                "Ungültiges KI-Analysepaket: " + str(exc), error=True
+            )
+            return
+        workflow.set_context_base(Path(filename))
+        workflow.set_notice(
+            "KI-Basispaket geprüft. Paket-ID " + package_id[:8]
+            + "… wird auch im zweiten Ergebnis verwendet."
+        )
+
+    def _context_export(self) -> None:
+        workflow = self.pages["workflow"]
+        if workflow.context_base_path is None:
+            workflow.set_notice("Zuerst die erste KI-Analyse-ZIP auswählen.", error=True)
+            return
+        if not self._portable_transfer_ready():
+            workflow.set_notice("Ein Import oder Download läuft bereits.", error=True)
+            return
+        originals = workflow.context_originals.isChecked()
+        warning = (
+            "Das Paket wird LOKAL erstellt und NICHT automatisch hochgeladen.\n\n"
+            "Das KI-Basispaket und die technischen Unterlagen sind selbst bei "
+            "Pseudonymisierung nicht garantiert anonym.\n\n"
+        )
+        if originals:
+            warning += (
+                "ACHTUNG: Unveränderte Unterlagen können echte FINs, "
+                "Lieferanteninformationen, Mitarbeitendennamen und vertrauliche "
+                "Entwicklungsdaten enthalten.\n\n"
+            )
+        warning += "Nur für freigegebene interne Übertragungswege. Export erstellen?"
+        decision = QMessageBox.question(
+            self, "Vertrauliche Clusterunterlagen", warning,
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if decision != QMessageBox.StandardButton.Yes:
+            return
+        dest, _ = QFileDialog.getSaveFileName(
+            self, "Clusterkontext-Paket lokal speichern",
+            str(Path.home() / "NTF_Clusterkontext_Durchlauf2.zip"),
+            "NTF Clusterkontext (*.zip)",
+        )
+        if not dest:
+            return
+        path = Path(dest)
+        if path.suffix.lower() != ".zip":
+            path = path.with_suffix(".zip")
+        worker = ClusterContextExportWorker(
+            workflow.context_store, workflow.profile_id, workflow._context_part,
+            workflow.context_base_path, path, include_originals=originals,
+        )
+        self._context_worker = worker
+        workflow.set_context_busy(True)
+        workflow.set_notice("Cluster-Kontextpaket wird lokal erstellt …")
+        worker.completed.connect(self._context_export_completed)
+        worker.failed.connect(self._context_failed)
+        worker.finished.connect(self._context_worker_finished)
+        worker.start()
+
+    def _context_export_completed(self, result: object) -> None:
+        self.pages["workflow"].set_notice(
+            f"Clusterkontext bereit: {result.path.name} · "
+            f"{result.file_count} klassifizierte Unterlagen, "
+            f"davon {result.included_files} Originale beigefügt. "
+            "ChatGPT-JSON-Vorlage aus dem ersten KI-Paket ist enthalten. "
+            "Vor externer Weitergabe Inhalt und Freigabe prüfen."
+        )
+
+    def _context_remove(self) -> None:
+        workflow = self.pages["workflow"]
+        row_index = workflow.context_table.currentIndex().row()
+        if row_index < 0 or row_index >= len(workflow.context_files):
+            workflow.set_notice("Bitte eine Datei in der Tabelle markieren.")
+            return
+        item = workflow.context_files[row_index]
+        answer = QMessageBox.question(
+            self, "Zuordnung entfernen",
+            "Unterlage nur aus dieser Sachnummern-Sammlung entfernen? "
+            "Rohdaten und andere Zuordnungen bleiben erhalten.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if answer != QMessageBox.StandardButton.Yes:
+            return
+        removed = workflow.context_store.remove_file(
+            workflow.profile_id, workflow._context_part,
+            item.category, item.sha256,
+        )
+        workflow.refresh_context_files()
+        workflow.refresh()
+        if removed:
+            workflow.set_notice("Unterlagenzuordnung entfernt.")
+
+    def _context_scrape(self, category: str, scope: str) -> None:
+        """Vorhandene SSO-Downloader gezielt für die QEC-Sachnummernkohorte."""
+        workflow = self.pages["workflow"]
+        cases = self.pages["cases"]
+        if category not in {"diagnosis_viewer", "tips_writer"}:
+            workflow.set_notice(
+                "Für TP Dashboard/Celonis ist noch kein Scraper implementiert. "
+                "Die exportierte Datei bitte manuell importieren.",
+                error=True,
+            )
+            return
+        if scope == "cancel":
+            if category == "diagnosis_viewer":
+                cases._cancel_quicktest_download()
+            elif cases.tips_download is not None:
+                cases.tips_download._cancel()
+            return
+        if scope not in {"all", "selected"}:
+            workflow.set_notice("Unbekannte Scraper-Aktion.", error=True)
+            return
+        if not self._portable_transfer_ready() or self._context_worker is not None:
+            workflow.set_notice("Ein Import oder Download läuft bereits.", error=True)
+            return
+        if scope == "selected":
+            indices = {
+                idx.row() for idx in workflow.qec_table.selectionModel().selectedRows()
+            }
+            rows = [
+                row for i, row in enumerate(workflow._scoped_rows) if i in indices
+            ]
+        else:
+            rows = workflow._scoped_rows
+        raw_fins = sorted({str(row["fin"]).strip().upper() for row in rows})
+        fins: list[str] = []
+        for fin in raw_fins:
+            try:
+                fins.extend(parse_fins(fin))
+            except ValueError:
+                continue
+        fins = sorted(set(fins))
+        if not fins:
+            workflow.set_notice(
+                "Keine gültigen FINs. Für 'Markierte' bitte zuvor "
+                "in Schritt 02 Tabellenzeilen auswählen.", error=True
+            )
+            return
+        if category == "diagnosis_viewer":
+            cases._start_quicktest_download(
+                selected_only=False, fins_override=fins,
+            )
+            worker = cases._quicktest_worker
+            if worker is not None:
+                self._workflow_quicktest_download_pending = True
+        else:
+            panel = cases.tips_download
+            if panel is None:
+                workflow.set_notice("TIPS-Writer-Abruf nicht verfügbar.", error=True)
+                return
+            panel._start(fins, bulk=scope == "all")
+            worker = panel.worker
+        if worker is None:
+            # Nutzer hat SSO-/Mengenbestätigung abgebrochen.
+            return
+        workflow.set_context_scraper_busy(category, True)
+        workflow.set_notice(
+            f"{category}: {len(fins)} FIN(s) werden mit dem vorhandenen "
+            "SSO-Downloader abgerufen …"
+        )
+        worker.failed.connect(
+            lambda msg: self.pages["workflow"].set_notice(
+                "Quellenabruf fehlgeschlagen: " + msg, error=True
+            )
+        )
+        worker.finished.connect(
+            lambda c=category: self._context_scraper_finished(c)
+        )
+
+    def _context_scraper_finished(self, category: str) -> None:
+        workflow = self.pages["workflow"]
+        workflow.set_context_scraper_busy(category, False)
+        if category == "diagnosis_viewer":
+            # Die vorhandene Downloadpipeline stößt ggf. einen Quellenimport an.
+            if self.pages["sources"]._worker is None:
+                self._workflow_quicktest_download_pending = False
+        workflow.refresh_data()
+
     def _workflow_action(self, action: str) -> None:
         workflow = self.pages["workflow"]
         source = self.pages["sources"]
+        if action.startswith("context_files:"):
+            self._context_import(action.partition(":")[2])
+            return
+        if action.startswith("context_scrape:"):
+            parts = action.split(":")
+            if len(parts) == 3:
+                self._context_scrape(parts[1], parts[2])
+            return
+        if action == "context_base":
+            self._context_choose_base()
+            return
+        if action == "context_export":
+            self._context_export()
+            return
+        if action == "context_remove":
+            self._context_remove()
+            return
         if action in {"qec_list_import", "qec_list_resume", "qec_import_local"}:
             self._workflow_start_import(action)
         elif action == "qec_list_cancel":
