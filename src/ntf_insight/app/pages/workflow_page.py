@@ -9,6 +9,8 @@ from __future__ import annotations
 from collections import Counter, defaultdict
 import json
 import re
+
+import duckdb
 import time
 from dataclasses import replace
 from datetime import datetime
@@ -2312,8 +2314,8 @@ class WorkflowPage(QWidget):
     def refresh(self) -> None:
         try:
             self._update_tables()
-        except OSError as exc:
-            # DuckDB meldet Windows-Dateisperren als IOException (OSError).
+        except (duckdb.IOException, OSError) as exc:
+            # DuckDB meldet Windows-Dateisperren als IOException.
             # Die Oberfläche mit ihrem letzten gültigen Zustand behalten.
             self._data_error = (
                 "Datenbank derzeit gesperrt. Andere NTF-Insight-Instanzen "
