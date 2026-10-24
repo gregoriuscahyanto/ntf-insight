@@ -298,6 +298,10 @@ class KIAnalysepaketPanel(QWidget):
 
     def use_shared_export_dialog(self) -> None:
         self._use_shared_export_dialog = True
+        # Keine zwei widersprüchlichen Auswahlsätze; nur die Auswahl im
+        # Popup gilt. Beim isolierten Panel bleiben die alten Optionen nutzbar.
+        self.include_text.hide()
+        self.include_qec_originale.hide()
 
     def _export(self) -> None:
         """Standalone fallback used by isolated source-panel dialogs."""
