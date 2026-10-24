@@ -68,7 +68,7 @@ def _create_table(headers: tuple[str, ...]) -> tuple[QTableView, SimpleTableMode
 _SOURCE_COLUMNS = (
     ("Quelle", 110),
     ("Portalabruf", 218),
-    ("Parser", 210),
+    ("Parser", 230),
     ("Datei / Fehler", 150),
     ("Bestand / Letzter Abruf", None),
 )
