@@ -169,10 +169,10 @@ def _download_file_for_qec(root: Path, fin: str, reference: str) -> Path | None:
 
 def _tp_sources(
     store: DuckDBStore, target_fins: set[str],
-) -> tuple[set[str], set[str]]:
+) -> dict[str, set[str]]:
     """Quelle und nachweislich geparste FINs (keine Schätzung anhand Dateinamen)."""
     if not target_fins:
-        return set(), set()
+        return {}
     if len(target_fins) > 10000:
         raise ValueError("Zu viele FINs für die Dokumentenabdeckung.")
     eligible = sorted(target_fins)
@@ -182,7 +182,7 @@ def _tp_sources(
             _has_table(con, "source_knowledge_rows")
             and _has_table(con, "source_knowledge_documents")
         ):
-            return set(), set()
+            return {}
         rows = con.execute(
             "SELECT DISTINCT r.source_sha256,r.fin FROM source_knowledge_rows r "
             "JOIN source_knowledge_documents d ON d.source_sha256=r.source_sha256 "
@@ -194,16 +194,14 @@ def _tp_sources(
             f"IN ({placeholders})",
             eligible,
         ).fetchall()
-    shas = set()
-    fins = set()
+    by_sha: dict[str, set[str]] = {}
     for sha, raw_fin in rows:
         fin = str(raw_fin).strip().upper()
         if fin.startswith("MBC") and len(fin) == 20:
             fin = fin[3:]
         if fin in target_fins:
-            shas.add(str(sha))
-            fins.add(fin)
-    return shas, fins
+            by_sha.setdefault(str(sha), set()).add(fin)
+    return by_sha
 
 
 def get_workflow_coverage(
@@ -368,7 +366,7 @@ def get_workflow_coverage(
     # TP: Originaldateien sind häufig große Sammel-CSV. Ihre bloße
     # Existenz beweist noch keine FIN-Zuordnung. Nur echte geparste
     # Provenienz-Zeilen liefern FIN-Abdeckung.
-    tp_shas, tp_fins = _tp_sources(store, fins)
+    tp_fin_sources = _tp_sources(store, fins)
     tp_documents = index["documents"]
     all_artifacts = {a.sha256: a for a in store.load_artifacts()}
     tp_selected: dict[str, Path] = {
@@ -376,7 +374,7 @@ def get_workflow_coverage(
         for sha, entry in evidence.get("tp_dashboard", {}).items()
         if entry.source_path.is_file()
     }
-    for sha in tp_shas:
+    for sha in tp_fin_sources:
         artifact = all_artifacts.get(sha)
         if artifact:
             path = Path(artifact.archived_path)
@@ -384,6 +382,7 @@ def get_workflow_coverage(
                 tp_selected[sha] = path
     tp_done = 0
     tp_partial = 0
+    tp_parsed_fins: set[str] = set()
     tp_pending: list[Path] = []
     for sha, path in tp_selected.items():
         documented = tp_documents.get(sha)
@@ -395,11 +394,13 @@ def get_workflow_coverage(
             sha, AutoExportParser, "autoexport_rows", latest, index,
         ) if correct else (False, False)
         tp_done += int(parsed)
+        if parsed:
+            tp_parsed_fins.update(tp_fin_sources.get(sha, set()))
         tp_partial += int(partial)
         if not parsed and path.suffix.lower() == ".csv":
             tp_pending.append(path)
     result["tp_dashboard"] = SourceCoverage(
-        "tp_dashboard", len(fins), None, len(tp_fins),
+        "tp_dashboard", len(fins), None, len(tp_parsed_fins),
         len(tp_selected), tp_done, tp_partial,
         pending_paths=tuple(tp_pending),
         case_label="FINs",
