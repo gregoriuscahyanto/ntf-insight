@@ -788,6 +788,7 @@ class SourcesPage(QWidget):
                 text = (
                     f"Nur Fehlerdateien geprüft: "
                     f"{summary.selected_failed_quicktests} zuvor problematische QuickTest-PDFs · "
+                    f"{summary.remaining_failed_quicktests} weiterhin problematisch · "
                     + text
                 )
         self.import_status.setText(text)
