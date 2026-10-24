@@ -517,6 +517,26 @@ def import_project(
                 "Ein stilles Überschreiben/Zusammenführen ist nicht sicher."
             )
 
+        # Optional evidence tables may not yet exist on a fresh PC.
+        # Initialize only application-defined schemas, never execute DDL from
+        # the imported package.
+        from ntf_insight.reporting.chatgpt_exchange import ChatGPTAnalyseStore
+        from ntf_insight.storage.cluster_evidence_store import ClusterEvidenceStore
+        from ntf_insight.storage.dtc_review_store import DtcReviewStore
+        from ntf_insight.storage.ml_feedback import MLFeedbackStore
+        from ntf_insight.storage.quicktest_store import QuickTestStore
+        from ntf_insight.storage.source_knowledge_store import SourceKnowledgeStore
+        from ntf_insight.storage.workflow_ai_chain import WorkflowAIChainStore
+        from ntf_insight.storage.workflow_progress import WorkflowProgressStore
+
+        for store_type in (
+            ChatGPTAnalyseStore, ClusterEvidenceStore, DtcReviewStore,
+            QuickTestStore, SourceKnowledgeStore, WorkflowAIChainStore,
+            WorkflowProgressStore, QecWorkflowStore,
+        ):
+            store_type(target_store)
+        MLFeedbackStore(target_store.path)
+
         # Read the fully verified staged project and locate every file first.
         staged_files: list[tuple[Path, Path]] = []
         for folder in DATA_FOLDERS:
