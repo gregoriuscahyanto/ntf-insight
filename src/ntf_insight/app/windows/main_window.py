@@ -377,7 +377,7 @@ class MainWindow(QMainWindow):
         if phase != self._diagnostics_phase:
             self._diagnostics_phase = phase
             self._diagnostics_started_at = time.monotonic()
-        progress = re.search(r"(\\d+)\\s*/\\s*(\\d+)", message)
+        progress = re.search(r"(\d+)\s*/\s*(\d+)", message)
         if progress and int(progress.group(2)) > 0:
             done, total = (int(part) for part in progress.groups())
             dialog.setRange(0, total)
@@ -429,8 +429,8 @@ class MainWindow(QMainWindow):
         confirmation.setWindowTitle("Fehler-ZIP erfolgreich erstellt")
         confirmation.setIcon(QMessageBox.Icon.Information)
         confirmation.setText(
-            f"Die ZIP-Datei ist vollständig gespeichert.\\n\\n"
-            f"Speicherort: {path}\\n"
+            f"Die ZIP-Datei ist vollständig gespeichert.\n\n"
+            f"Speicherort: {path}\n"
             f"Größe: {path.stat().st_size:,} Byte"
         )
         open_folder = confirmation.addButton(
