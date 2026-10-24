@@ -77,6 +77,8 @@ def find_parser_problems(
             if progress and number % 25 == 0:
                 progress(f"Projektbezogene Quellen prüfen: {number}/{len(scope_paths)}")
 
+    from ntf_insight.storage.quicktest_store import QuickTestStore
+    QuickTestStore(service.store)  # Bei einem frischen Roharchiv noch nicht angelegt.
     with service.store.connect() as con:
         quicktest_done = {
             row[0] for row in con.execute(
