@@ -209,3 +209,86 @@ Download; dafür sind die gesonderten Abbruchschaltflächen zuständig.
 verschlüsselt**. QEC-, FIN-, Lieferanten- und Werkstattdaten dürfen nur
 auf freigegebenen Systemen weitergegeben werden; keine Originalbelege oder
 echte FINs in GitHub, GitHub-Actions-Artifacts oder ungeprüfte externe Uploads.
+
+
+## Kompakte Workflow-Dashboards und SSL-Kohorten (Ausbaustufe 2)
+
+Die **fünf horizontalen Schrittkacheln sind die einzige Navigation**;
+die redundanten Schaltflächen Zurück, Pausieren und Weiter wurden
+entfernt. Ein zuvor lokal gespeicherter Pausenstatus wird beim
+Neustart in den neuen Workflow migriert und nicht als Sperre weitergeführt.
+
+### 01 QEC-FIN-Liste und Auswahl der Analysegrundgesamtheit
+
+- Donut: eindeutige FINs nach **SSL-Endbefund**; dieselbe FIN zählt
+  innerhalb dieser Verteilung genau einmal. Bei widersprüchlichen
+  SSL-Endbefunden derselben FIN gibt es die eigene Kategorie
+  \`Mehrere Endbefunde\`, bei Leerwerten \`Nicht angegeben\`.
+- Über \`SSL-Endbefunde auswählen\` können Kategorien an- und
+  abgewählt werden. \`Alle übernehmen\` aktiviert alle.
+  Die Auswahl wird je Profil/Sachnummer in DuckDB gespeichert
+  (\`workflow_ssl_selection\`) und mit \`.ntfproject\` übertragen.
+- Die FIN-Liste zeigt weiterhin **sämtliche** QEC-Fälle des Projekts.
+  Ausgeschlossene FINs sind dezent grau hinterlegt. Erst ab Schritt 02
+  werden ausschließlich ausgewählte FINs berücksichtigt: QEC-Abruf,
+  ChatGPT-1-Export, QuickTests/TIPS-Abruf, lokales Clustering und
+  ChatGPT-2-Auswertung. Der QEC-CSV-Export respektiert dieselbe Auswahl.
+- Die erste ChatGPT-ZIP wird in dieser Oberfläche tatsächlich auf
+  die gewählten FINs und zugehörige Fall-/QuickTest-/QEC-Daten begrenzt.
+  Die privat aufbewahrte Pseudonymzuordnung enthält ebenfalls nur
+  die ausgewählten FINs. Vor Übertragung immer lokal kontrollieren.
+
+### 02 QEC-Befundung
+
+- Donut mit drei sich ausschließenden FIN-Status:
+  **alle** QEC-Fallberichte heruntergeladen, **teilweise** vorhanden
+  oder **noch keiner** vorhanden. Gezählt werden eindeutige FINs.
+- Die Tabelle markiert vorhandene, lokal validierte QEC-Berichte grün,
+  ausstehende Zeilen neutral. Das vorhandene lokale Download-Datum
+  bleibt je FIN/Referenz sichtbar.
+
+### 03 NTF-Entscheidung
+
+- Die ZIP-Export- und JSON-Import-Schaltflächen sind vergrößert.
+- Ein Donut für \`NTF plausibel\`, \`NTF fraglich\`, \`Kein reiner NTF\`,
+  \`Nicht bewertbar\`, \`Nicht bewertet\` sowie ggf. \`Mehrere Bewertungen\`;
+  ein zweiter für die vorgeschlagenen Verursachungsbereiche.
+  Freitextkategorien werden für die kompakte Legende ab sechs
+  Kategorien zusammengefasst. Die Tabelle kennzeichnet Status
+  semantisch farbig und zeigt den vorgeschlagenen Verursachungsbereich.
+- Es werden nur die **validiert importierten Bewertungen des ersten
+  ChatGPT-Durchlaufs** angezeigt. Die QEC-Entscheidung bleibt unverändert.
+
+### 04 Unterlagen / Einlesen und Aktualität
+
+- TP Dashboard, Diagnosis Viewer, TIPS Writer und Celonis besitzen
+  jeweils eine explizite **Einlesen**-Aktion. Diese nutzt die
+  bereits vorhandene Parser-/Quellenimport-Pipeline. Für Celonis
+  existiert noch kein freigegebener strukturierter Parser; die
+  Aktion lautet \`Einlesen (Archiv)\` und archiviert Originale.
+- Bei Diagnosis Viewer/TIPS Writer gibt es nur \`Abrufen\`,
+  \`Stop\`, \`Einlesen\` und \`+ Beleg\`. Die missverständliche
+  Funktion \`Markierte\` entfällt. \`Abrufen\` nutzt die über
+  Schritt 01 gewählte FIN-Kohorte.
+- Die App speichert **Abrufzeitpunkt mit Erfolgs-/Fehlerstatus** und
+  **Einlesezeitpunkt** getrennt für jedes Projekt. Historische globale
+  Quellimporte werden als solche gekennzeichnet und sind nicht
+  automatisch einer Sachnummer zurechenbar. Datumsinformationen
+  sind kein Beweis für erfolgreiche Fachprüfung.
+- Originale in der Unterlageninventartabelle sind grün hinterlegt,
+  wenn sie im lokalen Archiv nachweislich vorhanden sind. Die eigene
+  überflüssige Schaltfläche \`Sonstige Dateien importieren\` entfällt;
+  die Kategorie \`Weitere Dokumente\` bleibt erhalten.
+
+### 05 Clusteranalyse – zwei Ansichten, keine doppelte KI
+
+- \`Lokal · HDBSCAN / Cosinus\` zeigt die einmalig vorhandene
+  lokale Clusterimplementierung, mit sinnvollem Scrollbereich.
+  Doppelte Beschreibungs-/Quellenabdeckungs-Texte entfallen.
+- \`ChatGPT · Ergebnis anzeigen\` zeigt **nur die validierte
+  zweite ChatGPT-Rückgabe** mit Clustertiteln, Hypothesen,
+  Sicherheit, FIN/Fall-Zuordnung und fachlichem Prüfstatus.
+  Dieser Tab führt **keinen** neuen ChatGPT-Request aus.
+- Die zwei zentralen Bedienelemente für den zweiten ZIP-Export und
+  JSON-Rückimport sind groß hervorgehoben. Beide Durchläufe bleiben
+  paket-/analyse-ID-gebunden.
