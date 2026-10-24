@@ -318,7 +318,7 @@ def test_context_scrapers_use_only_current_qec_part_with_single_fetch_action(
 
     monkeypatch.setattr(cases, "_start_quicktest_download", fake_start)
     window._context_scrape("diagnosis_viewer", "all")
-    assert calls == [("diagnosis", False, ["WDD12345678901234"], False)]
+    assert calls == [("diagnosis", False, ["WDD12345678901234"], True)]
     assert "cancel" not in page.context_scraper_buttons["diagnosis_viewer"]
     assert page.context_scraper_buttons["diagnosis_viewer"]["all"].text() == "Abruf stoppen"
     assert page.context_scraper_buttons["diagnosis_viewer"]["all"].isEnabled()
