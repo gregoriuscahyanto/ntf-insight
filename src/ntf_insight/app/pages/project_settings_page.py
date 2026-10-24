@@ -8,6 +8,7 @@ from PySide6.QtWidgets import (
 )
 
 from ntf_insight.components.registry import list_component_profiles
+from ntf_insight.storage.cluster_evidence_store import part_key
 from ntf_insight.storage.workflow_projects import NTFProject, WorkflowProjectStore
 
 
@@ -113,16 +114,22 @@ class ProjectSettingsPage(QWidget):
 
     def refresh_projects(self, *, select: tuple[str, str] | None = None) -> None:
         current = select or self.project_selector.currentData()
+        wanted = (
+            (str(current[0]), part_key(str(current[1])))
+            if isinstance(current, (tuple, list)) and len(current) == 2
+            else None
+        )
         self.project_selector.blockSignals(True)
         self.project_selector.clear()
-        for project in self.projects.list_projects():
+        chosen = -1
+        for index, project in enumerate(self.projects.list_projects()):
             self.project_selector.addItem(
                 project.title, (project.profile_id, project.part_number),
             )
-        if current is not None:
-            idx = self.project_selector.findData(current)
-            if idx >= 0:
-                self.project_selector.setCurrentIndex(idx)
+            if wanted == (project.profile_id, part_key(project.part_number)):
+                chosen = index
+        if chosen >= 0:
+            self.project_selector.setCurrentIndex(chosen)
         self.project_selector.blockSignals(False)
         if not self._is_new:
             self._load_selection()
