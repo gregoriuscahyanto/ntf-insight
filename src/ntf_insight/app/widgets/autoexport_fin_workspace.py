@@ -469,6 +469,7 @@ class AutoExportFinWorkspace(QWidget):
         overview_stack.addLayout(overview)
 
         separator = QFrame()
+        self._coverage_separator = separator
         separator.setFrameShape(QFrame.Shape.HLine)
         separator.setStyleSheet("color: #DDE3E8;")
         overview_stack.addWidget(separator)
@@ -476,11 +477,13 @@ class AutoExportFinWorkspace(QWidget):
         # Four overlapping source coverages require FOUR independent donuts.
         # A shared pie would misleadingly count the same FIN multiple times.
         coverage_header = QHBoxLayout()
-        coverage_header.addWidget(QLabel(
+        self._coverage_header_label = QLabel(
             "Quellenabdeckung der analysierten FINs", objectName="CardTitle",
-        ))
+        )
+        coverage_header.addWidget(self._coverage_header_label)
         coverage_header.addStretch(1)
-        coverage_header.addWidget(QLabel("Sachnummer"))
+        self._coverage_part_label = QLabel("Sachnummer")
+        coverage_header.addWidget(self._coverage_part_label)
         self.part_number_combo = QComboBox()
         for number in part_numbers(self._all_qec_cases):
             self.part_number_combo.addItem(number, number)
@@ -742,6 +745,8 @@ class AutoExportFinWorkspace(QWidget):
         for label in (
             self._page_heading, self._intro_label, self.population_note,
             self.summary_note, self.priority_note, self.coverage_note,
+            self._coverage_header_label, self._coverage_part_label,
+            self._coverage_separator, self.part_number_combo,
         ):
             label.hide()
         for indicator in self._source_coverage_items:
@@ -765,6 +770,7 @@ class AutoExportFinWorkspace(QWidget):
             return
         self._workflow_allowed_fins = selected
         self.only_qec.setChecked(True)
+        self.only_qec.setEnabled(selected is None)
         self._invalidate()
         self._update_finding_summary()
         self.status.setText(
@@ -905,7 +911,9 @@ class AutoExportFinWorkspace(QWidget):
         self._run_results = {}
         self.result = None
         self._show_empty()
-        self._analysis_scoped_to_qec = self.only_qec.isChecked()
+        self._analysis_scoped_to_qec = (
+            self.only_qec.isChecked() or self._workflow_allowed_fins is not None
+        )
         self._running_qec_cases = self._matched_qec_cases()
         if self.workflow_handoff_only.isChecked():
             self._running_qec_cases = tuple(
