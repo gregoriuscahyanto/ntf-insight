@@ -81,6 +81,7 @@ class CasePage(QWidget):
     """Inspect FIN/case combinations and edit persistent manual information."""
 
     case_saved = Signal(str)
+    cluster_requested = Signal(str)
     quicktests_downloaded = Signal(object)
     qec_reports_downloaded = Signal(object)
 
@@ -166,7 +167,8 @@ class CasePage(QWidget):
         )
         # Compatibility alias for local FIN navigation and prior tests.
         self.autoexport_fin_workspace = self.cluster_workspace
-        self.detail_tabs.addTab(self.cluster_workspace, "Clusteranalyse")
+        # Die Clustering-Oberfläche wird vom MainWindow in Workflow 05
+        # eingehängt; Fälle/FIN enthält nur noch Fall- und Diagnoseansichten.
         self.cluster_workspace.fin_requested.connect(
             self._open_autoexport_fin_history
         )
@@ -1143,7 +1145,7 @@ class CasePage(QWidget):
         """Show the selected true QEC/NTF case in the local scatter tab."""
         case_id = self.selector.currentData()
         if isinstance(case_id, str) and self.cluster_workspace.focus_case(case_id):
-            self.detail_tabs.setCurrentWidget(self.cluster_workspace)
+            self.cluster_requested.emit(case_id)
 
     def _on_quicktest_fin_changed(self) -> None:
         """Follow an explicit FIN selection from the QuickTest browser."""
