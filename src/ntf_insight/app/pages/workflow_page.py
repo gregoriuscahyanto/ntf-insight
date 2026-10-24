@@ -597,41 +597,23 @@ class WorkflowPage(QWidget):
         self.context_operation_bars: dict[str, QProgressBar] = {}
         self.context_operation_labels: dict[str, QLabel] = {}
 
-        headings = (
-            ("Quelle", 105), ("Portalabruf", 168), ("Parser", 202),
-            ("Beleg", 75), ("Letzter Abruf / Import", 190),
-            ("Dokumente / FINs", 255),
-        )
-        header = QFrame()
-        header_grid = QGridLayout(header)
-        header_grid.setContentsMargins(9, 0, 9, 0)
-        header_grid.setHorizontalSpacing(8)
-        for column, (heading, minimum) in enumerate(headings):
-            title = QLabel(heading, objectName="PageSubtitle")
-            title.setMinimumWidth(minimum)
-            header_grid.addWidget(title, 0, column)
-        header_grid.setColumnStretch(5, 1)
-        scraper_grid.addWidget(header)
+        self.context_source_header = _source_header()
+        scraper_grid.addWidget(self.context_source_header)
 
         for category, label in EVIDENCE_CATEGORIES[:4]:
             frame = QFrame(objectName="SourceCoverageRow")
             frame.setProperty("coverageState", "pending")
-            grid = QGridLayout(frame)
-            grid.setContentsMargins(9, 6, 9, 6)
-            grid.setHorizontalSpacing(8)
-            grid.setVerticalSpacing(0)
-            for column, (_heading, minimum) in enumerate(headings):
-                grid.setColumnMinimumWidth(column, minimum)
-            grid.setColumnStretch(5, 1)
+            frame.setMinimumHeight(94)
+            grid = _source_grid(frame)
             self.context_source_rows[category] = frame
             name = QLabel(label)
+            name.setFixedWidth(_SOURCE_COLUMNS[0][1])
             name.setWordWrap(True)
             grid.addWidget(name, 0, 0)
             self.context_source_names[category] = name
 
             buttons: dict[str, QPushButton] = {}
-            fetch_layout = QVBoxLayout()
-            fetch_layout.setSpacing(4)
+            fetch_buttons: list[QPushButton] = []
             all_fetch = QPushButton("Alle FINs neu abrufen", objectName="WorkflowAction")
             all_fetch.setMinimumHeight(32)
             all_fetch.setToolTip(
@@ -647,7 +629,7 @@ class WorkflowPage(QWidget):
                 all_fetch.setEnabled(False)
                 all_fetch.setToolTip("Für diese Quelle ist kein Portalscraper verfügbar.")
             buttons["all"] = all_fetch
-            fetch_layout.addWidget(all_fetch)
+            fetch_buttons.append(all_fetch)
 
             missing = QPushButton("Nur fehlende FINs abrufen", objectName="WorkflowAction")
             missing.setMinimumHeight(32)
@@ -660,36 +642,33 @@ class WorkflowPage(QWidget):
             )
             missing.setVisible(category in {"diagnosis_viewer", "tips_writer"})
             buttons["missing"] = missing
-            fetch_layout.addWidget(missing)
-            grid.addLayout(fetch_layout, 0, 1)
+            fetch_buttons.append(missing)
+            grid.addWidget(
+                _source_stack(1, fetch_buttons), 0, 1, Qt.AlignmentFlag.AlignTop
+            )
 
-            parser_layout = QVBoxLayout()
-            parser_layout.setSpacing(4)
             parse_all = QPushButton(
                 "Alle Dokumente neu parsen", objectName="WorkflowAction"
             )
-            parse_all.setMinimumHeight(32)
             parse_all.setToolTip(
-                "Alle verifizierten lokalen Dokumente dieser Quelle erneut "
-                "mit dem bestehenden Parser verarbeiten. Keine Portalabfrage."
+                "Alle verifizierten lokalen Dokumente erneut mit dem vorhandenen "
+                "Parser verarbeiten. Ohne erneute Portalabfrage."
             )
             parse_all.clicked.connect(
                 lambda _checked=False, c=category:
                 self._trigger_context_parse(c, "all")
             )
             if category == "celonis":
-                parse_all.setText("Originaldatei importieren …")
+                parse_all.setText("Kein Parser")
+                parse_all.setEnabled(False)
                 parse_all.setToolTip(
-                    "Celonis-Datei manuell auswählen und nur archivieren; "
-                    "kein strukturierter Parser verfügbar."
+                    "Celonis-Dateien können lokal archiviert werden, ein "
+                    "strukturierter Celonis-Parser ist derzeit nicht vorhanden."
                 )
             buttons["parse"] = parse_all
-            parser_layout.addWidget(parse_all)
-
             parse_missing = QPushButton(
                 "Ausstehendes Parsing fortsetzen", objectName="WorkflowAction"
             )
-            parse_missing.setMinimumHeight(32)
             parse_missing.setToolTip(
                 "Nur noch nicht erfolgreich geparste lokale Dokumente verarbeiten."
             )
@@ -698,29 +677,34 @@ class WorkflowPage(QWidget):
                 self._trigger_context_parse(c, "resume")
             )
             if category == "celonis":
-                parse_missing.setText("Parser fehlt")
+                parse_missing.setText("Nicht verfügbar")
                 parse_missing.setEnabled(False)
             buttons["resume_parse"] = parse_missing
-            parser_layout.addWidget(parse_missing)
+            grid.addWidget(
+                _source_stack(2, [parse_all, parse_missing]),
+                0, 2, Qt.AlignmentFlag.AlignTop,
+            )
             if category != "celonis":
-                problem_zip = QPushButton(
-                    "Nicht parsebare als ZIP exportieren", objectName="WorkflowAction",
+                problem_zip = _source_single(
+                    3, QPushButton(
+                        "Fehler-ZIP exportieren", objectName="WorkflowAction",
+                    ),
                 )
-                problem_zip.setMinimumHeight(28)
                 problem_zip.setToolTip(
-                    "Lokales Fehlerpaket für diese Quelle. Standardmäßig nur "
-                    "Metadaten; vertrauliche Originale nur nach Bestätigung."
+                    "Nicht parsebare Dokumente dieser Quelle als lokales ZIP. "
+                    "Standardmäßig nur technische Metadaten, Originale nach Bestätigung."
                 )
                 problem_zip.clicked.connect(
                     lambda _checked=False, c=category:
                     self.action_requested.emit(f"parser_diagnostics:{c}")
                 )
                 buttons["problem_zip"] = problem_zip
-                parser_layout.addWidget(problem_zip)
-            grid.addLayout(parser_layout, 0, 2)
+                grid.addWidget(problem_zip, 0, 3, Qt.AlignmentFlag.AlignTop)
 
-            archive = QPushButton("+ Beleg", objectName="WorkflowAction")
-            archive.setMinimumHeight(68)
+
+            archive = _source_single(
+                4, QPushButton("+ Beleg", objectName="WorkflowAction"),
+            )
             archive.setToolTip(
                 "Lokale Belegdateien in dieser Kategorie archivieren. "
                 "Strukturiertes Parsing separat starten."
@@ -731,12 +715,13 @@ class WorkflowPage(QWidget):
             )
             buttons["import"] = archive
             self.context_import_buttons[category] = archive
-            grid.addWidget(archive, 0, 3)
+            grid.addWidget(archive, 0, 4, Qt.AlignmentFlag.AlignTop)
 
             timestamp = QLabel("Noch kein Abruf", objectName="PageSubtitle")
+            timestamp.setFixedWidth(_SOURCE_COLUMNS[5][1])
             timestamp.setWordWrap(True)
             self.context_source_dates[category] = timestamp
-            grid.addWidget(timestamp, 0, 4)
+            grid.addWidget(timestamp, 0, 5)
 
             stats = QVBoxLayout()
             stats.setSpacing(3)
@@ -758,7 +743,7 @@ class WorkflowPage(QWidget):
             operation_label.setWordWrap(True)
             operation_label.hide()
             stats.addWidget(operation_label)
-            grid.addLayout(stats, 0, 5)
+            grid.addLayout(stats, 0, 6)
 
             self.context_coverage_bars[category] = bar
             self.context_operation_bars[category] = operation
