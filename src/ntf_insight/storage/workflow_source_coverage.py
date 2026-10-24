@@ -12,6 +12,7 @@ TP/Celonis: Dokument- und Parse-Zähler, FIN-Zuordnung ggf. unbekannt.
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
@@ -26,6 +27,8 @@ from ntf_insight.ingestion.qec_json import QECJsonParser, QEC_SECTIONS
 from ntf_insight.ingestion.tips_json import TipsJsonParser
 from ntf_insight.storage.cluster_evidence_store import EvidenceFile
 from ntf_insight.storage.duckdb_store import DuckDBStore
+
+_FIN = re.compile(r"[A-HJ-NPR-Z0-9]{17}\Z")
 
 
 
@@ -242,7 +245,8 @@ def get_workflow_coverage(
     root = Path(data_dir)
     fins = {
         str(row.get("fin") or "").strip().upper() for row in qec_rows
-    } - {""}
+        if _FIN.fullmatch(str(row.get("fin") or "").strip().upper())
+    }
     latest, index = _persisted(store)
     result: dict[str, SourceCoverage] = {}
     evidence: dict[str, dict[str, EvidenceFile]] = {}
