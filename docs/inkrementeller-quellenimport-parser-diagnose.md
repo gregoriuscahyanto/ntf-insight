@@ -31,7 +31,7 @@ Erfolgreiche v2-Dateien werden weder gescannt noch geparst. Erneutes Anklicken
 oder **Import fortsetzen** wählt die *weiterhin* problematischen Berichte
 neu aus, auch wenn diese bereits mit der gleichen Parser-Version fehlgeschlagen
 sind. Ein Abbruch verändert keine erfolgreich archivierten oder gespeicherten
-Berichte. Die Fehler- und Erfolgszahlen stehen im Importstatus.
+Berichte. Die Fehler-, Erfolgs- und verbleibenden Problemzahlen stehen im Importstatus.
 
 **Zweite Phase, erst nach erfolgreicher Fehlerbereinigung:** Über
 **Alle bereits heruntergeladenen QuickTests einlesen** wird wieder der
