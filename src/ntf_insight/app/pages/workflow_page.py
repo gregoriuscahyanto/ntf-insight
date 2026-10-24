@@ -131,6 +131,8 @@ class WorkflowPage(QWidget):
             ("pc_import", "PC-Import"),
             ("ai_export", "ChatGPT-Paket exportieren"),
             ("ai_import", "ChatGPT-Ergebnis importieren"),
+            ("cancel_import", "Import abbrechen"),
+            ("resume_import", "Import fortsetzen"),
         )):
             button = QPushButton(title)
             button.setObjectName("WorkflowAction")
