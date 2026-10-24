@@ -20,6 +20,7 @@ class NavigationPanel(QFrame):
 
     ITEMS = (
         ("workflow", "Workflow"),
+        ("project_settings", "Projekteinstellungen"),
         ("dashboard", "Übersicht"),
         ("sources", "Datenquellen"),
         ("knowledge", "Quellenwissen"),
