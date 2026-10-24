@@ -16,6 +16,7 @@ import shutil
 import tempfile
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from typing import Callable
 from pathlib import Path
 from zipfile import ZIP_DEFLATED, ZipFile
 
@@ -329,6 +330,7 @@ def _scope_snapshot(database: Path, data_root: Path, profile: str, part: str) ->
 def _stage_files(
     original_root: Path, project_root: Path, source_db: Path,
     fins: set[str], references: set[str],
+    *, progress: Callable[[int, str], None] | None = None,
 ) -> int:
     """Copy only referenced archive objects and FIN-scoped downloaded reports."""
     total = 0
@@ -356,6 +358,8 @@ def _stage_files(
                 [modified.model_dump_json(), sha],
             )
             total += 1
+            if progress and total % 25 == 0:
+                progress(25, f"{total} Rohbelege geprüft und kopiert")
     for folder in ("quicktests", "qec", "tips"):
         parent = original_root / folder
         if not parent.is_dir():
@@ -383,11 +387,14 @@ def _stage_files(
                 dest.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copy2(_safe_file(original_root, path), dest)
                 total += 1
+                if progress and total % 25 == 0:
+                    progress(30, f"{total} Projektdateien gesichert")
     return total
 
 
 def export_project(
     data_dir: Path, destination: Path, profile_id: str, part_number: str,
+    *, progress: Callable[[int, str], None] | None = None,
 ) -> ProjectExportResult:
     """Create a project-only package, without all other projects' database rows."""
     root, destination = Path(data_dir).absolute(), Path(destination).absolute()
@@ -402,18 +409,31 @@ def export_project(
     )
     if project is None:
         raise ValueError("Projekt noch nicht angelegt. Altbestand zuerst übernehmen.")
+    if progress:
+        progress(3, "Projektdatenbank konsistent sichern")
     with tempfile.TemporaryDirectory(prefix="ntf-project-") as tmp:
         temp = Path(tmp)
         inner_root = temp / "filtered"
         inner_root.mkdir()
         snapshot = inner_root / DATABASE_NAME
         _snapshot_database(_safe_file(root, root / DATABASE_NAME), snapshot)
+        if progress:
+            progress(12, "Projektfälle und zugehörige FINs filtern")
         fins, keys, shared = _scope_snapshot(
             snapshot, root, profile_id, part_number,
         )
-        _stage_files(root, inner_root, snapshot, fins, keys["references"])
+        if progress:
+            progress(20, "Projektbezogene Rohbelege kopieren")
+        _stage_files(
+            root, inner_root, snapshot, fins, keys["references"], progress=progress,
+        )
         backup = temp / INNER
-        export_portable_backup(inner_root, backup)
+        if progress:
+            progress(40, "Projektarchiv schreiben und Prüfsummen bilden")
+        export_portable_backup(
+            inner_root, backup,
+            progress=(lambda message: progress(55, message)) if progress else None,
+        )
         if backup.stat().st_size > MAX_PROJECT_BYTES:
             raise ValueError("Projektpaket überschreitet 32 GiB.")
         destination.parent.mkdir(parents=True, exist_ok=True)
@@ -423,6 +443,8 @@ def export_project(
         os.close(fd)
         temporary = Path(tempname)
         try:
+            if progress:
+                progress(78, "Fertiges Projektpaket bündeln und prüfen")
             with ZipFile(temporary, "w", compression=ZIP_DEFLATED) as archive:
                 entry = _write_member(archive, INNER, backup)
                 manifest = {
@@ -442,6 +464,8 @@ def export_project(
             if destination.exists():
                 raise FileExistsError("Die Ziel-Projektdatei existiert inzwischen.")
             os.replace(temporary, destination)
+            if progress:
+                progress(100, "Projektpaket vollständig erstellt")
         finally:
             temporary.unlink(missing_ok=True)
     return ProjectExportResult(
