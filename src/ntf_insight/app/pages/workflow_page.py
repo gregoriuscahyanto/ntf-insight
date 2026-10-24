@@ -215,6 +215,8 @@ class WorkflowPage(QWidget):
         self.note.setWordWrap(True)
         outer.addWidget(self.note)
         self.refresh_data()
+        self.refresh_ai_chain()
+        self._refresh_project_selector()
 
     def _workspace(self, title: str, subtitle: str = "") -> tuple[QWidget, QVBoxLayout]:
         widget = QWidget()
@@ -346,6 +348,9 @@ class WorkflowPage(QWidget):
         )
         actions.addStretch(1)
         body.addLayout(actions)
+        self.ai_package_status = QLabel(objectName="PageSubtitle")
+        self.ai_package_status.setWordWrap(True)
+        body.addWidget(self.ai_package_status)
         self.ntf_status = QLabel(objectName="PageSubtitle")
         body.addWidget(self.ntf_status)
         self.ntf_table, self.ntf_model = _create_table((
@@ -471,32 +476,6 @@ class WorkflowPage(QWidget):
         middle.addLayout(inventory, 4)
         body.addLayout(middle, 1)
 
-        export = QHBoxLayout()
-        self.context_base_button = QPushButton("1. KI-Analysepaket wählen …")
-        self.context_base_button.clicked.connect(
-            lambda: self.action_requested.emit("context_base")
-        )
-        export.addWidget(self.context_base_button)
-        self.context_base_label = QLabel("Keine Analysebasis", objectName="PageSubtitle")
-        self.context_base_label.setToolTip(
-            "Die 1. Analyse-ZIP liefert DTC-Clusterbasis und das gültige "
-            "ChatGPT-Ergebnisschema für den 2. Durchlauf."
-        )
-        export.addWidget(self.context_base_label, 1)
-        self.context_originals = QCheckBox("Originale beifügen (vertraulich)")
-        self.context_originals.setChecked(False)
-        self.context_originals.setToolTip(
-            "Nimmt die unveränderten lokalen Unterlagen auf. Sie können echte FINs, "
-            "Lieferanteninformationen, Personenangaben und Geheimnisse enthalten."
-        )
-        export.addWidget(self.context_originals)
-        self.context_export_button = QPushButton("Cluster-Kontextpaket exportieren")
-        self.context_export_button.setObjectName("ClusterStartButton")
-        self.context_export_button.clicked.connect(
-            lambda: self.action_requested.emit("context_export")
-        )
-        export.addWidget(self.context_export_button)
-        body.addLayout(export)
         self.context_review_button = QPushButton("Unterlagensammlung geprüft")
         self.context_review_button.clicked.connect(self._review)
         body.addWidget(self.context_review_button)
@@ -505,49 +484,142 @@ class WorkflowPage(QWidget):
         body.addWidget(self.context_summary)
 
     def _build_following_steps(self) -> None:
-        targets = (
-            ("05 · Clusteranalyse",
-             "Diagnoseähnlichkeit untersuchen; nicht die späteren Bewertungen als Clusterfeatures verwenden.",
-             "Clusteranalyse öffnen", "cases", "cluster"),
-            ("06 · Auswertung und Datenaustausch",
-             "Ergebnisse und PC-Datenstand lokal austauschen.",
-             "Auswertung öffnen", "sources", "chatgpt"),
+        """Die lokale FIN-Clusterberechnung wird in Schritt 05 eingehängt."""
+        _, body = self._workspace(
+            "05 · Clusteranalyse",
+            "Lokale DTC-Cluster und zweiter ChatGPT-Durchlauf. "
+            "Technische Unterlagen dienen der Erklärung und Plausibilisierung.",
         )
-        self.review_buttons: dict[int, QPushButton] = {}
-        for step, (title, hint, button_label, page, tab) in enumerate(targets, start=4):
-            _, detail = self._workspace(title, hint)
-            actions = QHBoxLayout()
-            self._add_action(
-                actions, button_label,
-                lambda _checked=False, p=page, t=tab: self.navigate.emit(p, t),
-            )
-            if step == 5:
-                self._add_action(
-                    actions, "Eigene Dateien importieren",
-                    lambda: self.action_requested.emit("self_import"),
-                )
-                self._add_action(
-                    actions, "PC-Export",
-                    lambda: self.action_requested.emit("pc_export"),
-                )
-                self._add_action(
-                    actions, "PC-Import",
-                    lambda: self.action_requested.emit("pc_import"),
-                )
-            button = self._add_action(actions, "Fachlich geprüft", self._review)
-            self.review_buttons[step] = button
-            actions.addStretch(1)
-            detail.addLayout(actions)
-            detail.addStretch(1)
-        self.review_buttons[3] = self.context_review_button
+        self.cluster_base_status = QLabel(objectName="PageSubtitle")
+        self.cluster_base_status.setWordWrap(True)
+        body.addWidget(self.cluster_base_status)
+        options = QHBoxLayout()
+        self.cluster_originals = QCheckBox("Technische Originale beifügen (vertraulich)")
+        self.cluster_originals.setChecked(False)
+        self.cluster_originals.setToolTip(
+            "Originale sind nicht anonymisiert. Auch das importierte erste "
+            "ChatGPT-Ergebnis kann vertrauliche Freitexte enthalten."
+        )
+        options.addWidget(self.cluster_originals)
+        self.cluster_export_button = self._add_action(
+            options, "2. ChatGPT-Paket exportieren",
+            lambda: self.action_requested.emit("cluster_export"),
+        )
+        self.cluster_import_button = self._add_action(
+            options, "Cluster-Ergebnis importieren",
+            lambda: self.action_requested.emit("cluster_import"),
+        )
+        options.addStretch(1)
+        body.addLayout(options)
+        self.cluster_result_status = QLabel(objectName="PageSubtitle")
+        body.addWidget(self.cluster_result_status)
+        self.local_cluster_holder = QWidget()
+        self.local_cluster_layout = QVBoxLayout(self.local_cluster_holder)
+        self.local_cluster_layout.setContentsMargins(0, 0, 0, 0)
+        self.local_cluster_layout.addWidget(
+            QLabel("Die vorhandene lokale Clusteranalyse wird hier eingebunden.")
+        )
+        body.addWidget(self.local_cluster_holder, 1)
+        self.context_review_button = self.context_review_button
+        self.review_buttons = {3: self.context_review_button}
+        self.cluster_review_button = QPushButton("Clusteranalyse fachlich geprüft")
+        self.cluster_review_button.clicked.connect(self._review)
+        body.addWidget(self.cluster_review_button)
+        self.review_buttons[4] = self.cluster_review_button
         self.review_button = self.review_buttons[4]
 
-    def set_context_base(self, path: Path | None) -> None:
-        self.context_base_path = Path(path) if path else None
-        self.context_base_label.setText(
-            self.context_base_path.name if self.context_base_path
-            else "Keine Analysebasis"
+    def mount_local_cluster(self, widget: QWidget) -> None:
+        """Ein einziger lokaler Cluster-Workspace, kein zweiter Analysealgorithmus."""
+        self.local_cluster_widget = widget
+        layout = self.local_cluster_layout
+        while layout.count():
+            item = layout.takeAt(0)
+            if item.widget() is not None:
+                item.widget().setParent(None)
+        layout.addWidget(widget)
+        widget.show()
+
+    def _refresh_project_selector(self) -> None:
+        projects = self.project_store.list_projects()
+        current = (self.profile_id, self._context_part)
+        self.project_combo.blockSignals(True)
+        self.project_combo.clear()
+        self.project_combo.addItem("Projekt wählen", None)
+        for project in projects:
+            self.project_combo.addItem(
+                project.title, (project.profile_id, project.part_number)
+            )
+        idx = self.project_combo.findData(current)
+        self.project_combo.setCurrentIndex(idx if idx >= 0 else 0)
+        self.project_combo.blockSignals(False)
+        project = self.project_store.get(*current)
+        label = project.title if project is not None else (
+            f"{'Kühlmittelpumpe' if self.profile_id == 'coolant_pump' else self.profile_id}"
+            f" [{self._context_part or 'Sachnummer wählen'}]"
         )
+        self.project_title.setText(label)
+        self.project_title.setToolTip(
+            "Steuergeräte und Projektbeschreibung über Einstellungen konfigurieren."
+            + ("\nECUs: " + ", ".join(project.ecu_names) if project and project.ecu_names else "")
+        )
+
+    def _project_combo_changed(self) -> None:
+        project = self.project_combo.currentData()
+        if project is not None:
+            self.project_selected.emit(project[0], project[1])
+
+    def activate_project(self, profile: str, part: str) -> None:
+        """Auswahl wechselt Kontext und Prüffortschritt, nicht die globalen Rohdaten."""
+        from ntf_insight.storage.workflow_progress import normalize_part_number
+        part = normalize_part_number(part)
+        self.profile_id, self._context_part = profile, part
+        idx = self.profile.findData(profile)
+        if idx >= 0:
+            self.profile.setCurrentIndex(idx)
+        self.part_number.setText(part)
+        self.progress_store.select_context(profile, part)
+        self.state = self.progress_store.load(profile, part)
+        self._notice = ""
+        self._error_step = None
+        self.refresh_context_files()
+        self.refresh_ai_chain()
+        self._refresh_project_selector()
+        self.refresh()
+
+    def refresh_ai_chain(self) -> None:
+        self.first_package = self.ai_chain.latest_first_export(
+            self.profile_id, self._context_part
+        )
+        if self.first_package is None:
+            self.ai_package_status.setText(
+                "Noch keine KI-Analysebasis registriert."
+            )
+            self.cluster_base_status.setText(
+                "Zuerst in Schritt 03 das erste ChatGPT-Paket exportieren "
+                "und das erste Ergebnis als JSON importieren."
+            )
+            self.cluster_result_status.setText("Noch kein zweiter Durchlauf.")
+        else:
+            package = self.first_package
+            self.ai_package_status.setText(
+                "1. KI-Paket automatisch gesichert · "
+                f"ID {package.paket_id[:12]}…"
+            )
+            if package.analysis_id is None:
+                self.cluster_base_status.setText(
+                    "1. KI-Paket vorhanden; die ChatGPT-Ergebnis-JSON aus "
+                    "Schritt 03 wurde noch nicht importiert."
+                )
+            else:
+                self.cluster_base_status.setText(
+                    f"1. Durchlauf: {package.analysis_id} · "
+                    f"{len(self.context_files)} Unterlagen aus Schritt 04 verfügbar."
+                )
+            prepared, imported = self.ai_chain.second_status(package.paket_id)
+            self.cluster_result_status.setText(
+                f"2. Durchlauf: {prepared} Clusterpaket(e) erzeugt, "
+                f"{imported} Ergebnis(se) validiert importiert."
+            )
         self._refresh_controls()
 
     def set_context_busy(self, busy: bool) -> None:
@@ -605,8 +677,11 @@ class WorkflowPage(QWidget):
             self.state = self.progress_store.load(profile_id, part)
             self._notice = ""
             self._error_step = None
-            self.set_context_base(None)
+            self.refresh_ai_chain()
+            self._refresh_project_selector()
         self.refresh_context_files()
+        self.refresh_ai_chain()
+        self._refresh_project_selector()
         self.refresh()
 
     def _save(self) -> None:
@@ -631,7 +706,7 @@ class WorkflowPage(QWidget):
         self._save()
 
     def _review(self) -> None:
-        if self.state.paused or self.state.step not in (3, 4, 5):
+        if self.state.paused or self.state.step not in (3, 4):
             return
         reviews = set(self.state.reviewed_steps)
         if self.state.step in reviews:
@@ -773,10 +848,15 @@ class WorkflowPage(QWidget):
         self.qec_import_button.setEnabled(not paused and not self._import_busy)
         for button in self.context_import_buttons.values():
             button.setEnabled(not paused and not self._context_busy)
-        self.context_base_button.setEnabled(not paused and not self._context_busy)
-        self.context_originals.setEnabled(not paused and not self._context_busy)
-        self.context_export_button.setEnabled(
-            not paused and not self._context_busy and self.context_base_path is not None
+        self.cluster_originals.setEnabled(not paused and not self._context_busy)
+        has_first = self.first_package is not None
+        has_first_result = bool(has_first and self.first_package.analysis_id)
+        self.cluster_export_button.setEnabled(
+            not paused and not self._context_busy and has_first_result
+        )
+        self.cluster_import_button.setEnabled(
+            not paused and not self._context_busy and has_first
+            and self.ai_chain.second_status(self.first_package.paket_id)[0] > 0
         )
         self.context_review_button.setEnabled(
             not paused and not self._context_busy and bool(self.context_files)
@@ -841,7 +921,6 @@ class WorkflowPage(QWidget):
                 "partial" if self.context_files else "pending"
             ),
             "done" if 4 in self.state.reviewed_steps else "pending",
-            "done" if 5 in self.state.reviewed_steps else "pending",
         ]
         fraction = sum(1 if status == "done" else 0.5 if status == "partial" else 0
                        for status in statuses)
@@ -874,7 +953,6 @@ class WorkflowPage(QWidget):
             f"{total} FINs", f"{downloaded}/{total} Berichte",
             f"{reviewed}/{stats['cases']} geprüft", f"{len(self.context_files)} Unterlagen",
             "Geprüft" if statuses[4] == "done" else "Offen",
-            "Geprüft" if statuses[5] == "done" else "Offen",
         )
         lamps = {"done": "●", "partial": "●", "pending": "○", "error": "!"}
         for i, button in enumerate(self.cards):
