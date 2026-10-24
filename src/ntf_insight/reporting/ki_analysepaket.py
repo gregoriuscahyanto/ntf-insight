@@ -40,7 +40,7 @@ from ntf_insight.reporting.qec_originalbelege import (
     plan_qec_originale, write_qec_originale,
 )
 
-EXPORT_VERSION = 2
+EXPORT_VERSION = 3
 _FIN_RE = re.compile(r"^[A-HJ-NPR-Z0-9]{17}$", re.I)
 _SAFE_CODE_RE = re.compile(r"^[A-Za-z0-9_.:/+\-]{1,45}$")
 MAX_QEC_RECORDS = 200_000
