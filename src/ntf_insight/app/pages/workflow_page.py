@@ -113,21 +113,26 @@ class WorkflowPage(QWidget):
             lambda: self.action_requested.emit("new_project")
         )
         header.addWidget(self.new_project_button)
+        self.adopt_button = QPushButton("Bestehenden QEC-Bestand übernehmen")
+        self.adopt_button.clicked.connect(
+            lambda: self.action_requested.emit("adopt_legacy")
+        )
+        header.addWidget(self.adopt_button)
         self.settings_button = QPushButton("Einstellungen")
         self.settings_button.clicked.connect(
             lambda: self.action_requested.emit("project_settings")
         )
         header.addWidget(self.settings_button)
-        self.pc_export_button = QPushButton("PC-Export")
-        self.pc_export_button.clicked.connect(
-            lambda: self.action_requested.emit("pc_export")
+        self.project_export_button = QPushButton("Projekt-Export")
+        self.project_export_button.clicked.connect(
+            lambda: self.action_requested.emit("project_export")
         )
-        header.addWidget(self.pc_export_button)
-        self.pc_import_button = QPushButton("PC-Import")
-        self.pc_import_button.clicked.connect(
-            lambda: self.action_requested.emit("pc_import")
+        header.addWidget(self.project_export_button)
+        self.project_import_button = QPushButton("Projekt-Import")
+        self.project_import_button.clicked.connect(
+            lambda: self.action_requested.emit("project_import")
         )
-        header.addWidget(self.pc_import_button)
+        header.addWidget(self.project_import_button)
         outer.addLayout(header)
         self.project_ecus_label = QLabel(objectName="PageSubtitle")
         outer.addWidget(self.project_ecus_label)
@@ -135,6 +140,7 @@ class WorkflowPage(QWidget):
         # API für bestehende Import-/GUI-Funktionen; editierbar ist nur das
         # Projekt auf der Einstellungsseite, nicht die globale Kopfzeile.
         self.profile = QComboBox(self)
+        self.profile.hide()
         self.profile.setAccessibleName("Bauteilprofil")
         for item in list_component_profiles():
             label = (
@@ -145,7 +151,8 @@ class WorkflowPage(QWidget):
             self.profile.addItem(label, item.profile_id)
         self.profile.setCurrentIndex(max(0, self.profile.findData(self.profile_id)))
         self.profile.currentIndexChanged.connect(self._change_context)
-        self.part_number = QLineEdit(part)
+        self.part_number = QLineEdit(part, self)
+        self.part_number.hide()
         self.part_number.setPlaceholderText("Sachnummer · alle")
         self.part_number.setMaximumWidth(215)
         self.part_number.setMaxLength(120)
@@ -564,6 +571,15 @@ class WorkflowPage(QWidget):
             f" [{self._context_part or 'Sachnummer wählen'}]"
         )
         self.project_title.setText(label)
+        self.adopt_button.setVisible(
+            project is None and bool(self._all_rows)
+            and self.profile_id == "coolant_pump"
+        )
+        self.project_export_button.setEnabled(project is not None)
+        self.project_export_button.setToolTip(
+            "Nur das ausgewählte Projekt als .ntfproject exportieren. "
+            "Bestehenden Bestand ohne Projekt zuerst übernehmen."
+        )
         self.project_ecus_label.setText(
             "Relevante Steuergeräte: " + ", ".join(project.ecu_names)
             if project and project.ecu_names
