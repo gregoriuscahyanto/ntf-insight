@@ -152,3 +152,58 @@ def test_case_download_import_stays_in_case_area(tmp_path, monkeypatch):
     finally:
         window.close()
         app.processEvents()
+
+
+def test_generic_import_popup_shows_progress_time_and_safe_stop(
+    tmp_path, monkeypatch,
+):
+    app, window = _window(tmp_path, monkeypatch)
+    sources = window.pages["sources"]
+    try:
+        sources.import_started.emit("10 Quelldateien importieren")
+        dialog = window._source_import_dialog
+        assert dialog is not None
+        assert dialog._running
+        assert dialog.cancel_button.isVisible() or not window.isVisible()
+        sources.import_progress.emit("Originaldateien archivieren (3/10) …")
+        assert dialog.maximum() == 10
+        assert dialog.value() == 3
+        assert "Bisher" in dialog.time_label.text()
+        dialog.cancel_button.click()
+        assert "Abbruch angefordert" in dialog.status.text()
+        sources.import_completed.emit(
+            "Import unterbrochen (Fortsetzen möglich): 3 archiviert"
+        )
+        assert not dialog._running
+        assert "sicher unterbrochen" in dialog.status.text()
+        assert "Gesamtdauer" in dialog.time_label.text()
+        dialog.accept()
+    finally:
+        window.close()
+        app.processEvents()
+
+
+def test_chatgpt_import_failure_is_shown_in_workflow_popup(
+    tmp_path, monkeypatch,
+):
+    app, window = _window(tmp_path, monkeypatch)
+    try:
+        window.navigation.select_page("workflow")
+        panel = window.pages["sources"].ki_analyse_panel
+        assert panel is not None
+        panel.analysis_import_started.emit("analyse.json")
+        dialog = window._ai_import_dialog
+        assert dialog is not None and dialog._running
+        panel.analysis_import_progress.emit("Fallbewertungen prüfen (17/173) …")
+        assert dialog.maximum() == 173
+        assert dialog.value() == 17
+        panel.analysis_import_failed.emit(
+            "Belegzeile ist im ursprünglichen Analyse-ZIP nicht vorhanden"
+        )
+        assert not dialog._running
+        assert "Vorgang fehlgeschlagen" in dialog.status.text()
+        assert "ChatGPT-Rückimport abgebrochen" in window.pages["workflow"]._notice
+        dialog.accept()
+    finally:
+        window.close()
+        app.processEvents()
