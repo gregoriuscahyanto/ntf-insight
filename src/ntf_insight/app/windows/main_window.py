@@ -6,7 +6,7 @@ import json
 from pathlib import Path
 
 from PySide6.QtCore import Qt, QEventLoop, QTimer, QUrl
-from PySide6.QtGui import QDesktopServices, QPainterPath
+from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import (
     QApplication, QDialog, QFileDialog, QGraphicsBlurEffect, QHBoxLayout,
     QInputDialog, QMainWindow, QMessageBox, QProgressDialog, QPushButton,
