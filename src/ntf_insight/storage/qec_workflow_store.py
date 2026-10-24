@@ -186,8 +186,15 @@ class QecWorkflowStore:
                 ))))
         return len(rows)
 
-    def handoff_ntf(self, qec_root: Path) -> int:
+    def handoff_ntf(
+        self, qec_root: Path, *, part_number: str = "",
+    ) -> int:
+        from ntf_insight.storage.cluster_evidence_store import part_key
+
         rows = self.rows(qec_root)
+        if part_number.strip():
+            key = part_key(part_number)
+            rows = [row for row in rows if part_key(row["part_number"]) == key]
         by_source: dict[str, dict[str, list[str]]] = {}
         for row in rows:
             by_source.setdefault(
@@ -198,11 +205,21 @@ class QecWorkflowStore:
             con.execute("BEGIN TRANSACTION")
             try:
                 for source in self.active_sources():
-                    con.execute(
-                        "DELETE FROM qec_cluster_handoff WHERE source_sha256=?",
-                        [source.sha256],
-                    )
-                    for fin, decisions in by_source.get(source.sha256, {}).items():
+                    candidates = by_source.get(source.sha256, {})
+                    if part_number.strip():
+                        # Do not erase previously released FINs of other parts.
+                        for fin in candidates:
+                            con.execute(
+                                "DELETE FROM qec_cluster_handoff WHERE "
+                                "source_sha256=? AND fin=?",
+                                [source.sha256, fin],
+                            )
+                    else:
+                        con.execute(
+                            "DELETE FROM qec_cluster_handoff WHERE source_sha256=?",
+                            [source.sha256],
+                        )
+                    for fin, decisions in candidates.items():
                         if decisions and all(x == "NTF" for x in decisions):
                             con.execute(
                                 "INSERT INTO qec_cluster_handoff VALUES (?,?)",
