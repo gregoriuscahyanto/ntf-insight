@@ -442,6 +442,7 @@ class WorkflowPage(QWidget):
         scraper_grid.setVerticalSpacing(3)
         self.context_scraper_buttons: dict[str, dict[str, QPushButton]] = {}
         self.context_import_buttons: dict[str, QPushButton] = {}
+        self.context_technical_resume: dict[str, QPushButton] = {}
         self.context_counts: dict[str, QLabel] = {}
         for column, heading in enumerate((
             "Quelle", "Abruf", "Stop", "Parser", "Datei",
@@ -592,6 +593,19 @@ class WorkflowPage(QWidget):
                     lambda: self.action_requested.emit("context_parse:cdd_smrd")
                 )
                 group.addWidget(parser)
+                resume = QPushButton("Fortsetzen", objectName="WorkflowAction")
+                resume.setToolTip(
+                    "Nur noch nicht strukturiert indexierte CDD-Dateien "
+                    "mit dem vorhandenen Candela-Parser lesen. "
+                    "SMR-D ist nicht unterstützt."
+                )
+                resume.clicked.connect(
+                    lambda: self.action_requested.emit(
+                        "context_parse_resume:cdd_smrd"
+                    )
+                )
+                self.context_technical_resume[category] = resume
+                group.addWidget(resume)
             button = QPushButton("+", objectName="WorkflowAction")
             button.setFixedWidth(30)
             button.setToolTip(f"{label} · eine oder mehrere Dateien auswählen")
@@ -1358,6 +1372,20 @@ class WorkflowPage(QWidget):
             status = self._source_coverage.get(category)
             if status is None:
                 continue
+            if category not in self.context_coverage_bars:
+                label.setText(
+                    f"{status.parsed_documents}/{status.local_documents} geparst"
+                    if category == "cdd_smrd" else
+                    f"{status.local_documents} archiviert"
+                )
+                label.setToolTip(status.display() + "\n" + status.note)
+                label.setStyleSheet(
+                    "color: #268763;" if (
+                        status.local_documents and
+                        status.local_documents == status.parsed_documents
+                    ) else "color: #bd8318;" if status.local_documents else ""
+                )
+                continue
             label.setText(status.display())
             label.setToolTip(status.note)
             bar = self.context_coverage_bars[category]
@@ -1534,6 +1562,12 @@ class WorkflowPage(QWidget):
             buttons["resume_parse"].setEnabled(
                 not paused and not blocked and status is not None
                 and status.can_resume_parsing
+            )
+        for category, button in self.context_technical_resume.items():
+            status = self._source_coverage.get(category)
+            button.setEnabled(
+                not paused and not self._context_busy and not self._import_busy
+                and bool(status and status.can_resume_parsing)
             )
         self.cluster_originals.setEnabled(not paused and not self._context_busy)
         has_first = self.first_package is not None
