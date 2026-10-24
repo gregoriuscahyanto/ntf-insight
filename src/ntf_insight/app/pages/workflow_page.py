@@ -16,8 +16,8 @@ from PySide6.QtGui import QAction
 from PySide6.QtGui import QCursor
 from PySide6.QtWidgets import (
     QAbstractItemView, QCheckBox, QComboBox, QGridLayout, QHBoxLayout,
-    QHeaderView, QLabel, QLineEdit, QMenu, QProgressBar, QPushButton,
-    QScrollArea, QSizePolicy, QStackedWidget, QTabWidget, QTableView,
+    QHeaderView, QLabel, QLayout, QLineEdit, QMenu, QProgressBar,
+    QPushButton, QScrollArea, QSizePolicy, QStackedWidget, QTabWidget, QTableView,
     QToolButton, QVBoxLayout, QWidget,
 )
 
@@ -606,13 +606,34 @@ class WorkflowPage(QWidget):
         self.cluster_tabs.setSizePolicy(
             QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding
         )
+        # Genau EIN Scrollbereich fuer den lokalen Clusterinhalt. Der
+        # eingebettete AutoExportFinWorkspace gibt seinen alten internen
+        # QScrollArea in set_workflow_compact_mode() frei. Ein verschachteltes
+        # Scrollen verhindert sonst, dass der untere Teil erreichbar ist.
+        self.local_cluster_scroll = QScrollArea()
+        self.local_cluster_scroll.setObjectName("WorkflowClusterScroll")
+        self.local_cluster_scroll.setWidgetResizable(True)
+        self.local_cluster_scroll.setVerticalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAlwaysOn
+        )
+        self.local_cluster_scroll.setHorizontalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAsNeeded
+        )
+        self.local_cluster_scroll.setMinimumHeight(230)
         self.local_cluster_holder = QWidget()
         self.local_cluster_holder.setSizePolicy(
-            QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Expanding
+            QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Minimum
         )
         self.local_cluster_layout = QVBoxLayout(self.local_cluster_holder)
         self.local_cluster_layout.setContentsMargins(0, 0, 0, 0)
-        self.cluster_tabs.addTab(self.local_cluster_holder, "Lokal · HDBSCAN / Cosinus")
+        self.local_cluster_layout.setSpacing(0)
+        self.local_cluster_layout.setSizeConstraint(
+            QLayout.SizeConstraint.SetMinimumSize
+        )
+        self.local_cluster_scroll.setWidget(self.local_cluster_holder)
+        self.cluster_tabs.addTab(
+            self.local_cluster_scroll, "Lokal · HDBSCAN / Cosinus"
+        )
         self.chatgpt_cluster_page = QWidget()
         review_layout = QVBoxLayout(self.chatgpt_cluster_page)
         review_layout.setContentsMargins(5, 5, 5, 5)
@@ -661,18 +682,14 @@ class WorkflowPage(QWidget):
             item = layout.takeAt(0)
             if item.widget() is not None:
                 item.widget().setParent(None)
-        layout.addWidget(widget)
-        widget.setSizePolicy(
-            QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Expanding
-        )
         if hasattr(widget, "set_workflow_compact_mode"):
             widget.set_workflow_compact_mode()
-        for scroll in widget.findChildren(QScrollArea):
-            scroll.setWidgetResizable(True)
-            scroll.setVerticalScrollBarPolicy(
-                Qt.ScrollBarPolicy.ScrollBarAsNeeded
-            )
+        widget.setSizePolicy(
+            QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Minimum
+        )
+        layout.addWidget(widget)
         widget.show()
+        self.local_cluster_scroll.verticalScrollBar().setValue(0)
 
     def _refresh_project_selector(self) -> None:
         projects = self.project_store.list_projects()
