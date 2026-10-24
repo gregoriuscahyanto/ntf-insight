@@ -584,3 +584,49 @@ def test_project_dropdown_uses_normalized_sachnummer_not_placeholder(
     assert page.project_combo.currentIndex() > 0
     window.close()
     app.processEvents()
+
+
+def test_qec_and_underlagen_share_aligned_action_columns(tmp_path, monkeypatch):
+    from ntf_insight.app.pages.workflow_page import _SOURCE_COLUMNS
+
+    app, window = _window(tmp_path, monkeypatch)
+    page = window.pages["workflow"]
+    headers = (page.qec_action_header, page.context_source_header)
+    assert len(_SOURCE_COLUMNS) == 7
+    for header in headers:
+        grid = header.layout()
+        assert [
+            grid.itemAtPosition(0, column).widget().text()
+            for column in range(7)
+        ] == [name for name, _width in _SOURCE_COLUMNS]
+        for column, (_name, width) in enumerate(_SOURCE_COLUMNS):
+            if width is not None:
+                assert grid.itemAtPosition(0, column).widget().width() == width
+
+    qec = page.qec_action_row.layout()
+    diagnosis = page.context_source_rows["diagnosis_viewer"].layout()
+    assert qec.itemAtPosition(0, 3).widget() is page.qec_problem_zip_button
+    assert qec.itemAtPosition(0, 4).widget() is page.local_qec_button
+    diagnosis_buttons = page.context_scraper_buttons["diagnosis_viewer"]
+    assert diagnosis.itemAtPosition(0, 3).widget() is diagnosis_buttons["problem_zip"]
+    assert diagnosis.itemAtPosition(0, 4).widget() is diagnosis_buttons["import"]
+    assert qec.itemAtPosition(0, 1).widget().width() == _SOURCE_COLUMNS[1][1]
+    assert diagnosis.itemAtPosition(0, 1).widget().width() == _SOURCE_COLUMNS[1][1]
+    assert qec.itemAtPosition(0, 2).widget().width() == _SOURCE_COLUMNS[2][1]
+    assert diagnosis.itemAtPosition(0, 2).widget().width() == _SOURCE_COLUMNS[2][1]
+
+    assert page.qec_action_row.minimumHeight() >= 136
+    assert page.context_source_rows["diagnosis_viewer"].minimumHeight() >= 94
+    assert page.download_all_button.height() == 36
+    assert page.download_missing_button.height() == 36
+    assert page.download_selected_button.height() == 36
+    assert page.qec_parse_all_button.height() == 36
+    assert page.qec_parse_resume_button.height() == 36
+    assert diagnosis_buttons["parse"].height() == 36
+    assert diagnosis_buttons["resume_parse"].height() == 36
+    assert diagnosis_buttons["problem_zip"].height() == 78
+    assert diagnosis_buttons["import"].height() == 78
+    assert page.qec_problem_zip_button.height() == 78
+    assert page.local_qec_button.height() == 78
+    window.close()
+    app.processEvents()
