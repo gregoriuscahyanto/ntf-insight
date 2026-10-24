@@ -510,6 +510,16 @@ class WorkflowPage(QWidget):
             name = QLabel(short_labels.get(category, label))
             name.setToolTip("Dateien werden unverändert lokal und mit SHA-256 archiviert.")
             group.addWidget(name, 1)
+            if category == "cdd_smrd":
+                parser = QPushButton("Einlesen", objectName="WorkflowAction")
+                parser.setToolTip(
+                    "CDD strukturiert über den bestehenden Candela-Parser "
+                    "einlesen; SMR-D bleibt zunächst Original-Inventar."
+                )
+                parser.clicked.connect(
+                    lambda: self.action_requested.emit("context_parse:cdd_smrd")
+                )
+                group.addWidget(parser)
             button = QPushButton("+", objectName="WorkflowAction")
             button.setFixedWidth(30)
             button.setToolTip(f"{label} · eine oder mehrere Dateien auswählen")
