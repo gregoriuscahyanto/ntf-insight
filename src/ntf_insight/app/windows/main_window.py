@@ -1280,6 +1280,9 @@ class MainWindow(QMainWindow):
             try:
                 count = source.workflow_store.export_csv(
                     dest, workflow.qec_root, part_number=part,
+                    selected_fins={
+                        str(row["fin"]).upper() for row in workflow._scoped_rows
+                    },
                 )
             except (OSError, ValueError) as exc:
                 QMessageBox.warning(self, "QEC-FIN-Export", str(exc))
