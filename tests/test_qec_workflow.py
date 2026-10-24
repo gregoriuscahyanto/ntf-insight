@@ -12,12 +12,15 @@ from ntf_insight.ingestion.service import SourceImportService
 from ntf_insight.storage.qec_workflow_store import QecWorkflowStore
 
 
-def _primary(path: Path, ref: str, fin: str = "W1TTEST0000000001") -> None:
+def _primary(
+    path: Path, ref: str, fin: str = "W1TTEST0000000001",
+    part: str = "SYNTH-PART",
+) -> None:
     workbook = Workbook()
     ws = workbook.active
     ws.title = "Schadteile QEC"
     ws.append(["Referenznr.", "FIN", "Rep.-Datum", "Benennung", "Sachnr. Teil"])
-    ws.append([ref, fin, datetime(2026, 5, 10), "KÜHLMITTELPUMPE", "SYNTH-PART"])
+    ws.append([ref, fin, datetime(2026, 5, 10), "KÜHLMITTELPUMPE", part])
     workbook.save(path)
     workbook.close()
 
@@ -105,3 +108,32 @@ def test_no_automatic_classification_from_ssl(tmp_path: Path):
     rows = workflow.rows(tmp_path / "qec")
     assert rows[0]["decision"] == "Offen"
     assert "NTF" in rows[0]["finding"]
+
+
+
+def test_two_independent_qec_part_projects_can_coexist(tmp_path: Path):
+    """Different parts may have different source lists without losing earlier cases."""
+    source, importer, workflow = _env(tmp_path)
+    first = tmp_path / "pumpe-a.xlsx"
+    second = tmp_path / "pumpe-b.xlsx"
+    _primary(first, "12345", part="A-PART")
+    _primary(
+        second, "98765", fin="W1TTEST0000000002", part="B-PART",
+    )
+    importer.import_paths([first])
+    importer.import_paths([second])
+    assert workflow.active_source() is None
+    assert len(workflow.active_sources()) == 2
+    cases = workflow.rows(tmp_path / "qec")
+    assert len(cases) == 2
+    assert {r["part_number"] for r in cases} == {"A-PART", "B-PART"}
+    assert {r["source_sha256"] for r in cases} == {
+        source.sha256 for source in workflow.active_sources()
+    }
+    b = next(row for row in cases if row["part_number"] == "B-PART")
+    workflow.set_decision(
+        b["source_sha256"], b["case_id"], "NTF", "Synthetisch geprüft",
+    )
+    assert workflow.handoff_ntf(tmp_path / "qec") == 1
+    assert workflow.handed_off_fins() == ("W1TTEST0000000002",)
+    assert len(source.store.load_cases()) == 2
