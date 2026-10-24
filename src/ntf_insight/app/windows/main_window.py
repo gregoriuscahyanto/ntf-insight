@@ -920,6 +920,88 @@ class MainWindow(QMainWindow):
             self._workflow_qec_download_pending = False
             workflow.refresh_data()
 
+    def _context_parse_all(self, category: str) -> None:
+        """Verifizierte Originale der aktuellen Quelle bewusst komplett neu parsen."""
+        workflow = self.pages["workflow"]
+        source = self.pages["sources"]
+        status = workflow._source_coverage.get(category)
+        kind = {
+            "tp_dashboard": SourceType.TP_DASHBOARD,
+            "diagnosis_viewer": SourceType.SHORT_TEST,
+            "tips_writer": SourceType.TIPS_CASE,
+        }.get(category)
+        if kind is None or status is None or status.unsupported_parser:
+            workflow.set_notice("Für diese Quelle ist kein Neuparsen verfügbar.", error=True)
+            return
+        if not self._portable_transfer_ready():
+            workflow.set_notice("Ein anderer Download oder Parser läuft bereits.", error=True)
+            return
+        paths = list(dict.fromkeys(status.local_paths))
+        if not paths:
+            workflow.set_notice("Keine verifizierten lokalen Dokumente zum Neuparsen.", error=True)
+            return
+        answer = QMessageBox.question(
+            self, "Alle Quelldokumente erneut parsen?",
+            f"{len(paths)} lokale Dokumente der Quelle {category} werden "
+            "erneut strukturiert eingelesen. Bei großen PDFs oder Sammel-CSV-Dateien "
+            "kann dies lange dauern. Originaldateien werden nicht gelöscht.\n\n"
+            "Wirklich das vollständige Neuparsen starten?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if answer != QMessageBox.StandardButton.Yes:
+            return
+        index = source.source_type.findData(kind)
+        before = source.source_type.currentIndex()
+        try:
+            source.source_type.setCurrentIndex(index if index >= 0 else 0)
+            source._archive_paths(paths)
+        finally:
+            source.source_type.setCurrentIndex(before)
+        worker = source._worker
+        if worker is None:
+            workflow.set_notice("Neuparsen konnte nicht gestartet werden.", error=True)
+            return
+        context = (workflow.profile_id, workflow._context_part)
+        workflow.source_activity.record(*context, category, "Einlesen gestartet")
+        workflow.set_context_parser_busy(category, True, "all")
+        workflow.set_context_operation(
+            category, True, f"Neuparsen gestartet: 0/{len(paths)} Dokumente"
+        )
+        worker.progress.connect(
+            lambda message, cat=category:
+            workflow.set_context_operation(cat, True, message)
+        )
+        worker.imported.connect(
+            lambda summary, cat=category, ctx=context:
+            self._resume_source_parsing_completed(cat, ctx, summary)
+        )
+        worker.failed.connect(
+            lambda _message, cat=category, ctx=context:
+            self._context_parse_failed(cat, ctx)
+        )
+        worker.finished.connect(
+            lambda cat=category: self._context_parser_finished(cat)
+        )
+
+    def _context_parse_cancel(self, category: str) -> None:
+        workflow = self.pages["workflow"]
+        if category not in workflow._context_parsers_busy:
+            return
+        source = self.pages["sources"]
+        if source._worker is None:
+            return
+        source._cancel_import()
+        workflow.set_context_operation(
+            category, True,
+            "Abbruch angefordert · laufende Datei wird sicher fertig verarbeitet"
+        )
+
+    def _context_parser_finished(self, category: str) -> None:
+        workflow = self.pages["workflow"]
+        workflow.set_context_operation(category, False)
+        workflow.set_context_parser_busy(category, False)
+
     def _resume_source_parsing(self, category: str) -> None:
         """Nur nicht indexierte vorhandene Dateien über bestehende Parser nachholen."""
         workflow = self.pages["workflow"]
@@ -969,6 +1051,7 @@ class MainWindow(QMainWindow):
             workflow.source_activity.record(
                 context[0], context[1], category, "Einlesen gestartet",
             )
+        workflow.set_context_parser_busy(category, True, "resume")
         if category != "qec":
             workflow.set_context_operation(
                 category, True, f"{len(paths)} ausstehende Dateien werden geparst …"
@@ -977,9 +1060,13 @@ class MainWindow(QMainWindow):
                 lambda message, cat=category:
                 workflow.set_context_operation(cat, True, message)
             )
-            worker.finished.connect(
-                lambda cat=category: workflow.set_context_operation(cat, False)
-            )
+        worker.failed.connect(
+            lambda _message, cat=category, ctx=(workflow.profile_id, workflow._context_part):
+            self._context_parse_failed(cat, ctx)
+        )
+        worker.finished.connect(
+            lambda cat=category: self._context_parser_finished(cat)
+        )
         worker.imported.connect(
             lambda summary, ctx=context, cat=category:
             self._resume_source_parsing_completed(cat, ctx, summary)
@@ -1062,6 +1149,7 @@ class MainWindow(QMainWindow):
             )
             workflow.refresh_context_files()
             return
+        workflow.set_context_parser_busy(category, True, "files")
         workflow.set_context_operation(
             category, True, f"{len(filenames)} Dateien werden eingelesen …"
         )
@@ -1070,7 +1158,7 @@ class MainWindow(QMainWindow):
             workflow.set_context_operation(cat, True, message)
         )
         worker.finished.connect(
-            lambda cat=category: workflow.set_context_operation(cat, False)
+            lambda cat=category: self._context_parser_finished(cat)
         )
         worker.imported.connect(
             lambda summary, ctx=context, cat=category,
@@ -1445,11 +1533,15 @@ class MainWindow(QMainWindow):
         workflow.source_activity.record(
             workflow.profile_id, workflow._context_part, category, "Gestartet",
         )
-        workflow.set_context_scraper_busy(category, True)
+        workflow.set_context_scraper_busy(category, True, scope)
         workflow.refresh_context_files()
         workflow.set_notice(
             f"{category}: {len(fins)} FIN(s) werden mit dem vorhandenen "
             "SSO-Downloader abgerufen …"
+        )
+        worker.progress.connect(
+            lambda message, c=category:
+            workflow.set_context_operation(c, True, message)
         )
         worker.failed.connect(
             lambda msg, c=category: self._context_scraper_failed_notice(c, msg)
@@ -1496,6 +1588,12 @@ class MainWindow(QMainWindow):
         source = self.pages["sources"]
         if action.startswith("context_files:"):
             self._context_import(action.partition(":")[2])
+            return
+        if action.startswith("context_parse_cancel:"):
+            self._context_parse_cancel(action.partition(":")[2])
+            return
+        if action.startswith("context_parse_all:"):
+            self._context_parse_all(action.partition(":")[2])
             return
         if action.startswith("context_parse_resume:"):
             self._resume_source_parsing(action.partition(":")[2])
