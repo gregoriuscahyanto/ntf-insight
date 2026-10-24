@@ -367,7 +367,7 @@ class WorkflowPage(QWidget):
         )
         self.qec_parse_resume_button = self._add_action(
             actions, "Parsing fortsetzen",
-            lambda: self.action_requested.emit("qec_parse_resume"),
+            lambda: self._trigger_context_parse("qec", "resume"),
             tooltip="Nur lokal vorhandene, noch nicht erfolgreich indexierte "
                     "QEC-JSON-Berichte mit dem vorhandenen Parser nachverarbeiten.",
         )
@@ -1045,6 +1045,8 @@ class WorkflowPage(QWidget):
         else:
             self._context_parsers_busy.pop(category, None)
             self._context_stop_requested.discard(("parse", category))
+        if category == "qec":
+            self.qec_parse_progress.setRange(0, 0) if busy else self.qec_parse_progress.setRange(0, 100)
         self._refresh_controls()
 
     def set_context_scraper_busy(
@@ -1965,9 +1967,16 @@ class WorkflowPage(QWidget):
                 qec_coverage is not None and qec_coverage.missing_qec
             )
         )
+        qec_parsing_busy = "qec" in self._context_parsers_busy
+        self.qec_parse_resume_button.setText(
+            "Parsing stoppen" if qec_parsing_busy else "Parsing fortsetzen"
+        )
         self.qec_parse_resume_button.setEnabled(
-            not paused and not self._busy and not self._import_busy
-            and bool(qec_coverage is not None and qec_coverage.can_resume_parsing)
+            qec_parsing_busy and ("parse", "qec") not in self._context_stop_requested
+            or not qec_parsing_busy and not paused and not self._busy
+            and not self._import_busy and bool(
+                qec_coverage is not None and qec_coverage.can_resume_parsing
+            )
         )
         self.download_selected_button.setEnabled(
             not paused and not self._busy and bool(
