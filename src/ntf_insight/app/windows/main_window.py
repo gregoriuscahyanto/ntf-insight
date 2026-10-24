@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from zipfile import BadZipFile
 
 from PySide6.QtCore import Qt, QTimer, QUrl
 from PySide6.QtGui import QDesktopServices
@@ -510,7 +511,7 @@ class MainWindow(QMainWindow):
             return
         try:
             package_id = validate_first_package(Path(filename))
-        except (OSError, ValueError) as exc:
+        except (OSError, ValueError, BadZipFile) as exc:
             workflow.set_notice(
                 "Ungültiges KI-Analysepaket: " + str(exc), error=True
             )
