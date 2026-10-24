@@ -2288,10 +2288,21 @@ class WorkflowPage(QWidget):
             )
         total, downloaded = stats["fins"], stats["downloaded"]
         reviewed = stats["ntf"] + stats["not_ntf"]
+        qec_coverage = self._source_coverage.get("qec")
+        qec_complete = bool(
+            total and downloaded == total and qec_coverage is not None
+            and qec_coverage.total_cases
+            and qec_coverage.downloaded_cases == qec_coverage.total_cases
+            and qec_coverage.parsed_cases == qec_coverage.total_cases
+            and not qec_coverage.missing_qec
+            and not qec_coverage.partial_documents
+        )
         statuses = [
             "done" if total else "pending",
-            "done" if total and downloaded == total else (
-                "partial" if downloaded else "pending"
+            "done" if qec_complete else (
+                "partial" if downloaded or (
+                    qec_coverage is not None and qec_coverage.local_documents
+                ) else "pending"
             ),
             "done" if stats["cases"] and not stats["open"] else (
                 "partial" if reviewed or self._chatgpt_by_case else "pending"
