@@ -21,6 +21,7 @@ from ntf_insight.acquisition.qec_archive import local_qec_archive
 from ntf_insight.acquisition.tips_archive import local_tips_cases
 from ntf_insight.ingestion.artifacts import ParseStatus, sha256_file
 from ntf_insight.ingestion.real_source_parsers import AutoExportParser, QuickTestPdfParser
+from ntf_insight.ingestion.reference_source_parsers import CandelaParser
 from ntf_insight.ingestion.qec_json import QECJsonParser
 from ntf_insight.ingestion.tips_json import TipsJsonParser
 from ntf_insight.storage.cluster_evidence_store import EvidenceFile
@@ -464,4 +465,50 @@ def get_workflow_coverage(
         case_label="Fälle",
         note="Manuelle Originaldateien; strukturierter Parser noch nicht vorhanden.",
     )
+    # CDD kann lokal als Candela-Dienststruktur geparst werden.
+    # SMR-D bleibt lediglich archivierte Originaldatei; keine
+    # Diagnose-Setzbedingungen ohne freigegebenen Parser ableiten.
+    cdd_files = [
+        item for item in evidence.get("cdd_smrd", {}).values()
+        if item.source_path.is_file()
+    ]
+    cdd_parsed = 0
+    cdd_partial = 0
+    cdd_pending: list[Path] = []
+    for item in cdd_files:
+        if item.source_path.suffix.lower() != ".cdd":
+            continue
+        parsed, partial = _was_parsed(
+            item.sha256, CandelaParser, "candela_services",
+            latest, index,
+        )
+        cdd_parsed += int(parsed)
+        cdd_partial += int(partial)
+        if not parsed:
+            cdd_pending.append(item.source_path)
+    result["cdd_smrd"] = SourceCoverage(
+        "cdd_smrd", None, None, None, len(cdd_files),
+        cdd_parsed, cdd_partial, pending_paths=tuple(cdd_pending),
+        case_label="Fälle", documents_label="CDD-/SMR-D-Dateien",
+        note="CDD-Dienste können gelesen werden; Setzbedingungen aus "
+             "SMR-D und eine eindeutige FIN-Zuordnung sind nicht implementiert.",
+    )
+
+    # Bei weiteren Kategorien ist bislang nur das Archiv vorhanden.
+    # Diese Nachweise nie fälschlich als strukturiert gelesen markieren.
+    for category in (
+        "ecu_messages", "trigger_conditions", "network_topology",
+        "hardware_changes", "software_changes", "additional",
+    ):
+        count = sum(
+            1 for item in evidence.get(category, {}).values()
+            if item.source_path.is_file()
+        )
+        result[category] = SourceCoverage(
+            category, None, None, None, count, 0,
+            unsupported_parser=True, documents_label="Dateien",
+            case_label="Fälle",
+            note="Unveränderliches Unterlageninventar; kein strukturierter "
+                 "Parser für diese Kategorie vorhanden.",
+        )
     return result
