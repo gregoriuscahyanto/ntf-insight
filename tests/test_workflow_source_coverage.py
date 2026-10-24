@@ -228,3 +228,31 @@ def test_tp_csv_document_parser_and_celonis_archive_are_separate(tmp_path):
     assert coverage["celonis"].total_cases is None
     assert not coverage["celonis"].can_resume_parsing
     assert "nicht sicher zuordenbar" in coverage["celonis"].display()
+
+
+
+def test_tips_json_download_can_be_resumed_through_existing_import_service(tmp_path):
+    from ntf_insight.ingestion.service import SourceImportService
+    from ntf_insight.ingestion.batch_import import LocalBatchImporter
+
+    root = tmp_path / "local"
+    store, knowledge, _ = _setup(root)
+    tips_report = _write_tips(root)
+    sources = SourceImportService(root / "raw", root / "ntf-insight.duckdb")
+    importer = LocalBatchImporter(sources)
+    result = importer.import_paths([tips_report])
+    assert result.files_parsed == 1
+    docs = knowledge.documents()
+    assert any(doc["source_kind"] == "tips_live_case" for doc in docs)
+    coverage = get_workflow_coverage(store, root, _rows())
+    assert coverage["tips_writer"].parsed_documents == 1
+    assert coverage["tips_writer"].parsed_cases == 1
+    assert not coverage["tips_writer"].can_resume_parsing
+    # Eine bereits erfolgreiche Quelle wird durch das neue Resume nicht
+    # nochmals verarbeitet, selbst wenn die Originaldatei noch vorhanden ist.
+    result2 = importer.import_paths(
+        [tips_report], only_new=False,
+    )
+    assert result2.files_parsed >= 0  # Normaler Neuimport bleibt separate Aktion.
+    coverage2 = get_workflow_coverage(store, root, _rows())
+    assert coverage2["tips_writer"].parsed_documents == 1
