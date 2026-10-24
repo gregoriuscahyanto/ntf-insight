@@ -775,6 +775,7 @@ class AutoExportFinWorkspace(QWidget):
                 shell.setSizeConstraint(
                     QLayout.SizeConstraint.SetMinimumSize
                 )
+                content.show()  # setParent() versteckt QWidget sonst.
                 self._embedded_content = content
                 self._embedded_scroll = None
                 old_scroll.deleteLater()
