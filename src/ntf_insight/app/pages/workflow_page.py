@@ -621,7 +621,7 @@ class WorkflowPage(QWidget):
             self.context_source_names[category] = name
 
             buttons: dict[str, QPushButton] = {}
-            all_fetch = QPushButton("Alle FINs abrufen", objectName="WorkflowAction")
+            all_fetch = QPushButton("FINs neu abrufen", objectName="WorkflowAction")
             all_fetch.setToolTip(
                 "Alle FINs neu aus dem Portal abrufen; mit Bestätigungsdialog."
             )
@@ -2211,7 +2211,7 @@ class WorkflowPage(QWidget):
             stop_pending = ("scrape", category) in self._context_stop_requested
             status = self._source_coverage.get(category)
             buttons["all"].setText(
-                "Abruf stoppen" if active == "all" else "Alle FINs neu abrufen"
+                "Abruf stoppen" if active == "all" else "FINs neu abrufen"
             )
             buttons["missing"].setText(
                 "Abruf stoppen" if active == "missing"
