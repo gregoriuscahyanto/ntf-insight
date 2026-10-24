@@ -9,6 +9,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
+from typing import Callable
 
 from ntf_insight.ingestion.artifacts import RawArchive, SourceArtifact, SourceType
 from ntf_insight.storage.duckdb_store import DuckDBStore
@@ -82,7 +83,8 @@ class ClusterEvidenceStore:
 
     def add_files(
         self, profile_id: str, part_number: str, category: str,
-        files: list[Path],
+        files: list[Path], *,
+        progress: Callable[[str], None] | None = None,
     ) -> int:
         profile, part = _profile(profile_id), part_key(part_number)
         if category not in CATEGORY_LABELS:
@@ -114,7 +116,9 @@ class ClusterEvidenceStore:
             "hardware_changes": SourceType.HW_SW_CHANGE_HISTORY,
             "software_changes": SourceType.HW_SW_CHANGE_HISTORY,
         }.get(category, SourceType.OTHER)
-        for source in checked:
+        for position, source in enumerate(checked, 1):
+            if progress is not None:
+                progress(f"Unterlagen importieren ({position}/{len(checked)}) …")
             kind = SourceType.SMR_D if source.suffix.lower() == ".smr-d" else source_type
             artifact = self.archive.archive(
                 source, kind, source_system="Cluster-Kontext: " + CATEGORY_LABELS[category],
