@@ -25,7 +25,10 @@ def test_overview_shows_all_projects_and_only_their_evidence(tmp_path):
     assert by_part["A 001 002"]["documents"] == 1
     assert by_part["A 001 002"]["parsed"] == 0
     assert by_part["B 003 004"]["documents"] == 0
-    assert all(row["fins"] == row["ntf"] == row["clusters"] == 0 for row in rows)
+    assert all(
+        row["fins"] == row["swaps"] == row["ntf"] == row["clusters"] == 0
+        for row in rows
+    )
 
 
 def test_overview_row_opens_selected_project(tmp_path, monkeypatch):
@@ -38,11 +41,12 @@ def test_overview_row_opens_selected_project(tmp_path, monkeypatch):
     page._loaded([{
         "title": "Pumpe A [A 001 002]",
         "profile": "coolant_pump", "part": "A 001 002",
-        "fins": 4, "cases": 5, "ntf": 2, "reports": 3,
+        "fins": 4, "cases": 5, "swaps": 1, "ntf": 2, "reports": 3,
         "documents": 7, "parsed": 6, "clusters": 1, "step": 3,
     }])
     assert page.table.item(0, 1).text() == "4"
-    assert page.table.item(0, 6).text() == "6"
+    assert page.table.item(0, 3).text() == "1"
+    assert page.table.item(0, 7).text() == "6"
     page._open_row(0, 0)
     assert emitted == [("coolant_pump", "A 001 002")]
     page.close()
