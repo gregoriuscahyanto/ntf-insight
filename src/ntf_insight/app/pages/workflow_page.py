@@ -439,7 +439,7 @@ class WorkflowPage(QWidget):
         grid.addWidget(name, 0, 0)
 
         self.download_all_button = QPushButton(
-            "Alle QEC-Berichte abrufen", objectName="WorkflowAction",
+            "Alle QEC abrufen", objectName="WorkflowAction",
         )
         self.download_all_button.setToolTip(
             "Alle Berichte des ausgewählten Projekts erneut herunterladen/aktualisieren."
@@ -454,7 +454,7 @@ class WorkflowPage(QWidget):
             lambda: self._trigger_qec_download("missing")
         )
         self.download_selected_button = QPushButton(
-            "Markierte herunterladen", objectName="WorkflowAction",
+            "Markierte abrufen", objectName="WorkflowAction",
         )
         self.download_selected_button.clicked.connect(
             lambda: self._trigger_qec_download("selected")
@@ -470,7 +470,7 @@ class WorkflowPage(QWidget):
         ]), 0, 1, Qt.AlignmentFlag.AlignTop)
 
         self.qec_parse_all_button = QPushButton(
-            "Alle QEC-Berichte neu parsen", objectName="WorkflowAction",
+            "Alle QEC parsen", objectName="WorkflowAction",
         )
         self.qec_parse_all_button.clicked.connect(
             lambda: self._trigger_context_parse("qec", "all")
@@ -490,7 +490,7 @@ class WorkflowPage(QWidget):
         ]), 0, 2, Qt.AlignmentFlag.AlignTop)
 
         self.qec_problem_zip_button = QPushButton(
-            "Fehler-ZIP exportieren", objectName="WorkflowAction",
+            "Fehler-ZIP", objectName="WorkflowAction",
         )
         self.qec_problem_zip_button.setToolTip(
             "Nicht parsebare QEC-Dateien exportieren; standardmäßig ohne Originale."
@@ -498,7 +498,7 @@ class WorkflowPage(QWidget):
         self.qec_problem_zip_button.clicked.connect(
             lambda: self.action_requested.emit("parser_diagnostics:qec")
         )
-        self.local_qec_button = QPushButton("Dateien einlesen …", objectName="WorkflowAction")
+        self.local_qec_button = QPushButton("Einlesen …", objectName="WorkflowAction")
         self.local_qec_button.setToolTip("Lokale QEC-Berichte auswählen und einlesen")
         self.local_qec_button.clicked.connect(
             lambda: self.action_requested.emit("qec_import_local")
@@ -635,7 +635,7 @@ class WorkflowPage(QWidget):
                 all_fetch.setToolTip("Für diese Quelle ist kein Scraper eingerichtet.")
             buttons["all"] = all_fetch
             missing = QPushButton(
-                "Nur fehlende FINs abrufen", objectName="WorkflowAction",
+                "Fehlende abrufen", objectName="WorkflowAction",
             )
             missing.setToolTip(
                 "Nur FINs mit noch fehlendem vollständigen Abrufstand nachladen."
@@ -649,7 +649,7 @@ class WorkflowPage(QWidget):
             grid.addWidget(_source_stack(1, [all_fetch, missing]), 0, 1)
 
             parse_all = QPushButton(
-                "Alle Dokumente neu parsen", objectName="WorkflowAction",
+                "Alle neu parsen", objectName="WorkflowAction",
             )
             parse_all.setToolTip(
                 "Alle vorhandenen, verifizierten Dateien bewusst erneut parsen."
@@ -682,7 +682,7 @@ class WorkflowPage(QWidget):
             )
 
             problem_zip = QPushButton(
-                "Fehler-ZIP exportieren", objectName="WorkflowAction",
+                "Fehler-ZIP", objectName="WorkflowAction",
             )
             problem_zip.setToolTip(
                 "Nicht parsebare Quellen als Diagnose-ZIP sichern. Originale werden "
@@ -2120,12 +2120,12 @@ class WorkflowPage(QWidget):
                 "Parsing stoppen" if busy and active == "all"
                 else "Einlesen stoppen" if busy and active == "files"
                 else "Kein Parser" if category == "celonis"
-                else "Alle Dokumente neu parsen"
+                else "Alle neu parsen"
             )
             buttons["resume_parse"].setText(
                 "Parsing stoppen" if busy and active == "resume"
                 else "Nicht verfügbar" if category == "celonis"
-                else "Ausstehendes Parsing fortsetzen"
+                else "Parsing fortsetzen"
             )
             buttons["parse"].setEnabled(
                 category != "celonis" and (
@@ -2211,7 +2211,7 @@ class WorkflowPage(QWidget):
             )
             buttons["missing"].setText(
                 "Abruf stoppen" if active == "missing"
-                else "Nur fehlende FINs abrufen"
+                else "Fehlende abrufen"
             )
             buttons["all"].setEnabled(
                 busy and active == "all" and not stop_pending
@@ -2232,12 +2232,12 @@ class WorkflowPage(QWidget):
         qec_coverage = self._source_coverage.get("qec")
         choices = {
             "all": (self.download_all_button,
-                    "Alle QEC-Berichte abrufen", has_rows),
+                    "Alle QEC abrufen", has_rows),
             "missing": (self.download_missing_button,
                         "Download fortsetzen",
                         bool(qec_coverage and qec_coverage.missing_qec)),
             "selected": (self.download_selected_button,
-                         "Markierte herunterladen",
+                         "Markierte abrufen",
                          bool(self.qec_table.selectionModel().selectedRows())),
         }
         for scope, (button, normal_label, available) in choices.items():
@@ -2251,7 +2251,7 @@ class WorkflowPage(QWidget):
         self.qec_parse_all_button.setText(
             "Parsing stoppen" if qec_parsing_busy
             and self._context_parsers_busy.get("qec") == "all"
-            else "Alle QEC-Berichte neu parsen"
+            else "Alle QEC parsen"
         )
         self.qec_parse_all_button.setEnabled(
             qec_parsing_busy and self._context_parsers_busy.get("qec") == "all"
