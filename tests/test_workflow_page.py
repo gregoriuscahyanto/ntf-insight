@@ -528,3 +528,26 @@ def test_source_row_colors_and_live_document_progress(tmp_path, monkeypatch):
     page.set_context_operation("tp_dashboard", False)
     window.close()
     app.processEvents()
+
+
+def test_qec_actions_match_source_table_and_parser_zip(tmp_path, monkeypatch):
+    app, window = _window(tmp_path, monkeypatch)
+    page = window.pages["workflow"]
+    assert page.qec_action_row.objectName() == "SourceCoverageRow"
+    assert page.download_all_button.text().startswith("Alle QEC-Berichte")
+    assert page.download_missing_button.text() == "Download fortsetzen"
+    assert page.download_selected_button.text() == "Markierte herunterladen"
+    assert page.qec_parse_all_button.text() == "Alle QEC-Berichte neu parsen"
+    assert page.qec_parse_resume_button.text() == "Ausstehendes Parsing fortsetzen"
+    assert "ZIP" in page.qec_problem_zip_button.text()
+    assert "problem_zip" in page.context_scraper_buttons["diagnosis_viewer"]
+    assert "problem_zip" in page.context_scraper_buttons["tips_writer"]
+    assert "problem_zip" in page.context_scraper_buttons["tp_dashboard"]
+    assert "problem_zip" not in page.context_scraper_buttons["celonis"]
+    assert page.context_summary.isHidden()
+    page.set_context_parser_busy("qec", True, "resume")
+    assert page.qec_parse_resume_button.text() == "Parsing stoppen"
+    page.set_context_parser_busy("qec", False)
+    assert page.qec_parse_resume_button.text() == "Ausstehendes Parsing fortsetzen"
+    window.close()
+    app.processEvents()
