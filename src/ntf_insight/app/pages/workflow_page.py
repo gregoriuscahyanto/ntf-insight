@@ -735,7 +735,10 @@ class WorkflowPage(QWidget):
             operation.hide()
             stats.addWidget(operation)
             operation_label = QLabel(objectName="PageSubtitle")
-            operation_label.setWordWrap(True)
+            operation_label.setWordWrap(False)
+            operation_label.setToolTip(
+                "Hier wird nur ein kurzer Laufstatus angezeigt."
+            )
             operation_label.hide()
             stats.addWidget(operation_label)
             grid.addLayout(stats, 0, 4)
@@ -1145,34 +1148,43 @@ class WorkflowPage(QWidget):
         label = self.context_operation_labels.get(category)
         if bar is None or label is None:
             return
+        # Während des laufenden Jobs nur EINEN Fortschrittsbalken und eine
+        # kurze Statuszeile zeigen. Sonst drängen Quellen-/Operationsbalken
+        # zusammen mit einem langen Text über den nächsten Quellenblock.
+        coverage = self.context_coverage_bars.get(category)
+        timestamp = self.context_source_dates.get(category)
+        if coverage is not None:
+            coverage.setVisible(not active)
+        if timestamp is not None:
+            timestamp.setVisible(not active)
         bar.setVisible(active)
         label.setVisible(active)
         if active:
+            label.setToolTip(message)
             self._context_operation_started.setdefault(category, time.monotonic())
-            # Die Quellen melden bearbeitete FINs bzw. lokale Parser-Positionen.
-            # Nur bei bekanntem Nenner einen Prozentwert anzeigen.
-            match = re.search(r"(?:FIN-Fortschritt:\s*|(?:parsen|einlesen|archivieren|abgleichen)\s*\()(\d+)\s*/\s*(\d+)", message, re.I)
+            match = re.search(
+                r"(?:FIN-Fortschritt:\s*|(?:parsen|einlesen|archivieren|abgleichen)\s*\()(\d+)\s*/\s*(\d+)",
+                message, re.I,
+            )
             if match and int(match.group(2)) > 0:
                 done, total = map(int, match.groups())
                 bar.setRange(0, total)
                 bar.setValue(min(done, total))
+                kind = "Abruf" if "FIN-Fortschritt" in message else "Parsing"
+                text = f"{kind}: {done}/{total} {'FINs' if kind == 'Abruf' else 'Dateien'}"
                 elapsed = time.monotonic() - self._context_operation_started[category]
-                if done > 0 and done < total and elapsed >= 2:
+                if 0 < done < total and elapsed >= 2:
                     rest = round(elapsed * (total - done) / done)
-                    estimate = f" · grob noch {rest // 60} min {rest % 60:02d} s"
-                else:
-                    estimate = " · Restzeit wird ermittelt" if done < total else ""
-                label.setText(message + estimate)
+                    text += f" · ca. {rest // 60}:{rest % 60:02d} min"
+                label.setText(text)
             else:
                 bar.setRange(0, 0)
-                label.setText(
-                    (message or "Verarbeitung läuft")
-                    + " · Restzeit nach ersten FINs/Dateien abschätzbar"
-                )
+                label.setText("Verarbeitung läuft · Dauer unbekannt")
         else:
             self._context_operation_started.pop(category, None)
             bar.setRange(0, 100)
             bar.setValue(0)
+            label.clear()
 
     def _trigger_context_fetch(self, category: str, scope: str) -> None:
         if category in self._context_scrapers_busy:
