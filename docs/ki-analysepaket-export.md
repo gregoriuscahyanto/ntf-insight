@@ -46,13 +46,37 @@ Unter **Datenquellen**:
 | `tips.csv` | Verknüpfte TIPS-Beobachtungen und Verfügbarkeit von Beschwerde/Werkstatt/Maßnahme |
 | `smrd_bestand.csv` | SMR-D-Quelleninventar, **keine vorgetäuschte SMR-D-Feature-Extraktion** |
 | `bewertungen_NICHT_CLUSTER.csv` | Fachlich bewertete Ursachen/Lieferantenbefunde: ausschließlich nach dem Clustering ansehen |
+| `autoexport_diagnosen.csv` | ECU:DTC-Diagnosezeilen aller importierten AutoExport-FINs; Zeit, Kilometer, ECU-SW-/HW-Versionen und Quelle |
+| `autoexport_fallbezug.csv` | Explizite Vor-/Nach-/unklare Zeitlage jeder AutoExport-Diagnose je Fall |
+| `werkstatt_historie.csv` | AutoExport-Werkstatt- und Claimdaten; originale Beanstandungs-/Maßnahmentexte nur bei Freitext-Opt-in |
+| `autoexport_tips.csv` | Auch bisher unverbundene TIPS-Rohvorgänge mit vorsichtigen Fallkandidaten; Freitext nur Opt-in |
+| `pumpentausch_historie.csv` | Dokumentierte Tauschereignisse, pseudonymisierte Teile-/Lieferanten-/Serien- und Chargenkennungen |
+| `fall_ereignisse.csv` | Lokal vorhandene Diagnose-, Reparatur-, ECU- und Software-Ereignisse, getrennt von AutoExport-Rohzeilen |
+| `ecu_versionshistorie.csv` | Fahrzeug-/Fallbezogene Hardware-/Softwarebeobachtungen aus AutoExport und Fallereignissen |
+| `diagnose_qualitaet.csv` | Abdeckung mit Vor-/Nachtests, fehlenden Tests und positiven AutoExport-Beobachtungen |
+| `lieferantenbefunde_NICHT_CLUSTER.csv` | Bereits im Fallmodell vorhandene Lieferantenbefunde – nur nach dem Clustering für die Ursachenprüfung |
+| `lieferantenquellen_bestand_NICHT_CLUSTER.csv` | Inventar separat gespeicherter Lieferantenquellen, keine Originalbytes |
 | `methodik.csv`, `README.txt`, `manifest.json` | Interpretation, Datenlücken, Version und Integritätsangaben |
+
+**Erweiterung ab Paketversion 3:** Der Export umfasst nun auch FINs, die nur in
+AutoExport-Quellen vorkommen. Die zusätzlichen Diagnosezeilen werden nicht als
+vollständige QuickTests interpretiert. Insbesondere fehlt bei AutoExport-DTC-only-Quellen
+der Beleg eines tatsächlich DTC-freien Nachtests. Die zusätzlichen
+`*_NICHT_CLUSTER.csv`-Dateien bleiben strikt außerhalb der Clusterfeatures.
 
 **Fallzuordnung:** `fahrzeug_id` verknüpft unabhängige QuickTests und QEC
 mit ihren Fahrzeugen. `fall_id` identifiziert den Schadteilfall.
 `quicktest_fallbezug.csv` klassifiziert den zeitlichen Bezug eines Tests
 zu jedem Fall getrennt. Dadurch können mehrere Schadteilfälle derselben
 FIN unabhängig voneinander betrachtet werden.
+
+**Zusätzliche technische Merkmale aus AutoExport:** Nur
+`autoexport_diagnosen.csv` mit `autoexport_fallbezug.csv` und
+`lage_zum_pumpentausch=vor_tausch` als technische DTC-Clustermerkmale
+verwenden. Lieferantenbefunde, Austausch-, Werkstatt- und Softwaremaßnahmen
+sind nachgelagerte Kontexte; dokumentierte ECU-Zustände können nach
+zeitlicher und fachlicher Prüfung als technische Merkmale verwendet werden.
+Gleichdatige AutoExport-Beobachtungen bleiben konservativ `zeitlich_unklar`.
 
 **Clustergrundlage:** `cluster_input.csv` und DTCs aus tatsächlich vor dem Tausch liegenden
 QuickTests. Spätere DTCs helfen, die Wiederkehr zu bewerten, aber dürfen
@@ -116,3 +140,19 @@ Mit beiden Paketen lässt sich eine externe Clusteranalyse durchführen.
 Falls die Referenzunterlagen proprietäre Informationen enthalten, sollten
 sie in einer **intern freigegebenen Analyseumgebung** statt einem
 öffentlichen Chat verarbeitet werden.
+
+## Bereits beim QEC-Abruf heruntergeladene Lieferantenbelege
+
+Die aktivierte Checkbox **Vollständige QEC-Befundungsdokumente und Anhänge**
+schließt referenzgebundene, lokal gespeicherte QEC-Anhänge ein
+(`qec_originale/Q00001/anlage_0001.pdf`, `.jpg`, `.png` usw.).
+Diese Belege werden bereits mit dem QEC-Downloader gespeichert und müssen nicht
+erneut heruntergeladen werden. Fehlende oder ältere Anhänge erscheinen im
+`qec_originale/vollstaendigkeit.json`-Nachweis. Die App parst deren
+Bild-/PDF-Inhalt dadurch noch nicht automatisch.
+
+Separat archivierte Lieferanten-Analyseberichte außerhalb eines QEC-Anhangs
+werden im v3-Paket bislang nur inventarisiert. Ihre Originalbytes sind
+nicht enthalten; insbesondere erfolgt **keine** spekulative FIN-/QEC-Zuordnung.
+Lieferantenbefunde dürfen technisch ähnliche Vor-Tausch-Fälle nach dem Clustering
+prüfen, aber keine Clustereingabe oder Kausalitätsbestätigung darstellen.
