@@ -36,7 +36,10 @@ def _setup(root: Path):
     return store, knowledge, evidence
 
 
-def _run(\n    store: DuckDBStore, sha: str, parser, status=ParseStatus.SUCCESS,\n    *, version: str | None = None,\n):
+def _run(
+    store: DuckDBStore, sha: str, parser, status=ParseStatus.SUCCESS,
+    *, version: str | None = None,
+):
     store.save_parse_run(ParseRun(
         artifact_sha256=sha,
         parser_name=parser.name, parser_version=version or parser.version,
