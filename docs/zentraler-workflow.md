@@ -62,13 +62,69 @@ und keine Wahrscheinlichkeit einer Lieferantenverursachung.
   lokal importierten Fälle**, nicht automatisch nur die gewählte Sachnummer.
   Bei gesetztem Sachnummernfilter gibt es davor eine explizite Warnung.
 
-## 04–06 – weitere Bearbeitungsstationen
+## 04 – Unterlagen für die zweite ChatGPT-Clusteranalyse
 
-Diagnosen, Cluster und Auswertung öffnen vorerst die bereits vorhandenen,
-etablierten Detailsichten. Ihre gesonderten kompakten Schrittoberflächen
-werden anschließend fachlich ausgestaltet. Der bisherige globale
-Import-/Export-Buttonblock entfällt; allgemeiner Selbstimport und
-PC-Gesamtstandtransfer sind zunächst bei Schritt 06 erreichbar.
+Die sechs Workflowstationen bleiben **in einer Zeile**. Schritt 04 zeigt
+darunter **ein Sammel-Dashboard**, keinen zusätzlichen Seiten-Scrollbereich.
+Alle Unterlagen werden je Bauteilprofil und Sachnummer verwaltet; die
+Tabellen darin dürfen für viele Dateien intern scrollen.
+
+| Quelle / Datei | Workflow-Aktion | Technische Grenze |
+| --- | --- | --- |
+| **TP Dashboard** | CSV/Excel/PDF auswählen, im Rohdatenarchiv speichern | Noch kein TP-Dashboard-Scraper implementiert: Abrufbutton ist sichtbar deaktiviert |
+| **Diagnosis Viewer** | QuickTests für alle bzw. in Schritt 02 markierte QEC-FINs abrufen, Stop | Vorhandener Edge-/SSO-Downloader; 24-h-Regel und sicherer Quellenimport bleiben erhalten |
+| **TIPS Writer** | TIPS-Fälle für alle bzw. markierte QEC-FINs abrufen, Stop | Bestehender TIPS-Worker; Live-Abruf bedarf Prüfung im Unternehmensnetz |
+| **Celonis** | Exportdateien auswählen und archivieren | Noch kein Celonis-Scraper/Portal-Link implementiert, daher kein erfundener Abruf |
+| **CDD / SMR-D** | Ein oder mehrere technische Quelldokumente wählen | Als Original archiviert, keine automatische Validierung der DTC-Setzbedingungen |
+| **ECU-Nachrichtenliste** | Datei auswählen | Fachliche Interpretation erfolgt erst im ChatGPT-Kontext |
+| **Setzbedingungen** | Excel auswählen | Keine automatische Extraktion aus beliebigen Excel-Varianten |
+| **Vehicle Network Topology** | Dateien auswählen | Keine erfundene Topologie aus Dateinamen |
+| **HW-Änderungsstände** | Dateien auswählen | Fachliche HW-Zuordnung nicht aus Dateinamen ableiten |
+| **SW-Änderungsstände** | Dateien auswählen | Fachliche SW-Zuordnung nicht aus Dateinamen ableiten |
+| **Weitere Unterlagen** | Kühlungsschema, Pumpendatenblatt, Schaltplan usw. wählen | Kategorie bleibt frei für weitere Bauteile |
+
+Der Datei-Import archiviert die Originaldatei ohne automatisches Parsen
+mit SHA-256 und führt die Zuordnung in der lokalen DuckDB unter
+\`cluster_evidence_files\`. Duplikate werden identifiziert; dieselbe Datei
+darf in unterschiedlichen Sachnummernkontexten verwendet werden.
+**Zuordnung entfernen** löscht niemals die gemeinsame Rohdatei.
+Die bisherigen Datenquellenparser bleiben unverändert nutzbar.
+
+### Zweiter ChatGPT-Durchlauf
+
+1. Nach dem Import der QEC-/Diagnosis-/TIPS-Daten **Schritt 03 erneut**
+   durchlaufen und ein **aktuelles erstes KI-Analysepaket** als ZIP erzeugen.
+   Dieses enthält die pseudonymisierte FIN-/DTC-/QEC-Ausgangsmatrix und das
+   validierte \`chatgpt_ergebnis_vorlage.json\`-/Schema-Paar.
+2. In Schritt 04 \`1. KI-Analysepaket wählen …\` anklicken. Das Paket muss
+   Schema-Version 3 und eine konsistente \`paket_id\` besitzen.
+3. Unterlagen kategorisiert importieren. \`Originale beifügen\` ist
+   standardmäßig **aus**. Ohne diese Option enthält das Ergebnis nur
+   **Kategorieninventar**, keine lokal importierten fachlichen Belege.
+4. \`Cluster-Kontextpaket exportieren\` erstellt eine lokale ZIP mit
+   \`basis/\` (ursprüngliche Analyse-ZIP entpackt), \`cluster_kontext_manifest.json\`,
+   \`CHATGPT_2_DURCHLAUF.txt\`, der bisherigen ChatGPT-Ergebnisvorlage und
+   **nur nach ausdrücklichem Opt-in** \`unterlagen/<kategorie>/Dxxxx.<endung>\`.
+   Es erfolgt **kein Upload**. Quellpfade und reale Namen werden nicht in
+   neuen ZIP-Belegpfaden wiederholt.
+5. Beim zweiten ChatGPT-Durchlauf werden **Setzbedingungen, Nachrichten,
+   Topologie, HW-/SW-Änderungen und Kühlungsschema zunächst zur
+   Clusterinterpretation/Validierung** genutzt. Für die DTC-Ähnlichkeitsbildung
+   gelten weiterhin ausschließlich geeignete Merkmale **vor dem Tausch**.
+   SSL-/Lieferantenbewertungen oder Diagnosen nach dem Tausch dürfen nicht
+   unbemerkt als Gruppierungsmerkmale benutzt werden.
+6. Der Rückimport erfolgt über den bestehenden JSON-Vertrag mit derselben
+   \`paket_id\`, aber **neuer \`analyse_id\`** (in Schritt 03).
+   ChatGPT-Hypothesen bleiben separat und zunächst ungeprüft.
+
+Es gibt weiterhin **keine** automatisierte Lieferantenverantwortungszuweisung.
+Der zweite Analyse-Durchlauf ist eine mit Belegen begründbare Hypothese,
+die fachlich freigegeben werden muss.
+
+## 05–06 – bestehende Analysetools
+
+Clusteranalyse und Auswertung öffnen weiterhin die vorhandenen
+Detailsichten. Der Selbstimport und der PC-Gesamtstandtransfer liegen bei 06.
 
 ## Speicher und Datenschutz
 
