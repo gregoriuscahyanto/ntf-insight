@@ -131,6 +131,8 @@ class WorkflowPage(QWidget):
         )
         header.addWidget(self.pc_import_button)
         outer.addLayout(header)
+        self.project_ecus_label = QLabel(objectName="PageSubtitle")
+        outer.addWidget(self.project_ecus_label)
 
         # API für bestehende Import-/GUI-Funktionen; editierbar ist nur das
         # Projekt auf der Einstellungsseite, nicht die globale Kopfzeile.
@@ -518,7 +520,6 @@ class WorkflowPage(QWidget):
             QLabel("Die vorhandene lokale Clusteranalyse wird hier eingebunden.")
         )
         body.addWidget(self.local_cluster_holder, 1)
-        self.context_review_button = self.context_review_button
         self.review_buttons = {3: self.context_review_button}
         self.cluster_review_button = QPushButton("Clusteranalyse fachlich geprüft")
         self.cluster_review_button.clicked.connect(self._review)
@@ -556,6 +557,11 @@ class WorkflowPage(QWidget):
             f" [{self._context_part or 'Sachnummer wählen'}]"
         )
         self.project_title.setText(label)
+        self.project_ecus_label.setText(
+            "Relevante Steuergeräte: " + ", ".join(project.ecu_names)
+            if project and project.ecu_names
+            else "Relevante Steuergeräte: noch nicht festgelegt"
+        )
         self.project_title.setToolTip(
             "Steuergeräte und Projektbeschreibung über Einstellungen konfigurieren."
             + ("\nECUs: " + ", ".join(project.ecu_names) if project and project.ecu_names else "")
@@ -573,7 +579,9 @@ class WorkflowPage(QWidget):
         self.profile_id, self._context_part = profile, part
         idx = self.profile.findData(profile)
         if idx >= 0:
+            self.profile.blockSignals(True)
             self.profile.setCurrentIndex(idx)
+            self.profile.blockSignals(False)
         self.part_number.setText(part)
         self.progress_store.select_context(profile, part)
         self.state = self.progress_store.load(profile, part)
@@ -856,6 +864,11 @@ class WorkflowPage(QWidget):
             not paused and not self._context_busy and has_first
             and self.ai_chain.second_status(self.first_package.paket_id)[0] > 0
         )
+        if hasattr(self, "local_cluster_widget"):
+            self.local_cluster_widget.setEnabled(
+                not paused and self.profile_id == "coolant_pump"
+                and bool(self._context_part)
+            )
         self.context_review_button.setEnabled(
             not paused and not self._context_busy and bool(self.context_files)
         )
