@@ -1068,23 +1068,28 @@ class MainWindow(QMainWindow):
             )
             self.pages["workflow"].set_notice(summary)
             return
+        # Ein Parser-Ergebnis darf die aktive Seite nicht wechseln.
+        # _reload_data() ersetzt sämtliche Widgets, daher die vorherige
+        # Auswahl merken und anschließend die neue Seite wieder anzeigen.
+        active_page = next(
+            (
+                name for name, page in self.pages.items()
+                if page is self.stack.currentWidget()
+            ),
+            "workflow",
+        )
         from_case_download = self._case_quicktest_import_pending
         current_case = (
             self.pages["cases"].selector.currentData() if from_case_download else None
         )
         self._case_quicktest_import_pending = False
         self._reload_data()
-        if from_case_download:
-            if current_case:
-                self.pages["cases"].select_case(current_case)
-            self.navigation.select_page("cases")
-            return
+        if from_case_download and current_case:
+            self.pages["cases"].select_case(current_case)
         self.pages["sources"].import_status.setText(summary)
-        if quicktests_saved:
-            self.navigation.select_page("cases")
-            self.pages["cases"].show_quicktests()
-        else:
-            self.navigation.select_page("sources")
+        # Auch bei gespeicherten QuickTests oder abgebrochenem Parsing weder
+        # "Fälle / FIN" noch automatisch "QuickTests nach FIN" öffnen.
+        self.navigation.select_page(active_page)
 
     def _reload_after_manual_change(self, case_id: str) -> None:
         """Reload persisted data and rebuild derived views after one successful edit."""
