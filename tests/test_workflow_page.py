@@ -161,6 +161,42 @@ def test_existing_local_cluster_is_embedded_only_in_step_five(tmp_path, monkeypa
     app.processEvents()
 
 
+
+def test_step_five_cluster_scrollbar_reaches_lower_tables(tmp_path, monkeypatch):
+    """Echte Fenstergeometrie: kein verschachtelter Scrollbereich mehr."""
+    app, window = _window(tmp_path, monkeypatch)
+    window.resize(1180, 740)
+    window.show()
+    page = window.pages["workflow"]
+    page.cards[4].click()
+    app.processEvents()
+
+    scroll = page.local_cluster_scroll
+    widget = page.local_cluster_widget
+    assert isinstance(scroll, QScrollArea)
+    assert page.cluster_tabs.widget(0) is scroll
+    assert scroll.widget() is page.local_cluster_holder
+    assert widget._embedded_scroll is None
+    assert widget.parentWidget() is page.local_cluster_holder
+    assert widget._embedded_content.isVisible()
+    assert not widget.findChildren(QScrollArea)
+
+    # Die letzte FIN-Tabelle muss unterhalb des Viewports liegen.
+    # Der Nutzer kann sie ueber die aeussere Scrollbar erreichen.
+    bar = scroll.verticalScrollBar()
+    assert bar.maximum() > 0, (
+        f"Clusterinhalte passen faelschlich in {scroll.viewport().height()} px "
+        f"(max={bar.maximum()}, content={widget.minimumSizeHint().height()})"
+    )
+    bar.setValue(bar.maximum())
+    app.processEvents()
+    assert bar.value() == bar.maximum()
+    assert bar.value() > 0
+    window.close()
+    app.processEvents()
+
+
+
 def test_local_qec_csv_export_filters_part_without_false_download_claims(tmp_path, monkeypatch):
     store = DuckDBStore(tmp_path / "local.duckdb")
     from ntf_insight.storage.qec_workflow_store import QecWorkflowStore
