@@ -21,7 +21,7 @@ from zipfile import ZIP_DEFLATED, ZipFile
 
 import duckdb
 
-from ntf_insight.ingestion.artifacts import SourceArtifact
+from ntf_insight.ingestion.artifacts import SourceArtifact, sha256_file
 from ntf_insight.ingestion.portable_backup import (
     DATABASE_NAME, DATA_FOLDERS, MAX_MEMBER_BYTES, _CHUNK, _relative,
     _safe_file, _snapshot_database, _write_member, export_portable_backup,
@@ -301,7 +301,7 @@ def _stage_files(
             destination = project_root / relative
             destination.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(path, destination)
-            digest = hashlib.sha256(destination.read_bytes()).hexdigest()
+            digest = sha256_file(destination)
             if digest != sha:
                 raise ValueError("Quelldatei stimmt nicht mit dem gespeicherten SHA-256 überein.")
             modified = artifact.model_copy(update={
@@ -496,8 +496,7 @@ def import_project(
                         if target.is_symlink() or not target.is_file():
                             raise ValueError("Zielpfad eines Projektdokuments ist belegt.")
                         if (
-                            hashlib.sha256(target.read_bytes()).digest()
-                            != hashlib.sha256(path.read_bytes()).digest()
+                            sha256_file(target) != sha256_file(path)
                         ):
                             raise ValueError("Gleichnamiger lokaler Bericht hat anderen Inhalt.")
                     else:
@@ -537,13 +536,19 @@ def import_project(
                         if table not in target_tables:
                             raise ValueError("Ziel-App kennt Projekttabelle nicht: " + table)
                         columns = [
-                            r[1] for r in con.execute(
-                                f'PRAGMA table_info("{table}")'
+                            row[0] for row in con.execute(
+                                "SELECT column_name FROM information_schema.columns "
+                                "WHERE table_catalog=current_database() "
+                                "AND table_schema='main' AND table_name=? "
+                                "ORDER BY ordinal_position", [table],
                             ).fetchall()
                         ]
                         other_cols = [
-                            r[1] for r in con.execute(
-                                f"SELECT * FROM pragma_table_info('{table}')"
+                            row[0] for row in con.execute(
+                                "SELECT column_name FROM information_schema.columns "
+                                "WHERE table_catalog='project_source' "
+                                "AND table_schema='main' AND table_name=? "
+                                "ORDER BY ordinal_position", [table],
                             ).fetchall()
                         ]
                         if columns != other_cols:
@@ -581,9 +586,8 @@ def import_project(
             for target in copied:
                 target.unlink(missing_ok=True)
             raise
-        count = len({
-            row[0] for row in duckdb.connect(str(incoming_db), read_only=True).execute(
-                "SELECT case_id FROM case_snapshots"
-            ).fetchall()
-        })
+        with duckdb.connect(str(incoming_db), read_only=True) as source_db:
+            count = source_db.execute(
+                "SELECT COUNT(*) FROM case_snapshots"
+            ).fetchone()[0]
     return ProjectImportResult(profile, part, count, len(staged_files))
