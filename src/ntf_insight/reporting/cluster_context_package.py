@@ -14,6 +14,7 @@ import secrets
 import stat
 import tempfile
 from dataclasses import dataclass
+from typing import Callable
 from pathlib import Path, PurePosixPath
 from zipfile import ZIP_DEFLATED, ZipFile, ZipInfo
 
@@ -133,6 +134,7 @@ def export_cluster_context(
     *,
     include_originals: bool = False,
     first_result: dict | None = None,
+    progress: Callable[[str], None] | None = None,
 ) -> ClusterContextExport:
     """Kontextpaket aus der verifizierten KI-Analysebasis und kategorisierten Belegen."""
     first_package = Path(first_package).absolute()
@@ -145,6 +147,8 @@ def export_cluster_context(
     if destination.is_relative_to(root) or destination.is_symlink():
         raise ValueError("Analyse-ZIP außerhalb des NTF-Datenverzeichnisses speichern.")
 
+    if progress:
+        progress("Erste ChatGPT-Analyse und Quelldateien prüfen …")
     package_id = validate_first_package(first_package)
     verified_result = (
         ChatGPTRueckgabe.model_validate(first_result)
@@ -247,7 +251,9 @@ def export_cluster_context(
                     "Bitte eine pseudonymisierte Basis auswählen oder "
                     "Originale nach Unternehmensfreigabe ausdrücklich aktivieren."
                 )
-            for info in infos:
+            for index, info in enumerate(infos, 1):
+                if progress:
+                    progress(f"KI-Basis kopieren: {index}/{len(infos)}")
                 # Bereits pseudonymisierte Daten und gegebenenfalls vom Nutzer
                 # freigegebene Originale der Basis exakt und ohne Umbenennung erhalten.
                 if not include_originals and info.filename.startswith("qec_originale/"):
@@ -280,7 +286,11 @@ def export_cluster_context(
                 )
             if include_originals:
                 raw_root = store.archive.root.resolve()
-                for original, meta in zip(evidence, files_manifest):
+                for index, (original, meta) in enumerate(
+                    zip(evidence, files_manifest), 1,
+                ):
+                    if progress:
+                        progress(f"Fachunterlagen einfügen: {index}/{len(evidence)}")
                     path = original.source_path
                     if (
                         path.is_symlink() or not path.is_file()
@@ -303,6 +313,8 @@ def export_cluster_context(
         if destination.exists():
             raise FileExistsError("Zieldatei wurde inzwischen angelegt.")
         os.replace(temp, destination)
+        if progress:
+            progress("Zweites ChatGPT-Paket vollständig gespeichert.")
     finally:
         temp.unlink(missing_ok=True)
     return ClusterContextExport(
