@@ -22,6 +22,7 @@ from PySide6.QtWidgets import (
 
 from ntf_insight.acquisition.qec_archive import local_qec_archive
 from ntf_insight.acquisition.qec_tool import QecTarget, parse_qec_targets
+from ntf_insight.ingestion.artifacts import SourceType
 from ntf_insight.app.models.simple_table_model import SimpleTableModel
 from ntf_insight.app.widgets.workflow_donut import WorkflowDonut
 from ntf_insight.components.registry import list_component_profiles
@@ -780,6 +781,26 @@ class WorkflowPage(QWidget):
         activities = self.source_activity.get(
             self.profile_id, self._context_part
         )
+        imported_types = {
+            "tp_dashboard": SourceType.TP_DASHBOARD,
+            "diagnosis_viewer": SourceType.SHORT_TEST,
+            "tips_writer": SourceType.TIPS_CASE,
+        }
+        all_artifacts = self.progress_store.store.load_artifacts()
+        legacy_imports = {}
+        for source in all_artifacts:
+            for category, source_type in imported_types.items():
+                if source.source_type == source_type:
+                    last = legacy_imports.get(category)
+                    if last is None or source.imported_at > last:
+                        legacy_imports[category] = source.imported_at
+            if (
+                source.source_type == SourceType.OTHER
+                and "celonis" in str(source.source_system or "").casefold()
+            ):
+                last = legacy_imports.get("celonis")
+                if last is None or source.imported_at > last:
+                    legacy_imports["celonis"] = source.imported_at
         for key, count_label in self.context_counts.items():
             count_label.setText(str(counts[key]))
             if key in self.context_source_dates:
@@ -801,17 +822,39 @@ class WorkflowPage(QWidget):
                     self.context_source_dates[key].setText(
                         "Dateiimport: " + newest.strftime("%d.%m.%Y %H:%M")
                     )
+                elif key in legacy_imports:
+                    newest = legacy_imports[key]
+                    self.context_source_dates[key].setText(
+                        "Import (projektübergreifend): "
+                        + newest.strftime("%d.%m.%Y %H:%M")
+                    )
                 else:
                     self.context_source_dates[key].setText(
                         "Noch kein Abruf / Import"
                     )
+                local_parsed = bool(activity and activity[1] in {
+                    "Eingelesen", "Archiviert",
+                })
+                available = bool(documents or local_parsed)
+                legacy_only = bool(
+                    not available and key in legacy_imports
+                )
+                count_label.setText(
+                    str(counts[key]) if counts[key] else
+                    "✓" if local_parsed else "~" if legacy_only else "0"
+                )
                 self.context_source_names[key].setStyleSheet(
-                    "color: #268763; font-weight: 600;"
-                    if documents else ""
+                    "color: #268763; font-weight: 600;" if available
+                    else "color: #CA922C;" if legacy_only else ""
                 )
                 count_label.setStyleSheet(
-                    "color: #268763; font-weight: 600;"
-                    if documents else ""
+                    "color: #268763; font-weight: 600;" if available
+                    else "color: #CA922C;" if legacy_only else ""
+                )
+                count_label.setToolTip(
+                    "✓ = Datei mit vorhandener Quellenpipeline eingelesen; "
+                    "~ = importierte Quelle nur global nachgewiesen. "
+                    "Keine automatische FIN-Zuordnung aus Dateinamen."
                 )
         self.context_model.set_rows([
             (
