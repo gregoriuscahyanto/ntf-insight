@@ -56,8 +56,27 @@ und keine Wahrscheinlichkeit einer Lieferantenverursachung.
 - **ChatGPT-Ergebnis importieren (JSON)** prüft Paket-ID, Belegreferenzen,
   Pseudonym-Zuordnung und speichert Vorschläge **getrennt und ungeprüft**.
 - Tabelle: FIN, QEC-Fall, SSL-Endbefund, manuelle QEC-Entscheidung,
-  ChatGPT-Vorschlag und Prüfstatus. Ein importierter ChatGPT-Vorschlag
-  überschreibt **keine** QEC-Entscheidung und weist **keine** Schuld zu.
+  ChatGPT-Vorschlag, Verursachungsbereich und **ChatGPT-Prüfstatus**.
+  Ein importierter ChatGPT-Vorschlag überschreibt **keine**
+  QEC-Entscheidung und weist **keine** Schuld zu.
+- **Zähler trennen:** `QEC-entschieden` zählt ausschließlich die manuell
+  in `qec_workflow_decisions` gespeicherten NTF-/Kein-NTF-Fachentscheidungen.
+  Ein bereits vorhandener SSL-Endbefund oder eine importierte ChatGPT-JSON
+  erhöht diesen Zähler nicht. Der zweite Zähler zeigt separat importierte
+  ChatGPT-Vorschläge; diese beginnen mit Prüfstatus `Offen`.
+- **Fachlich entscheiden:** Unter **Datenquellen → QEC-Prüfworkflow** den Fall
+  auswählen, `NTF` oder `Kein NTF` festlegen und
+  **Bewertung speichern** drücken. Die KI-Vorschläge werden getrennt unter
+  **Datenquellen → ChatGPT-Auswertung** einzeln geprüft und
+  **Bestätigt** oder **Abgelehnt** markiert.
+- **Tabelle filtern und sortieren:** Freitextsuche über alle sieben Spalten,
+  kombinierbare Auswahlfilter für SSL-Endbefund, QEC-Entscheidung,
+  ChatGPT-Vorschlag, Verursachungsbereich und ChatGPT-Prüfstatus;
+  Klick auf einen Spaltenkopf sortiert auf- bzw. absteigend.
+  **Filter zurücksetzen** zeigt wieder alle Fälle. Die Anzahl sichtbarer
+  Tabellenzeilen wird separat angezeigt; Filter verändern **weder**
+  die QEC-Kohorte **noch** Auswertungen, Entscheidungsstatus oder Exporte.
+  Beim Wechsel des Sachnummernprojekts werden die Filter zurückgesetzt.
 - **Wichtig:** Der bestehende KI-Analysepaketexport umfasst zurzeit **alle
   lokal importierten Fälle**, nicht automatisch nur die gewählte Sachnummer.
   Bei gesetztem Sachnummernfilter gibt es davor eine explizite Warnung.
