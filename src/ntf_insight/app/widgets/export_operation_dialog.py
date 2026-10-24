@@ -268,6 +268,16 @@ class ExportOperationDialog(QDialog):
             + ("\n" + details if details else "")
         )
 
+    def interrupted(self, details: str) -> None:
+        """Ein angeforderter Parserabbruch ist weder Erfolg noch Dateifehler."""
+        self._done()
+        self.destination_label.hide()
+        self.folder_button.hide()
+        self.status.setText(
+            "Import sicher unterbrochen. Bereits gespeicherte Daten bleiben "
+            "erhalten.\n" + details
+        )
+
     def fail(self, message: str) -> None:
         self._done()
         self._destination = None
