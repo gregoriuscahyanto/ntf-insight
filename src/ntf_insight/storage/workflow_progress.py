@@ -12,7 +12,7 @@ from dataclasses import dataclass
 from ntf_insight.storage.duckdb_store import DuckDBStore
 
 STEP_COUNT = 6
-MANUAL_STEPS = frozenset({4, 5})
+MANUAL_STEPS = frozenset({3, 4, 5})
 DEFAULT_PROFILE = "coolant_pump"
 
 
@@ -114,7 +114,7 @@ class WorkflowProgressStore:
             raise ValueError("Ungültiger Workflowschritt.")
         reviewed = tuple(sorted(set(state.reviewed_steps)))
         if any(step not in MANUAL_STEPS for step in reviewed):
-            raise ValueError("Nur Analyse-/Review-Schritte dürfen manuell bestätigt werden.")
+            raise ValueError("Nur Unterlagen-, Analyse- und Review-Schritte dürfen manuell bestätigt werden.")
         with self.store.connect() as con:
             con.execute(
                 """
