@@ -81,6 +81,9 @@ class KIAnalysepaketPanel(QWidget):
 
     transfer_busy = Signal(bool)
     analysis_updated = Signal()
+    first_package_export_started = Signal(object)
+    first_package_exported = Signal(object)
+    analysis_imported = Signal(object)
 
     def __init__(
         self, service: SourceImportService, *, parent: QWidget | None = None,
@@ -305,6 +308,7 @@ class KIAnalysepaketPanel(QWidget):
         self.include_text.setEnabled(False)
         self.include_qec_originale.setEnabled(False)
         self.status.setText("Versioniertes KI-Analysepaket wird lokal erstellt …")
+        self.first_package_export_started.emit(destination)
         self.transfer_busy.emit(True)
         self.worker.start()
 
@@ -326,6 +330,7 @@ class KIAnalysepaketPanel(QWidget):
             f"Die lokale Datei {result.private_zuordnung.name} "
             "mit echten FIN-/Fall-Zuordnungen niemals hochladen."
         )
+        self.first_package_exported.emit(result)
 
     def _failed(self, message: str) -> None:
         self.status.setText("KI-Analyseexport fehlgeschlagen: " + message)
@@ -393,6 +398,7 @@ class KIAnalysepaketPanel(QWidget):
         )
         self._refresh_imports()
         self.analysis_updated.emit()
+        self.analysis_imported.emit(result)
 
     def _import_failed(self, message: str) -> None:
         self.status.setText("ChatGPT-Rückimport abgebrochen: " + message)
