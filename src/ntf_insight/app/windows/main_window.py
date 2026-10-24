@@ -225,6 +225,15 @@ class MainWindow(QMainWindow):
             transfer.set_guard(self._portable_transfer_ready)
             transfer.transfer_busy.connect(self._portable_transfer_busy)
             transfer.restored.connect(self._portable_restored)
+            transfer.operation_started.connect(self._portable_operation_started)
+            transfer.operation_progress.connect(self._portable_operation_progress)
+            transfer.operation_completed.connect(self._portable_operation_completed)
+            transfer.operation_failed.connect(self._portable_operation_failed)
+        fin_export = pages["cases"].fin_zip_export
+        if fin_export is not None:
+            fin_export.export_started.connect(self._fin_export_started)
+            fin_export.export_progress.connect(self._fin_export_progress)
+            fin_export.export_completed.connect(self._fin_export_completed)
         analysis_export = pages["sources"].ki_analyse_panel
         if analysis_export is not None:
             analysis_export.set_guard(self._portable_transfer_ready)
@@ -239,6 +248,62 @@ class MainWindow(QMainWindow):
             analysis_export.first_package_exported.connect(self._first_export_completed)
             analysis_export.analysis_imported.connect(self._ai_import_completed)
         return pages
+
+    def _portable_operation_started(self, action: str) -> None:
+        title = (
+            "NTF-Gesamtstand exportieren"
+            if action == "export" else "NTF-Gesamtstand importieren"
+        )
+        self._portable_export_dialog = self._show_operation_progress(
+            title, "Gesamtdatenstand wird verarbeitet …",
+        )
+
+    def _portable_operation_progress(self, message: str) -> None:
+        if self._portable_export_dialog is not None:
+            self._portable_export_dialog.update_message(message)
+
+    def _portable_operation_completed(self, result: object) -> None:
+        dialog = self._portable_export_dialog
+        if dialog is not None:
+            dialog.complete(
+                Path(result.path) if hasattr(result, "path") else None,
+                details=(
+                    "Gesamtdatenstand sicher lokal exportiert."
+                    if hasattr(result, "path") else
+                    "Gesamtdatenstand lokal wiederhergestellt."
+                ),
+            )
+
+    def _portable_operation_failed(self, message: str) -> None:
+        if self._portable_export_dialog is not None:
+            self._portable_export_dialog.fail(message)
+
+    def _fin_export_started(self, destination: str) -> None:
+        self._fin_export_dialog = self._show_operation_progress(
+            "FIN-Diagnosepakete exportieren",
+            "FIN-ZIP-Dateien werden einzeln erzeugt …",
+        )
+
+    def _fin_export_progress(self, message: str) -> None:
+        if self._fin_export_dialog is not None:
+            self._fin_export_dialog.update_message(message)
+
+    def _fin_export_completed(self, payload: object) -> None:
+        dialog = self._fin_export_dialog
+        if dialog is None:
+            return
+        results, destination = payload
+        successful = [x for x in results if x.zip_path is not None]
+        if not successful:
+            dialog.fail("Keine FIN-ZIP-Datei konnte erfolgreich erstellt werden.")
+            return
+        failed = len(results) - len(successful)
+        dialog.complete_directory(
+            Path(destination), details=(
+                f"{len(successful)} FIN-ZIPs erstellt, {failed} ohne ZIP. "
+                "Vertrauliche Originalberichte nur intern freigegeben weitergeben."
+            ),
+        )
 
     def _adopt_existing_qec(self) -> None:
         """Bestehende QEC-Fälle zuordnen, niemals erneut importieren oder löschen."""
