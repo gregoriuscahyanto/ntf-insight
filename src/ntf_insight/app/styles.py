@@ -175,6 +175,32 @@ QPushButton:hover {{
     background-color: {p["hover"]};
 }}
 
+/* Flächige Quellenampel: eindeutige Statusrückmeldung unabhängig von Textfarbe. */
+QFrame#SourceCoverageRow, QFrame#TechnicalEvidenceRow {{
+    background-color: {p["surface"]};
+    border: 1px solid {p["border"]};
+    border-radius: 8px;
+}}
+QFrame#SourceCoverageRow[coverageState="partial"] {{
+    background-color: #fff0d2;
+    border: 1px solid #bd8318;
+}}
+QFrame#SourceCoverageRow[coverageState="done"],
+QFrame#TechnicalEvidenceRow[evidenceState="done"] {{
+    background-color: #d9eee2;
+    border: 1px solid #26845c;
+}}
+QFrame#SourceCoverageRow[coverageState="error"] {{
+    background-color: #fbe2e2;
+    border: 1px solid #b94242;
+}}
+QFrame#SourceCoverageRow[coverageState="partial"] QLabel,
+QFrame#SourceCoverageRow[coverageState="done"] QLabel,
+QFrame#TechnicalEvidenceRow[evidenceState="done"] QLabel {{
+    background: transparent;
+    color: #25323a;
+}}
+
 /* Status-Ampel: sparsame Farben nur für belegte Verarbeitungszustände. */
 QPushButton#WorkflowStep {{
     background-color: {p["surface"]};
