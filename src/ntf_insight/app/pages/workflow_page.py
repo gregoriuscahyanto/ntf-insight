@@ -882,11 +882,9 @@ class WorkflowPage(QWidget):
         self.chatgpt_cluster_page = QWidget()
         review_layout = QVBoxLayout(self.chatgpt_cluster_page)
         review_layout.setContentsMargins(5, 5, 5, 5)
-        self.chatgpt_cluster_summary = QLabel(
-            "Noch kein importiertes Ergebnis des zweiten ChatGPT-Durchlaufs.",
-            objectName="PageSubtitle",
-        )
+        self.chatgpt_cluster_summary = QLabel(objectName="PageSubtitle")
         self.chatgpt_cluster_summary.setWordWrap(True)
+        self.chatgpt_cluster_summary.hide()
         review_layout.addWidget(self.chatgpt_cluster_summary)
         self.chatgpt_cluster_table, self.chatgpt_cluster_model = _create_table((
             "Cluster", "Titel", "Fälle", "Sicherheit",
@@ -1832,9 +1830,8 @@ class WorkflowPage(QWidget):
         self._cluster_entries = []
         package = self.first_package
         if package is None:
-            self.chatgpt_cluster_summary.setText(
-                "Kein erstes KI-Paket für dieses Projekt vorhanden."
-            )
+            self.chatgpt_cluster_summary.clear()
+            self.chatgpt_cluster_summary.hide()
             self.chatgpt_cluster_model.set_rows([])
             self.chatgpt_case_model.set_rows([])
             return
@@ -1847,10 +1844,8 @@ class WorkflowPage(QWidget):
                 [package.paket_id],
             ).fetchone()
             if not result:
-                self.chatgpt_cluster_summary.setText(
-                    "Noch kein importiertes Clusterergebnis. "
-                    "Dieses Tab zeigt ausschließlich den zweiten ChatGPT-Durchlauf."
-                )
+                self.chatgpt_cluster_summary.clear()
+                self.chatgpt_cluster_summary.hide()
                 self.chatgpt_cluster_model.set_rows([])
                 self.chatgpt_case_model.set_rows([])
                 return
@@ -1892,6 +1887,7 @@ class WorkflowPage(QWidget):
                 if review != "Abgelehnt" else "error"
             )
         self.chatgpt_case_model.set_rows(rendered, row_states=state)
+        self.chatgpt_cluster_summary.show()
         self.chatgpt_cluster_summary.setText(
             f"Analyse {analysis_id} · {len(self._cluster_entries)} ChatGPT-Cluster · "
             f"{len(rendered)} aktuelle QEC-Fälle mit Ergebnissen. "
