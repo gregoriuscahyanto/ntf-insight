@@ -936,6 +936,7 @@ class MainWindow(QMainWindow):
             "diagnosis_viewer": SourceType.SHORT_TEST,
             "tips_writer": SourceType.TIPS_CASE,
             "tp_dashboard": SourceType.TP_DASHBOARD,
+            "cdd_smrd": SourceType.DIAGNOSTIC_DESCRIPTION,
         }.get(category)
         if kind is None:
             workflow.set_notice(
