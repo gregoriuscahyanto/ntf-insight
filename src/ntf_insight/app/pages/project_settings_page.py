@@ -34,12 +34,6 @@ class ProjectSettingsPage(QWidget):
         outer.setContentsMargins(24, 20, 24, 20)
         outer.setSpacing(12)
         outer.addWidget(QLabel("Projekteinstellungen", objectName="PageTitle"))
-        outer.addWidget(QLabel(
-            "Bauteil und Sachnummer legen die Projektkohorte fest. "
-            "Wichtige Steuergeräte sind frei editierbar und werden nicht "
-            "automatisch als verursachende Steuergeräte bewertet.",
-            objectName="PageSubtitle",
-        ))
         selectors = QHBoxLayout()
         self.project_selector = QComboBox()
         self.project_selector.setAccessibleName("Vorhandenes Projekt")
