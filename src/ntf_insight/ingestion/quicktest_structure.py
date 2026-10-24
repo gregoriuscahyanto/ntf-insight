@@ -113,18 +113,13 @@ def _metadata(lines: list[str]) -> dict[str, Any]:
     return {
         "diagnostics_id": diag_id,
         "ecu_variant": variant,
-        "hardware_partnumber": (lookup("HW partnumber")
-            or legacy(r"Hardware\s*
-Partnumber\s*
-(.+?)\s+Hardware\s*
-Version")
-            or legacy(r"Hardware\s*
-Partnumber\s*
-([^
-]+)")),
+        "hardware_partnumber": (
+            lookup("HW partnumber")
+            or legacy(r"Hardware\s*\nPartnumber\s*\n(.+?)\s+Hardware\s*\nVersion")
+            or legacy(r"Hardware\s*\nPartnumber\s*\n([^\n]+)")
+        ),
         "hardware_version": lookup("HW version") or legacy(r"Hardware\s*\nVersion\s*\n([^\n]+)"),
-        "supplier": legacy(r"Supplier\s+(.+?)\s+Software\s*
-Version") or lookup("Supplier"),
+        "supplier": legacy(r"Supplier\s+(.+?)\s+Software\s*\nVersion") or lookup("Supplier"),
         "software_version": lookup("SW version") or legacy(r"Software\s*\nVersion\s*\n([^\n]+)"),
         "boot_and_serial": lookup("Boot version") or lookup("Boot Version"),
         "software_partnumbers": lookup("Software Partnumbers") or legacy(r"Software\s*\nPartnumbers\s*\n([^\n]+)"),
