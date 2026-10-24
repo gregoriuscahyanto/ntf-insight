@@ -34,9 +34,12 @@ def find_failed_quicktest_artifacts(
         return []
 
     latest: dict[str, ParseRun] = {}
+    successful: set[str] = set()
     for run in sources.store.load_parse_runs():
         if run.parser_name != QuickTestPdfParser.name or run.artifact_sha256 not in known:
             continue
+        if run.status == ParseStatus.SUCCESS:
+            successful.add(run.artifact_sha256)
         old = latest.get(run.artifact_sha256)
         if old is None or (run.completed_at or run.started_at) >= (
             old.completed_at or old.started_at
@@ -62,19 +65,16 @@ def find_failed_quicktest_artifacts(
             continue
         # A successful v2 result that is already safely stored must not be
         # reprocessed here. PARTIAL remains an explicit parser problem.
-        if sha in persisted and run.status != ParseStatus.PARTIAL:
+        if sha in persisted and (sha in successful or run.status != ParseStatus.PARTIAL):
             continue
         # Missing persistence also needs repair even if a parser run was
         # marked successful before the storage transaction failed.
-        if sha in persisted or run.status in {
-            ParseStatus.FAILED, ParseStatus.PARTIAL, ParseStatus.SUCCESS, ParseStatus.RUNNING,
-        }:
-            path = Path(artifact.archived_path).absolute()
-            if (
-                not path.is_symlink()
-                and path.is_file()
-                and path.suffix.casefold() == ".pdf"
-                and path.resolve().is_relative_to(root)
-            ):
-                selected.append(artifact)
+        path = Path(artifact.archived_path).absolute()
+        if (
+            not path.is_symlink()
+            and path.is_file()
+            and path.suffix.casefold() == ".pdf"
+            and path.resolve().is_relative_to(root)
+        ):
+            selected.append(artifact)
     return sorted(selected, key=lambda a: a.sha256)
