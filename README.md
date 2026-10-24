@@ -80,6 +80,39 @@ Das Skript richtet automatisch eine `venv` ein und installiert alle mitgeliefert
 
 **Noch kein Download sichtbar?** Die Pakete müssen erst über den GitHub-Workflow veröffentlicht werden.
 
+## Entwicklungs-Branch auf neuem Windows-PC starten (PowerShell)
+
+Dieser Weg installiert die aktuelle Entwicklungsfassung einschließlich der
+projektbezogenen Workflows. Für die veröffentlichte Setup-Version sind
+keine Python-Abhängigkeiten notwendig.
+
+Vorher **Git**, **Python 3.11 (64 Bit)** und für die Erstinstallation
+Internetzugang bereitstellen.
+
+```powershell
+git clone --branch feature/workflow-zentrale-sachnummer-20261024 https://github.com/gregoriuscahyanto/ntf-insight.git
+cd ntf-insight
+py -3.11 -m venv .venv
+Set-ExecutionPolicy -Scope Process -ExecutionPolicy RemoteSigned
+.\.venv\Scripts\Activate.ps1
+python -m pip install --upgrade pip
+python -m pip install -e ".[dev]"
+python -m playwright install chromium
+ntf-insight
+```
+
+Bei einem vorhandenen Checkout stattdessen im Repository
+`git switch feature/workflow-zentrale-sachnummer-20261024`
+und `git pull --ff-only` ausführen, die `.venv` aktivieren
+und Abhängigkeiten mit `python -m pip install -e ".[dev]"` aktualisieren.
+
+**Wichtig:** Code-Installation und Projektdaten sind getrennt. Ein neuer
+PC erhält QEC-FINs, QuickTests, ChatGPT-Ergebnisse und Unterlagen erst
+über **Projekt-Export / Projekt-Import** mit einer `.ntfproject`-Datei
+oder über einen gesonderten Gesamtstandtransfer. Das Projektpaket kann
+vertrauliche Originaldaten enthalten und muss über freigegebene Wege
+übertragen werden.
+
 ## Neue Version auf GitHub veröffentlichen (Entwicklung)
 
 1. [**Actions → Windows Release – Setup und Wheel**](https://github.com/gregoriuscahyanto/ntf-insight/actions/workflows/release-windows.yml) öffnen.
