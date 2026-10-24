@@ -1673,6 +1673,15 @@ class WorkflowPage(QWidget):
             local_qec_archive(self.qec_root, row["fin"], row["reference"])
             for row in self._scoped_rows
         ]
+        latest_report = max(
+            (report for report in reports
+             if report is not None and getattr(report, "timestamp", None) is not None),
+            key=lambda report: report.timestamp,
+            default=None,
+        )
+        self.qec_last_fetch.setText(
+            latest_report.date_label if latest_report else "—"
+        )
         self.qec_model.set_rows([
             (
                 row["fin"], row["case_id"], row["reference"],
@@ -2050,27 +2059,34 @@ class WorkflowPage(QWidget):
             buttons["parse"].setText(
                 "Parsing stoppen" if busy and active == "all"
                 else "Einlesen stoppen" if busy and active == "files"
-                else "Originaldatei importieren …" if category == "celonis"
+                else "Kein Parser" if category == "celonis"
                 else "Alle Dokumente neu parsen"
             )
             buttons["resume_parse"].setText(
                 "Parsing stoppen" if busy and active == "resume"
-                else "Parser fehlt" if category == "celonis"
+                else "Nicht verfügbar" if category == "celonis"
                 else "Ausstehendes Parsing fortsetzen"
             )
             buttons["parse"].setEnabled(
-                busy and active in {"all", "files"} and not stop_pending
-                or not busy and not blocked and (
-                    category == "celonis"
-                    or bool(coverage and coverage.local_paths)
+                category != "celonis" and (
+                    busy and active in {"all", "files"} and not stop_pending
+                    or not busy and not blocked and bool(
+                        coverage and coverage.local_paths
+                    )
                 )
             )
             buttons["resume_parse"].setEnabled(
-                busy and active == "resume" and not stop_pending
-                or not busy and not blocked and bool(
-                    coverage and coverage.can_resume_parsing
+                category != "celonis" and (
+                    busy and active == "resume" and not stop_pending
+                    or not busy and not blocked and bool(
+                        coverage and coverage.can_resume_parsing
+                    )
                 )
             )
+            if "problem_zip" in buttons:
+                buttons["problem_zip"].setEnabled(
+                    not blocked and bool(coverage and coverage.local_paths)
+                )
         for category, button in self.context_technical_resume.items():
             status = self._source_coverage.get(category)
             active = self._context_parsers_busy.get(category)
@@ -2198,6 +2214,10 @@ class WorkflowPage(QWidget):
         )
         self.cancel_download_button.setEnabled(False)
         self.local_qec_button.setEnabled(not paused and not self._busy)
+        self.qec_problem_zip_button.setEnabled(
+            not self._busy and not self._import_busy
+            and bool(qec_coverage and qec_coverage.local_paths)
+        )
         self.ai_export_button.setEnabled(not paused and has_rows)
         self.ai_import_button.setEnabled(not paused)
         for button in self.review_buttons.values():
@@ -2253,10 +2273,13 @@ class WorkflowPage(QWidget):
             self.source_label.setText(
                 "Noch keine aktive QEC-FIN-Liste. Bitte Original-Excel importieren."
             )
+        qec_coverage = self._source_coverage.get("qec")
         self.qec_status.setText(
             self.qec_status.text() if self._busy else
-            f"{downloaded} von {total} FINs mit QEC-Bericht · "
-            "markierte Tabellenzeilen für gezielten Abruf"
+            f"{downloaded}/{total} FINs mit Bericht\n"
+            f"{qec_coverage.parsed_cases or 0}/{total} FINs geparst"
+            if qec_coverage is not None else
+            f"{downloaded}/{total} FINs mit Bericht"
         )
         self.ntf_status.setText(
             f"NTF: {stats['ntf']} · Kein NTF: {stats['not_ntf']} · "
