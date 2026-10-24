@@ -551,3 +551,25 @@ def test_qec_actions_match_source_table_and_parser_zip(tmp_path, monkeypatch):
     assert page.qec_parse_resume_button.text() == "Ausstehendes Parsing fortsetzen"
     window.close()
     app.processEvents()
+
+
+def test_project_dropdown_uses_normalized_sachnummer_not_placeholder(
+    tmp_path, monkeypatch,
+):
+    from ntf_insight.storage.workflow_projects import NTFProject
+
+    app, window = _window(tmp_path, monkeypatch)
+    page = window.pages["workflow"]
+    page.project_store.save(NTFProject(
+        "coolant_pump", "A 000 500 08 01", "Kühlmittelpumpe", ("CPC3",),
+    ))
+    page.activate_project("coolant_pump", "A0005000801")
+    assert page.project_combo.currentData() == (
+        "coolant_pump", "A 000 500 08 01",
+    )
+    assert page.project_combo.currentText() == (
+        "Kühlmittelpumpe [A 000 500 08 01]"
+    )
+    assert page.project_combo.currentIndex() > 0
+    window.close()
+    app.processEvents()
