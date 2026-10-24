@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QTimer
 from PySide6.QtWidgets import QHBoxLayout, QMainWindow, QMessageBox, QStackedWidget, QWidget
 
 from ntf_insight.app.bootstrap import load_application_data
@@ -231,27 +231,72 @@ class MainWindow(QMainWindow):
             self.stack.addWidget(page)
 
 
+    @staticmethod
+    def _workflow_focus(scroll, target: QWidget | None) -> None:
+        """Nach dem Seitenwechsel direkt zum tatsächlichen Unterbereich springen."""
+        if target is None:
+            return
+        scroll.ensureWidgetVisible(target, 24, 56)
+        if target.focusPolicy() != Qt.FocusPolicy.NoFocus:
+            target.setFocus(Qt.FocusReason.OtherFocusReason)
+
     def _workflow_navigate(self, page: str, tab: str) -> None:
-        """Bestehende Analyse- und Quellenseiten nutzen, keine Parallel-UI."""
-        if page == "cases" and tab == "cluster":
-            workflow = self.pages["workflow"]
-            if workflow.profile_id != "coolant_pump":
-                QMessageBox.information(
-                    self, "Bauteilprofil",
-                    "Die aktuelle FIN-Clusterarbeitsfläche ist pumpenspezifisch. "
-                    "Für andere Bauteile sind eigene Diagnosemerkmale erforderlich.",
+        """Jede Karte führt zur konkreten Funktion statt nur zum Seitenanfang."""
+        if page == "sources":
+            source = self.pages["sources"]
+            target = None
+            if tab == "qec_list":
+                target = (
+                    source.qec_workflow.step1
+                    if source.qec_workflow is not None else source.archive_button
+                )
+            elif tab == "qec_decision" and source.qec_workflow is not None:
+                source.qec_workflow.refresh()
+                target = source.qec_workflow.case_selector
+            elif tab == "chatgpt" and source.ki_analyse_panel is not None:
+                target = source.ki_analyse_panel.export_button
+            self.navigation.select_page("sources")
+            if target is not None:
+                QTimer.singleShot(
+                    0, lambda scroll=source.content_scroll, widget=target:
+                    self._workflow_focus(scroll, widget),
+                )
+            return
+
+        if page == "cases":
+            cases = self.pages["cases"]
+            if tab == "qec_reports":
+                if cases.qec_download is None:
+                    QMessageBox.information(
+                        self, "QEC-Befundung",
+                        "Der QEC-Abruf ist in dieser Installation nicht verfügbar.",
+                    )
+                    return
+                cases.detail_tabs.setCurrentWidget(cases.analysis_tab)
+                self.navigation.select_page("cases")
+                QTimer.singleShot(
+                    0, lambda scroll=cases.analysis_tab,
+                    widget=cases.qec_download.all_button:
+                    self._workflow_focus(scroll, widget),
                 )
                 return
-            self.pages["cases"].cluster_workspace.set_workflow_part_number(
-                workflow.part_number.text()
-            )
-            self.pages["cases"].detail_tabs.setCurrentWidget(
-                self.pages["cases"].cluster_workspace
-            )
-        elif page == "cases" and tab == "quicktests":
-            case = self.pages["cases"]
-            if case.quicktest_browser is not None:
-                case.detail_tabs.setCurrentWidget(case.quicktest_browser)
+            if tab == "cluster":
+                workflow = self.pages["workflow"]
+                if workflow.profile_id != "coolant_pump":
+                    QMessageBox.information(
+                        self, "Bauteilprofil",
+                        "Die vorhandene FIN-Clusteranalyse ist pumpenspezifisch. "
+                        "Für weitere Bauteile müssen passende Diagnosemerkmale "
+                        "zuerst fachlich hinterlegt werden.",
+                    )
+                    return
+                cases.cluster_workspace.set_workflow_part_number(
+                    workflow.part_number.text()
+                )
+                cases.detail_tabs.setCurrentWidget(cases.cluster_workspace)
+            elif tab == "quicktests" and cases.quicktest_browser is not None:
+                cases.detail_tabs.setCurrentWidget(cases.quicktest_browser)
+
         self.navigation.select_page(page)
 
     def _workflow_action(self, action: str) -> None:
@@ -266,9 +311,7 @@ class MainWindow(QMainWindow):
             self.navigation.select_page("sources")
             source.archive_button.click()
         elif action == "qec":
-            self.navigation.select_page("sources")
-            if source.qec_workflow is not None:
-                source.qec_workflow.refresh()
+            self._workflow_navigate("sources", "qec_decision")
         elif action in {"pc_export", "pc_import"}:
             self.navigation.select_page("sources")
             panel = source.portable_backup_panel
