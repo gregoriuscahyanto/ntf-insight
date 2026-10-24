@@ -22,7 +22,7 @@ from ntf_insight.acquisition.tips_archive import local_tips_cases
 from ntf_insight.ingestion.artifacts import ParseStatus, sha256_file
 from ntf_insight.ingestion.real_source_parsers import AutoExportParser, QuickTestPdfParser
 from ntf_insight.ingestion.reference_source_parsers import CandelaParser
-from ntf_insight.ingestion.qec_json import QECJsonParser
+from ntf_insight.ingestion.qec_json import QECJsonParser, QEC_SECTIONS
 from ntf_insight.ingestion.tips_json import TipsJsonParser
 from ntf_insight.storage.cluster_evidence_store import EvidenceFile
 from ntf_insight.storage.duckdb_store import DuckDBStore
@@ -62,6 +62,7 @@ class SourceCoverage:
     documents_label: str = "Dokumente"
     note: str = ""
     parsed_qec: frozenset[tuple[str, str]] = frozenset()
+    partial_qec: frozenset[tuple[str, str]] = frozenset()
 
     @property
     def pending_documents(self) -> int:
@@ -168,6 +169,34 @@ def _download_file_for_qec(root: Path, fin: str, reference: str) -> Path | None:
     return path if path.is_file() and not path.is_symlink() else None
 
 
+def _qec_download_complete(path: Path, fin: str, reference: str) -> bool:
+    """Nur aktueller, vollständig geladener Portalbericht; keine alten Reiter."""
+    try:
+        if path.stat().st_size > 32 * 1024**2:
+            return False
+        data = json.loads(path.read_text(encoding="utf-8-sig"))
+        if (
+            not isinstance(data, dict)
+            or data.get("schema_version") != 2
+            or data.get("fin") != fin
+            or str(data.get("referenznummer")) != reference
+            or data.get("vollstaendige_reiter") is not True
+            or data.get("fehler")
+        ):
+            return False
+        sections = data.get("abschnitte")
+        if not isinstance(sections, list):
+            return False
+        fresh = {
+            item.get("bereich") for item in sections
+            if isinstance(item, dict)
+            and item.get("aus_vorherigem_abruf") is not True
+        }
+        return set(QEC_SECTIONS).issubset(fresh)
+    except (OSError, UnicodeError, ValueError, TypeError):
+        return False
+
+
 def _tp_sources(
     store: DuckDBStore, target_fins: set[str],
 ) -> dict[str, set[str]]:
@@ -231,6 +260,7 @@ def get_workflow_coverage(
     qec_partial = 0
     qec_pending: list[Path] = []
     qec_parsed_cases: set[tuple[str, str]] = set()
+    qec_partial_cases: set[tuple[str, str]] = set()
     qec_missing: list[tuple[str, str]] = []
     for fin, ref in sorted(cases):
         info = local_qec_archive(root / "qec", fin, ref)
@@ -242,6 +272,9 @@ def get_workflow_coverage(
         if path is None:  # altes Legacy-Format: erneut als JSON abrufen
             qec_missing.append((fin, ref))
             continue
+        if not _qec_download_complete(path, fin, ref):
+            # Bereits lokal vorhanden, aber neue Portalabfrage erforderlich.
+            qec_missing.append((fin, ref))
         sha = _file_hash(path)
         success, partial = _was_parsed(
             sha, QECJsonParser, "qec_live_report",
@@ -251,6 +284,8 @@ def get_workflow_coverage(
         if success:
             qec_parsed_cases.add((fin, ref))
         qec_partial += int(partial)
+        if partial:
+            qec_partial_cases.add((fin, ref))
         if not success:
             qec_pending.append(path)
     result["qec"] = SourceCoverage(
@@ -261,6 +296,7 @@ def get_workflow_coverage(
         case_label="QEC-Fälle",
         documents_label="Berichte",
         parsed_qec=frozenset(qec_parsed_cases),
+        partial_qec=frozenset(qec_partial_cases),
     )
 
     # Diagnosis: echte PDFs, nicht nur Abrufstatus/Ordner. Portalanzahl
