@@ -7,7 +7,7 @@ from pathlib import Path
 
 from PySide6.QtCore import Qt, QTimer, QUrl
 from PySide6.QtGui import QDesktopServices
-from PySide6.QtWidgets import QFileDialog, QHBoxLayout, QInputDialog, QMainWindow, QMessageBox, QStackedWidget, QWidget
+from PySide6.QtWidgets import QFileDialog, QHBoxLayout, QInputDialog, QMainWindow, QMessageBox, QProgressDialog, QStackedWidget, QWidget
 
 from ntf_insight.acquisition.qec_tool import QEC_START
 from ntf_insight.acquisition.diagnosis_viewer import parse_fins
@@ -64,6 +64,7 @@ class MainWindow(QMainWindow):
         self._context_scraper_failed: set[str] = set()
         self._context_worker = None
         self._project_transfer_worker = None
+        self._project_transfer_dialog = None
         self._project_delete_worker = None
         self._project_delete_result = None
         self._project_import_result = None
@@ -392,12 +393,20 @@ class MainWindow(QMainWindow):
         )
         worker = self._project_transfer_worker
         worker.completed.connect(self._project_transfer_completed)
-        worker.progress.connect(
-            self.pages["workflow"].update_project_transfer_progress
+        dialog = QProgressDialog(
+            "Projektpaket wird verarbeitet …", "", 0, 100, self,
         )
-        self.pages["workflow"].update_project_transfer_progress(
-            0, "Projektpaket vorbereiten"
+        dialog.setWindowTitle(
+            "Projekt exportieren" if action == "export" else "Projekt importieren"
         )
+        dialog.setCancelButton(None)  # Nie laufende Datenbanktransaktion abbrechen.
+        dialog.setMinimumDuration(0)
+        dialog.setAutoClose(False)
+        dialog.setWindowModality(Qt.WindowModality.NonModal)
+        self._project_transfer_dialog = dialog
+        worker.progress.connect(self._project_transfer_progress)
+        self._project_transfer_progress(0, "Projektpaket vorbereiten")
+        dialog.show()
         worker.failed.connect(self._project_transfer_failed)
         worker.finished.connect(self._project_transfer_finished)
         self.pages["workflow"].set_notice(
@@ -406,6 +415,18 @@ class MainWindow(QMainWindow):
         )
         self._portable_transfer_busy(True)
         worker.start()
+
+    def _project_transfer_progress(self, percent: int, message: str) -> None:
+        workflow = self.pages["workflow"]
+        workflow.update_project_transfer_progress(percent, message)
+        dialog = self._project_transfer_dialog
+        if dialog is not None:
+            if percent < 0:
+                dialog.setRange(0, 0)
+            else:
+                dialog.setRange(0, 100)
+                dialog.setValue(max(0, min(100, percent)))
+            dialog.setLabelText(workflow.project_transfer_eta.text())
 
     def _project_transfer_completed(self, result: object) -> None:
         workflow = self.pages["workflow"]
@@ -434,6 +455,10 @@ class MainWindow(QMainWindow):
 
     def _project_transfer_finished(self) -> None:
         self.pages["workflow"].finish_project_transfer_progress()
+        dialog, self._project_transfer_dialog = self._project_transfer_dialog, None
+        if dialog is not None:
+            dialog.close()
+            dialog.deleteLater()
         worker, self._project_transfer_worker = self._project_transfer_worker, None
         if worker is not None:
             worker.deleteLater()
