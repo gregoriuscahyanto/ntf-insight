@@ -885,6 +885,7 @@ class MainWindow(QMainWindow):
             destination,
             mit_freitext=bool(options.get("text")),
             mit_qec_originalen=bool(options.get("originals")),
+            confirmation_parent=dialog,
         )
 
     def _first_export_progress(self, message: str) -> None:
