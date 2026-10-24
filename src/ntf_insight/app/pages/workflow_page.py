@@ -909,8 +909,18 @@ class WorkflowPage(QWidget):
                     else f"{len(sources)} aktive QEC-Listen" if sources else ""
                 )
             if self.analysis_store is not None:
-                for finding in self.analysis_store.list_case_findings(limit=10000):
-                    self._chatgpt_by_case.setdefault(finding["case_id"], finding)
+                # Schritt 03 zeigt ausschließlich die erste ChatGPT-Auswertung;
+                # die zweite Runde wird nur in Schritt 05 angezeigt.
+                first = self.ai_chain.latest_first_export(
+                    self.profile_id, self._context_part
+                )
+                first_id = first.analysis_id if first is not None else None
+                if first_id:
+                    for finding in self.analysis_store.list_case_findings(limit=10000):
+                        if finding["analyse_id"] == first_id:
+                            self._chatgpt_by_case.setdefault(
+                                finding["case_id"], finding
+                            )
         except (OSError, ValueError) as exc:
             # Keine rohen Berichtsdetails oder FINs in Logs/Dialoge übertragen.
             self._data_error = (
@@ -977,9 +987,13 @@ class WorkflowPage(QWidget):
             f"{included} FINs in den Schritten 02–05 berücksichtigt. "
             "Die originale QEC-Liste bleibt vollständig erhalten."
         )
-        self.ssl_donut.set_counts({
-            category: fin_counts[category] for category in sorted(fin_counts)
-        })
+        ranked = sorted(
+            fin_counts.items(), key=lambda item: (-item[1], item[0])
+        )
+        chart = dict(ranked[:6])
+        if len(ranked) > 6:
+            chart["Weitere Endbefunde"] = sum(count for _, count in ranked[6:])
+        self.ssl_donut.set_counts(chart)
 
     @staticmethod
     def _per_fin_distribution(
