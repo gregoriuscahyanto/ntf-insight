@@ -254,3 +254,62 @@ def test_context_collection_shows_provenance_and_part_specific_status(
     assert page.cards[3].property("workflowState") == "pending"
     window.close()
     app.processEvents()
+
+
+
+def test_context_scrapers_use_only_current_qec_part_and_marked_fins(
+    tmp_path, monkeypatch,
+):
+    """Keine echten Browserkontakte: nur die FIN-Übergabe an vorhandene Downloader."""
+    from PySide6.QtCore import QObject, Signal
+
+    class FakeWorker(QObject):
+        failed = Signal(str)
+        finished = Signal()
+
+    app, window = _window(tmp_path, monkeypatch)
+    page = window.pages["workflow"]
+    fake = page.qec_store
+    monkeypatch.setattr(fake, "rows", lambda _root: _qec_rows())
+    monkeypatch.setattr(
+        fake, "active_source",
+        lambda: SimpleNamespace(original_name="synthetisches_qec.xlsx"),
+    )
+    page.refresh_data()
+    page.part_number.setText("A 123 456")
+    page._change_context()
+    page.cards[3].click()
+
+    monkeypatch.setattr(window, "_portable_transfer_ready", lambda: True)
+    cases = window.pages["cases"]
+    calls = []
+    quicktest_worker = FakeWorker()
+
+    def fake_start(*, selected_only, fins_override=None):
+        calls.append(("diagnosis", selected_only, list(fins_override or [])))
+        cases._quicktest_worker = quicktest_worker
+
+    monkeypatch.setattr(cases, "_start_quicktest_download", fake_start)
+    window._context_scrape("diagnosis_viewer", "all")
+    assert calls == [("diagnosis", False, ["WDD12345678901234"])]
+    assert page.context_scraper_buttons["diagnosis_viewer"]["cancel"].isEnabled()
+    cases._quicktest_worker = None
+    quicktest_worker.finished.emit()
+    assert not page.context_scraper_buttons["diagnosis_viewer"]["cancel"].isEnabled()
+
+    tips = cases.tips_download
+    assert tips is not None
+    tips_worker = FakeWorker()
+
+    def fake_tips_start(fins, *, bulk):
+        calls.append(("tips", list(fins), bulk))
+        tips.worker = tips_worker
+
+    monkeypatch.setattr(tips, "_start", fake_tips_start)
+    page.qec_table.selectRow(0)
+    window._context_scrape("tips_writer", "selected")
+    assert calls[-1] == ("tips", ["WDD12345678901234"], False)
+    tips.worker = None
+    tips_worker.finished.emit()
+    window.close()
+    app.processEvents()
