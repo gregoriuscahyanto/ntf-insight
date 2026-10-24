@@ -492,6 +492,11 @@ def import_project(
                     target = root / relative
                     _relative(relative.as_posix())
                     _safe_file(project_root, path)
+                    current = target.parent
+                    while current != root:
+                        if current.is_symlink():
+                            raise ValueError("Verknüpfter Zielordner ist nicht erlaubt.")
+                        current = current.parent
                     if target.exists():
                         if target.is_symlink() or not target.is_file():
                             raise ValueError("Zielpfad eines Projektdokuments ist belegt.")
@@ -541,8 +546,37 @@ def import_project(
                             f'SELECT * FROM project_source.main."{table}" LIMIT 0'
                         )
                         other_cols = [item[0] for item in con.description]
-                        if columns != other_cols:
+                        if columns != other_cols or not all(
+                            _IDENTIFIER.fullmatch(name) for name in columns
+                        ):
                             raise ValueError("Tabellenschema ist nicht kompatibel.")
+                        columns_info = con.execute(
+                            f'PRAGMA table_info("{table}")'
+                        ).fetchall()
+                        primary = [
+                            row[1] for row in sorted(
+                                columns_info, key=lambda row: int(row[5])
+                            ) if row[5]
+                        ]
+                        if primary:
+                            join = " AND ".join(
+                                f't."{column}"=i."{column}"'
+                                for column in primary
+                            )
+                            differs = " OR ".join(
+                                f't."{column}" IS DISTINCT FROM i."{column}"'
+                                for column in columns
+                            )
+                            conflicting = con.execute(
+                                f'SELECT EXISTS(SELECT 1 FROM main."{table}" t '
+                                f'JOIN project_source.main."{table}" i ON {join} '
+                                f'WHERE {differs} LIMIT 1)'
+                            ).fetchone()[0]
+                            if conflicting:
+                                raise ValueError(
+                                    "Projektimport würde vorhandene Daten verändern: "
+                                    + table
+                                )
                         con.execute(
                             f'INSERT INTO main."{table}" BY NAME '
                             f'SELECT * FROM project_source.main."{table}" '
