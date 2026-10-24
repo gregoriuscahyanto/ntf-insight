@@ -8,6 +8,7 @@ from PySide6.QtWidgets import QHBoxLayout, QMainWindow, QMessageBox, QStackedWid
 from ntf_insight.app.bootstrap import load_application_data
 from ntf_insight.app.pages.case_page import CasePage
 from ntf_insight.app.pages.dashboard_page import DashboardPage
+from ntf_insight.app.pages.workflow_page import WorkflowPage
 from ntf_insight.app.pages.data_quality_page import DataQualityPage
 from ntf_insight.app.pages.dtc_page import DTCExplorerPage
 from ntf_insight.app.pages.prediction_page import PredictionPage
@@ -20,6 +21,8 @@ from ntf_insight.storage.duckdb_store import DuckDBStore
 from ntf_insight.storage.dtc_review_store import DtcReviewStore
 from ntf_insight.storage.quicktest_store import QuickTestStore
 from ntf_insight.storage.source_knowledge_store import SourceKnowledgeStore
+from ntf_insight.storage.qec_workflow_store import QecWorkflowStore
+from ntf_insight.storage.workflow_progress import WorkflowProgressStore
 
 
 class MainWindow(QMainWindow):
@@ -55,7 +58,7 @@ class MainWindow(QMainWindow):
         self.setCentralWidget(root)
 
         self.navigation.page_selected.connect(self.show_page)
-        self.navigation.select_page("dashboard")
+        self.navigation.select_page("workflow")
 
     def _create_pages(self) -> dict[str, QWidget]:
         # Fachmarkierungen bleiben im selben lokalen DuckDB wie die Quellen,
@@ -90,6 +93,15 @@ class MainWindow(QMainWindow):
             "prediction": PredictionPage(self.repository, str(self.application_data.paths.database_path), self.application_data.mode),
             "quality": DataQualityPage(self.repository, self.reference_repository),
         }
+        pages["workflow"] = WorkflowPage(
+            WorkflowProgressStore(self.manual_service.store),
+            qec_store=QecWorkflowStore(self.manual_service.store),
+            repository=self.repository,
+            quicktests=QuickTestStore(self.manual_service.store),
+            mode=self.application_data.mode,
+        )
+        pages["workflow"].navigate.connect(self._workflow_navigate)
+        pages["workflow"].action_requested.connect(self._workflow_action)
         pages["cases"].case_saved.connect(self._reload_after_manual_change)
         pages["cases"].quicktests_downloaded.connect(self._import_downloaded_case_quicktests)
         pages["cases"].qec_reports_downloaded.connect(self._import_downloaded_case_quicktests)
@@ -218,10 +230,45 @@ class MainWindow(QMainWindow):
         for page in self.pages.values():
             self.stack.addWidget(page)
 
+
+    def _workflow_navigate(self, page: str, tab: str) -> None:
+        """Bestehende Analyse- und Quellenseiten nutzen, keine Parallel-UI."""
+        if page == "cases" and tab == "cluster":
+            self.pages["cases"].detail_tabs.setCurrentWidget(
+                self.pages["cases"].cluster_workspace
+            )
+        elif page == "cases" and tab == "quicktests":
+            case = self.pages["cases"]
+            if case.quicktest_browser is not None:
+                case.detail_tabs.setCurrentWidget(case.quicktest_browser)
+        self.navigation.select_page(page)
+
+    def _workflow_action(self, action: str) -> None:
+        source = self.pages["sources"]
+        if action == "self_import":
+            self.navigation.select_page("sources")
+            source.archive_button.click()
+        elif action == "qec":
+            self.navigation.select_page("sources")
+            if source.qec_workflow is not None:
+                source.qec_workflow.refresh()
+        elif action in {"pc_export", "pc_import"}:
+            self.navigation.select_page("sources")
+            panel = source.portable_backup_panel
+            if panel is not None:
+                (panel.export_button if action == "pc_export" else panel.restore_button).click()
+        elif action in {"ai_export", "ai_import"}:
+            self.navigation.select_page("sources")
+            panel = source.ki_analyse_panel
+            if panel is not None:
+                (panel.export_button if action == "ai_export" else panel.import_button).click()
+
     def show_page(self, key: str) -> None:
         page = self.pages.get(key)
         if page is None:
             return
+        if key == "workflow":
+            page.refresh()
         if key == "cases":
             page.cluster_workspace.refresh_review_priorities()
             page._refresh_quicktest_download_dates()
