@@ -301,3 +301,56 @@ def test_context_scrapers_use_only_current_qec_part_and_marked_fins(
     tips_worker.finished.emit()
     window.close()
     app.processEvents()
+
+
+
+def test_header_shows_projects_not_legacy_component_dropdown(tmp_path, monkeypatch):
+    app, window = _window(tmp_path, monkeypatch)
+    page = window.pages["workflow"]
+    assert page.profile.isHidden()
+    assert page.part_number.isHidden()
+    assert page.project_export_button.text() == "Projekt-Export"
+    assert page.project_import_button.text() == "Projekt-Import"
+    assert not page.project_export_button.isEnabled()
+    assert page.project_import_button.isEnabled()
+    assert len(page.cards) == 5
+    window.close()
+    app.processEvents()
+
+
+def test_existing_unassigned_qec_dataset_is_adopted_without_second_import(
+    tmp_path, monkeypatch,
+):
+    from PySide6.QtWidgets import QInputDialog, QMessageBox
+
+    app, window = _window(tmp_path, monkeypatch)
+    page = window.pages["workflow"]
+    monkeypatch.setattr(page.qec_store, "rows", lambda _root: _qec_rows())
+    monkeypatch.setattr(
+        page.qec_store, "active_source",
+        lambda: SimpleNamespace(original_name="synthetische_master.xlsx"),
+    )
+    page.refresh_data()
+    assert page.project_store.list_projects() == []
+    assert page.adopt_button.isVisibleTo(page)
+    monkeypatch.setattr(window, "_portable_transfer_ready", lambda: True)
+    monkeypatch.setattr(
+        QInputDialog, "getItem",
+        lambda *_args, **_kwargs: ("A 123 456  ·  1 QEC-Fälle", True),
+    )
+    monkeypatch.setattr(
+        QMessageBox, "question",
+        lambda *_args, **_kwargs: QMessageBox.StandardButton.Yes,
+    )
+    original = list(page._all_rows)
+    page.adopt_button.click()
+    project = page.project_store.get("coolant_pump", "A 123 456")
+    assert project is not None
+    assert project.title == "Kühlmittelpumpe [A 123 456]"
+    assert len(page._scoped_rows) == 1
+    assert page._scoped_rows[0]["fin"] == "WDD12345678901234"
+    assert page._all_rows == original
+    assert page.project_export_button.isEnabled()
+    assert not page.adopt_button.isVisibleTo(page)
+    window.close()
+    app.processEvents()
