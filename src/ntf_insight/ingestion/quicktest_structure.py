@@ -79,7 +79,7 @@ def _ecu_header(lines: list[tuple[str, int]], index: int) -> dict[str, str] | No
         and lines[index + offset][0].casefold() == "general information"
         and all(
             not re.match(
-                r"^(?:QuickTest\\s+\\d+|ECUS\\s*\\(|FAULT CODES\\s*\\()",
+                r"^(?:QuickTest\s+\d+|ECUS\s*\(|FAULT CODES\s*\()",
                 lines[intermediate][0], re.I,
             )
             for intermediate in range(index + 1, index + offset)
