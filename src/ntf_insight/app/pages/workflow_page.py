@@ -7,13 +7,14 @@ Rohdatenparser, QEC-Downloader und ChatGPT-Vertrag werden nicht dupliziert.
 from __future__ import annotations
 
 from dataclasses import replace
+from pathlib import Path
 
 from PySide6.QtCore import QSortFilterProxyModel, Qt, Signal
 from PySide6.QtGui import QCursor
 from PySide6.QtWidgets import (
-    QAbstractItemView, QComboBox, QHBoxLayout, QHeaderView, QLabel, QLineEdit,
-    QProgressBar, QPushButton, QSizePolicy, QStackedWidget, QTableView,
-    QVBoxLayout, QWidget,
+    QAbstractItemView, QCheckBox, QComboBox, QGridLayout, QHBoxLayout,
+    QHeaderView, QLabel, QLineEdit, QProgressBar, QPushButton,
+    QSizePolicy, QStackedWidget, QTableView, QVBoxLayout, QWidget,
 )
 
 from ntf_insight.acquisition.qec_archive import local_qec_archive
@@ -21,6 +22,9 @@ from ntf_insight.acquisition.qec_tool import QecTarget, parse_qec_targets
 from ntf_insight.app.models.simple_table_model import SimpleTableModel
 from ntf_insight.components.registry import list_component_profiles
 from ntf_insight.reporting.chatgpt_exchange import ChatGPTAnalyseStore
+from ntf_insight.storage.cluster_evidence_store import (
+    CATEGORY_LABELS, ClusterEvidenceStore, EVIDENCE_CATEGORIES,
+)
 from ntf_insight.storage.workflow_progress import (
     STEP_COUNT, WorkflowProgressStore, normalize_part_number,
 )
@@ -52,7 +56,7 @@ class WorkflowPage(QWidget):
         ("QEC-FIN-Liste", "QEC-Kohorte", "sources", "qec_list"),
         ("QEC-Befundung", "Berichte", "cases", "qec_reports"),
         ("NTF-Entscheidung", "Prüfung", "sources", "qec_decision"),
-        ("Diagnose", "CPC3 / TP", "cases", "quicktests"),
+        ("Unterlagen", "CPC3 / TP", "workflow", "evidence"),
         ("Clusteranalyse", "Muster", "cases", "cluster"),
         ("Auswertung", "Ergebnis", "sources", "chatgpt"),
     )
@@ -82,6 +86,12 @@ class WorkflowPage(QWidget):
         self._import_busy = False
         self._import_can_resume = False
         self.analysis_store = ChatGPTAnalyseStore(progress_store.store) if qec_store else None
+        self.context_store = ClusterEvidenceStore(progress_store.store)
+        self.context_files = []
+        self.context_base_path: Path | None = None
+        self._context_busy = False
+        self._context_scrapers_busy: set[str] = set()
+
 
         outer = QVBoxLayout(self)
         outer.setContentsMargins(18, 13, 18, 13)
@@ -164,6 +174,7 @@ class WorkflowPage(QWidget):
         self._build_step_one()
         self._build_step_two()
         self._build_step_three()
+        self._build_step_four()
         self._build_following_steps()
 
         self.note = QLabel(objectName="PageSubtitle")
@@ -309,24 +320,157 @@ class WorkflowPage(QWidget):
         ))
         body.addWidget(self.ntf_table, 1)
 
+    def _build_step_four(self) -> None:
+        """Unterlagenzentrale: Quellenabrufe und kategorisierte technische Dokumente."""
+        _, body = self._workspace(
+            "04 · Unterlagen für den zweiten ChatGPT-Durchlauf",
+            "Quellen abrufen oder Dateien einsammeln · Unbekannte Scraper werden nicht simuliert.",
+        )
+        scraper_grid = QGridLayout()
+        scraper_grid.setHorizontalSpacing(8)
+        scraper_grid.setVerticalSpacing(3)
+        self.context_scraper_buttons: dict[str, dict[str, QPushButton]] = {}
+        self.context_import_buttons: dict[str, QPushButton] = {}
+        self.context_counts: dict[str, QLabel] = {}
+        for index, (category, label) in enumerate(EVIDENCE_CATEGORIES[:4]):
+            scraper_grid.addWidget(QLabel(label), index, 0)
+            buttons: dict[str, QPushButton] = {}
+            for j, (key, caption) in enumerate((
+                ("all", "Alle abrufen"),
+                ("selected", "Markierte"),
+                ("cancel", "Stop"),
+            ), start=1):
+                button = QPushButton(caption, objectName="WorkflowAction")
+                if category in ("diagnosis_viewer", "tips_writer"):
+                    button.clicked.connect(
+                        lambda _checked=False, c=category, k=key:
+                        self.action_requested.emit(f"context_scrape:{c}:{k}")
+                    )
+                else:
+                    button.setEnabled(False)
+                    button.setToolTip(
+                        "Ein automatisierter Scraper ist für diese Quelle "
+                        "im Repository noch nicht implementiert."
+                    )
+                    if key == "all":
+                        button.setText("Scraper offen")
+                    else:
+                        button.setVisible(False)
+                buttons[key] = button
+                scraper_grid.addWidget(button, index, j)
+            buttons["import"] = QPushButton("Dateien wählen …", objectName="WorkflowAction")
+            buttons["import"].clicked.connect(
+                lambda _checked=False, c=category:
+                self.action_requested.emit(f"context_files:{c}")
+            )
+            self.context_import_buttons[category] = buttons["import"]
+            scraper_grid.addWidget(buttons["import"], index, 4)
+            count = QLabel("0", objectName="PageSubtitle")
+            scraper_grid.addWidget(count, index, 5)
+            self.context_counts[category] = count
+            self.context_scraper_buttons[category] = buttons
+        body.addLayout(scraper_grid)
+
+        middle = QHBoxLayout()
+        middle.setSpacing(12)
+        left = QVBoxLayout()
+        left.addWidget(QLabel("Technische Unterlagen", objectName="CardTitle"))
+        tech_grid = QGridLayout()
+        tech_grid.setHorizontalSpacing(6)
+        tech_grid.setVerticalSpacing(4)
+        for index, (category, label) in enumerate(EVIDENCE_CATEGORIES[4:]):
+            col = index // 4
+            row = index % 4
+            group = QHBoxLayout()
+            group.setSpacing(3)
+            name = QLabel(label)
+            name.setToolTip("Dateien werden unverändert lokal und mit SHA-256 archiviert.")
+            group.addWidget(name, 1)
+            button = QPushButton("+", objectName="WorkflowAction")
+            button.setFixedWidth(30)
+            button.setToolTip(f"{label} · eine oder mehrere Dateien auswählen")
+            button.clicked.connect(
+                lambda _checked=False, c=category:
+                self.action_requested.emit(f"context_files:{c}")
+            )
+            group.addWidget(button)
+            self.context_import_buttons[category] = button
+            count = QLabel("0", objectName="PageSubtitle")
+            count.setMinimumWidth(24)
+            group.addWidget(count)
+            self.context_counts[category] = count
+            tech_grid.addLayout(group, row, col)
+        left.addLayout(tech_grid)
+        left.addStretch(1)
+        middle.addLayout(left, 3)
+
+        inventory = QVBoxLayout()
+        inventory.addWidget(QLabel("Gesammelte Dateien", objectName="CardTitle"))
+        self.context_table, self.context_model = _create_table((
+            "Quelle", "Datei", "Größe", "SHA-256", "Importiert",
+        ))
+        self.context_table.setMinimumHeight(126)
+        self.context_table.selectionModel().selectionChanged.connect(
+            lambda *_: self._refresh_controls()
+        )
+        inventory.addWidget(self.context_table, 1)
+        remove_row = QHBoxLayout()
+        self.context_remove_button = QPushButton("Zuordnung entfernen")
+        self.context_remove_button.setToolTip(
+            "Entfernt nur den Eintrag aus dieser Sachnummern-Sammlung; "
+            "Quelldateien und andere Auswertungen bleiben erhalten."
+        )
+        self.context_remove_button.clicked.connect(
+            lambda: self.action_requested.emit("context_remove")
+        )
+        remove_row.addWidget(self.context_remove_button)
+        remove_row.addStretch(1)
+        inventory.addLayout(remove_row)
+        middle.addLayout(inventory, 4)
+        body.addLayout(middle, 1)
+
+        export = QHBoxLayout()
+        self.context_base_button = QPushButton("1. KI-Analysepaket wählen …")
+        self.context_base_button.clicked.connect(
+            lambda: self.action_requested.emit("context_base")
+        )
+        export.addWidget(self.context_base_button)
+        self.context_base_label = QLabel("Keine Analysebasis", objectName="PageSubtitle")
+        self.context_base_label.setToolTip(
+            "Die 1. Analyse-ZIP liefert DTC-Clusterbasis und das gültige "
+            "ChatGPT-Ergebnisschema für den 2. Durchlauf."
+        )
+        export.addWidget(self.context_base_label, 1)
+        self.context_originals = QCheckBox("Originale beifügen (vertraulich)")
+        self.context_originals.setChecked(False)
+        self.context_originals.setToolTip(
+            "Nimmt die unveränderten lokalen Unterlagen auf. Sie können echte FINs, "
+            "Lieferanteninformationen, Personenangaben und Geheimnisse enthalten."
+        )
+        export.addWidget(self.context_originals)
+        self.context_export_button = QPushButton("Cluster-Kontextpaket exportieren")
+        self.context_export_button.setObjectName("ClusterStartButton")
+        self.context_export_button.clicked.connect(
+            lambda: self.action_requested.emit("context_export")
+        )
+        export.addWidget(self.context_export_button)
+        body.addLayout(export)
+        self.context_summary = QLabel(objectName="PageSubtitle")
+        self.context_summary.setWordWrap(True)
+        body.addWidget(self.context_summary)
+
     def _build_following_steps(self) -> None:
         targets = (
-            ("04 · CPC3 / Diagnosen",
-             "QuickTests, TP-Dashboard, TIPS und Werkstatthistorie sind weiter "
-             "in der vorhandenen FIN-/Fallanalyse verfügbar.",
-             "Diagnosen öffnen", "cases", "quicktests"),
             ("05 · Clusteranalyse",
-             "NTF-Fälle nach Diagnoseähnlichkeit untersuchen. "
-             "Ein Cluster ist kein Lieferanten-Nachweis.",
+             "Diagnoseähnlichkeit untersuchen; nicht die späteren Bewertungen als Clusterfeatures verwenden.",
              "Clusteranalyse öffnen", "cases", "cluster"),
             ("06 · Auswertung und Datenaustausch",
-             "Ergebnisse und PC-Datenstand können mit vorhandenen Formaten "
-             "lokal ausgetauscht werden.",
+             "Ergebnisse und PC-Datenstand lokal austauschen.",
              "Auswertung öffnen", "sources", "chatgpt"),
         )
         self.review_buttons: dict[int, QPushButton] = {}
-        for step, (title, hint, button_label, page, tab) in enumerate(targets, start=3):
-            _, body = self._workspace(title, hint)
+        for step, (title, hint, button_label, page, tab) in enumerate(targets, start=4):
+            _, detail = self._workspace(title, hint)
             actions = QHBoxLayout()
             self._add_action(
                 actions, button_label,
@@ -345,17 +489,57 @@ class WorkflowPage(QWidget):
                     actions, "PC-Import",
                     lambda: self.action_requested.emit("pc_import"),
                 )
-            if step in (4, 5):
-                button = self._add_action(
-                    actions, "Fachlich geprüft",
-                    self._review,
-                )
-                self.review_buttons[step] = button
+            button = self._add_action(actions, "Fachlich geprüft", self._review)
+            self.review_buttons[step] = button
             actions.addStretch(1)
-            body.addLayout(actions)
-            body.addStretch(1)
-        # Kompatibilität zu früheren Tests und anderen internen Aufrufern.
+            detail.addLayout(actions)
+            detail.addStretch(1)
         self.review_button = self.review_buttons[4]
+
+    def set_context_base(self, path: Path | None) -> None:
+        self.context_base_path = Path(path) if path else None
+        self.context_base_label.setText(
+            self.context_base_path.name if self.context_base_path
+            else "Keine Analysebasis"
+        )
+        self._refresh_controls()
+
+    def set_context_busy(self, busy: bool) -> None:
+        self._context_busy = busy
+        self._refresh_controls()
+
+    def set_context_scraper_busy(self, category: str, busy: bool) -> None:
+        if busy:
+            self._context_scrapers_busy.add(category)
+        else:
+            self._context_scrapers_busy.discard(category)
+        self._refresh_controls()
+
+    def refresh_context_files(self) -> None:
+        """Kontextdaten der aktuellen Sachnummer ohne Dateiinhalt in GUI anzeigen."""
+        self.context_files = self.context_store.list_files(
+            self.profile_id, self._context_part
+        )
+        counts = {name: 0 for name in CATEGORY_LABELS}
+        for file in self.context_files:
+            counts[file.category] += 1
+        for key, count_label in self.context_counts.items():
+            count_label.setText(str(counts[key]))
+        self.context_model.set_rows([
+            (
+                CATEGORY_LABELS[item.category], item.original_name,
+                f"{item.size_bytes / (1024**2):.1f} MB",
+                item.sha256[:12],
+                item.imported_at.strftime("%d.%m.%Y %H:%M"),
+            )
+            for item in self.context_files
+        ])
+        self.context_summary.setText(
+            f"{len(self.context_files)} Unterlagen in "
+            f"{sum(v > 0 for v in counts.values())} von "
+            f"{len(counts)} Kategorien · "
+            "Dateien werden nicht automatisch an ChatGPT gesendet."
+        )
 
     def _change_context(self) -> None:
         profile_id = self.profile.currentData()
@@ -375,6 +559,7 @@ class WorkflowPage(QWidget):
             self.state = self.progress_store.load(profile_id, part)
             self._notice = ""
             self._error_step = None
+        self.refresh_context_files()
         self.refresh()
 
     def _save(self) -> None:
@@ -441,6 +626,7 @@ class WorkflowPage(QWidget):
                 "QEC-/ChatGPT-Daten konnten nicht geladen werden: "
                 + type(exc).__name__
             )
+        self.refresh_context_files()
         self.refresh()
 
     def _update_tables(self) -> None:
@@ -538,6 +724,28 @@ class WorkflowPage(QWidget):
         self.next_button.setEnabled(not paused and self.state.step < STEP_COUNT - 1)
         self.pause_button.setText("Fortsetzen" if paused else "Pausieren")
         self.qec_import_button.setEnabled(not paused and not self._import_busy)
+        for button in self.context_import_buttons.values():
+            button.setEnabled(not paused and not self._context_busy)
+        self.context_base_button.setEnabled(not paused and not self._context_busy)
+        self.context_originals.setEnabled(not paused and not self._context_busy)
+        self.context_export_button.setEnabled(
+            not paused and not self._context_busy and self.context_base_path is not None
+        )
+        self.context_remove_button.setEnabled(
+            not paused and not self._context_busy and bool(
+                self.context_table.selectionModel().selectedRows()
+            )
+        )
+        for category in ("diagnosis_viewer", "tips_writer"):
+            buttons = self.context_scraper_buttons[category]
+            busy = category in self._context_scrapers_busy
+            buttons["all"].setEnabled(not paused and not busy and bool(self._scoped_rows))
+            buttons["selected"].setEnabled(
+                not paused and not busy and bool(
+                    self.qec_table.selectionModel().selectedRows()
+                )
+            )
+            buttons["cancel"].setEnabled(busy)
         self.cancel_import_button.setEnabled(self._import_busy)
         self.resume_import_button.setEnabled(
             not paused and not self._import_busy and self._import_can_resume
@@ -575,8 +783,8 @@ class WorkflowPage(QWidget):
             "done" if stats["cases"] and not stats["open"] else (
                 "partial" if reviewed or self._chatgpt_by_case else "pending"
             ),
-            "done" if total and stats["with_tp"] == total else (
-                "partial" if stats["with_tp"] else "pending"
+            "done" if len(self.context_files) and 3 in self.state.reviewed_steps else (
+                "partial" if self.context_files else "pending"
             ),
             "done" if 4 in self.state.reviewed_steps else "pending",
             "done" if 5 in self.state.reviewed_steps else "pending",
@@ -610,7 +818,7 @@ class WorkflowPage(QWidget):
         )
         names = (
             f"{total} FINs", f"{downloaded}/{total} Berichte",
-            f"{reviewed}/{stats['cases']} geprüft", f"{stats['with_tp']} TP-FINs",
+            f"{reviewed}/{stats['cases']} geprüft", f"{len(self.context_files)} Unterlagen",
             "Geprüft" if statuses[4] == "done" else "Offen",
             "Geprüft" if statuses[5] == "done" else "Offen",
         )
