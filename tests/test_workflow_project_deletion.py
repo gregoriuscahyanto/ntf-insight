@@ -216,3 +216,25 @@ def test_project_settings_confirmation_requires_exact_part_number(tmp_path, monk
     ]
     widget.close()
     app.processEvents()
+
+
+
+def test_full_delete_preserves_same_sha_evidence_used_by_another_project(tmp_path):
+    root = tmp_path / "data"
+    store, projects = _storage(root)
+    doc = tmp_path / "shared.txt"
+    doc.write_text("Für beide Projekte relevante Setzbedingungen", encoding="utf-8")
+    evidence = ClusterEvidenceStore(store)
+    evidence.add_files("coolant_pump", "A111222", "additional", [doc])
+    evidence.add_files("coolant_pump", "B333444", "additional", [doc])
+    sha = evidence.list_files("coolant_pump", "A111222")[0].sha256
+    target = evidence.list_files("coolant_pump", "B333444")[0].source_path
+    assert target.exists()
+
+    result = fully_delete_project(store, root, "coolant_pump", "A111222")
+    assert result.complete
+    assert result.shared_files_retained >= 1
+    assert target.is_file()
+    assert not evidence.list_files("coolant_pump", "A111222")
+    assert evidence.list_files("coolant_pump", "B333444")[0].sha256 == sha
+    assert projects.get("coolant_pump", "B333444") is not None
