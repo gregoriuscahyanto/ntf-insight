@@ -1046,7 +1046,16 @@ class WorkflowPage(QWidget):
             self._context_parsers_busy.pop(category, None)
             self._context_stop_requested.discard(("parse", category))
         if category == "qec":
-            self.qec_parse_progress.setRange(0, 0) if busy else self.qec_parse_progress.setRange(0, 100)
+            if busy:
+                self.qec_parse_progress.setRange(0, 0)
+            else:
+                self.qec_parse_progress.setRange(0, 100)
+                status = self._source_coverage.get("qec")
+                if status is not None:
+                    self.qec_parse_progress.setValue(round(
+                        100 * (status.parsed_cases or 0)
+                        / max(1, status.total_cases or 0)
+                    ))
         self._refresh_controls()
 
     def set_context_scraper_busy(
