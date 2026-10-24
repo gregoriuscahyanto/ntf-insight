@@ -79,6 +79,9 @@ class MainWindow(QMainWindow):
         ] = []
         self._project_transfer_worker = None
         self._project_transfer_dialog: ExportOperationDialog | None = None
+        self._source_import_dialog: ExportOperationDialog | None = None
+        self._ai_import_dialog: ExportOperationDialog | None = None
+        self._context_import_dialog: ExportOperationDialog | None = None
         self._first_export_dialog: ExportOperationDialog | None = None
         self._second_export_dialog: ExportOperationDialog | None = None
         self._portable_export_dialog: ExportOperationDialog | None = None
@@ -218,6 +221,10 @@ class MainWindow(QMainWindow):
         pages["workflow"].cohort_updated.connect(self._sync_local_cluster)
         pages["workflow"].mount_local_cluster(pages["cases"].cluster_workspace)
         sources = pages["sources"]
+        sources.import_started.connect(self._source_import_started)
+        sources.import_progress.connect(self._source_import_progress)
+        sources.import_completed.connect(self._source_import_completed)
+        sources.import_failed.connect(self._source_import_failed)
         sources.diagnostics_started.connect(self._diagnostics_started)
         sources.diagnostics_progress.connect(self._diagnostics_progress)
         sources.diagnostics_saved.connect(self._diagnostics_saved)
@@ -267,6 +274,9 @@ class MainWindow(QMainWindow):
             )
             analysis_export.first_package_exported.connect(self._first_export_completed)
             analysis_export.analysis_imported.connect(self._ai_import_completed)
+            analysis_export.analysis_import_started.connect(self._ai_import_started)
+            analysis_export.analysis_import_progress.connect(self._ai_import_progress)
+            analysis_export.analysis_import_failed.connect(self._ai_import_failed)
         return pages
 
     def _portable_operation_started(self, action: str) -> None:
@@ -467,6 +477,91 @@ class MainWindow(QMainWindow):
         dialog.close()
         dialog.deleteLater()
         self._finish_loading()
+
+    def _close_old_import_cards(self) -> None:
+        """Vor einem Folgeimport nur bereits abgeschlossene Importkarten schließen."""
+        for name in (
+            "_source_import_dialog", "_ai_import_dialog", "_context_import_dialog",
+        ):
+            card = getattr(self, name)
+            if card is not None and not card._running:
+                card.accept()
+                setattr(self, name, None)
+
+    def _source_import_started(self, message: str) -> None:
+        self._close_old_import_cards()
+        dialog = self._show_operation_progress(
+            "Quelldateien importieren", message,
+        )
+        self._source_import_dialog = dialog
+        dialog.allow_cancel()
+        dialog.cancel_requested.connect(self.pages["sources"]._cancel_import)
+
+    def _source_import_progress(self, message: str) -> None:
+        if self._source_import_dialog is not None:
+            self._source_import_dialog.update_message(message)
+
+    def _source_import_completed(self, summary: str) -> None:
+        dialog = self._source_import_dialog
+        if dialog is None:
+            return
+        short = summary[:560]
+        if summary.startswith("Import unterbrochen"):
+            dialog.interrupted(short)
+        else:
+            dialog.complete(
+                None, details=short + "\nDetails unter Datenquellen.",
+            )
+
+    def _source_import_failed(self, message: str) -> None:
+        if self._source_import_dialog is not None:
+            self._source_import_dialog.fail(
+                message + "\nBereits archivierte Originaldateien bleiben erhalten."
+            )
+
+    def _ai_import_started(self, filename: str) -> None:
+        self._close_old_import_cards()
+        self._ai_import_dialog = self._show_operation_progress(
+            "ChatGPT-Ergebnis importieren",
+            f"Ergebnisdatei {filename} wird geprüft und lokal zugeordnet …",
+        )
+
+    def _ai_import_progress(self, message: str) -> None:
+        if self._ai_import_dialog is not None:
+            self._ai_import_dialog.update_message(message)
+
+    def _ai_import_failed(self, message: str) -> None:
+        self._pending_ai_round = None
+        self._close_old_import_cards()
+        if self._ai_import_dialog is None:
+            self._ai_import_dialog = self._show_operation_progress(
+                "ChatGPT-Ergebnis importieren", "Rückimport prüfen …",
+            )
+        self._ai_import_dialog.fail(message)
+        self.pages["workflow"].set_notice(
+            "ChatGPT-Rückimport abgebrochen: " + message, error=True,
+        )
+
+    def _workflow_ai_import(self) -> None:
+        """Datei direkt aus dem sichtbaren Workflow wählen, nicht im versteckten Panel."""
+        workflow = self.pages["workflow"]
+        panel = self.pages["sources"].ki_analyse_panel
+        if panel is None:
+            workflow.set_notice("ChatGPT-Rückimport nicht verfügbar.", error=True)
+            return
+        if not self._portable_transfer_ready():
+            workflow.set_notice("Ein Import oder Download läuft bereits.", error=True)
+            return
+        name, _ = QFileDialog.getOpenFileName(
+            self, "Erstes ChatGPT-Analyseergebnis auswählen",
+            str(Path.home()), "NTF ChatGPT-Auswertung (*.json)",
+        )
+        if not name:
+            self._pending_ai_round = None
+            return
+        self._pending_ai_round = 1
+        if not panel.import_from_path(Path(name)):
+            self._pending_ai_round = None
 
     def _diagnostics_started(self, message: str) -> None:
         self._diagnostics_path = None
@@ -942,25 +1037,47 @@ class MainWindow(QMainWindow):
     def _ai_import_completed(self, result: object) -> None:
         round_number = self._pending_ai_round
         self._pending_ai_round = None
-        if round_number is None:
-            return
         workflow = self.pages["workflow"]
-        try:
-            linked = workflow.ai_chain.record_import(
-                result["analyse_id"], round_number=round_number
-            )
-        except (OSError, ValueError) as exc:
-            workflow.set_notice(
-                "Analyse importiert, aber Workflow-Zuordnung ungültig: "
-                + str(exc), error=True,
-            )
-            return
-        workflow.refresh_ai_chain()
-        workflow.refresh_data()
-        if linked:
-            workflow.set_notice(
-                f"{round_number}. ChatGPT-Ergebnis automatisch im Projekt verknüpft."
-            )
+        details = (
+            f"{result['faelle']} Fallbewertungen und "
+            f"{result['cluster']} Cluster lokal gespeichert."
+        )
+        if result.get("bereits_importiert"):
+            details += " Das Ergebnis war bereits identisch importiert."
+        if round_number is not None:
+            try:
+                linked = workflow.ai_chain.record_import(
+                    result["analyse_id"], round_number=round_number
+                )
+            except (OSError, ValueError) as exc:
+                # Analyse wurde bereits atomar importiert: dies ausdrücklich
+                # melden und keinen irreführenden Totalfehler anzeigen.
+                details += (
+                    " Achtung: Projektzuordnung konnte nicht gespeichert "
+                    "werden: " + str(exc)
+                )
+                workflow.set_notice(
+                    "Analyse lokal gespeichert, aber Workflow-Zuordnung "
+                    "fehlgeschlagen: " + str(exc), error=True,
+                )
+            else:
+                workflow.refresh_ai_chain()
+                workflow.refresh_data()
+                if linked:
+                    details += f" Als {round_number}. Durchlauf im Projekt verknüpft."
+                    workflow.set_notice(
+                        f"{round_number}. ChatGPT-Ergebnis im Projekt verknüpft."
+                    )
+                else:
+                    details += (
+                        " Keine passende exportierte Analysebasis für dieses "
+                        "Projekt registriert; keine automatische Verknüpfung."
+                    )
+                    workflow.set_notice(details)
+        else:
+            workflow.set_notice(details)
+        if self._ai_import_dialog is not None:
+            self._ai_import_dialog.complete(None, details=details)
 
     def _import_downloaded_case_quicktests(self, paths: list) -> None:
         """Archive QuickTest/QEC files from the case table with source provenance."""
@@ -1880,10 +1997,13 @@ class MainWindow(QMainWindow):
                 error=True,
             )
             return
-        self._pending_ai_round = 2
         panel = self.pages["sources"].ki_analyse_panel
-        if panel is not None:
-            panel.import_from_path(path)
+        if panel is None:
+            workflow.set_notice("ChatGPT-Rückimport nicht verfügbar.", error=True)
+            return
+        self._pending_ai_round = 2
+        if not panel.import_from_path(path):
+            self._pending_ai_round = None
 
     def _context_remove(self) -> None:
         workflow = self.pages["workflow"]
@@ -2201,8 +2321,9 @@ class MainWindow(QMainWindow):
                     return
                 panel.prepare_workflow_cohort(fins)
             if action == "ai_import":
-                self._pending_ai_round = 1
-            (panel.export_button if action == "ai_export" else panel.import_button).click()
+                self._workflow_ai_import()
+            else:
+                panel.export_button.click()
         elif action == "project_export":
             self._project_transfer_export()
         elif action == "project_import":
