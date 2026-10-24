@@ -535,22 +535,12 @@ def import_project(
                             continue
                         if table not in target_tables:
                             raise ValueError("Ziel-App kennt Projekttabelle nicht: " + table)
-                        columns = [
-                            row[0] for row in con.execute(
-                                "SELECT column_name FROM information_schema.columns "
-                                "WHERE table_catalog=current_database() "
-                                "AND table_schema='main' AND table_name=? "
-                                "ORDER BY ordinal_position", [table],
-                            ).fetchall()
-                        ]
-                        other_cols = [
-                            row[0] for row in con.execute(
-                                "SELECT column_name FROM information_schema.columns "
-                                "WHERE table_catalog='project_source' "
-                                "AND table_schema='main' AND table_name=? "
-                                "ORDER BY ordinal_position", [table],
-                            ).fetchall()
-                        ]
+                        con.execute(f'SELECT * FROM main."{table}" LIMIT 0')
+                        columns = [item[0] for item in con.description]
+                        con.execute(
+                            f'SELECT * FROM project_source.main."{table}" LIMIT 0'
+                        )
+                        other_cols = [item[0] for item in con.description]
                         if columns != other_cols:
                             raise ValueError("Tabellenschema ist nicht kompatibel.")
                         con.execute(
