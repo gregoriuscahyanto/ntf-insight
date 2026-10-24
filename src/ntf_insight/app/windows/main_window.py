@@ -89,6 +89,18 @@ class MainWindow(QMainWindow):
         self.navigation.page_selected.connect(self.show_page)
         self.navigation.select_page("workflow")
 
+    def closeEvent(self, event) -> None:  # noqa: N802
+        if self._project_delete_worker is not None:
+            event.ignore()
+            QMessageBox.warning(
+                self, "Projektlöschung läuft",
+                "Die Projektlöschung muss zuerst abgeschlossen werden. "
+                "Das App-Fenster bleibt geöffnet, bis Dateien und Datenbank "
+                "konsistent aktualisiert sind.",
+            )
+            return
+        super().closeEvent(event)
+
     def _create_pages(self) -> dict[str, QWidget]:
         # Fachmarkierungen bleiben im selben lokalen DuckDB wie die Quellen,
         # aber in einer separaten, importunabhängigen Tabelle gespeichert.
