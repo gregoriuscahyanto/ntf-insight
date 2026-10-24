@@ -778,6 +778,7 @@ class WorkflowPage(QWidget):
                 + type(exc).__name__
             )
         self.refresh_context_files()
+        self._refresh_project_selector()
         self.refresh()
 
     def _update_tables(self) -> None:
