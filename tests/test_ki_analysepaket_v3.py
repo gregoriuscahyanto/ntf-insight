@@ -8,6 +8,8 @@ import csv
 import io
 import json
 from datetime import datetime
+
+import pytest
 from zipfile import ZipFile
 
 from ntf_insight.domain.case import NTFCase
@@ -23,6 +25,7 @@ from ntf_insight.reporting.chatgpt_exchange import (
 )
 from ntf_insight.reporting.ki_analysepaket import export_ki_analysepaket
 from ntf_insight.storage.source_knowledge_store import SourceKnowledgeStore
+from ntf_insight.storage.workflow_ai_chain import WorkflowAIChainStore
 
 
 FIN = "WDD12345678901234"
@@ -213,3 +216,72 @@ def test_v3_freitext_zusaetzliche_quellen_nur_opt_in(tmp_path):
         assert PRIVATE in archive.read("autoexport_tips.csv").decode("utf-8-sig")
         assert PRIVATE in archive.read("lieferantenbefunde_NICHT_CLUSTER.csv").decode("utf-8-sig")
         assert json.loads(archive.read("manifest.json"))["pseudonymisiert"] is False
+
+
+def test_chatgpt_row_evidence_uses_archived_export_not_private_alias(tmp_path):
+    """AE-/LB-Zeilen des v3-Exports müssen zum ursprünglichen ZIP gehören."""
+    service = _source(tmp_path)
+    exported = export_ki_analysepaket(service, tmp_path / "row-source.zip")
+    WorkflowAIChainStore(service.store).register_first_export(
+        "coolant_pump", "PUMP-ALT-REAL", exported.pfad,
+    )
+    with ZipFile(exported.pfad) as archive:
+        template = json.loads(archive.read("chatgpt_ergebnis_vorlage.json"))
+        case_alias = _csv(archive, "faelle.csv")[0]["fall_id"]
+        auto_alias = _csv(archive, "autoexport_diagnosen.csv")[0]["beobachtung_id"]
+        supplier_alias = _csv(
+            archive, "lieferantenbefunde_NICHT_CLUSTER.csv"
+        )[0]["befund_id"]
+
+    template["cluster"] = [{
+        "cluster_id": "C01", "titel": "Vor-Tausch-DTC", "fall_ids": [case_alias],
+        "technische_hypothese": "Elektrik prüfen", "sicherheit": "Niedrig",
+        "belege": [{"quelle": "autoexport_diagnosen", "quelle_id": auto_alias}],
+    }]
+    template["faelle"] = [{
+        "fall_id": case_alias, "cluster_id": "C01",
+        "ntf_bewertung": "NTF fraglich", "prioritaet": "P2",
+        "belege": [
+            {"quelle": "autoexport_diagnosen", "quelle_id": auto_alias},
+            {"quelle": "lieferantenbefunde_NICHT_CLUSTER",
+             "quelle_id": supplier_alias},
+        ],
+    }]
+    result_path = tmp_path / "chatgpt.json"
+    records = []
+    template["analyse_id"] = "Analyse-Test-Zeilenbelege"
+    result_path.write_text(json.dumps(template), encoding="utf-8")
+
+    store = ChatGPTAnalyseStore(service.store)
+    result = store.import_file(result_path, progress=records.append)
+    assert (result["faelle"], result["cluster"]) == (1, 1)
+    assert records and any("Fallbewertungen prüfen" in msg for msg in records)
+    assert store.latest_for_case("FALL-REAL-PRIVAT") is not None
+
+    # Auch mit passender Paket-ID dürfen erfundene Zeilen nicht durchgehen.
+    template["analyse_id"] = "Analyse-Test-Manipulation"
+    template["faelle"][0]["belege"][1]["quelle_id"] = "LB999999"
+    result_path.write_text(json.dumps(template), encoding="utf-8")
+    with pytest.raises(ValueError, match="nicht vorhanden"):
+        store.import_file(result_path)
+    assert store.latest_for_case("FALL-REAL-PRIVAT")["analyse_id"] == (
+        "Analyse-Test-Zeilenbelege"
+    )
+
+
+def test_chatgpt_row_evidence_without_archived_package_is_rejected(tmp_path):
+    """Fehlende Originalquelle wird nicht als validierter Lieferantenbeleg geraten."""
+    service = _source(tmp_path)
+    exported = export_ki_analysepaket(service, tmp_path / "row-no-zip.zip")
+    with ZipFile(exported.pfad) as archive:
+        template = json.loads(archive.read("chatgpt_ergebnis_vorlage.json"))
+        case_alias = _csv(archive, "faelle.csv")[0]["fall_id"]
+        auto_alias = _csv(archive, "autoexport_diagnosen.csv")[0]["beobachtung_id"]
+    template["faelle"] = [{
+        "fall_id": case_alias,
+        "belege": [{"quelle": "autoexport_diagnosen", "quelle_id": auto_alias}],
+    }]
+    path = tmp_path / "rueckgabe.json"
+    path.write_text(json.dumps(template), encoding="utf-8")
+    with pytest.raises(ValueError, match="Analyse-ZIP"):
+        ChatGPTAnalyseStore(service.store).import_file(path)

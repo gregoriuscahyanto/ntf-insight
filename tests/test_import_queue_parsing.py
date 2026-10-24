@@ -1,0 +1,209 @@
+"""Regressionen: ECU-Unterlagen während Parsing und DuckDB-Dateisperre.
+
+Synthetische lokale Tests ohne echte FINs, Portale oder Downloads.
+"""
+from __future__ import annotations
+
+import os
+
+import duckdb
+os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+
+from PySide6.QtWidgets import QApplication, QFileDialog
+
+from ntf_insight.app.windows.main_window import MainWindow
+
+
+def _window(tmp_path, monkeypatch):
+    monkeypatch.setenv("NTF_INSIGHT_DATA_DIR", str(tmp_path / "data"))
+    app = QApplication.instance() or QApplication([])
+    return app, MainWindow()
+
+
+def test_ecu_documents_queued_while_parsing_and_imported_afterward(
+    tmp_path, monkeypatch,
+):
+    app, window = _window(tmp_path, monkeypatch)
+    source = window.pages["sources"]
+    workflow = window.pages["workflow"]
+    fake_worker = object()
+    try:
+        source._worker = fake_worker
+        workflow.set_context_parser_busy("qec", True, "all")
+        document = tmp_path / "ecu-messages.xlsx"
+        document.write_bytes(b"synthetic")
+        monkeypatch.setattr(
+            QFileDialog, "getOpenFileNames",
+            lambda *args, **kwargs: ([str(document)], ""),
+        )
+        # Tests behandeln die aktuell aktive Parser-Verbindung als freigegeben
+        # für die *Dateiauswahl*, nicht als Freigabe für DB-Schreibzugriffe.
+        monkeypatch.setattr(
+            window, "_portable_transfer_ready",
+            lambda *, allow_source_parser=False, allow_context_import=False:
+            allow_source_parser or source._worker is None,
+        )
+        started = []
+        monkeypatch.setattr(
+            window, "_start_context_evidence_import",
+            lambda *args: started.append(args),
+        )
+        window._context_import("ecu_messages")
+        assert len(window._pending_context_imports) == 1
+        assert not started
+        assert "vorgemerkt" in workflow._notice
+        source._worker = None
+        workflow.set_context_parser_busy("qec", False)
+        window._drain_pending_context_imports()
+        assert len(started) == 1
+        assert started[0][2] == "ecu_messages"
+        assert started[0][3] == (document,)
+        assert not window._pending_context_imports
+    finally:
+        source._worker = None
+        window.close()
+        app.processEvents()
+
+
+def test_database_lock_during_refresh_does_not_escape_qt_callback(
+    tmp_path, monkeypatch,
+):
+    app, window = _window(tmp_path, monkeypatch)
+    workflow = window.pages["workflow"]
+    try:
+        def locked():
+            raise duckdb.IOException("database is locked by another Python process")
+
+        monkeypatch.setattr(workflow, "_update_tables", locked)
+        workflow.refresh()
+        assert workflow.note.isVisibleTo(workflow) or workflow.note.isVisible()
+        assert "Datenbank derzeit gesperrt" in workflow.note.text()
+        # Eine Statusmeldung darf keinen zweiten Datenbankversuch auslösen.
+        workflow.set_notice("Ein Download läuft bereits.", error=True)
+        assert "Ein Download läuft bereits." in workflow.note.text()
+    finally:
+        window.close()
+        app.processEvents()
+
+
+def test_requested_parse_stop_remains_visible_during_late_progress(
+    tmp_path, monkeypatch,
+):
+    app, window = _window(tmp_path, monkeypatch)
+    workflow = window.pages["workflow"]
+    try:
+        workflow.set_context_parser_busy("tp_dashboard", True, "all")
+        workflow._context_stop_requested.add(("parse", "tp_dashboard"))
+        workflow.set_context_operation(
+            "tp_dashboard", True, "Abbruch angefordert",
+        )
+        label = workflow.context_operation_labels["tp_dashboard"]
+        assert "Abbruch angefordert" in label.text()
+        # Auch spätere Worker-Signale ohne Dateizähler dürfen den
+        # Stopphinweis nicht durch "Dauer unbekannt" überschreiben.
+        workflow.set_context_operation(
+            "tp_dashboard", True, "Verknüpfte Fälle dauerhaft speichern …",
+        )
+        assert "Abbruch angefordert" in label.text()
+        workflow.set_context_operation("tp_dashboard", False)
+        workflow.set_context_parser_busy("tp_dashboard", False)
+        assert not label.text()
+    finally:
+        window.close()
+        app.processEvents()
+
+
+def test_import_completion_does_not_open_quicktests_automatically(
+    tmp_path, monkeypatch,
+):
+    """Auch bei vor dem Abbruch gespeicherten PDFs den Arbeitsbereich behalten."""
+    app, window = _window(tmp_path, monkeypatch)
+    try:
+        for initial_page in ("workflow", "sources"):
+            for cancelled in (False, True):
+                window.navigation.select_page(initial_page)
+                summary = (
+                    "Import unterbrochen (Fortsetzen möglich): 2 QuickTests"
+                    if cancelled else "Import abgeschlossen: 2 QuickTests"
+                )
+                window._reload_after_source_import(
+                    summary, quicktests_saved=2,
+                )
+                assert window.navigation.buttons[initial_page].isChecked()
+                assert window.stack.currentWidget() is window.pages[initial_page]
+                assert window.pages["sources"].import_status.text() == summary
+    finally:
+        window.close()
+        app.processEvents()
+
+
+def test_case_download_import_stays_in_case_area(tmp_path, monkeypatch):
+    """Von Fälle / FIN gestartete Downloads behalten ihren Kontext."""
+    app, window = _window(tmp_path, monkeypatch)
+    try:
+        window.navigation.select_page("cases")
+        window._case_quicktest_import_pending = True
+        window._reload_after_source_import(
+            "Import abgeschlossen: 1 QuickTest", quicktests_saved=1,
+        )
+        assert window.navigation.buttons["cases"].isChecked()
+        assert window.stack.currentWidget() is window.pages["cases"]
+        assert not window._case_quicktest_import_pending
+    finally:
+        window.close()
+        app.processEvents()
+
+
+def test_generic_import_popup_shows_progress_time_and_safe_stop(
+    tmp_path, monkeypatch,
+):
+    app, window = _window(tmp_path, monkeypatch)
+    sources = window.pages["sources"]
+    try:
+        sources.import_started.emit("10 Quelldateien importieren")
+        dialog = window._source_import_dialog
+        assert dialog is not None
+        assert dialog._running
+        assert dialog.cancel_button.isVisible() or not window.isVisible()
+        sources.import_progress.emit("Originaldateien archivieren (3/10) …")
+        assert dialog.maximum() == 10
+        assert dialog.value() == 3
+        assert "Bisher" in dialog.time_label.text()
+        dialog.cancel_button.click()
+        assert "Abbruch angefordert" in dialog.status.text()
+        sources.import_completed.emit(
+            "Import unterbrochen (Fortsetzen möglich): 3 archiviert"
+        )
+        assert not dialog._running
+        assert "sicher unterbrochen" in dialog.status.text()
+        assert "Gesamtdauer" in dialog.time_label.text()
+        dialog.accept()
+    finally:
+        window.close()
+        app.processEvents()
+
+
+def test_chatgpt_import_failure_is_shown_in_workflow_popup(
+    tmp_path, monkeypatch,
+):
+    app, window = _window(tmp_path, monkeypatch)
+    try:
+        window.navigation.select_page("workflow")
+        panel = window.pages["sources"].ki_analyse_panel
+        assert panel is not None
+        panel.analysis_import_started.emit("analyse.json")
+        dialog = window._ai_import_dialog
+        assert dialog is not None and dialog._running
+        panel.analysis_import_progress.emit("Fallbewertungen prüfen (17/173) …")
+        assert dialog.maximum() == 173
+        assert dialog.value() == 17
+        panel.analysis_import_failed.emit(
+            "Belegzeile ist im ursprünglichen Analyse-ZIP nicht vorhanden"
+        )
+        assert not dialog._running
+        assert "Vorgang fehlgeschlagen" in dialog.status.text()
+        assert "ChatGPT-Rückimport abgebrochen" in window.pages["workflow"]._notice
+        dialog.accept()
+    finally:
+        window.close()
+        app.processEvents()

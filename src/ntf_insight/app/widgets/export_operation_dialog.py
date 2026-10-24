@@ -22,6 +22,7 @@ class ExportOperationDialog(QDialog):
     """Dieselbe schwebende Oberfläche für ZIP, Projekttransfer und ChatGPT."""
 
     start_requested = Signal(dict)
+    cancel_requested = Signal()
 
     def __init__(
         self, title: str, message: str, *,
@@ -92,6 +93,11 @@ class ExportOperationDialog(QDialog):
         layout.addWidget(self.destination_label)
         row = QHBoxLayout()
         row.addStretch()
+        self.cancel_button = QPushButton("Import stoppen")
+        self.cancel_button.setObjectName("ImportCancelAction")
+        self.cancel_button.clicked.connect(self._request_cancel)
+        self.cancel_button.hide()
+        row.addWidget(self.cancel_button)
         self.start_button = QPushButton("Datei wählen und Export starten")
         self.start_button.setObjectName("ExportStartAction")
         self.start_button.clicked.connect(self._request_start)
@@ -117,6 +123,23 @@ class ExportOperationDialog(QDialog):
             for key, checkbox in self.checkboxes.items()
         })
 
+    def allow_cancel(self) -> None:
+        """Nur für Importworker mit sicherer Abbruchgrenze anbieten."""
+        self.cancel_button.setText("Import stoppen")
+        self.cancel_button.setEnabled(True)
+        self.cancel_button.show()
+
+    def _request_cancel(self) -> None:
+        if not self._running or not self.cancel_button.isEnabled():
+            return
+        self.cancel_button.setEnabled(False)
+        self.cancel_button.setText("Abbruch angefordert")
+        self.status.setText(
+            "Abbruch angefordert – laufende Datei und Datenbankvorgänge "
+            "werden sicher abgeschlossen."
+        )
+        self.cancel_requested.emit()
+
     def begin(self, message: str = "") -> None:
         self._running = True
         self._started_at = time.monotonic()
@@ -126,6 +149,7 @@ class ExportOperationDialog(QDialog):
         self.start_button.hide()
         self.close_button.hide()
         self.folder_button.hide()
+        self.cancel_button.hide()
         for checkbox in self.checkboxes.values():
             checkbox.hide()
         self.progress.setRange(0, 0)
@@ -174,7 +198,8 @@ class ExportOperationDialog(QDialog):
         return self.progress.value()
 
     def update_message(self, message: str) -> None:
-        self.setLabelText(message)
+        if not self.cancel_button.text() == "Abbruch angefordert":
+            self.setLabelText(message)
         match = re.search(r"(\d+)\s*/\s*(\d+)", message)
         if match and int(match.group(2)) > 0:
             done, total = map(int, match.groups())
@@ -187,13 +212,18 @@ class ExportOperationDialog(QDialog):
         self._tick()
 
     def _done(self) -> None:
+        elapsed = max(0, int(time.monotonic() - self._started_at))
         self._running = False
         self.clock.stop()
         self.start_button.hide()
+        self.cancel_button.hide()
         for checkbox in self.checkboxes.values():
             checkbox.hide()
         self.progress.hide()
-        self.time_label.hide()
+        self.time_label.setText(
+            f"Gesamtdauer: {elapsed // 60} min {elapsed % 60:02d} s"
+        )
+        self.time_label.show()
         self.close_button.show()
 
     def complete(
@@ -234,6 +264,16 @@ class ExportOperationDialog(QDialog):
         self.status.setText(
             "Vorgang erfolgreich abgeschlossen."
             + ("\n" + details if details else "")
+        )
+
+    def interrupted(self, details: str) -> None:
+        """Ein angeforderter Parserabbruch ist weder Erfolg noch Dateifehler."""
+        self._done()
+        self.destination_label.hide()
+        self.folder_button.hide()
+        self.status.setText(
+            "Import sicher unterbrochen. Bereits gespeicherte Daten bleiben "
+            "erhalten.\n" + details
         )
 
     def fail(self, message: str) -> None:

@@ -12,6 +12,7 @@ from ntf_insight.storage.cluster_evidence_store import ClusterEvidenceStore
 class ClusterEvidenceImportWorker(QThread):
     completed = Signal(int)
     failed = Signal(str)
+    progress = Signal(str)
 
     def __init__(
         self, store: ClusterEvidenceStore, profile: str, part_number: str,
@@ -28,6 +29,7 @@ class ClusterEvidenceImportWorker(QThread):
         try:
             count = self.store.add_files(
                 self.profile, self.part_number, self.category, self.paths,
+                progress=self.progress.emit,
             )
         except Exception as exc:  # Worker-Grenze: kein Qt-Thread-Absturz
             self.failed.emit(f"{type(exc).__name__}: {exc}")

@@ -72,8 +72,16 @@ class MainWindow(QMainWindow):
         self._workflow_quicktest_download_pending = False
         self._context_scraper_failed: set[str] = set()
         self._context_worker = None
+        # Importauswahl darf während des Parsings vorgemerkt werden; keine
+        # zweite DuckDB-Schreiboperation vor Abschluss des aktiven Workers.
+        self._pending_context_imports: list[
+            tuple[str, str, str, tuple[Path, ...]]
+        ] = []
         self._project_transfer_worker = None
         self._project_transfer_dialog: ExportOperationDialog | None = None
+        self._source_import_dialog: ExportOperationDialog | None = None
+        self._ai_import_dialog: ExportOperationDialog | None = None
+        self._context_import_dialog: ExportOperationDialog | None = None
         self._first_export_dialog: ExportOperationDialog | None = None
         self._second_export_dialog: ExportOperationDialog | None = None
         self._portable_export_dialog: ExportOperationDialog | None = None
@@ -213,6 +221,10 @@ class MainWindow(QMainWindow):
         pages["workflow"].cohort_updated.connect(self._sync_local_cluster)
         pages["workflow"].mount_local_cluster(pages["cases"].cluster_workspace)
         sources = pages["sources"]
+        sources.import_started.connect(self._source_import_started)
+        sources.import_progress.connect(self._source_import_progress)
+        sources.import_completed.connect(self._source_import_completed)
+        sources.import_failed.connect(self._source_import_failed)
         sources.diagnostics_started.connect(self._diagnostics_started)
         sources.diagnostics_progress.connect(self._diagnostics_progress)
         sources.diagnostics_saved.connect(self._diagnostics_saved)
@@ -262,6 +274,9 @@ class MainWindow(QMainWindow):
             )
             analysis_export.first_package_exported.connect(self._first_export_completed)
             analysis_export.analysis_imported.connect(self._ai_import_completed)
+            analysis_export.analysis_import_started.connect(self._ai_import_started)
+            analysis_export.analysis_import_progress.connect(self._ai_import_progress)
+            analysis_export.analysis_import_failed.connect(self._ai_import_failed)
         return pages
 
     def _portable_operation_started(self, action: str) -> None:
@@ -462,6 +477,106 @@ class MainWindow(QMainWindow):
         dialog.close()
         dialog.deleteLater()
         self._finish_loading()
+
+    def _track_import_card(
+        self, attribute: str, dialog: ExportOperationDialog,
+    ) -> None:
+        setattr(self, attribute, dialog)
+        # Der Dialog wird nach finished per deleteLater freigegeben.
+        # Niemals einen bereits zerstörten QObject über ein altes Attribut
+        # ansprechen, insbesondere beim unmittelbar folgenden Import.
+        dialog.finished.connect(
+            lambda _code, attr=attribute, card=dialog:
+            setattr(self, attr, None)
+            if getattr(self, attr) is card else None
+        )
+
+    def _close_old_import_cards(self) -> None:
+        """Vor einem Folgeimport nur bereits abgeschlossene Importkarten schließen."""
+        for name in (
+            "_source_import_dialog", "_ai_import_dialog", "_context_import_dialog",
+        ):
+            card = getattr(self, name)
+            if card is not None and not card._running:
+                card.accept()
+                setattr(self, name, None)
+
+    def _source_import_started(self, message: str) -> None:
+        self._close_old_import_cards()
+        dialog = self._show_operation_progress(
+            "Quelldateien importieren", message,
+        )
+        self._track_import_card("_source_import_dialog", dialog)
+        dialog.allow_cancel()
+        dialog.cancel_requested.connect(self.pages["sources"]._cancel_import)
+
+    def _source_import_progress(self, message: str) -> None:
+        if self._source_import_dialog is not None:
+            self._source_import_dialog.update_message(message)
+
+    def _source_import_completed(self, summary: str) -> None:
+        dialog = self._source_import_dialog
+        if dialog is None:
+            return
+        short = summary[:560]
+        if summary.startswith("Import unterbrochen"):
+            dialog.interrupted(short)
+        else:
+            dialog.complete(
+                None, details=short + "\nDetails unter Datenquellen.",
+            )
+
+    def _source_import_failed(self, message: str) -> None:
+        if self._source_import_dialog is not None:
+            self._source_import_dialog.fail(
+                message + "\nBereits archivierte Originaldateien bleiben erhalten."
+            )
+
+    def _ai_import_started(self, filename: str) -> None:
+        self._close_old_import_cards()
+        dialog = self._show_operation_progress(
+            "ChatGPT-Ergebnis importieren",
+            f"Ergebnisdatei {filename} wird geprüft und lokal zugeordnet …",
+        )
+        self._track_import_card("_ai_import_dialog", dialog)
+
+    def _ai_import_progress(self, message: str) -> None:
+        if self._ai_import_dialog is not None:
+            self._ai_import_dialog.update_message(message)
+
+    def _ai_import_failed(self, message: str) -> None:
+        self._pending_ai_round = None
+        self._close_old_import_cards()
+        if self._ai_import_dialog is None:
+            dialog = self._show_operation_progress(
+                "ChatGPT-Ergebnis importieren", "Rückimport prüfen …",
+            )
+            self._track_import_card("_ai_import_dialog", dialog)
+        self._ai_import_dialog.fail(message)
+        self.pages["workflow"].set_notice(
+            "ChatGPT-Rückimport abgebrochen: " + message, error=True,
+        )
+
+    def _workflow_ai_import(self) -> None:
+        """Datei direkt aus dem sichtbaren Workflow wählen, nicht im versteckten Panel."""
+        workflow = self.pages["workflow"]
+        panel = self.pages["sources"].ki_analyse_panel
+        if panel is None:
+            workflow.set_notice("ChatGPT-Rückimport nicht verfügbar.", error=True)
+            return
+        if not self._portable_transfer_ready():
+            workflow.set_notice("Ein Import oder Download läuft bereits.", error=True)
+            return
+        name, _ = QFileDialog.getOpenFileName(
+            self, "Erstes ChatGPT-Analyseergebnis auswählen",
+            str(Path.home()), "NTF ChatGPT-Auswertung (*.json)",
+        )
+        if not name:
+            self._pending_ai_round = None
+            return
+        self._pending_ai_round = 1
+        if not panel.import_from_path(Path(name)):
+            self._pending_ai_round = None
 
     def _diagnostics_started(self, message: str) -> None:
         self._diagnostics_path = None
@@ -937,25 +1052,47 @@ class MainWindow(QMainWindow):
     def _ai_import_completed(self, result: object) -> None:
         round_number = self._pending_ai_round
         self._pending_ai_round = None
-        if round_number is None:
-            return
         workflow = self.pages["workflow"]
-        try:
-            linked = workflow.ai_chain.record_import(
-                result["analyse_id"], round_number=round_number
-            )
-        except (OSError, ValueError) as exc:
-            workflow.set_notice(
-                "Analyse importiert, aber Workflow-Zuordnung ungültig: "
-                + str(exc), error=True,
-            )
-            return
-        workflow.refresh_ai_chain()
-        workflow.refresh_data()
-        if linked:
-            workflow.set_notice(
-                f"{round_number}. ChatGPT-Ergebnis automatisch im Projekt verknüpft."
-            )
+        details = (
+            f"{result['faelle']} Fallbewertungen und "
+            f"{result['cluster']} Cluster lokal gespeichert."
+        )
+        if result.get("bereits_importiert"):
+            details += " Das Ergebnis war bereits identisch importiert."
+        if round_number is not None:
+            try:
+                linked = workflow.ai_chain.record_import(
+                    result["analyse_id"], round_number=round_number
+                )
+            except (OSError, ValueError) as exc:
+                # Analyse wurde bereits atomar importiert: dies ausdrücklich
+                # melden und keinen irreführenden Totalfehler anzeigen.
+                details += (
+                    " Achtung: Projektzuordnung konnte nicht gespeichert "
+                    "werden: " + str(exc)
+                )
+                workflow.set_notice(
+                    "Analyse lokal gespeichert, aber Workflow-Zuordnung "
+                    "fehlgeschlagen: " + str(exc), error=True,
+                )
+            else:
+                workflow.refresh_ai_chain()
+                workflow.refresh_data()
+                if linked:
+                    details += f" Als {round_number}. Durchlauf im Projekt verknüpft."
+                    workflow.set_notice(
+                        f"{round_number}. ChatGPT-Ergebnis im Projekt verknüpft."
+                    )
+                else:
+                    details += (
+                        " Keine passende exportierte Analysebasis für dieses "
+                        "Projekt registriert; keine automatische Verknüpfung."
+                    )
+                    workflow.set_notice(details)
+        else:
+            workflow.set_notice(details)
+        if self._ai_import_dialog is not None:
+            self._ai_import_dialog.complete(None, details=details)
 
     def _import_downloaded_case_quicktests(self, paths: list) -> None:
         """Archive QuickTest/QEC files from the case table with source provenance."""
@@ -987,15 +1124,22 @@ class MainWindow(QMainWindow):
         self._case_quicktest_import_pending = True
         source_page._archive_paths(paths)
 
-    def _portable_transfer_ready(self) -> bool:
-        """Never replace data while a source import or background download runs."""
+    def _portable_transfer_ready(
+        self, *, allow_source_parser: bool = False,
+        allow_context_import: bool = False,
+    ) -> bool:
+        """Exklusive Transfers sperren; Vormerkung nur für aktive Imports erlauben."""
         source = self.pages["sources"]
         cases = self.pages["cases"]
         qec = cases.qec_download
         tips = getattr(cases, 'tips_download', None)
         exporter = cases.fin_zip_export
         return (
-            source._worker is None
+            (source._worker is None or (
+                allow_source_parser and bool(
+                    self.pages["workflow"]._context_parsers_busy
+                )
+            ))
             and source._diagnostics_worker is None
             and (
                 source.ki_analyse_panel is None
@@ -1005,7 +1149,13 @@ class MainWindow(QMainWindow):
                 )
             )
             and not self._case_quicktest_import_pending
-            and self._context_worker is None
+            and (
+                self._context_worker is None or (
+                    allow_context_import and isinstance(
+                        self._context_worker, ClusterEvidenceImportWorker
+                    )
+                )
+            )
             and self._project_transfer_worker is None
             and self._project_delete_worker is None
             and cases._quicktest_worker is None
@@ -1050,23 +1200,28 @@ class MainWindow(QMainWindow):
             )
             self.pages["workflow"].set_notice(summary)
             return
+        # Ein Parser-Ergebnis darf die aktive Seite nicht wechseln.
+        # _reload_data() ersetzt sämtliche Widgets, daher die vorherige
+        # Auswahl merken und anschließend die neue Seite wieder anzeigen.
+        active_page = next(
+            (
+                name for name, page in self.pages.items()
+                if page is self.stack.currentWidget()
+            ),
+            "workflow",
+        )
         from_case_download = self._case_quicktest_import_pending
         current_case = (
             self.pages["cases"].selector.currentData() if from_case_download else None
         )
         self._case_quicktest_import_pending = False
         self._reload_data()
-        if from_case_download:
-            if current_case:
-                self.pages["cases"].select_case(current_case)
-            self.navigation.select_page("cases")
-            return
+        if from_case_download and current_case:
+            self.pages["cases"].select_case(current_case)
         self.pages["sources"].import_status.setText(summary)
-        if quicktests_saved:
-            self.navigation.select_page("cases")
-            self.pages["cases"].show_quicktests()
-        else:
-            self.navigation.select_page("sources")
+        # Auch bei gespeicherten QuickTests oder abgebrochenem Parsing weder
+        # "Fälle / FIN" noch automatisch "QuickTests nach FIN" öffnen.
+        self.navigation.select_page(active_page)
 
     def _reload_after_manual_change(self, case_id: str) -> None:
         """Reload persisted data and rebuild derived views after one successful edit."""
@@ -1357,6 +1512,9 @@ class MainWindow(QMainWindow):
         workflow = self.pages["workflow"]
         workflow.set_context_operation(category, False)
         workflow.set_context_parser_busy(category, False)
+        # QTimer lässt erst alle finished-Slots (auch SourcesPage._worker=None)
+        # ablaufen; erst danach darf ein vorgemerkter Import DuckDB öffnen.
+        QTimer.singleShot(0, self._drain_pending_context_imports)
 
     def _resume_source_parsing(self, category: str) -> None:
         """Nur nicht indexierte vorhandene Dateien über bestehende Parser nachholen."""
@@ -1586,13 +1744,25 @@ class MainWindow(QMainWindow):
         workflow.refresh_context_files()
 
     def _context_import(self, category: str) -> None:
-        """Fachunterlagen unverändert im vorhandenen lokalen Rohdatenarchiv sammeln."""
+        """Fachunterlagen auswählen; laufendes Parsing nicht unterbrechen."""
         workflow = self.pages["workflow"]
         if category not in CATEGORY_LABELS:
             workflow.set_notice("Unbekannte Unterlagenkategorie.", error=True)
             return
-        if not self._portable_transfer_ready() or self._context_worker is not None:
-            workflow.set_notice("Ein Import oder Download läuft bereits.", error=True)
+        source = self.pages["sources"]
+        parsing = (
+            source._worker is not None and bool(workflow._context_parsers_busy)
+        )
+        importing = isinstance(self._context_worker, ClusterEvidenceImportWorker)
+        # Projekttransfers/Exporte bleiben exklusiv. Nur ein laufender Parser
+        # oder ein weiterer Unterlagenimport erlaubt das Vormerken.
+        if not self._portable_transfer_ready(
+            allow_source_parser=parsing, allow_context_import=importing,
+        ):
+            workflow.set_notice(
+                "Ein Import, Download oder exklusiver Datentransfer läuft bereits.",
+                error=True,
+            )
             return
         files, _ = QFileDialog.getOpenFileNames(
             self, f"{CATEGORY_LABELS[category]} auswählen",
@@ -1600,28 +1770,77 @@ class MainWindow(QMainWindow):
         )
         if not files:
             return
+        paths = tuple(Path(name) for name in files)
+        context = (workflow.profile_id, workflow._context_part)
+        if parsing or importing or self._pending_context_imports:
+            # Projekt und Sachnummer bei der Auswahl festhalten, nicht erst
+            # beim späteren Abarbeiten der Warteschlange ermitteln.
+            self._pending_context_imports.append(
+                (*context, category, paths)
+            )
+            workflow.set_notice(
+                f"{len(paths)} Datei(en) für {CATEGORY_LABELS[category]} "
+                "vorgemerkt. "
+                f"{len(self._pending_context_imports)} Auftrag/Aufträge in "
+                "der Warteschlange; Import nach dem aktiven Vorgang."
+            )
+            if not parsing and not importing:
+                QTimer.singleShot(0, self._drain_pending_context_imports)
+            return
+        self._start_context_evidence_import(*context, category, paths)
+
+    def _start_context_evidence_import(
+        self, profile: str, part: str, category: str,
+        paths: tuple[Path, ...],
+    ) -> None:
+        """Genau einen Unterlagenimport mit eigener Worker-Lebensdauer starten."""
+        workflow = self.pages["workflow"]
         worker = ClusterEvidenceImportWorker(
-            workflow.context_store, workflow.profile_id, workflow._context_part,
-            category, [Path(name) for name in files],
+            workflow.context_store, profile, part, category, list(paths),
         )
         self._context_worker = worker
         workflow.set_context_busy(True)
         workflow.set_notice(
-            f"{len(files)} Datei(en) werden lokal als "
+            f"{len(paths)} Datei(en) werden lokal als "
             f"{CATEGORY_LABELS[category]} archiviert …"
         )
         worker.completed.connect(self._context_import_completed)
         worker.failed.connect(self._context_failed)
         worker.finished.connect(self._context_worker_finished)
+        self._close_old_import_cards()
+        dialog = self._show_operation_progress(
+            "Technische Unterlagen importieren",
+            f"{len(paths)} Datei(en) als {CATEGORY_LABELS[category]} archivieren …",
+        )
+        self._track_import_card("_context_import_dialog", dialog)
+        worker.progress.connect(dialog.update_message)
         worker.start()
+
+    def _drain_pending_context_imports(self) -> None:
+        """FIFO nur nach Freigabe aller aktiven Datenbank-Worker fortsetzen."""
+        if not self._pending_context_imports or not self._portable_transfer_ready():
+            return
+        profile, part, category, paths = self._pending_context_imports.pop(0)
+        self._start_context_evidence_import(profile, part, category, paths)
 
     def _context_import_completed(self, count: int) -> None:
         workflow = self.pages["workflow"]
+        if self._context_import_dialog is not None:
+            self._context_import_dialog.complete(
+                None,
+                details=f"{count} neue Unterlage(n) archiviert, "
+                "bereits bekannte Dateien übersprungen.",
+            )
         workflow.refresh_context_files()
         workflow.refresh()
         workflow.set_notice(f"{count} neue Unterlage(n) archiviert, Duplikate übersprungen.")
 
     def _context_failed(self, message: str) -> None:
+        if (
+            isinstance(self._context_worker, ClusterEvidenceImportWorker)
+            and self._context_import_dialog is not None
+        ):
+            self._context_import_dialog.fail(message)
         if self._second_export_dialog is not None and self._context_worker is not None:
             self._second_export_dialog.fail(message)
             self._pending_cluster_context = None
@@ -1637,6 +1856,7 @@ class MainWindow(QMainWindow):
         workflow.set_context_busy(False)
         workflow.refresh_context_files()
         workflow.refresh()
+        QTimer.singleShot(0, self._drain_pending_context_imports)
 
     def _context_export(self) -> None:
         """Die zweite ChatGPT-Runde verwendet dieselbe Exportkarte."""
@@ -1810,10 +2030,13 @@ class MainWindow(QMainWindow):
                 error=True,
             )
             return
-        self._pending_ai_round = 2
         panel = self.pages["sources"].ki_analyse_panel
-        if panel is not None:
-            panel.import_from_path(path)
+        if panel is None:
+            workflow.set_notice("ChatGPT-Rückimport nicht verfügbar.", error=True)
+            return
+        self._pending_ai_round = 2
+        if not panel.import_from_path(path):
+            self._pending_ai_round = None
 
     def _context_remove(self) -> None:
         workflow = self.pages["workflow"]
@@ -2131,8 +2354,9 @@ class MainWindow(QMainWindow):
                     return
                 panel.prepare_workflow_cohort(fins)
             if action == "ai_import":
-                self._pending_ai_round = 1
-            (panel.export_button if action == "ai_export" else panel.import_button).click()
+                self._workflow_ai_import()
+            else:
+                panel.export_button.click()
         elif action == "project_export":
             self._project_transfer_export()
         elif action == "project_import":

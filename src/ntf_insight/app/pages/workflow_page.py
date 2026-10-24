@@ -9,6 +9,8 @@ from __future__ import annotations
 from collections import Counter, defaultdict
 import json
 import re
+
+import duckdb
 import time
 from dataclasses import replace
 from datetime import datetime
@@ -61,6 +63,51 @@ def _create_table(headers: tuple[str, ...]) -> tuple[QTableView, SimpleTableMode
     table.setMinimumHeight(140)
     table.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
     return table, model
+
+
+class _DecisionFilterProxy(QSortFilterProxyModel):
+    """Reiner Anzeigefilter: niemals die QEC-Kohorte oder Exporte verändern."""
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self._query = ""
+        self._column_choices: dict[int, str] = {}
+        self.setDynamicSortFilter(True)
+        self.setSortCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
+
+    def set_query(self, value: str) -> None:
+        self._query = value.strip().casefold()
+        self.invalidateFilter()
+
+    def set_choice(self, column: int, value: str) -> None:
+        if value:
+            self._column_choices[column] = value
+        else:
+            self._column_choices.pop(column, None)
+        self.invalidateFilter()
+
+    def filterAcceptsRow(self, source_row: int, source_parent) -> bool:  # noqa: N802
+        model = self.sourceModel()
+        if model is None:
+            return False
+
+        def cell(column: int) -> str:
+            value = model.index(source_row, column, source_parent).data(
+                Qt.ItemDataRole.DisplayRole
+            )
+            return str(value or "")
+
+        if any(
+            cell(column) != value
+            for column, value in self._column_choices.items()
+        ):
+            return False
+        if not self._query:
+            return True
+        searchable = " ".join(
+            cell(column) for column in range(model.columnCount())
+        ).casefold()
+        return all(term in searchable for term in self._query.split())
 
 
 # Kompaktes, gemeinsames Raster. Auch bei 1336 px Fensterbreite bleiben
@@ -576,12 +623,124 @@ class WorkflowPage(QWidget):
         self.ai_package_status.hide()
         body.addWidget(self.ai_package_status)
         self.ntf_status = QLabel(objectName="PageSubtitle")
+        self.ntf_status.setWordWrap(True)
+        self.ntf_status.setToolTip(
+            "Der SSL-Endbefund kommt aus der QEC-Liste. "
+            "Die QEC-Fachentscheidung wird separat gespeichert. "
+            "Ein importierter ChatGPT-Vorschlag ist bis zur "
+            "menschlichen Bestätigung oder Ablehnung ungeprüft."
+        )
         body.addWidget(self.ntf_status)
+
+        # Zeilensuche und Facetten betreffen NUR die Ansicht, nie die
+        # QEC-Kohorte, den Export oder die fachlichen Statistiken.
+        search_row = QHBoxLayout()
+        search_row.setSpacing(7)
+        self.ntf_search = QLineEdit()
+        self.ntf_search.setObjectName("NTFTableSearch")
+        self.ntf_search.setPlaceholderText(
+            "FIN, QEC-Fall, Endbefund oder Ursache durchsuchen …"
+        )
+        self.ntf_search.setClearButtonEnabled(True)
+        self.ntf_search.setToolTip(
+            "Suche in allen Tabellenspalten; mehrere Suchwörter werden kombiniert."
+        )
+        search_row.addWidget(self.ntf_search, 1)
+        self.ntf_filter_count = QLabel("0 von 0 Fällen angezeigt", objectName="PageSubtitle")
+        self.ntf_filter_count.setToolTip(
+            "Nur Anzeige. Die Filter ändern weder Projektkohorte noch Exporte."
+        )
+        search_row.addWidget(self.ntf_filter_count)
+        self.ntf_clear_filters = QPushButton("Filter zurücksetzen")
+        self.ntf_clear_filters.setObjectName("NTFFilterReset")
+        search_row.addWidget(self.ntf_clear_filters)
+        body.addLayout(search_row)
+
+        choices_row = QHBoxLayout()
+        choices_row.setSpacing(7)
+        self.ntf_filter_boxes: dict[int, QComboBox] = {}
+        self._ntf_filter_labels = {
+            2: "SSL-Endbefund",
+            3: "QEC-Entscheidung",
+            4: "ChatGPT-Vorschlag",
+            5: "Verursachungsbereich",
+            6: "KI-Prüfstatus",
+        }
+        for column, label in self._ntf_filter_labels.items():
+            combo = QComboBox()
+            combo.setObjectName(f"NTFFilterColumn{column}")
+            combo.setMinimumContentsLength(11)
+            combo.setSizeAdjustPolicy(
+                QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon
+            )
+            combo.addItem(label + ": Alle", "")
+            combo.setAccessibleName(label + " filtern")
+            combo.setToolTip("Nur " + label + " filtern")
+            combo.currentIndexChanged.connect(
+                lambda _index, col=column, field=combo:
+                self._ntf_filter_choice_changed(col, field.currentData())
+            )
+            self.ntf_filter_boxes[column] = combo
+            choices_row.addWidget(combo, 1)
+        body.addLayout(choices_row)
+
         self.ntf_table, self.ntf_model = _create_table((
             "FIN", "QEC-Fall", "SSL-Endbefund", "QEC-Entscheidung",
-            "ChatGPT-Vorschlag", "Verursachungsbereich", "Prüfstatus",
+            "ChatGPT-Vorschlag", "Verursachungsbereich", "ChatGPT-Prüfstatus",
         ))
+        self.ntf_proxy = _DecisionFilterProxy(self)
+        self.ntf_proxy.setSourceModel(self.ntf_model)
+        self.ntf_table.setModel(self.ntf_proxy)
+        self.ntf_table.setSortingEnabled(True)
+        self.ntf_table.horizontalHeader().setSortIndicatorShown(True)
+        self.ntf_table.horizontalHeader().setToolTip(
+            "Spaltenkopf anklicken: aufsteigend oder absteigend sortieren."
+        )
+        self.ntf_search.textChanged.connect(self._ntf_filter_text_changed)
+        self.ntf_clear_filters.clicked.connect(self._reset_ntf_filters)
         body.addWidget(self.ntf_table, 1)
+
+    def _ntf_filter_text_changed(self, value: str) -> None:
+        self.ntf_proxy.set_query(value)
+        self._update_ntf_filter_count()
+
+    def _ntf_filter_choice_changed(self, column: int, value: str | None) -> None:
+        self.ntf_proxy.set_choice(column, str(value or ""))
+        self._update_ntf_filter_count()
+
+    def _reset_ntf_filters(self) -> None:
+        self.ntf_search.clear()
+        for combo in self.ntf_filter_boxes.values():
+            combo.setCurrentIndex(0)
+        self._update_ntf_filter_count()
+
+    def _refresh_ntf_filter_options(self) -> None:
+        """Auswahlwerte aus dem Projektbestand, nicht aus sichtbaren Zeilen."""
+        for column, combo in self.ntf_filter_boxes.items():
+            previous = str(combo.currentData() or "")
+            values = sorted({
+                str(row[column]) for row in self.ntf_model.rows
+                if row[column] is not None and str(row[column]).strip()
+            }, key=str.casefold)
+            combo.blockSignals(True)
+            combo.clear()
+            combo.addItem(self._ntf_filter_labels[column] + ": Alle", "")
+            for value in values:
+                combo.addItem(value, value)
+            index = combo.findData(previous)
+            combo.setCurrentIndex(index if index >= 0 else 0)
+            combo.blockSignals(False)
+            # Falls ein Wert im neuen Projekt nicht mehr vorkommt, soll
+            # keine unsichtbare, alte Filterbedingung weiterwirken.
+            self.ntf_proxy.set_choice(column, str(combo.currentData() or ""))
+        self._update_ntf_filter_count()
+
+    def _update_ntf_filter_count(self) -> None:
+        total = self.ntf_model.rowCount()
+        shown = self.ntf_proxy.rowCount()
+        self.ntf_filter_count.setText(
+            f"{shown} von {total} Fällen angezeigt"
+        )
 
     def _build_step_four(self) -> None:
         """Unterlagenzentrale: Quellenabrufe und kategorisierte technische Dokumente."""
@@ -1053,6 +1212,8 @@ class WorkflowPage(QWidget):
         """Auswahl wechselt Kontext und Prüffortschritt, nicht die globalen Rohdaten."""
         from ntf_insight.storage.workflow_progress import normalize_part_number
         part = normalize_part_number(part)
+        if (profile, part) != (self.profile_id, self._context_part):
+            self._reset_ntf_filters()
         self.profile_id, self._context_part = profile, part
         idx = self.profile.findData(profile)
         if idx >= 0:
@@ -1165,6 +1326,16 @@ class WorkflowPage(QWidget):
         if active:
             label.setToolTip(message)
             self._context_operation_started.setdefault(category, time.monotonic())
+            if ("parse", category) in self._context_stop_requested:
+                # Fortschrittsmeldungen des Workers dürfen den bereits
+                # angeforderten Abbruch nicht als normalen Job darstellen.
+                # Erst das finished-Signal beendet diesen Zustand.
+                bar.setRange(0, 0)
+                label.setText(
+                    "Abbruch angefordert · aktuelle Datei und "
+                    "Datenbanktransaktion werden sicher abgeschlossen"
+                )
+                return
             match = re.search(
                 r"(?:FIN-Fortschritt:\s*|(?:parsen|einlesen|archivieren|abgleichen)\s*\()(\d+)\s*/\s*(\d+)",
                 message, re.I,
@@ -1474,6 +1645,7 @@ class WorkflowPage(QWidget):
             return
         self.part_number.setText(part)
         if (profile_id, part) != (self.profile_id, self._context_part):
+            self._reset_ntf_filters()
             self.profile_id = profile_id
             self._context_part = part
             self.progress_store.select_context(profile_id, part)
@@ -1796,6 +1968,7 @@ class WorkflowPage(QWidget):
             statuses.get(proposal(row).get("ntf_bewertung"), "muted")
             for row in self._scoped_rows
         ])
+        self._refresh_ntf_filter_options()
         ratings = self._per_fin_distribution(
             self._scoped_rows,
             lambda row: proposal(row).get("ntf_bewertung", "Nicht bewertet"),
@@ -2044,8 +2217,14 @@ class WorkflowPage(QWidget):
         self.note.style().unpolish(self.note)
         self.note.style().polish(self.note)
         if error:
-            # Fehlerampel sofort aktualisieren, nicht erst beim nächsten Klick.
-            self.refresh()
+            # Ein Hinweis darf keinen weiteren DuckDB-Zugriff auslösen:
+            # eine fremde Windows-Dateisperre muss als Hinweis sichtbar bleiben.
+            # Die Fehlerampel nur mit bereits geladenen Daten aktualisieren.
+            if hasattr(self, "cards") and 0 <= self.state.step < len(self.cards):
+                card = self.cards[self.state.step]
+                card.setProperty("workflowState", "error")
+                card.style().unpolish(card)
+                card.style().polish(card)
 
     def set_import_state(self, busy: bool, *, can_resume: bool = False) -> None:
         self._import_busy = busy
@@ -2304,7 +2483,22 @@ class WorkflowPage(QWidget):
             button.setEnabled(not paused)
 
     def refresh(self) -> None:
-        self._update_tables()
+        try:
+            self._update_tables()
+        except (duckdb.IOException, OSError) as exc:
+            # DuckDB meldet Windows-Dateisperren als IOException.
+            # Die Oberfläche mit ihrem letzten gültigen Zustand behalten.
+            self._data_error = (
+                "Datenbank derzeit gesperrt. Andere NTF-Insight-Instanzen "
+                "oder Python-Prozesse prüfen. " + str(exc)
+            )
+            self.note.setText(self._data_error)
+            self.note.setProperty("isError", True)
+            self.note.setVisible(True)
+            self.note.style().unpolish(self.note)
+            self.note.style().polish(self.note)
+            return
+        self._data_error = ""
         self._refresh_chatgpt_cluster_view()
         if self.qec_store is not None:
             stats = self.qec_store.summarize_rows(self._scoped_rows)
@@ -2373,9 +2567,30 @@ class WorkflowPage(QWidget):
                 if qec_coverage is not None else
                 f"{downloaded}/{total} FINs mit Bericht"
             )
+        imported = sum(
+            row["case_id"] in self._chatgpt_by_case
+            for row in self._scoped_rows
+        )
+        accepted = sum(
+            self._chatgpt_by_case.get(row["case_id"], {}).get("review_status")
+            == "Bestätigt" for row in self._scoped_rows
+        )
+        rejected = sum(
+            self._chatgpt_by_case.get(row["case_id"], {}).get("review_status")
+            == "Abgelehnt" for row in self._scoped_rows
+        )
         self.ntf_status.setText(
-            f"NTF: {stats['ntf']} · Kein NTF: {stats['not_ntf']} · "
-            f"Offen: {stats['open']} · ChatGPT-Vorschläge getrennt von QEC-Entscheidungen"
+            f"QEC-Fachentscheidungen: {reviewed}/{stats['cases']} abgeschlossen "
+            f"({stats['ntf']} NTF · {stats['not_ntf']} Kein NTF · "
+            f"{stats['open']} offen). "
+            f"ChatGPT-Vorschläge: {imported}/{stats['cases']} importiert "
+            f"({accepted} bestätigt · {rejected} abgelehnt · "
+            f"{imported - accepted - rejected} ungeprüft). "
+            "SSL-Endbefund, QEC-Entscheidung und ChatGPT-Prüfstatus "
+            "sind unabhängige Angaben.\n"
+            "Fachentscheidung: Datenquellen → QEC-Prüfworkflow → "
+            "Bewertung speichern. ChatGPT-Prüfung: Datenquellen → "
+            "ChatGPT-Auswertung → Vorschlag bestätigen/ablehnen."
         )
         source_documents = sum(
             s.local_documents for category, s in self._source_coverage.items()
@@ -2383,7 +2598,8 @@ class WorkflowPage(QWidget):
         )
         names = (
             f"{total} FINs", f"{downloaded}/{total} Berichte",
-            f"{reviewed}/{stats['cases']} geprüft",
+            f"{reviewed}/{stats['cases']} QEC-entschieden\n"
+            f"{imported}/{stats['cases']} KI-Vorschläge",
             f"{source_documents} Quelldokumente",
             "Geprüft" if statuses[4] == "done" else "Offen",
         )
