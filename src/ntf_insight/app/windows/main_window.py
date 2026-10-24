@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
-from zipfile import BadZipFile
 
 from PySide6.QtCore import Qt, QTimer, QUrl
 from PySide6.QtGui import QDesktopServices
@@ -11,8 +11,7 @@ from PySide6.QtWidgets import QFileDialog, QHBoxLayout, QMainWindow, QMessageBox
 
 from ntf_insight.acquisition.qec_tool import QEC_START
 from ntf_insight.acquisition.diagnosis_viewer import parse_fins
-from ntf_insight.reporting.cluster_context_package import validate_first_package
-from ntf_insight.storage.cluster_evidence_store import CATEGORY_LABELS
+ from ntf_insight.storage.cluster_evidence_store import CATEGORY_LABELS
 from ntf_insight.app.workers.cluster_context_workers import (
     ClusterContextExportWorker, ClusterEvidenceImportWorker,
 )
@@ -21,6 +20,7 @@ from ntf_insight.app.bootstrap import load_application_data
 from ntf_insight.app.pages.case_page import CasePage
 from ntf_insight.app.pages.dashboard_page import DashboardPage
 from ntf_insight.app.pages.workflow_page import WorkflowPage
+from ntf_insight.app.pages.project_settings_page import ProjectSettingsPage
 from ntf_insight.app.pages.data_quality_page import DataQualityPage
 from ntf_insight.app.pages.dtc_page import DTCExplorerPage
 from ntf_insight.app.pages.prediction_page import PredictionPage
@@ -35,6 +35,7 @@ from ntf_insight.storage.quicktest_store import QuickTestStore
 from ntf_insight.storage.source_knowledge_store import SourceKnowledgeStore
 from ntf_insight.storage.qec_workflow_store import QecWorkflowStore
 from ntf_insight.storage.workflow_progress import WorkflowProgressStore
+from ntf_insight.storage.workflow_projects import WorkflowProjectStore
 
 
 class MainWindow(QMainWindow):
@@ -58,6 +59,9 @@ class MainWindow(QMainWindow):
         self._workflow_last_qec_files: list[Path] = []
         self._workflow_quicktest_download_pending = False
         self._context_worker = None
+        self._pending_first_context: tuple[str, str] | None = None
+        self._pending_ai_round: int | None = None
+        self._pending_cluster_context: tuple[str, str, str] | None = None
 
         root = QWidget(objectName="AppRoot")
         layout = QHBoxLayout(root)
@@ -117,8 +121,15 @@ class MainWindow(QMainWindow):
             quicktests=QuickTestStore(self.manual_service.store),
             mode=self.application_data.mode,
         )
+        pages["project_settings"] = ProjectSettingsPage(
+            WorkflowProjectStore(self.manual_service.store)
+        )
+        pages["project_settings"].project_selected.connect(self._project_selected)
         pages["workflow"].navigate.connect(self._workflow_navigate)
         pages["workflow"].action_requested.connect(self._workflow_action)
+        pages["workflow"].project_selected.connect(self._project_selected)
+        pages["workflow"].mount_local_cluster(pages["cases"].cluster_workspace)
+        pages["cases"].cluster_requested.connect(self._open_cluster_from_case)
         if pages["cases"].qec_download is not None:
             pages["cases"].qec_download.downloads_completed.connect(
                 lambda _results: pages["workflow"].refresh_data()
@@ -140,7 +151,85 @@ class MainWindow(QMainWindow):
         if analysis_export is not None:
             analysis_export.set_guard(self._portable_transfer_ready)
             analysis_export.transfer_busy.connect(self._portable_transfer_busy)
+            analysis_export.first_package_export_started.connect(
+                self._first_export_started
+            )
+            analysis_export.first_package_exported.connect(self._first_export_completed)
+            analysis_export.analysis_imported.connect(self._ai_import_completed)
         return pages
+
+    def _project_selected(self, profile: str, part: str) -> None:
+        if not self._portable_transfer_ready():
+            self.pages["workflow"].set_notice(
+                "Projektwechsel erst nach Abschluss laufender Importe/Downloads.",
+                error=True,
+            )
+            return
+        self.pages["workflow"].activate_project(profile, part)
+        self.pages["project_settings"].select_project(profile, part)
+        self._sync_local_cluster()
+        self.navigation.select_page("workflow")
+
+    def _sync_local_cluster(self) -> None:
+        workflow = self.pages["workflow"]
+        if workflow.profile_id == "coolant_pump":
+            self.pages["cases"].cluster_workspace.set_workflow_part_number(
+                workflow._context_part
+            )
+
+    def _open_cluster_from_case(self, case_id: str) -> None:
+        workflow = self.pages["workflow"]
+        self._sync_local_cluster()
+        workflow._open_step(4)
+        self.navigation.select_page("workflow")
+
+    def _first_export_started(self, _destination: object) -> None:
+        workflow = self.pages["workflow"]
+        self._pending_first_context = (workflow.profile_id, workflow._context_part)
+
+    def _first_export_completed(self, result: object) -> None:
+        workflow = self.pages["workflow"]
+        context = self._pending_first_context
+        self._pending_first_context = None
+        if context is None:
+            return
+        try:
+            stored = workflow.ai_chain.register_first_export(
+                context[0], context[1], result.pfad
+            )
+        except (OSError, ValueError) as exc:
+            workflow.set_notice(
+                "KI-Paket erstellt, aber automatische Übernahme fehlgeschlagen: "
+                + str(exc), error=True,
+            )
+            return
+        workflow.refresh_ai_chain()
+        workflow.set_notice(
+            "1. KI-Paket automatisch lokal gesichert: "
+            + stored.paket_id[:12] + "… · kein erneutes Auswählen nötig."
+        )
+
+    def _ai_import_completed(self, result: object) -> None:
+        round_number = self._pending_ai_round
+        self._pending_ai_round = None
+        if round_number is None:
+            return
+        workflow = self.pages["workflow"]
+        try:
+            linked = workflow.ai_chain.record_import(
+                result["analyse_id"], round_number=round_number
+            )
+        except (OSError, ValueError) as exc:
+            workflow.set_notice(
+                "Analyse importiert, aber Workflow-Zuordnung ungültig: "
+                + str(exc), error=True,
+            )
+            return
+        workflow.refresh_ai_chain()
+        if linked:
+            workflow.set_notice(
+                f"{round_number}. ChatGPT-Ergebnis automatisch im Projekt verknüpft."
+            )
 
     def _import_downloaded_case_quicktests(self, paths: list) -> None:
         """Archive QuickTest/QEC files from the case table with source provenance."""
@@ -206,7 +295,7 @@ class MainWindow(QMainWindow):
         """Build fresh repositories directly from the transferred DuckDB."""
         self._case_quicktest_import_pending = False
         self._reload_data()
-        self.navigation.select_page("cases")
+        self.navigation.select_page("workflow")
         QMessageBox.information(
             self, "Gesamtdatenstand wiederhergestellt",
             f"{result.case_count} Fall/Fälle und {result.quicktest_count} "
