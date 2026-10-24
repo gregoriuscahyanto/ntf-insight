@@ -352,37 +352,104 @@ class WorkflowPage(QWidget):
             "02 · QEC-Befundungsberichte",
             "Abruf ausschließlich für die QEC-FINs und Referenzen der gewählten Sachnummer.",
         )
-        actions = QHBoxLayout()
-        self.download_all_button = self._add_action(
-            actions, "Alle QEC-Berichte herunterladen / aktualisieren",
-            lambda: self.action_requested.emit("qec_download_all"),
+        # Dieselben Spalten wie in Schritt 04, ohne lose Buttonleiste.
+        outer_actions = QVBoxLayout()
+        outer_actions.setSpacing(3)
+        headers = QFrame()
+        headings = QGridLayout(headers)
+        headings.setContentsMargins(9, 0, 9, 0)
+        for column, title in enumerate((
+            "Quelle", "Portalabruf", "Parser", "Fehlerpaket", "Status",
+        )):
+            headings.addWidget(QLabel(title, objectName="PageSubtitle"), 0, column)
+        headings.setColumnStretch(4, 1)
+        outer_actions.addWidget(headers)
+
+        self.qec_action_row = QFrame(objectName="SourceCoverageRow")
+        self.qec_action_row.setProperty("coverageState", "pending")
+        grid = QGridLayout(self.qec_action_row)
+        grid.setContentsMargins(9, 6, 9, 6)
+        grid.setHorizontalSpacing(8)
+        grid.setColumnMinimumWidth(0, 105)
+        grid.setColumnMinimumWidth(1, 235)
+        grid.setColumnMinimumWidth(2, 220)
+        grid.setColumnMinimumWidth(3, 150)
+        grid.setColumnStretch(4, 1)
+        grid.addWidget(QLabel("QEC-Befundung"), 0, 0)
+
+        downloads = QVBoxLayout()
+        downloads.setSpacing(4)
+        self.download_all_button = QPushButton(
+            "Alle QEC-Berichte herunterladen / aktualisieren", objectName="WorkflowAction",
         )
-        self.download_missing_button = self._add_action(
-            actions, "Download fortsetzen",
-            lambda: self.action_requested.emit("qec_download_missing"),
-            tooltip="Nur QEC-Fälle ohne aktuellen JSON-Bericht abrufen; "
-                    "bereits vorhandene Berichte nicht erneut herunterladen.",
+        self.download_all_button.clicked.connect(
+            lambda: self.action_requested.emit("qec_download_all")
         )
-        self.qec_parse_resume_button = self._add_action(
-            actions, "Parsing fortsetzen",
-            lambda: self._trigger_context_parse("qec", "resume"),
-            tooltip="Nur lokal vorhandene, noch nicht erfolgreich indexierte "
-                    "QEC-JSON-Berichte mit dem vorhandenen Parser nachverarbeiten.",
+        downloads.addWidget(self.download_all_button)
+        self.download_missing_button = QPushButton(
+            "Download fortsetzen", objectName="WorkflowAction",
         )
-        self.download_selected_button = self._add_action(
-            actions, "Markierte herunterladen",
-            lambda: self.action_requested.emit("qec_download_selected"),
+        self.download_missing_button.clicked.connect(
+            lambda: self.action_requested.emit("qec_download_missing")
         )
-        self.cancel_download_button = self._add_action(
-            actions, "Abruf abbrechen",
-            lambda: self.action_requested.emit("qec_download_cancel"),
+        downloads.addWidget(self.download_missing_button)
+        self.download_selected_button = QPushButton(
+            "Markierte herunterladen", objectName="WorkflowAction",
         )
-        self.local_qec_button = self._add_action(
-            actions, "Lokale Berichte einlesen",
-            lambda: self.action_requested.emit("qec_import_local"),
+        self.download_selected_button.clicked.connect(
+            lambda: self.action_requested.emit("qec_download_selected")
         )
-        actions.addStretch(1)
-        body.addLayout(actions)
+        downloads.addWidget(self.download_selected_button)
+        self.cancel_download_button = QPushButton(
+            "Abruf abbrechen", objectName="WorkflowAction",
+        )
+        self.cancel_download_button.clicked.connect(
+            lambda: self.action_requested.emit("qec_download_cancel")
+        )
+        downloads.addWidget(self.cancel_download_button)
+        grid.addLayout(downloads, 0, 1)
+
+        parsing = QVBoxLayout()
+        parsing.setSpacing(4)
+        self.qec_parse_all_button = QPushButton(
+            "Alle QEC-Berichte neu parsen", objectName="WorkflowAction",
+        )
+        self.qec_parse_all_button.clicked.connect(
+            lambda: self._trigger_context_parse("qec", "all")
+        )
+        parsing.addWidget(self.qec_parse_all_button)
+        self.qec_parse_resume_button = QPushButton(
+            "Ausstehendes Parsing fortsetzen", objectName="WorkflowAction",
+        )
+        self.qec_parse_resume_button.clicked.connect(
+            lambda: self._trigger_context_parse("qec", "resume")
+        )
+        parsing.addWidget(self.qec_parse_resume_button)
+        self.local_qec_button = QPushButton(
+            "Lokale Berichte einlesen", objectName="WorkflowAction",
+        )
+        self.local_qec_button.clicked.connect(
+            lambda: self.action_requested.emit("qec_import_local")
+        )
+        parsing.addWidget(self.local_qec_button)
+        self.qec_problem_zip_button = QPushButton(
+            "Nicht parsebare als ZIP exportieren", objectName="WorkflowAction",
+        )
+        self.qec_problem_zip_button.setToolTip(
+            "Parserfehler als lokales ZIP, standardmäßig ohne Originaldateien. "
+            "Bei Originaldateien ist eine gesonderte Vertraulichkeitsfreigabe nötig."
+        )
+        self.qec_problem_zip_button.clicked.connect(
+            lambda: self.action_requested.emit("parser_diagnostics:qec")
+        )
+        parsing.addWidget(self.qec_problem_zip_button)
+        grid.addLayout(parsing, 0, 2)
+
+        self.qec_status = QLabel(objectName="PageSubtitle")
+        self.qec_status.setWordWrap(True)
+        grid.addWidget(self.qec_status, 0, 4)
+        outer_actions.addWidget(self.qec_action_row)
+        body.addLayout(outer_actions)
         donuts = QHBoxLayout()
         donuts.setSpacing(16)
         self.qec_donut = WorkflowDonut("QEC-Berichte · eindeutige FINs")
@@ -397,9 +464,6 @@ class WorkflowPage(QWidget):
         self.qec_parse_progress.setMaximumHeight(9)
         self.qec_parse_progress.setTextVisible(False)
         body.addWidget(self.qec_parse_progress)
-        self.qec_status = QLabel(objectName="PageSubtitle")
-        self.qec_status.setWordWrap(True)
-        body.addWidget(self.qec_status)
         self.qec_table, self.qec_model = _create_table((
             "FIN", "QEC-Fall", "Referenz", "Sachnummer",
             "Letzter Download", "Downloadstatus", "Parsing",
@@ -575,6 +639,21 @@ class WorkflowPage(QWidget):
                 parse_missing.setEnabled(False)
             buttons["resume_parse"] = parse_missing
             parser_layout.addWidget(parse_missing)
+            if category != "celonis":
+                problem_zip = QPushButton(
+                    "Nicht parsebare als ZIP exportieren", objectName="WorkflowAction",
+                )
+                problem_zip.setMinimumHeight(28)
+                problem_zip.setToolTip(
+                    "Lokales Fehlerpaket für diese Quelle. Standardmäßig nur "
+                    "Metadaten; vertrauliche Originale nur nach Bestätigung."
+                )
+                problem_zip.clicked.connect(
+                    lambda _checked=False, c=category:
+                    self.action_requested.emit(f"parser_diagnostics:{c}")
+                )
+                buttons["problem_zip"] = problem_zip
+                parser_layout.addWidget(problem_zip)
             grid.addLayout(parser_layout, 0, 2)
 
             archive = QPushButton("+ Beleg", objectName="WorkflowAction")
@@ -676,6 +755,13 @@ class WorkflowPage(QWidget):
                 )
                 self.context_technical_resume[category] = resume
                 group.addWidget(resume)
+                problem_zip = QPushButton("Fehler-ZIP", objectName="WorkflowAction")
+                problem_zip.clicked.connect(
+                    lambda: self.action_requested.emit(
+                        "parser_diagnostics:cdd_smrd"
+                    )
+                )
+                group.addWidget(problem_zip)
             button = QPushButton("+", objectName="WorkflowAction")
             button.setFixedWidth(30)
             button.setToolTip(f"{label} · eine oder mehrere Dateien auswählen")
