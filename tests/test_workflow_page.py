@@ -54,13 +54,13 @@ def test_workflow_upsert_and_context_survive_reopen(tmp_path):
     assert restored.load("hv_battery", "A 123 456") == WorkflowProgress()
 
 
-def test_six_horizontal_steps_show_inline_workspaces_and_resume(tmp_path, monkeypatch):
+def test_five_horizontal_steps_show_inline_workspaces_and_resume(tmp_path, monkeypatch):
     app, window = _window(tmp_path, monkeypatch)
     page = window.pages["workflow"]
     assert window.navigation.buttons["workflow"].isChecked()
-    assert not page.findChildren(QScrollArea)
-    assert len(page.cards) == 6
-    assert page.workspaces.count() == 6
+    assert not isinstance(page.workspaces, QScrollArea)
+    assert len(page.cards) == 5
+    assert page.workspaces.count() == 5
     assert all(btn.isCheckable() for btn in page.cards)
 
     page.cards[1].click()
@@ -151,23 +151,15 @@ def test_decision_step_has_chatgpt_export_import_without_bottom_button_grid(
     app.processEvents()
 
 
-def test_existing_diagnosis_and_cluster_detail_still_open(tmp_path, monkeypatch):
+def test_existing_local_cluster_is_embedded_only_in_step_five(tmp_path, monkeypatch):
     app, window = _window(tmp_path, monkeypatch)
     page = window.pages["workflow"]
     page.cards[4].click()
     assert window.stack.currentWidget() is page
-    detail = page.workspaces.widget(4)
-    from PySide6.QtWidgets import QPushButton
-    open_buttons = [
-        b for b in detail.findChildren(QPushButton)
-        if "Clusteranalyse" in b.text()
-    ]
-    assert open_buttons
-    open_buttons[0].click()
-    assert window.navigation.buttons["cases"].isChecked()
-    assert window.pages["cases"].detail_tabs.currentWidget() is (
-        window.pages["cases"].cluster_workspace
-    )
+    assert page.local_cluster_widget is window.pages["cases"].cluster_workspace
+    assert page.local_cluster_widget.parentWidget() is page.local_cluster_holder
+    assert window.pages["cases"].detail_tabs.indexOf(page.local_cluster_widget) == -1
+    assert page.workspaces.currentWidget() is page.workspaces.widget(4)
     window.close()
     app.processEvents()
 
@@ -197,7 +189,7 @@ def test_step_four_collects_all_requested_categories_without_page_scroll(
     page.cards[3].click()
     assert page.workspaces.currentIndex() == 3
     assert window.stack.currentWidget() is page
-    assert not page.findChildren(QScrollArea)
+    assert not isinstance(page.workspaces, QScrollArea)
     from ntf_insight.storage.cluster_evidence_store import CATEGORY_LABELS
     assert len(CATEGORY_LABELS) == 11
     assert set(page.context_import_buttons) == set(CATEGORY_LABELS)
@@ -206,30 +198,18 @@ def test_step_four_collects_all_requested_categories_without_page_scroll(
     }
     assert not page.context_scraper_buttons["tp_dashboard"]["all"].isEnabled()
     assert not page.context_scraper_buttons["celonis"]["all"].isEnabled()
-    assert page.context_originals.isChecked() is False
-    assert not page.context_export_button.isEnabled()
+    assert not hasattr(page, "context_base_button")
+    assert not hasattr(page, "context_export_button")
+    assert page.cluster_originals.isChecked() is False
+    assert not page.cluster_export_button.isEnabled()
     assert page.context_model.rowCount() == 0
-
-    # Datei-/Bestätigungsdialoge hart stubben, nicht von Signal-Disconnect abhängen.
     actions = []
     monkeypatch.setattr(
         window, "_context_import",
         lambda category: actions.append(f"context_files:{category}"),
     )
-    monkeypatch.setattr(
-        window, "_context_choose_base", lambda: actions.append("context_base"),
-    )
-    monkeypatch.setattr(
-        window, "_context_export", lambda: actions.append("context_export"),
-    )
     page.context_import_buttons["cdd_smrd"].click()
     assert actions == ["context_files:cdd_smrd"]
-    page.context_base_button.click()
-    assert actions[-1] == "context_base"
-    page.set_context_base(tmp_path / "analyse.zip")
-    assert page.context_export_button.isEnabled()
-    page.context_export_button.click()
-    assert actions[-1] == "context_export"
     window.close()
     app.processEvents()
 
