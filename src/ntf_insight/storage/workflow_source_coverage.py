@@ -458,14 +458,21 @@ def get_workflow_coverage(
     tp_selected: dict[str, Path] = {
         sha: entry.source_path
         for sha, entry in evidence.get("tp_dashboard", {}).items()
-        if entry.source_path.is_file()
+        if entry.source_path.suffix.lower() == ".csv"
+        and _file_hash(entry.source_path) == sha
     }
     for sha in tp_fin_sources:
         artifact = all_artifacts.get(sha)
         if artifact:
             path = Path(artifact.archived_path)
-            if path.is_file() and not path.is_symlink():
+            if path.suffix.lower() == ".csv" and _file_hash(path) == sha:
                 tp_selected[sha] = path
+    # Eine TP-CSV ist ein Sammeldokument: die bestätigten FINs
+    # stammen aus den tatsächlich persistierten CSV-Zeilen, nicht
+    # aus Dateinamen oder der Anzahl heruntergeladener Dateien.
+    tp_local_fins = set().union(
+        *(tp_fin_sources.get(sha, set()) for sha in tp_selected)
+    )
     tp_done = 0
     tp_partial = 0
     tp_parsed_fins: set[str] = set()
@@ -486,12 +493,13 @@ def get_workflow_coverage(
         if not parsed and path.suffix.lower() == ".csv":
             tp_pending.append(path)
     result["tp_dashboard"] = SourceCoverage(
-        "tp_dashboard", len(fins), None, len(tp_parsed_fins),
+        "tp_dashboard", len(fins), len(tp_local_fins), len(tp_parsed_fins),
         len(tp_selected), tp_done, tp_partial,
         pending_paths=tuple(tp_pending),
         case_label="FINs",
         documents_label="CSV-Dateien",
-        note="CSV-Dokumentzahl kann mehrere FINs enthalten; Downloadzahl im Portal unbekannt.",
+        note="FIN-Zahlen aus gespeicherten CSV-Zeilen; eine Sammeldatei "
+             "enthält mehrere FINs. Portal-Gesamtanzahl unbekannt.",
     )
 
     # Celonis: Ohne strukturierten Celonis-Parser gibt es hier nur
