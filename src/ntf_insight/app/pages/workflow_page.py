@@ -164,7 +164,6 @@ class WorkflowPage(QWidget):
         self.import_status.setWordWrap(True)
         root.addWidget(self.import_status)
         source_page.import_status.textChanged.connect(self._status_changed)
-        source_page.cancel_import_button.enabledChanged if False else None
         self.refresh()
 
     def _save_component(self) -> None:
