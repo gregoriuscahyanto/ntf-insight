@@ -419,7 +419,7 @@ class WorkflowPage(QWidget):
 
         self.qec_action_row = QFrame(objectName="SourceCoverageRow")
         self.qec_action_row.setProperty("coverageState", "pending")
-        self.qec_action_row.setMinimumHeight(138)
+        self.qec_action_row.setMinimumHeight(108)
         grid = _source_grid(self.qec_action_row)
         name = QLabel("QEC-Befundung")
         name.setFixedWidth(_SOURCE_COLUMNS[0][1])
@@ -427,11 +427,10 @@ class WorkflowPage(QWidget):
         grid.addWidget(name, 0, 0)
 
         self.download_all_button = QPushButton(
-            "Alle QEC-Berichte neu abrufen", objectName="WorkflowAction",
+            "Alle QEC-Berichte abrufen", objectName="WorkflowAction",
         )
         self.download_all_button.setToolTip(
-            "Alle QEC-Berichte der aktuellen Projekt-FINs herunterladen oder "
-            "aktualisieren. Bereits vorhandene Berichte werden erneut abgefragt."
+            "Alle Berichte des ausgewählten Projekts erneut herunterladen/aktualisieren."
         )
         self.download_all_button.clicked.connect(
             lambda: self._trigger_qec_download("all")
@@ -448,7 +447,6 @@ class WorkflowPage(QWidget):
         self.download_selected_button.clicked.connect(
             lambda: self._trigger_qec_download("selected")
         )
-        # Kompatible Referenz für vorhandene Aktionen/Tests; kein Stop-Zusatzfeld.
         self.cancel_download_button = QPushButton("Abruf abbrechen", self)
         self.cancel_download_button.hide()
         self.cancel_download_button.clicked.connect(
@@ -466,7 +464,11 @@ class WorkflowPage(QWidget):
             lambda: self._trigger_context_parse("qec", "all")
         )
         self.qec_parse_resume_button = QPushButton(
-            "Ausstehendes Parsing fortsetzen", objectName="WorkflowAction",
+            "Parsing fortsetzen", objectName="WorkflowAction",
+        )
+        self.qec_parse_resume_button.setToolTip(
+            "Nur bislang nie erfolgreich geparste Dateien, auch frühere Fehlversuche. "
+            "Nicht allein wegen einer neuen Parser-Version erneut parsen."
         )
         self.qec_parse_resume_button.clicked.connect(
             lambda: self._trigger_context_parse("qec", "resume")
@@ -475,36 +477,34 @@ class WorkflowPage(QWidget):
             self.qec_parse_all_button, self.qec_parse_resume_button,
         ]), 0, 2, Qt.AlignmentFlag.AlignTop)
 
-        self.qec_problem_zip_button = _source_single(
-            3, QPushButton("Fehler-ZIP exportieren", objectName="WorkflowAction"),
+        self.qec_problem_zip_button = QPushButton(
+            "Fehler-ZIP exportieren", objectName="WorkflowAction",
         )
         self.qec_problem_zip_button.setToolTip(
-            "Nicht parsebare QEC-Dateien als lokales ZIP exportieren. "
-            "Standardmäßig ohne Originale; vertrauliche Originaldateien "
-            "nur nach gesonderter Bestätigung."
+            "Nicht parsebare QEC-Dateien exportieren; standardmäßig ohne Originale."
         )
         self.qec_problem_zip_button.clicked.connect(
             lambda: self.action_requested.emit("parser_diagnostics:qec")
         )
-        grid.addWidget(self.qec_problem_zip_button, 0, 3, Qt.AlignmentFlag.AlignTop)
-
-        self.local_qec_button = _source_single(
-            4, QPushButton("Einlesen …", objectName="WorkflowAction"),
-        )
+        self.local_qec_button = QPushButton("Dateien einlesen …", objectName="WorkflowAction")
         self.local_qec_button.setToolTip("Lokale QEC-Berichte auswählen und einlesen")
         self.local_qec_button.clicked.connect(
             lambda: self.action_requested.emit("qec_import_local")
         )
-        grid.addWidget(self.local_qec_button, 0, 4, Qt.AlignmentFlag.AlignTop)
+        grid.addWidget(_source_stack(3, [
+            self.qec_problem_zip_button, self.local_qec_button,
+        ]), 0, 3, Qt.AlignmentFlag.AlignTop)
 
-        self.qec_last_fetch = QLabel("—", objectName="PageSubtitle")
-        self.qec_last_fetch.setFixedWidth(_SOURCE_COLUMNS[5][1])
-        self.qec_last_fetch.setWordWrap(True)
-        grid.addWidget(self.qec_last_fetch, 0, 5)
-
+        summary = QVBoxLayout()
+        summary.setContentsMargins(0, 0, 0, 0)
+        summary.setSpacing(2)
         self.qec_status = QLabel(objectName="PageSubtitle")
         self.qec_status.setWordWrap(True)
-        grid.addWidget(self.qec_status, 0, 6)
+        summary.addWidget(self.qec_status)
+        self.qec_last_fetch = QLabel("—", objectName="PageSubtitle")
+        self.qec_last_fetch.setWordWrap(True)
+        summary.addWidget(self.qec_last_fetch)
+        grid.addLayout(summary, 0, 4)
         actions.addWidget(self.qec_action_row)
         body.addLayout(actions)
         donuts = QHBoxLayout()
@@ -1675,7 +1675,8 @@ class WorkflowPage(QWidget):
             default=None,
         )
         self.qec_last_fetch.setText(
-            latest_report.date_label if latest_report else "—"
+            "Letzter Abruf: " + latest_report.date_label
+            if latest_report else "Noch kein Abruf"
         )
         self.qec_model.set_rows([
             (
@@ -2167,7 +2168,7 @@ class WorkflowPage(QWidget):
         qec_coverage = self._source_coverage.get("qec")
         choices = {
             "all": (self.download_all_button,
-                    "Alle QEC-Berichte neu abrufen", has_rows),
+                    "Alle QEC-Berichte abrufen", has_rows),
             "missing": (self.download_missing_button,
                         "Download fortsetzen",
                         bool(qec_coverage and qec_coverage.missing_qec)),
@@ -2197,7 +2198,7 @@ class WorkflowPage(QWidget):
         self.qec_parse_resume_button.setText(
             "Parsing stoppen" if qec_parsing_busy
             and self._context_parsers_busy.get("qec") == "resume"
-            else "Ausstehendes Parsing fortsetzen"
+            else "Parsing fortsetzen"
         )
         self.qec_parse_resume_button.setEnabled(
             qec_parsing_busy and self._context_parsers_busy.get("qec") == "resume"
