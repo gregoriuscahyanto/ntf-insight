@@ -178,95 +178,47 @@ def _fault_block(lines: list[tuple[str, int]]) -> dict:
 
 
 def extract_quicktest(path: Path, source_sha: str) -> ParsedSource:
-    """Parse one locally archived PDF, enforcing ECU/DTC count consistency."""
+    """Read every QuickTest pass while preserving one report-level time anchor.
+
+    A PDF may contain several diagnostic passes without distinct timestamps.
+    Those passes are retained and labelled, but not assigned invented times.
+    """
+    from ntf_insight.ingestion.quicktest_structure import parse_quicktest_structure
+
     if path.stat().st_size > 80 * 1024 * 1024:
         raise ValueError("QuickTest-PDF exceeds maximum supported size (80 MB).")
     reader = PdfReader(path, strict=False)
     if reader.is_encrypted or not 1 <= len(reader.pages) <= 250:
         raise ValueError("QuickTest-PDF encrypted or invalid page count.")
-
     page_texts = [page.extract_text() or "" for page in reader.pages]
-    if not any(page_texts):
-        raise ValueError("QuickTest ohne durchsuchbare Textebene; OCR nicht verfügbar.")
-    lines = [
-        (line.strip().replace("\x00", ""), page_number)
-        for page_number, page_text in enumerate(page_texts, start=1)
-        for line in page_text.splitlines()
-        if line.strip()
-    ]
-    starts = [
-        index for index, (line, _) in enumerate(lines)
-        if ECU_HEADER.fullmatch(line)
-    ]
-    if not starts:
-        raise ValueError("QuickTest: keine Steuergeräte-Blöcke erkannt.")
-
-    preamble = [line for line, _ in lines[:starts[0]]]
-    fin = canonical_fin(_field(preamble, "FIN"))
-    reported_vin = canonical_fin(_field(preamble, "VIN"))
-    moment = _field(preamble, "DIAG START")
-    if not fin or not moment:
-        raise ValueError("QuickTest enthält keine eindeutige FIN oder Diagnosezeit.")
-    try:
-        when = datetime.strptime(moment, "%Y-%m-%d %H:%M:%S")
-    except ValueError as exc:
-        raise ValueError("Ungültiger Diagnosezeitpunkt im QuickTest.") from exc
-
-    declared_ecus = _int(_field(preamble, "ECU Count"))
-    if declared_ecus is None or declared_ecus != len(starts):
-        raise ValueError(
-            "QuickTest: ECU-Anzahl stimmt nicht überein "
-            f"(Bericht={declared_ecus}, erkannt={len(starts)})."
-        )
-
-    reported_test = next(
-        (text for text in preamble if text.startswith("QuickTest ")), "QuickTest"
-    )
+    structure = parse_quicktest_structure(page_texts)
+    fin = canonical_fin(structure["fin"])
+    if not fin:
+        raise ValueError("QuickTest enthaelt keine eindeutige FIN.")
+    reported_vin = canonical_fin(structure["vin"])
+    when = structure["diag_start"]
+    km = structure["distance_km"]
     report_id = hashlib.sha256("\f".join(page_texts).encode("utf-8")).hexdigest()
-    km = _int(_field(preamble, "DISTANCE"))
     session_id = _identifier(report_id, "session")
-    ecus = []
     output = ParsedSource()
+    ecus = []
 
-    for ecu_index, start in enumerate(starts, start=1):
-        end = starts[ecu_index] if ecu_index < len(starts) else len(lines)
-        block = lines[start:end]
-        header = ECU_HEADER.fullmatch(block[0][0])
-        if header is None:
-            raise ValueError("QuickTest: ungültiger ECU-Kopf.")
-        counts = [
-            index for index, (text, _) in enumerate(block)
-            if FAULT_COUNT.fullmatch(text)
-        ]
-        if len(counts) != 1:
-            raise ValueError("QuickTest: ECU-Block ohne eindeutige DTC-Anzahl.")
-        count_index = counts[0]
-        declared_faults = int(FAULT_COUNT.fullmatch(block[count_index][0]).group(1))
-        metadata = _ecu_metadata([text for text, _ in block[1:count_index]])
-        ecu_name = header.group("ecu")
-        starts_dtc = [
-            index for index, (text, _) in enumerate(block[count_index+1:], start=count_index+1)
-            if DTC_START.match(text)
-        ]
-        if declared_faults != len(starts_dtc):
-            raise ValueError(
-                f"QuickTest: {ecu_name} meldet {declared_faults} DTCs, "
-                f"aber {len(starts_dtc)} wurden erkannt."
-            )
-        faults = []
-        for dtc_index, dtc_start in enumerate(starts_dtc, start=1):
-            dtc_end = starts_dtc[dtc_index] if dtc_index < len(starts_dtc) else len(block)
-            fault = _fault_block(block[dtc_start:dtc_end])
-            faults.append(fault)
+    for ecu in structure["ecus"]:
+        ecu_index = ecu["ecu_index"]
+        ecu_code = ecu["ecu_code"]
+        metadata = dict(ecu["metadata"])
+        metadata["quicktest_number"] = ecu["quicktest_number"]
+        faults = ecu["faults"]
+        for dtc_index, fault in enumerate(faults, start=1):
             output.diagnostics.append(DiagnosticEvent(
                 event_id=_identifier(report_id, f"ecu:{ecu_index}:dtc:{dtc_index}"),
                 vin=fin, occurred_at=when, mileage_km=km,
-                session_id=session_id,
-                ecu=ecu_name, dtc_code=fault["code"],
+                session_id=session_id, ecu=ecu_code, dtc_code=fault["code"],
                 dtc_text=fault["description"], status=fault["status"],
                 occurrence_count=fault["frequency_counter"],
                 freeze_frame={
                     "kind": fault["kind"],
+                    "quicktest_number": ecu["quicktest_number"],
                     "original_odometer_km": fault["original_odometer_km"],
                     "most_recent_odometer_km": fault["most_recent_odometer_km"],
                     "ignition_cycle_counter": fault["ignition_cycle_counter"],
@@ -275,38 +227,25 @@ def extract_quicktest(path: Path, source_sha: str) -> ParsedSource:
                 },
                 source_ref=f"raw:{source_sha}#ecu:{ecu_index}:dtc:{dtc_index}",
             ))
-        ecus.append({
-            "ecu_index": ecu_index,
-            "ecu_code": ecu_name,
-            "location": header.group("location"),
-            "name": header.group("name"),
-            "metadata": metadata,
-            "reported_fault_count": declared_faults,
-            "page_start": block[0][1],
-            "page_end": block[-1][1],
-            "raw_block_text": "\n".join(text for text, _ in block),
-            "faults": faults,
-        })
+        ecus.append({**ecu, "metadata": metadata})
         output.ecu_states.append(ECUStateObservation(
             event_id=_identifier(report_id, f"ecu:{ecu_index}:state"),
             vin=fin, occurred_at=when, mileage_km=km, session_id=session_id,
-            ecu=ecu_name, software_version=metadata["software_version"],
+            ecu=ecu_code, software_version=metadata["software_version"],
             hardware_version=metadata["hardware_version"],
             source_ref=f"raw:{source_sha}#ecu:{ecu_index}",
             hardware_part_number=metadata["hardware_partnumber"],
-            supplier=metadata["supplier"],
-            ecu_variant=metadata["ecu_variant"],
+            supplier=metadata["supplier"], ecu_variant=metadata["ecu_variant"],
         ))
 
+    runs = structure["runs"]
+    label = "QuickTest PDF" if len(runs) == 1 else f"QuickTest PDF ({len(runs)} Durchlaeufe)"
     output.sessions.append(DiagnosticSession(
         event_id=_identifier(report_id, "session:event"),
         session_id=session_id, vin=fin, occurred_at=when, mileage_km=km,
-        label="QuickTest PDF", ecu_count=len(ecus),
-        dtc_count=len(output.diagnostics),
-        source_ref=f"raw:{source_sha}#session",
-        report_id=report_id,
-        report_vin_usa=reported_vin,
-        source_is_complete_quicktest=True,
+        label=label, ecu_count=len(ecus), dtc_count=len(output.diagnostics),
+        source_ref=f"raw:{source_sha}#session", report_id=report_id,
+        report_vin_usa=reported_vin, source_is_complete_quicktest=True,
     ))
     output.quicktest_report = {
         "report_id": report_id,
@@ -314,16 +253,15 @@ def extract_quicktest(path: Path, source_sha: str) -> ParsedSource:
         "vin": reported_vin,
         "diag_start": when.isoformat(),
         "distance_km": km,
-        "header": {
-            key: _field(preamble, key) for key in HEADER_KEYS
-        } | {
-            "test_name": reported_test,
-            "raw_header_text": "\n".join(preamble),
+        "header": structure["header"] | {
+            "test_name": f"QuickTest {runs[0]['quicktest_number']}",
+            "raw_header_text": "\n".join(structure["preamble"]),
+            "quicktest_runs": runs,
         },
         "page_texts": page_texts,
         "ecus": ecus,
         "source_sha256": source_sha,
-        "reported_ecu_count": declared_ecus,
-        "observed_dtc_count": len(output.diagnostics),
+        "reported_ecu_count": structure["reported_ecu_count"],
+        "observed_dtc_count": structure["observed_dtc_count"],
     }
     return output
