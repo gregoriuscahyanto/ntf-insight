@@ -57,24 +57,47 @@ def active_qec_lists(artifacts: list[SourceArtifact]) -> list[SourceArtifact]:
     ]
 
 
+def _part_keys(path: Path) -> set[str]:
+    """Read the actual QEC case part numbers, not a guessed filename."""
+    from ntf_insight.ingestion.real_source_parsers import QECWorkbookParser
+
+    parsed = QECWorkbookParser(sha256_file(path)).parse(path).cases
+    values = {
+        "".join(c for c in str(case.qec_part_number or "").upper() if c.isalnum())
+        for case in parsed
+    }
+    if not values or "" in values:
+        raise ValueError(
+            "QEC-FIN-Liste enthält Fälle ohne gültige Sachnummer. "
+            "Eine projektbezogene Zuordnung ist damit nicht sicher."
+        )
+    return values
+
+
 def validate_single_qec_list(
     incoming_paths: list[Path],
     archived: list[SourceArtifact],
 ) -> None:
-    """Reject an additional primary cohort before importing any individual file.
+    """At most one *different* QEC primary source per part number.
 
-    Reimport of an identical file (same SHA-256) remains idempotent.
+    Multiple projects may coexist, but overlapping QEC cohorts require an
+    explicit source replacement rather than silently overriding decisions.
     """
-    existing = {artifact.sha256 for artifact in active_qec_lists(archived)}
-    incoming = {
-        sha256_file(path)
-        for path in incoming_paths
-        if is_primary_qec_workbook(path)
+    sources = {
+        artifact.sha256: Path(artifact.archived_path)
+        for artifact in active_qec_lists(archived)
     }
-    if len(existing | incoming) > 1:
-        raise ValueError(
-            "Es darf nur eine QEC-generierte FIN-Liste gleichzeitig verwendet "
-            "werden. Bitte die bisherige aktive QEC-FIN-Liste zuerst unter "
-            "Datenquellen gezielt löschen. Ergänzende SSL-Endbefundlisten "
-            "ohne FIN bleiben erlaubt."
-        )
+    for path in incoming_paths:
+        if is_primary_qec_workbook(path):
+            sources[sha256_file(path)] = Path(path)
+    ownership: dict[str, str] = {}
+    for sha, path in sorted(sources.items()):
+        for part in _part_keys(path):
+            old_sha = ownership.setdefault(part, sha)
+            if old_sha != sha:
+                raise ValueError(
+                    "Pro Sachnummer darf nur eine QEC-generierte FIN-Liste "
+                    "aktiv sein. Zwei verschiedene Quelldateien enthalten "
+                    f"dieselbe Sachnummer {part}. Bitte die alte Liste "
+                    "vor einem Neuimport gezielt ersetzen."
+                )
