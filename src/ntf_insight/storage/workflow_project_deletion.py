@@ -222,7 +222,7 @@ def fully_delete_project(
                 "SELECT paket_id FROM workflow_first_ai_packages "
                 "WHERE profile_id=? AND part_key=?", [profile, key],
             ).fetchall()
-        }
+        } if "workflow_first_ai_packages" in available else set()
         for package in packages:
             if con.execute(
                 "SELECT EXISTS(SELECT 1 FROM workflow_first_ai_packages "
@@ -250,7 +250,7 @@ def fully_delete_project(
         knowledge_sources: set[str] = set()
         knowledge_rows = con.execute(
             "SELECT source_sha256,fin FROM source_knowledge_rows"
-        ).fetchall()
+        ).fetchall() if "source_knowledge_rows" in available else []
         for sha, fin in knowledge_rows:
             if str(fin or "").upper() in our_fins:
                 knowledge_sources.add(str(sha))
@@ -270,26 +270,26 @@ def fully_delete_project(
             row[0] for row in con.execute(
                 "SELECT report_id,fin FROM quicktest_reports"
             ).fetchall() if str(row[1]).upper() in our_fins
-        }
+        } if "quicktest_reports" in available else set()
         if len(reports) > 1000000:
             raise ValueError("Unplausibel viele QuickTest-Berichte.")
         report_shas = {
             row[0] for row in con.execute(
                 "SELECT artifact_sha256,report_id FROM quicktest_sources"
             ).fetchall() if row[1] in reports
-        }
+        } if "quicktest_sources" in available else set()
         evidence_shas = {
             row[0] for row in con.execute(
                 "SELECT sha256 FROM cluster_evidence_files "
                 "WHERE profile_id=? AND part_key=?", [profile, key],
             ).fetchall()
-        }
+        } if "cluster_evidence_files" in available else set()
         package_shas = {
             row[0] for row in con.execute(
                 "SELECT sha256 FROM workflow_first_ai_packages "
                 "WHERE profile_id=? AND part_key=?", [profile, key],
             ).fetchall()
-        }
+        } if "workflow_first_ai_packages" in available else set()
         hinted_shas: set[str] = set()
         all_artifacts = {
             row[0]: SourceArtifact.model_validate_json(row[1])
@@ -340,7 +340,7 @@ def fully_delete_project(
                     f"({','.join('?' for _ in packages)})",
                     sorted(packages),
                 ).fetchall()
-            } if packages else set()
+            } if packages and "chatgpt_imports" in available else set()
             for table in ("chatgpt_fallanalysen", "chatgpt_cluster"):
                 _delete_where(con, table, "analyse_id", analysis_ids)
             _delete_where(con, "chatgpt_imports", "analyse_id", analysis_ids)
@@ -351,15 +351,17 @@ def fully_delete_project(
                 "cluster_evidence_files", "workflow_ssl_selection",
                 "workflow_source_activity", "workflow_source_log",
             ):
+                if table in available:
+                    con.execute(
+                        f'DELETE FROM "{table}" WHERE profile_id=? AND part_key=?',
+                        [profile, key],
+                    )
+            if "workflow_progress" in available:
                 con.execute(
-                    f'DELETE FROM "{table}" WHERE profile_id=? AND part_key=?',
+                    "DELETE FROM workflow_progress WHERE profile_id=? "
+                    "AND regexp_replace(upper(part_number),'[^A-Z0-9]','','g')=?",
                     [profile, key],
                 )
-            con.execute(
-                "DELETE FROM workflow_progress WHERE profile_id=? "
-                "AND regexp_replace(upper(part_number),'[^A-Z0-9]','','g')=?",
-                [profile, key],
-            )
             con.execute(
                 "DELETE FROM workflow_projects WHERE profile_id=? AND part_key=?",
                 [profile, key],
@@ -371,20 +373,21 @@ def fully_delete_project(
             for sha in candidates:
                 # Shared source content must remain. Do not drop shared
                 # parse_runs/artifact metadata even when one project goes.
-                used = any(con.execute(sql, [sha]).fetchone()[0] for sql in (
-                    "SELECT EXISTS(SELECT 1 FROM cluster_evidence_files "
-                    "WHERE sha256=?)",
-                    "SELECT EXISTS(SELECT 1 FROM workflow_first_ai_packages "
-                    "WHERE sha256=?)",
-                    "SELECT EXISTS(SELECT 1 FROM quicktest_sources "
-                    "WHERE artifact_sha256=?)",
-                    "SELECT EXISTS(SELECT 1 FROM source_knowledge_documents "
-                    "WHERE source_sha256=?)",
-                    "SELECT EXISTS(SELECT 1 FROM qec_workflow_decisions "
-                    "WHERE source_sha256=?)",
-                    "SELECT EXISTS(SELECT 1 FROM qec_cluster_handoff "
-                    "WHERE source_sha256=?)",
-                ))
+                dependencies = (
+                    ("cluster_evidence_files", "sha256"),
+                    ("workflow_first_ai_packages", "sha256"),
+                    ("quicktest_sources", "artifact_sha256"),
+                    ("source_knowledge_documents", "source_sha256"),
+                    ("qec_workflow_decisions", "source_sha256"),
+                    ("qec_cluster_handoff", "source_sha256"),
+                )
+                used = any(
+                    con.execute(
+                        f'SELECT EXISTS(SELECT 1 FROM "{table}" '
+                        f'WHERE "{column}"=?)', [sha],
+                    ).fetchone()[0]
+                    for table, column in dependencies if table in available
+                )
                 if used:
                     shared.add(sha)
                 else:
