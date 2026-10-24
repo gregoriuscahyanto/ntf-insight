@@ -98,7 +98,8 @@ def test_context_package_contains_originals_only_after_opt_in(tmp_path):
         assert not any(x.startswith("unterlagen/") for x in names)
         manifest = json.loads(archive.read("cluster_kontext_manifest.json"))
         assert manifest["basis_paket_id"] == "a" * 32
-        assert manifest["sachnummer_wurde_lokal_gefiltert"]
+        assert not manifest["sachnummer_wurde_lokal_gefiltert"]
+        assert manifest["unterlagen_nach_sachnummer_zugeordnet"]
         assert "A123456" not in archive.read("cluster_kontext_manifest.json").decode()
         assert not manifest["inhalt_originaldateien"]
     second = export_cluster_context(
