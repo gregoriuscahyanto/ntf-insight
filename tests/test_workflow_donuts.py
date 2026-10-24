@@ -181,7 +181,9 @@ def test_source_activity_distinguishes_download_from_manual_import(tmp_path, mon
     assert not hasattr(page, "context_self_import_button")
     assert page.cluster_tabs.count() == 2
     assert page.cluster_tabs.tabText(1).startswith("ChatGPT")
-    assert isinstance(window.pages["cases"].cluster_workspace._embedded_scroll, QScrollArea)
+    assert isinstance(page.local_cluster_scroll, QScrollArea)
+    assert window.pages["cases"].cluster_workspace._embedded_scroll is None
+    assert window.pages["cases"].cluster_workspace._embedded_content is not None
     assert page.ai_export_button.minimumHeight() >= 52
     assert page.cluster_export_button.minimumHeight() >= 52
     window.close()
