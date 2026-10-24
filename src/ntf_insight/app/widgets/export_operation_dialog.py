@@ -174,8 +174,9 @@ class ExportOperationDialog(QDialog):
             done, total = map(int, match.groups())
             self.setRange(0, total)
             self.setValue(min(done, total))
-        else:
-            self._units = None
+        elif self._units is None:
+            # Ein nachgelagerter Text ohne Zählung darf die bereits bekannte
+            # Gesamtmenge nicht wieder auf den Endlos-Spinner zurücksetzen.
             self.setRange(0, 0)
         self._tick()
 
