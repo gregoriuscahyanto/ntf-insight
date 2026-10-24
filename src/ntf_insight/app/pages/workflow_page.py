@@ -459,7 +459,8 @@ class WorkflowPage(QWidget):
             buttons: dict[str, QPushButton] = {}
             fetch_layout = QVBoxLayout()
             fetch_layout.setSpacing(2)
-            fetch = QPushButton("Abrufen", objectName="WorkflowAction")
+            fetch = QPushButton("Alle FINs neu abrufen", objectName="WorkflowAction")
+            fetch.setToolTip("Startet für ALLE FINs der aktuellen Auswahl einen erneuten Portalabruf. Vorhandene Ergebnisse bleiben erhalten; ein erneuter Abruf kann lange dauern.")
             if category in ("diagnosis_viewer", "tips_writer"):
                 fetch.clicked.connect(
                     lambda _checked=False, c=category:
@@ -471,7 +472,7 @@ class WorkflowPage(QWidget):
                 fetch.setToolTip("Für diese Quelle existiert kein freigegebener Scraper.")
             buttons["all"] = fetch
             fetch_layout.addWidget(fetch)
-            resume_download = QPushButton("Fehlende abrufen", objectName="WorkflowAction")
+            resume_download = QPushButton("Nur fehlende FINs abrufen", objectName="WorkflowAction")
             resume_download.setToolTip(
                 "Nur FINs ohne erfolgreichen Abrufstand oder mit "
                 "unvollständigem Portalabruf erneut abfragen. "
@@ -495,7 +496,7 @@ class WorkflowPage(QWidget):
             scraper_grid.addWidget(cancel, index, 2)
             parser_layout = QVBoxLayout()
             parser_layout.setSpacing(2)
-            parser = QPushButton("Einlesen …", objectName="WorkflowAction")
+            parser = QPushButton("Dateien auswählen & einlesen …", objectName="WorkflowAction")
             parser.clicked.connect(
                 lambda _checked=False, c=category:
                 self.action_requested.emit(f"context_parse:{c}")
@@ -512,7 +513,7 @@ class WorkflowPage(QWidget):
                 )
             buttons["parse"] = parser
             parser_layout.addWidget(parser)
-            resume_parse = QPushButton("Parsing fortsetzen", objectName="WorkflowAction")
+            resume_parse = QPushButton("Ausstehendes Parsing fortsetzen", objectName="WorkflowAction")
             resume_parse.clicked.connect(
                 lambda _checked=False, c=category:
                 self.action_requested.emit(f"context_parse_resume:{c}")
@@ -593,7 +594,7 @@ class WorkflowPage(QWidget):
                     lambda: self.action_requested.emit("context_parse:cdd_smrd")
                 )
                 group.addWidget(parser)
-                resume = QPushButton("Fortsetzen", objectName="WorkflowAction")
+                resume = QPushButton("Parsing fortsetzen", objectName="WorkflowAction")
                 resume.setToolTip(
                     "Nur noch nicht strukturiert indexierte CDD-Dateien "
                     "mit dem vorhandenen Candela-Parser lesen. "
@@ -1064,14 +1065,28 @@ class WorkflowPage(QWidget):
             "success" if item.source_path.is_file() else "error"
             for item in self.context_files
         ])
+        automatic = {
+            key: value for key, value in self._source_coverage.items()
+            if key in {"tp_dashboard", "diagnosis_viewer", "tips_writer", "celonis"}
+        }
+        automatic_total = sum(item.local_documents for item in automatic.values())
+        automatic_parsed = sum(item.parsed_documents for item in automatic.values())
+        active_categories = {
+            key for key, count in counts.items() if count
+        } | {
+            key for key, item in automatic.items() if item.local_documents
+        }
         self.context_summary.setText(
-            f"{len(self.context_files)} Unterlagen in "
-            f"{sum(v > 0 for v in counts.values())} von "
-            f"{len(counts)} Kategorien · "
+            f"{automatic_total} Quelldokumente lokal · "
+            f"{automatic_parsed} geparst · "
+            f"{len(self.context_files)} manuell zugeordnete Unterlagen · "
+            f"{len(active_categories)} von {len(counts)} Kategorien mit Bestand. "
+            "Quelldokumente und manuelle Zuordnungen sind getrennte Bestände; "
             "Dateien werden nicht automatisch an ChatGPT gesendet."
         )
         if self._source_coverage:
             self._update_coverage_labels()
+        self._refresh_controls()
 
     def _change_context(self) -> None:
         profile_id = self.profile.currentData()
@@ -1436,6 +1451,26 @@ class WorkflowPage(QWidget):
                 "color: #268763;" if complete
                 else "color: #bd8318;" if status.local_documents else ""
             )
+        # Die Zusammenfassung muss den zuletzt berechneten lokalen
+        # Quellenbestand abbilden, nicht nur manuell verknüpfte Belege.
+        if hasattr(self, "context_summary"):
+            totals = [
+                s for category, s in self._source_coverage.items()
+                if category in {"tp_dashboard", "diagnosis_viewer", "tips_writer", "celonis"}
+            ]
+            documents = sum(s.local_documents for s in totals)
+            parsed = sum(s.parsed_documents for s in totals)
+            manual_categories = {f.category for f in self.context_files}
+            available_categories = manual_categories | {
+                s.category for s in totals if s.local_documents
+            }
+            self.context_summary.setText(
+                f"{documents} Quelldokumente lokal · {parsed} geparst · "
+                f"{len(self.context_files)} manuell zugeordnete Unterlagen · "
+                f"{len(available_categories)} von {len(CATEGORY_LABELS)} Kategorien "
+                "mit Bestand. Quelldokumente sind nicht gleich manuelle "
+                "Zuordnungen. Keine automatische ChatGPT-Übertragung."
+            )
 
     def _show_chatgpt_cluster_details(self) -> None:
         index = self.chatgpt_cluster_table.currentIndex().row()
@@ -1613,7 +1648,12 @@ class WorkflowPage(QWidget):
                 and bool(self._context_part)
             )
         self.context_review_button.setEnabled(
-            not paused and not self._context_busy and bool(self.context_files)
+            not paused and not self._context_busy and bool(
+                self.context_files or any(
+                    s.local_documents for category, s in self._source_coverage.items()
+                    if category != "qec"
+                )
+            )
         )
         self.context_review_button.setText(
             "Bestätigung zurücknehmen" if 3 in self.state.reviewed_steps
@@ -1683,9 +1723,17 @@ class WorkflowPage(QWidget):
             "done" if stats["cases"] and not stats["open"] else (
                 "partial" if reviewed or self._chatgpt_by_case else "pending"
             ),
-            "done" if len(self.context_files) and 3 in self.state.reviewed_steps else (
-                "partial" if self.context_files else "pending"
-            ),
+            "done" if 3 in self.state.reviewed_steps and (
+                self.context_files or any(
+                    s.local_documents for category, s in self._source_coverage.items()
+                    if category != "qec"
+                )
+            ) else "partial" if (
+                self.context_files or any(
+                    s.local_documents for category, s in self._source_coverage.items()
+                    if category != "qec"
+                )
+            ) else "pending",
             "done" if 4 in self.state.reviewed_steps else "pending",
         ]
         fraction = sum(1 if status == "done" else 0.5 if status == "partial" else 0
@@ -1715,9 +1763,14 @@ class WorkflowPage(QWidget):
             f"NTF: {stats['ntf']} · Kein NTF: {stats['not_ntf']} · "
             f"Offen: {stats['open']} · ChatGPT-Vorschläge getrennt von QEC-Entscheidungen"
         )
+        source_documents = sum(
+            s.local_documents for category, s in self._source_coverage.items()
+            if category in {"tp_dashboard", "diagnosis_viewer", "tips_writer", "celonis"}
+        )
         names = (
             f"{total} FINs", f"{downloaded}/{total} Berichte",
-            f"{reviewed}/{stats['cases']} geprüft", f"{len(self.context_files)} Unterlagen",
+            f"{reviewed}/{stats['cases']} geprüft",
+            f"{source_documents} Quelldokumente",
             "Geprüft" if statuses[4] == "done" else "Offen",
         )
         lamps = {"done": "●", "partial": "●", "pending": "○", "error": "!"}
