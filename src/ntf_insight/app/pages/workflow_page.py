@@ -378,12 +378,20 @@ class WorkflowPage(QWidget):
         tech_grid = QGridLayout()
         tech_grid.setHorizontalSpacing(6)
         tech_grid.setVerticalSpacing(4)
+        short_labels = {
+            "ecu_messages": "ECU-Nachrichten",
+            "trigger_conditions": "Setzbedingungen",
+            "network_topology": "Netzwerktopologie",
+            "hardware_changes": "HW-Änderungen",
+            "software_changes": "SW-Änderungen",
+            "additional": "Weitere Dokumente",
+        }
         for index, (category, label) in enumerate(EVIDENCE_CATEGORIES[4:]):
-            col = index // 4
-            row = index % 4
+            col = 0
+            row = index
             group = QHBoxLayout()
             group.setSpacing(3)
-            name = QLabel(label)
+            name = QLabel(short_labels.get(category, label))
             name.setToolTip("Dateien werden unverändert lokal und mit SHA-256 archiviert.")
             group.addWidget(name, 1)
             button = QPushButton("+", objectName="WorkflowAction")
