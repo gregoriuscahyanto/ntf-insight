@@ -17,7 +17,7 @@ from ntf_insight.storage.cluster_evidence_store import ClusterEvidenceStore
 from ntf_insight.storage.duckdb_store import DuckDBStore
 from ntf_insight.storage.quicktest_store import QuickTestStore
 from ntf_insight.storage.source_knowledge_store import SourceKnowledgeStore
-from ntf_insight.storage.workflow_source_coverage import get_workflow_coverage
+from ntf_insight.storage.workflow_source_coverage import SourceCoverage, get_workflow_coverage
 
 
 FIN_1 = "WDD12345678901234"
@@ -417,3 +417,24 @@ def test_progress_rejects_invalid_fin_as_local_archive_path(tmp_path):
     assert progress["diagnosis_viewer"].total_cases == 0
     assert progress["tips_writer"].total_cases == 0
     assert progress["qec"].local_documents == 0
+
+
+def test_source_row_traffic_light_requires_complete_fins_and_parsing():
+    from ntf_insight.app.pages.workflow_page import WorkflowPage
+
+    status = WorkflowPage._source_traffic_state
+    assert status(SourceCoverage("tp_dashboard", 171, 161, 161, 1, 1)) == "partial"
+    assert status(SourceCoverage(
+        "diagnosis_viewer", 171, 169, 167, 2345, 1579,
+    )) == "partial"
+    assert status(SourceCoverage("tips_writer", 171, 0, 0, 0, 0)) == "pending"
+    assert status(SourceCoverage("tp_dashboard", 171, 171, 171, 1, 1)) == "done"
+    assert status(SourceCoverage(
+        "diagnosis_viewer", 171, 171, 171, 2345, 2345,
+    )) == "done"
+    assert status(SourceCoverage(
+        "celonis", None, None, None, 1, 0, unsupported_parser=True,
+    )) == "partial"
+    assert status(SourceCoverage(
+        "tp_dashboard", 171, 171, 171, 1, 1, partial_documents=1,
+    )) == "partial"
