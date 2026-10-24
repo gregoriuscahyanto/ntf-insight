@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from collections import Counter, defaultdict
 import json
+import re
 import time
 from dataclasses import replace
 from datetime import datetime
@@ -940,8 +941,17 @@ class WorkflowPage(QWidget):
         bar.setVisible(active)
         label.setVisible(active)
         if active:
-            bar.setRange(0, 0)
-            label.setText(message or "Verarbeitung läuft · Gesamtdauer unbekannt")
+            # Die Quellen melden bearbeitete FINs bzw. lokale Parser-Positionen.
+            # Nur bei bekanntem Nenner einen Prozentwert anzeigen.
+            match = re.search(r"(?:FIN-Fortschritt:\\s*|parsen \\()(\\d+)\\s*/\\s*(\\d+)", message, re.I)
+            if match and int(match.group(2)) > 0:
+                done, total = map(int, match.groups())
+                bar.setRange(0, total)
+                bar.setValue(min(done, total))
+                label.setText(message)
+            else:
+                bar.setRange(0, 0)
+                label.setText(message or "Verarbeitung läuft · Gesamtdauer unbekannt")
         else:
             bar.setRange(0, 100)
             bar.setValue(0)
