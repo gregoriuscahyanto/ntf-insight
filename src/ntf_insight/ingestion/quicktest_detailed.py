@@ -187,7 +187,7 @@ def extract_quicktest(path: Path, source_sha: str) -> ParsedSource:
     if path.stat().st_size > 80 * 1024 * 1024:
         raise ValueError("QuickTest-PDF exceeds maximum supported size (80 MB).")
     reader = PdfReader(path, strict=False)
-    if reader.is_encrypted or not 1 <= len(reader.pages) <= 250:
+    if reader.is_encrypted or not 1 <= len(reader.pages) <= 400:
         raise ValueError("QuickTest-PDF encrypted or invalid page count.")
     page_texts = [page.extract_text() or "" for page in reader.pages]
     structure = parse_quicktest_structure(page_texts)
