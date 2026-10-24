@@ -7,8 +7,12 @@ from __future__ import annotations
 
 import csv
 import hashlib
+import io
 import json
 import re
+from collections import defaultdict
+from typing import Callable
+from zipfile import ZipFile, BadZipFile
 from datetime import datetime
 from pathlib import Path
 from typing import Literal
@@ -286,9 +290,90 @@ class ChatGPTAnalyseStore:
             }
         return result
 
+    _ROW_EVIDENCE = {
+        "autoexport_diagnosen": (
+            "autoexport_diagnosen.csv", "beobachtung_id", r"AE[0-9]{7}"
+        ),
+        "lieferantenbefunde_NICHT_CLUSTER": (
+            "lieferantenbefunde_NICHT_CLUSTER.csv", "befund_id", r"LB[0-9]{6}"
+        ),
+    }
+
+    def _validate_export_rows(
+        self, paket_id: str, requested: dict[str, set[str]],
+    ) -> dict[str, set[str]]:
+        """Belegzeilen nur gegen das *unveränderte* exportierte ZIP prüfen.
+
+        AE... und LB... sind CSV-Zeilenbezeichner, keine Alias-Typen
+        der privaten FIN-Zuordnung. Insbesondere LB... ist KEIN Fall-Pseudonym.
+        """
+        if not requested:
+            return {}
+        with self.store.connect() as con:
+            row = con.execute(
+                "SELECT a.payload_json,f.sha256 "
+                "FROM workflow_first_ai_packages f "
+                "JOIN source_artifacts a ON a.sha256=f.sha256 "
+                "WHERE f.paket_id=? ORDER BY f.registered_at DESC LIMIT 1",
+                [paket_id],
+            ).fetchone()
+        if row is None:
+            raise ValueError(
+                "Zur Prüfung der AE-/LB-Belegzeilen fehlt das ursprünglich "
+                "exportierte ChatGPT-Analyse-ZIP im lokalen Projektarchiv. "
+                "Bitte den passenden Projektstand bzw. das erste Analysepaket "
+                "auf diesem PC wiederherstellen; Belege werden nicht geraten."
+            )
+        artifact = json.loads(row[0])
+        path = Path(artifact["archived_path"])
+        if not path.is_file() or path.is_symlink():
+            raise ValueError(
+                "Das archivierte Analyse-ZIP fehlt. Der Rückimport wurde "
+                "zum Schutz der Belegzuordnung abgelehnt."
+            )
+        digest = hashlib.sha256()
+        with path.open("rb") as handle:
+            for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+                digest.update(chunk)
+        if digest.hexdigest() != row[1]:
+            raise ValueError("Die Prüfsumme des archivierten Analyse-ZIPs stimmt nicht.")
+        found: dict[str, set[str]] = defaultdict(set)
+        try:
+            with ZipFile(path) as archive:
+                for category, needed in requested.items():
+                    filename, id_column, _ = self._ROW_EVIDENCE[category]
+                    with archive.open(filename) as binary:
+                        records = csv.DictReader(
+                            io.TextIOWrapper(binary, encoding="utf-8-sig", newline="")
+                        )
+                        if id_column not in (records.fieldnames or ()):
+                            raise ValueError(
+                                f"Exportierte Belegtabelle {filename} ist unvollständig."
+                            )
+                        for record in records:
+                            alias = str(record.get(id_column) or "")
+                            if alias in needed:
+                                found[category].add(alias)
+                            if found[category] == needed:
+                                break
+        except (BadZipFile, KeyError, UnicodeError) as exc:
+            raise ValueError(
+                "Das archivierte Analyse-ZIP enthält nicht alle benötigten "
+                "CSV-Belegtabellen."
+            ) from exc
+        for category, needed in requested.items():
+            missing = needed - found[category]
+            if missing:
+                raise ValueError(
+                    "Belegzeile ist im ursprünglichen Analyse-ZIP nicht vorhanden: "
+                    f"{category}/{sorted(missing)[0]}"
+                )
+        return found
+
     @staticmethod
     def _validate_belege(
         belege: list[ChatGPTBeleg], mapping: dict[tuple[str, str], dict],
+        verified_rows: dict[str, set[str]] | None = None,
     ) -> None:
         types = {
             "qec_berichte": "qec_bericht",
@@ -309,6 +394,13 @@ class ChatGPTAnalyseStore:
             "lieferantenquellen_bestand_NICHT_CLUSTER": "quelle",
         }
         for item in belege:
+            spec = ChatGPTAnalyseStore._ROW_EVIDENCE.get(item.quelle)
+            if spec and re.fullmatch(spec[2], item.quelle_id):
+                if item.quelle_id not in (verified_rows or {}).get(item.quelle, set()):
+                    raise ValueError(
+                        f"Belegzeile nicht verifiziert: {item.quelle}/{item.quelle_id}"
+                    )
+                continue
             if item.quelle == "technische_referenz":
                 if not item.fundstelle:
                     raise ValueError("Technischer Beleg braucht eine dokumentierte Fundstelle.")
@@ -322,12 +414,18 @@ class ChatGPTAnalyseStore:
 
     def import_file(
         self, path: Path, *, private_csv: Path | None = None,
+        progress: Callable[[str], None] | None = None,
     ) -> dict:
         """Validate all identities and evidence before an atomic INSERT.
 
         A case's operational assessment, manual revisions and supplier finding
         are NEVER overwritten by an external model's hypothesis.
         """
+        def report(message: str) -> None:
+            if progress is not None:
+                progress(message)
+
+        report("ChatGPT-Datei prüfen …")
         path = Path(path)
         if path.suffix.casefold() != ".json" or not path.is_file():
             raise ValueError("Bitte eine ChatGPT-Ergebnisdatei im Format .json wählen.")
@@ -336,10 +434,20 @@ class ChatGPTAnalyseStore:
         content = path.read_bytes()
         try:
             data = ChatGPTRueckgabe.model_validate_json(content)
-        except (ValueError, ValidationError) as exc:
-            raise ValueError("ChatGPT-Ergebnis entspricht nicht der gültigen Analysevorlage.") from exc
+        except ValidationError as exc:
+            details = "; ".join(
+                f"{'.'.join(str(x) for x in item['loc'])}: {item['msg']}"
+                for item in exc.errors()[:3]
+            )
+            raise ValueError(
+                "ChatGPT-Ergebnis entspricht nicht der gültigen Analysevorlage: "
+                + details
+            ) from exc
+        except ValueError as exc:
+            raise ValueError("ChatGPT-Ergebnis enthält ungültiges JSON.") from exc
         if not _IDENT.fullmatch(data.analyse_id) or not _PAKET_ID.fullmatch(data.paket_id):
             raise ValueError("Ungültige Paket- oder Analysekennung.")
+        report("Lokale Paket- und FIN-Zuordnung prüfen …")
         mapping = self._mapping(data.paket_id, private_csv)
         source_sha = hashlib.sha256(content).hexdigest()
         with self.store.connect() as con:
@@ -371,13 +479,24 @@ class ChatGPTAnalyseStore:
         if not case_by_alias:
             raise ValueError("Die lokale Zuordnung enthält keine gültigen Fälle.")
 
+        # AE-/LB-IDs sind Zeilennummern im originalen Export, keine Einträge
+        # der privaten Pseudonymzuordnung. Nur durch ZIP-Prüfung akzeptieren.
+        requested_rows: dict[str, set[str]] = defaultdict(set)
+        for item in (*data.cluster, *data.faelle):
+            for evidence in item.belege:
+                spec = self._ROW_EVIDENCE.get(evidence.quelle)
+                if spec and re.fullmatch(spec[2], evidence.quelle_id):
+                    requested_rows[evidence.quelle].add(evidence.quelle_id)
+        report("Zeilenbelege gegen das archivierte Analysepaket prüfen …")
+        verified_rows = self._validate_export_rows(data.paket_id, requested_rows)
+
         cluster_ids: set[str] = set()
         members: dict[str, str] = {}
         for cluster in data.cluster:
             if not _IDENT.fullmatch(cluster.cluster_id) or cluster.cluster_id in cluster_ids:
                 raise ValueError("Clusterkennung ungültig oder doppelt.")
             cluster_ids.add(cluster.cluster_id)
-            self._validate_belege(cluster.belege, mapping)
+            self._validate_belege(cluster.belege, mapping, verified_rows)
             for pseudo in cluster.fall_ids:
                 if pseudo not in case_by_alias:
                     raise ValueError("Unbekannter Fall im Cluster.")
@@ -386,7 +505,9 @@ class ChatGPTAnalyseStore:
                 members[pseudo] = cluster.cluster_id
 
         input_cases: set[str] = set()
-        for finding in data.faelle:
+        for number, finding in enumerate(data.faelle, 1):
+            if number == 1 or number % 10 == 0 or number == len(data.faelle):
+                report(f"Fallbewertungen prüfen ({number}/{len(data.faelle)}) …")
             pseudo = finding.fall_id
             if pseudo not in case_by_alias or pseudo in input_cases:
                 raise ValueError("Unbekannte oder doppelte Fallkennung in ChatGPT-Ergebnis.")
@@ -398,8 +519,9 @@ class ChatGPTAnalyseStore:
                     raise ValueError("Cluster-Mitgliedschaft widerspricht der Fallbewertung.")
             elif pseudo in members:
                 raise ValueError("Clusterzuordnung fehlt bei einem aufgeführten Mitglied.")
-            self._validate_belege(finding.belege, mapping)
+            self._validate_belege(finding.belege, mapping, verified_rows)
 
+        report("Analyse und Cluster in einer Transaktion speichern …")
         with self.store.connect() as con:
             con.execute("BEGIN TRANSACTION")
             try:
