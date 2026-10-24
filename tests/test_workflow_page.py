@@ -354,3 +354,50 @@ def test_existing_unassigned_qec_dataset_is_adopted_without_second_import(
     assert not page.adopt_button.isVisibleTo(page)
     window.close()
     app.processEvents()
+
+
+
+def test_legacy_single_part_adoption_keeps_unscoped_workflow_and_documents(
+    tmp_path, monkeypatch,
+):
+    from PySide6.QtWidgets import QInputDialog, QMessageBox
+
+    app, window = _window(tmp_path, monkeypatch)
+    workflow = window.pages["workflow"]
+    doc = tmp_path / "cpc3_legacy.cdd"
+    doc.write_text("synthetisch, nicht vertraulich", encoding="utf-8")
+    workflow.context_store.add_files(
+        "coolant_pump", "", "cdd_smrd", [doc],
+    )
+    workflow.progress_store.save(
+        "coolant_pump", "",
+        WorkflowProgress(step=2, paused=False, reviewed_steps=()),
+    )
+    monkeypatch.setattr(
+        workflow.qec_store, "rows", lambda _root: [_qec_rows()[0]],
+    )
+    monkeypatch.setattr(
+        workflow.qec_store, "active_sources",
+        lambda: [SimpleNamespace(original_name="QEC_demo.xlsx")],
+    )
+    monkeypatch.setattr(window, "_portable_transfer_ready", lambda: True)
+    monkeypatch.setattr(
+        QInputDialog, "getItem",
+        lambda *_args, **_kwargs: ("A 123 456  ·  1 QEC-Fälle", True),
+    )
+    monkeypatch.setattr(
+        QMessageBox, "question",
+        lambda *_args, **_kwargs: QMessageBox.StandardButton.Yes,
+    )
+    workflow.refresh_data()
+    assert workflow.adopt_button.isVisibleTo(workflow)
+    workflow.adopt_button.click()
+    assert workflow._context_part == "A 123 456"
+    assert workflow.state.step == 2
+    assert workflow.context_model.rowCount() == 1
+    assert workflow.context_counts["cdd_smrd"].text() == "1"
+    assert workflow.progress_store.load("coolant_pump", "").step == 2
+    assert workflow.progress_store.load("coolant_pump", "A123456").step == 0
+    assert workflow.progress_store.load("coolant_pump", "A 123 456").step == 2
+    window.close()
+    app.processEvents()
