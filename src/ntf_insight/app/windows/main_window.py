@@ -133,6 +133,10 @@ class MainWindow(QMainWindow):
         pages["workflow"].action_requested.connect(self._workflow_action)
         pages["workflow"].project_selected.connect(self._project_selected)
         pages["workflow"].mount_local_cluster(pages["cases"].cluster_workspace)
+        if pages["sources"].qec_workflow is not None:
+            pages["sources"].qec_workflow.set_project_scope(
+                pages["workflow"]._context_part
+            )
         pages["cases"].cluster_requested.connect(self._open_cluster_from_case)
         if pages["cases"].qec_download is not None:
             pages["cases"].qec_download.downloads_completed.connect(
@@ -374,6 +378,8 @@ class MainWindow(QMainWindow):
             )
             return
         self.pages["workflow"].activate_project(profile, part)
+        if self.pages["sources"].qec_workflow is not None:
+            self.pages["sources"].qec_workflow.set_project_scope(part)
         self.pages["project_settings"].select_project(profile, part)
         self._sync_local_cluster()
         self.navigation.select_page("workflow")
