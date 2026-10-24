@@ -67,17 +67,14 @@ def test_five_horizontal_steps_show_inline_workspaces_and_resume(tmp_path, monke
     assert window.stack.currentWidget() is page
     assert page.state.step == 1
     assert page.workspaces.currentIndex() == 1
-    page.next_button.click()
+    page.cards[2].click()
     assert page.state.step == 2
     assert window.stack.currentWidget() is page
-    page.previous_button.click()
+    page.cards[1].click()
     assert page.state.step == 1
-
-    page.pause_button.click()
-    assert page.state.paused
-    page.cards[4].click()
-    assert page.state.step == 1
-    page.pause_button.click()
+    assert not hasattr(page, "next_button")
+    assert not hasattr(page, "previous_button")
+    assert not hasattr(page, "pause_button")
     page.cards[4].click()
     assert page.state.step == 4
     page.review_button.click()
@@ -245,7 +242,7 @@ def test_context_collection_shows_provenance_and_part_specific_status(
 
 
 
-def test_context_scrapers_use_only_current_qec_part_and_marked_fins(
+def test_context_scrapers_use_only_current_qec_part_with_single_fetch_action(
     tmp_path, monkeypatch,
 ):
     """Keine echten Browserkontakte: nur die FIN-Übergabe an vorhandene Downloader."""
@@ -294,9 +291,11 @@ def test_context_scrapers_use_only_current_qec_part_and_marked_fins(
         tips.worker = tips_worker
 
     monkeypatch.setattr(tips, "_start", fake_tips_start)
-    page.qec_table.selectRow(0)
-    window._context_scrape("tips_writer", "selected")
-    assert calls[-1] == ("tips", ["WDD12345678901234"], False)
+    assert "selected" not in page.context_scraper_buttons["tips_writer"]
+    assert page.context_scraper_buttons["tips_writer"]["parse"].text() == "Einlesen …"
+    window._context_scrape("tips_writer", "all")
+    assert calls[-1] == ("tips", ["WDD12345678901234"], True)
+    assert "Abruf" in page.context_source_dates["tips_writer"].text()
     tips.worker = None
     tips_worker.finished.emit()
     window.close()
