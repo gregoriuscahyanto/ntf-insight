@@ -181,6 +181,11 @@ QPushButton#WorkflowAction[sourceCompact="true"] {{
     padding: 3px 5px;
     border-radius: 6px;
 }}
+QPushButton#ProjectHeaderAction {{
+    font-size: 12px;
+    padding: 6px 8px;
+    border-radius: 7px;
+}}
 QFrame#SourceTableHeader {{
     background: transparent;
     border: none;
