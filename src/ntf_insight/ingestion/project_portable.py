@@ -114,13 +114,17 @@ def _scope_snapshot(database: Path, data_root: Path, profile: str, part: str) ->
     key = part_key(part)
     store = DuckDBStore(database)
     qec = QecWorkflowStore(store)
-    active = qec.active_source()
-    qec_rows = qec.rows(data_root / "qec") if active else []
+    qec_rows = qec.rows(data_root / "qec")
     targeted = [row for row in qec_rows if part_key(row["part_number"]) == key]
+    target_sources = {row["source_sha256"] for row in targeted}
     case_ids = {str(x["case_id"]) for x in targeted}
     fins = {str(x["fin"]).upper() for x in targeted}
     references = {str(x["reference"]) for x in targeted if x["reference"]}
-    shared_source = bool(active and len(targeted) != len(qec_rows))
+    shared_source = any(
+        row["source_sha256"] in target_sources and
+        part_key(row["part_number"]) != key
+        for row in qec_rows
+    )
 
     with duckdb.connect(str(database)) as con:
         available = _tables(con)
@@ -202,8 +206,7 @@ def _scope_snapshot(database: Path, data_root: Path, profile: str, part: str) ->
             _retain(con, table, "report_id", report_ids, available)
 
         selected_shas: set[str] = set()
-        if active and targeted:
-            selected_shas.add(active.sha256)
+        selected_shas.update(target_sources)
         for table, column in (
             ("cluster_evidence_files", "sha256"),
             ("workflow_first_ai_packages", "sha256"),
