@@ -257,6 +257,7 @@ class AutoExportFinWorkspace(QWidget):
         self._finding_counts = finding_counts(cases)
         self._running_qec_cases = self._all_qec_cases
         self._workflow_part_number = ""
+        self._workflow_allowed_fins: frozenset[str] | None = None
         self._quicktest_fins = tuple(quicktest_fins)
         self._tp_dashboard_fins = (
             source.tp_dashboard_fins()
@@ -278,7 +279,11 @@ class AutoExportFinWorkspace(QWidget):
         shell = QVBoxLayout(self)
         shell.setContentsMargins(0, 0, 0, 0)
         scroll = QScrollArea(self)
+        self._embedded_scroll = scroll
         scroll.setWidgetResizable(True)
+        scroll.setVerticalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAsNeeded
+        )
         scroll.setFrameShape(QFrame.Shape.NoFrame)
         shell.addWidget(scroll)
         content = QWidget()
@@ -287,7 +292,8 @@ class AutoExportFinWorkspace(QWidget):
         body.setContentsMargins(22, 18, 22, 25)
         body.setSpacing(12)
 
-        body.addWidget(QLabel("Clusteranalyse", objectName="PageTitle"))
+        self._page_heading = QLabel("Clusteranalyse", objectName="PageTitle")
+        body.addWidget(self._page_heading)
         intro = QLabel(
             "AutoExport und QEC werden über die FIN zusammengeführt. "
             "Ein Fahrzeug zählt genau einmal. Die Cluster zeigen "
@@ -295,6 +301,7 @@ class AutoExportFinWorkspace(QWidget):
             objectName="PageSubtitle",
         )
         intro.setWordWrap(True)
+        self._intro_label = intro
         body.addWidget(intro)
 
         total_auto = self.population_metrics.get("autoexport_unique_fins", 0)
@@ -490,6 +497,7 @@ class AutoExportFinWorkspace(QWidget):
         source_row = QHBoxLayout()
         source_row.setSpacing(8)
         self.coverage_donuts: dict[str, FinCoverageDonut] = {}
+        self._source_coverage_items: list[QWidget] = []
         for key, label, color in (
             ("part", "FINs mit Sachnummer", "#4C6580"),
             ("qec", "FINs mit QEC-Fall", "#1D70A5"),
@@ -508,6 +516,7 @@ class AutoExportFinWorkspace(QWidget):
             stack.addWidget(donut, 0)
             stack.setAlignment(donut, Qt.AlignmentFlag.AlignHCenter)
             source_row.addWidget(indicator, 1)
+            self._source_coverage_items.append(indicator)
         overview_stack.addLayout(source_row)
         self.coverage_note = QLabel(
             "Die vier Angaben können sich überschneiden: Ein Fahrzeug "
@@ -728,6 +737,41 @@ class AutoExportFinWorkspace(QWidget):
             f"{count} echte Cluster-Repräsentanten lokal in Excel gespeichert."
         )
 
+    def set_workflow_compact_mode(self) -> None:
+        """Im Fünf-Schritte-Workflow überflüssige Doppelbeschreibungen ausblenden."""
+        for label in (
+            self._page_heading, self._intro_label, self.population_note,
+            self.summary_note, self.priority_note, self.coverage_note,
+        ):
+            label.hide()
+        for indicator in self._source_coverage_items:
+            indicator.hide()
+        self._embedded_scroll.setWidgetResizable(True)
+        self._embedded_scroll.setVerticalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAsNeeded
+        )
+        self.setMinimumHeight(0)
+        self.setSizePolicy(
+            QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Expanding
+        )
+
+    def set_workflow_allowed_fins(self, fins: set[str] | None) -> None:
+        """Stage 01 SSL-Auswahl begrenzt echte lokale Cluster-Features."""
+        selected = (
+            frozenset(str(fin).upper() for fin in fins)
+            if fins is not None else None
+        )
+        if selected == self._workflow_allowed_fins:
+            return
+        self._workflow_allowed_fins = selected
+        self.only_qec.setChecked(True)
+        self._invalidate()
+        self._update_finding_summary()
+        self.status.setText(
+            f"SSL-Kohorte: {len(selected) if selected is not None else 'alle'} FINs. "
+            "Lokale Clusteranalyse neu starten."
+        )
+
     def set_workflow_part_number(self, number: str) -> None:
         """Sachnummer aus dem Workflow als echten QEC-Kohortenfilter setzen.
 
@@ -763,6 +807,11 @@ class AutoExportFinWorkspace(QWidget):
                 case for case in cases
                 if key(getattr(case, "qec_part_number", "") or "")
                 == key(self._workflow_part_number)
+            )
+        if self._workflow_allowed_fins is not None:
+            cases = tuple(
+                case for case in cases
+                if case.vin.strip().upper() in self._workflow_allowed_fins
             )
         return tuple(cases)
 
