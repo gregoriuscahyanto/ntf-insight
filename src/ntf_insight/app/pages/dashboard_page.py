@@ -62,12 +62,18 @@ def project_overview_rows(store: DuckDBStore) -> list[dict]:
             "chatgpt_cluster", "workflow_ai_rounds", "workflow_second_ai_exports"
         }.issubset(tables):
             clusters = con.execute(
-                "SELECT e.profile_id,e.part_key,COUNT(DISTINCT c.cluster_id) "
-                "FROM chatgpt_cluster c "
-                "JOIN workflow_ai_rounds r ON r.analyse_id=c.analyse_id "
+                "WITH recent AS ("
+                "SELECT e.profile_id,e.part_key,r.analyse_id,"
+                "ROW_NUMBER() OVER (PARTITION BY e.profile_id,e.part_key "
+                "ORDER BY r.registered_at DESC,r.analyse_id DESC) AS pos "
+                "FROM workflow_ai_rounds r "
                 "JOIN workflow_second_ai_exports e "
                 "ON e.analyse_id=r.analyse_id AND e.paket_id=r.paket_id "
-                "WHERE r.round_number=2 GROUP BY e.profile_id,e.part_key"
+                "WHERE r.round_number=2) "
+                "SELECT r.profile_id,r.part_key,COUNT(DISTINCT c.cluster_id) "
+                "FROM recent r LEFT JOIN chatgpt_cluster c "
+                "ON c.analyse_id=r.analyse_id "
+                "WHERE r.pos=1 GROUP BY r.profile_id,r.part_key"
             ).fetchall()
             cluster_counts = {(p, k): int(v) for p, k, v in clusters}
 
