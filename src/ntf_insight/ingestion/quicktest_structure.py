@@ -70,10 +70,20 @@ def _ecu_header(lines: list[tuple[str, int]], index: int) -> dict[str, str] | No
     line = lines[index][0]
     if " - " not in line:
         return None
-    if not (
-        (index + 1 < len(lines) and lines[index + 1][0].casefold() == "general information")
-        or LEGACY_ECU.fullmatch(line)
-    ):
+    # XENTRY 2025/2026 can insert a NUL-only PDF cell between the ECU
+    # heading and its "General information" block. Long ECU descriptions
+    # occasionally wrap one trailing character onto the next PDF text line.
+    # Do not invent missing ECUs: only accept a real code/location heading.
+    adjacent_general = (
+        index + 1 < len(lines)
+        and lines[index + 1][0].casefold() == "general information"
+    )
+    wrapped_general = (
+        index + 2 < len(lines)
+        and len(lines[index + 1][0]) <= 2
+        and lines[index + 2][0].casefold() == "general information"
+    )
+    if not (adjacent_general or wrapped_general or LEGACY_ECU.fullmatch(line)):
         return None
     head, _, name = line.partition(" - ")
     if "-" not in head:
@@ -246,11 +256,14 @@ def parse_quicktest_structure(page_texts: list[str]) -> dict[str, Any]:
     """
     if not any(page_texts):
         raise ValueError("QuickTest ohne durchsuchbare Textebene; OCR nicht verfuegbar.")
+    # First remove PDF extraction artefacts, THEN discard empty cells.
+    # Filtering before removing NUL produced phantom blank headers and
+    # caused otherwise complete reports to fail the strict ECU count check.
     lines = [
-        (line.strip().replace("\x00", ""), page)
+        (cleaned, page)
         for page, text in enumerate(page_texts, 1)
-        for line in text.splitlines()
-        if line.strip()
+        for raw in text.splitlines()
+        if (cleaned := raw.replace("\x00", "").strip())
     ]
     # Narrow PDF cells can put FC/EV in one text line and the DTC in the next.
     normalized: list[tuple[str, int]] = []
