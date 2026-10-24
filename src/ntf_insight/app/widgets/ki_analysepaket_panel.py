@@ -260,7 +260,10 @@ class KIAnalysepaketPanel(QWidget):
             return False
         return True
 
-    def _confirm_confidential(self, *, originals: bool, text: bool) -> bool:
+    def _confirm_confidential(
+        self, *, originals: bool, text: bool,
+        parent: QWidget | None = None,
+    ) -> bool:
         if not (originals or text):
             return True
         relevant = (
@@ -271,7 +274,7 @@ class KIAnalysepaketPanel(QWidget):
             "QEC-/TIPS-/Werkstatt-/Lieferanten-Freitexte"
         )
         reply = QMessageBox.warning(
-            self, "Freigabe erforderlich · nicht anonymisierte Analyseinhalte",
+            parent or self, "Freigabe erforderlich · nicht anonymisierte Analyseinhalte",
             "Du möchtest " + relevant + " in eine ZIP-Datei übernehmen.\n\n"
             "Die Inhalte können echte FINs, Seriennummern, Namen und "
             "vertrauliche Mercedes-Benz-Befunde enthalten. "
@@ -326,12 +329,14 @@ class KIAnalysepaketPanel(QWidget):
         self, destination: Path, *,
         mit_freitext: bool = False,
         mit_qec_originalen: bool = False,
+        confirmation_parent: QWidget | None = None,
     ) -> bool:
         """Explicit selection from the modal dialog, never an implicit opt-in."""
         if not self._can_start():
             return False
         if not self._confirm_confidential(
             originals=mit_qec_originalen, text=mit_freitext,
+            parent=confirmation_parent,
         ):
             return False
         destination = Path(destination)
