@@ -148,6 +148,106 @@ def test_decision_step_has_chatgpt_export_import_without_bottom_button_grid(
     app.processEvents()
 
 
+def test_ntf_table_combined_filters_search_sort_and_original_counts(tmp_path, monkeypatch):
+    """Schritt 03 filtert nur die Ansicht und behält Fach-/KI-Zähler getrennt."""
+    from PySide6.QtCore import Qt
+
+    app, window = _window(tmp_path, monkeypatch)
+    try:
+        page = window.pages["workflow"]
+        original = _qec_rows()
+        extra = dict(original[1])
+        extra.update({
+            "fin": "WDD12345678901236", "case_id": "QEC-DEMO-3",
+            "decision": "Offen", "finding": "Stecker prüfen",
+        })
+        rows = [original[0], original[1], extra]
+        monkeypatch.setattr(page.qec_store, "rows", lambda _root: rows)
+        monkeypatch.setattr(
+            page.qec_store, "active_sources",
+            lambda: [SimpleNamespace(original_name="synthetisch.xlsx")],
+        )
+        page.refresh_data()
+
+        # KI-Befunde sind da, die unabhängigen QEC-Fachentscheidungen nicht.
+        page._chatgpt_by_case = {
+            "QEC-DEMO-1": {
+                "bewertung": {
+                    "ntf_bewertung": "NTF plausibel",
+                    "verursachungsbereich": "Nicht zuordenbar",
+                },
+                "review_status": "Offen",
+            },
+            "QEC-DEMO-2": {
+                "bewertung": {
+                    "ntf_bewertung": "NTF fraglich",
+                    "verursachungsbereich": "LIN / Leitungsnetz",
+                },
+                "review_status": "Bestätigt",
+            },
+            "QEC-DEMO-3": {
+                "bewertung": {
+                    "ntf_bewertung": "Kein reiner NTF",
+                    "verursachungsbereich": "Stecker / Abdichtung",
+                },
+                "review_status": "Abgelehnt",
+            },
+        }
+        page.refresh()
+
+        assert page.ntf_model.rowCount() == 3
+        assert page.ntf_table.isSortingEnabled()
+        assert page.ntf_proxy.rowCount() == 3
+        assert "QEC-Fachentscheidungen: 1/3" in page.ntf_status.text()
+        assert "ChatGPT-Vorschläge: 3/3 importiert" in page.ntf_status.text()
+        assert "1 bestätigt" in page.ntf_status.text()
+        assert "1 abgelehnt" in page.ntf_status.text()
+        assert "1 ungeprüft" in page.ntf_status.text()
+        assert "1/3 QEC-entschieden" in page.cards[2].text()
+        assert "3 von 3" in page.ntf_filter_count.text()
+
+        page.ntf_search.setText("WDD12345678901236 stecker")
+        assert page.ntf_proxy.rowCount() == 1
+        assert page.ntf_proxy.index(0, 1).data() == "QEC-DEMO-3"
+        assert "1 von 3" in page.ntf_filter_count.text()
+        # SSL-Kohorte und Verteilung dürfen NICHT neu berechnet werden.
+        assert len(page._scoped_rows) == 3
+        assert page.ntf_model.rowCount() == 3
+        assert "1/3 QEC-entschieden" in page.cards[2].text()
+
+        page.ntf_search.clear()
+        review_filter = page.ntf_filter_boxes[6]
+        review_filter.setCurrentIndex(review_filter.findData("Offen"))
+        assert page.ntf_proxy.rowCount() == 1
+        assert page.ntf_proxy.index(0, 1).data() == "QEC-DEMO-1"
+
+        cause_filter = page.ntf_filter_boxes[5]
+        cause_filter.setCurrentIndex(cause_filter.findData("LIN / Leitungsnetz"))
+        assert page.ntf_proxy.rowCount() == 0
+        assert "0 von 3" in page.ntf_filter_count.text()
+        page.ntf_clear_filters.click()
+        assert page.ntf_proxy.rowCount() == 3
+
+        # Eine Sortierung im Proxy darf das Originalmodell nicht umsortieren.
+        ids = [row[1] for row in page.ntf_model.rows]
+        page.ntf_table.sortByColumn(1, Qt.SortOrder.DescendingOrder)
+        visible = [
+            page.ntf_proxy.index(i, 1).data()
+            for i in range(page.ntf_proxy.rowCount())
+        ]
+        assert visible == sorted(ids, reverse=True)
+        assert [row[1] for row in page.ntf_model.rows] == ids
+
+        # Neu geladenes QEC-Objekt: Filterwerte bleiben erhalten, sofern gültig.
+        review_filter.setCurrentIndex(review_filter.findData("Bestätigt"))
+        page.refresh()
+        assert page.ntf_proxy.rowCount() == 1
+        assert page.ntf_proxy.index(0, 1).data() == "QEC-DEMO-2"
+    finally:
+        window.close()
+        app.processEvents()
+
+
 def test_existing_local_cluster_is_embedded_only_in_step_five(tmp_path, monkeypatch):
     app, window = _window(tmp_path, monkeypatch)
     page = window.pages["workflow"]
