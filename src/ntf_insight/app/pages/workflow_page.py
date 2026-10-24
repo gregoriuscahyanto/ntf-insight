@@ -63,6 +63,68 @@ def _create_table(headers: tuple[str, ...]) -> tuple[QTableView, SimpleTableMode
     return table, model
 
 
+# Beide Quellenbereiche nutzen exakt dieselben Spaltenbreiten, Rasterabstände
+# und Buttonhöhen. Separate GridLayouts ohne diese Vorgaben würden auseinanderlaufen.
+_SOURCE_COLUMNS = (
+    ("Quelle", 108),
+    ("Portalabruf", 274),
+    ("Parser", 230),
+    ("Fehleranalyse", 150),
+    ("Datei", 120),
+    ("Letzter Abruf / Import", 190),
+    ("Dokumente / FINs", None),
+)
+_SOURCE_ACTION_HEIGHT = 36
+_SOURCE_ACTION_SPACING = 6
+_SOURCE_DOUBLE_HEIGHT = _SOURCE_ACTION_HEIGHT * 2 + _SOURCE_ACTION_SPACING
+
+
+def _source_grid(frame: QFrame, *, header: bool = False) -> QGridLayout:
+    grid = QGridLayout(frame)
+    grid.setContentsMargins(9, 0 if header else 8, 9, 0 if header else 8)
+    grid.setHorizontalSpacing(8)
+    grid.setVerticalSpacing(0)
+    for index, (_heading, width) in enumerate(_SOURCE_COLUMNS):
+        if width is not None:
+            grid.setColumnMinimumWidth(index, width)
+    grid.setColumnStretch(len(_SOURCE_COLUMNS) - 1, 1)
+    return grid
+
+
+def _source_header() -> QFrame:
+    frame = QFrame(objectName="SourceTableHeader")
+    grid = _source_grid(frame, header=True)
+    for index, (heading, width) in enumerate(_SOURCE_COLUMNS):
+        label = QLabel(heading, objectName="PageSubtitle")
+        if width is not None:
+            label.setFixedWidth(width)
+        grid.addWidget(label, 0, index)
+    return frame
+
+
+def _source_stack(column: int, buttons: list[QPushButton]) -> QWidget:
+    """Fixe Buttonhöhe und einheitliche vertikale Abstände ohne Abschneiden."""
+    width = _SOURCE_COLUMNS[column][1]
+    assert width is not None
+    holder = QWidget()
+    holder.setFixedWidth(width)
+    layout = QVBoxLayout(holder)
+    layout.setContentsMargins(0, 0, 0, 0)
+    layout.setSpacing(_SOURCE_ACTION_SPACING)
+    for button in buttons:
+        button.setFixedHeight(_SOURCE_ACTION_HEIGHT)
+        layout.addWidget(button)
+    return holder
+
+
+def _source_single(column: int, button: QPushButton) -> QPushButton:
+    width = _SOURCE_COLUMNS[column][1]
+    assert width is not None
+    button.setFixedWidth(width)
+    button.setFixedHeight(_SOURCE_DOUBLE_HEIGHT)
+    return button
+
+
 class WorkflowPage(QWidget):
     """Die Startseite bleibt geöffnet; Stationen ändern den lokalen Inhalt."""
 
@@ -355,104 +417,101 @@ class WorkflowPage(QWidget):
             "02 · QEC-Befundungsberichte",
             "Abruf ausschließlich für die QEC-FINs und Referenzen der gewählten Sachnummer.",
         )
-        # Dieselben Spalten wie in Schritt 04, ohne lose Buttonleiste.
-        outer_actions = QVBoxLayout()
-        outer_actions.setSpacing(3)
-        headers = QFrame()
-        headings = QGridLayout(headers)
-        headings.setContentsMargins(9, 0, 9, 0)
-        for column, title in enumerate((
-            "Quelle", "Portalabruf", "Parser", "Berichte / FINs",
-        )):
-            headings.addWidget(QLabel(title, objectName="PageSubtitle"), 0, column)
-        headings.setColumnStretch(3, 1)
-        outer_actions.addWidget(headers)
+        actions = QVBoxLayout()
+        actions.setSpacing(5)
+        self.qec_action_header = _source_header()
+        actions.addWidget(self.qec_action_header)
 
         self.qec_action_row = QFrame(objectName="SourceCoverageRow")
         self.qec_action_row.setProperty("coverageState", "pending")
-        grid = QGridLayout(self.qec_action_row)
-        grid.setContentsMargins(9, 6, 9, 6)
-        grid.setHorizontalSpacing(8)
-        grid.setColumnMinimumWidth(0, 105)
-        grid.setColumnMinimumWidth(1, 235)
-        grid.setColumnMinimumWidth(2, 220)
-        grid.setColumnMinimumWidth(3, 220)
-        grid.setColumnStretch(3, 1)
-        grid.addWidget(QLabel("QEC-Befundung"), 0, 0)
+        self.qec_action_row.setMinimumHeight(138)
+        grid = _source_grid(self.qec_action_row)
+        name = QLabel("QEC-Befundung")
+        name.setFixedWidth(_SOURCE_COLUMNS[0][1])
+        name.setWordWrap(True)
+        grid.addWidget(name, 0, 0)
 
-        downloads = QVBoxLayout()
-        downloads.setSpacing(4)
         self.download_all_button = QPushButton(
-            "Alle QEC-Berichte herunterladen / aktualisieren", objectName="WorkflowAction",
+            "Alle QEC-Berichte neu abrufen", objectName="WorkflowAction",
+        )
+        self.download_all_button.setToolTip(
+            "Alle QEC-Berichte der aktuellen Projekt-FINs herunterladen oder "
+            "aktualisieren. Bereits vorhandene Berichte werden erneut abgefragt."
         )
         self.download_all_button.clicked.connect(
             lambda: self._trigger_qec_download("all")
         )
-        downloads.addWidget(self.download_all_button)
         self.download_missing_button = QPushButton(
             "Download fortsetzen", objectName="WorkflowAction",
         )
         self.download_missing_button.clicked.connect(
             lambda: self._trigger_qec_download("missing")
         )
-        downloads.addWidget(self.download_missing_button)
         self.download_selected_button = QPushButton(
             "Markierte herunterladen", objectName="WorkflowAction",
         )
         self.download_selected_button.clicked.connect(
             lambda: self._trigger_qec_download("selected")
         )
-        downloads.addWidget(self.download_selected_button)
-        self.cancel_download_button = QPushButton(
-            "Abruf abbrechen", objectName="WorkflowAction",
-        )
+        # Kompatible Referenz für vorhandene Aktionen/Tests; kein Stop-Zusatzfeld.
+        self.cancel_download_button = QPushButton("Abruf abbrechen", self)
+        self.cancel_download_button.hide()
         self.cancel_download_button.clicked.connect(
             lambda: self.action_requested.emit("qec_download_cancel")
         )
-        self.cancel_download_button.hide()  # Stop ist im aktiven Abrufbutton.
-        grid.addLayout(downloads, 0, 1)
+        grid.addWidget(_source_stack(1, [
+            self.download_all_button, self.download_missing_button,
+            self.download_selected_button,
+        ]), 0, 1, Qt.AlignmentFlag.AlignTop)
 
-        parsing = QVBoxLayout()
-        parsing.setSpacing(4)
         self.qec_parse_all_button = QPushButton(
             "Alle QEC-Berichte neu parsen", objectName="WorkflowAction",
         )
         self.qec_parse_all_button.clicked.connect(
             lambda: self._trigger_context_parse("qec", "all")
         )
-        parsing.addWidget(self.qec_parse_all_button)
         self.qec_parse_resume_button = QPushButton(
             "Ausstehendes Parsing fortsetzen", objectName="WorkflowAction",
         )
         self.qec_parse_resume_button.clicked.connect(
             lambda: self._trigger_context_parse("qec", "resume")
         )
-        parsing.addWidget(self.qec_parse_resume_button)
-        self.local_qec_button = QPushButton(
-            "Lokale Berichte einlesen", objectName="WorkflowAction",
-        )
-        self.local_qec_button.clicked.connect(
-            lambda: self.action_requested.emit("qec_import_local")
-        )
-        parsing.addWidget(self.local_qec_button)
-        self.qec_problem_zip_button = QPushButton(
-            "Nicht parsebare als ZIP exportieren", objectName="WorkflowAction",
+        grid.addWidget(_source_stack(2, [
+            self.qec_parse_all_button, self.qec_parse_resume_button,
+        ]), 0, 2, Qt.AlignmentFlag.AlignTop)
+
+        self.qec_problem_zip_button = _source_single(
+            3, QPushButton("Fehler-ZIP exportieren", objectName="WorkflowAction"),
         )
         self.qec_problem_zip_button.setToolTip(
-            "Parserfehler als lokales ZIP, standardmäßig ohne Originaldateien. "
-            "Bei Originaldateien ist eine gesonderte Vertraulichkeitsfreigabe nötig."
+            "Nicht parsebare QEC-Dateien als lokales ZIP exportieren. "
+            "Standardmäßig ohne Originale; vertrauliche Originaldateien "
+            "nur nach gesonderter Bestätigung."
         )
         self.qec_problem_zip_button.clicked.connect(
             lambda: self.action_requested.emit("parser_diagnostics:qec")
         )
-        parsing.addWidget(self.qec_problem_zip_button)
-        grid.addLayout(parsing, 0, 2)
+        grid.addWidget(self.qec_problem_zip_button, 0, 3, Qt.AlignmentFlag.AlignTop)
+
+        self.local_qec_button = _source_single(
+            4, QPushButton("Lokale Berichte", objectName="WorkflowAction"),
+        )
+        self.local_qec_button.setToolTip("Lokale QEC-Berichte auswählen und einlesen")
+        self.local_qec_button.clicked.connect(
+            lambda: self.action_requested.emit("qec_import_local")
+        )
+        grid.addWidget(self.local_qec_button, 0, 4, Qt.AlignmentFlag.AlignTop)
+
+        self.qec_last_fetch = QLabel("—", objectName="PageSubtitle")
+        self.qec_last_fetch.setFixedWidth(_SOURCE_COLUMNS[5][1])
+        self.qec_last_fetch.setWordWrap(True)
+        grid.addWidget(self.qec_last_fetch, 0, 5)
 
         self.qec_status = QLabel(objectName="PageSubtitle")
         self.qec_status.setWordWrap(True)
-        grid.addWidget(self.qec_status, 0, 3)
-        outer_actions.addWidget(self.qec_action_row)
-        body.addLayout(outer_actions)
+        grid.addWidget(self.qec_status, 0, 6)
+        actions.addWidget(self.qec_action_row)
+        body.addLayout(actions)
         donuts = QHBoxLayout()
         donuts.setSpacing(16)
         self.qec_donut = WorkflowDonut("QEC-Berichte · eindeutige FINs")
@@ -2112,7 +2171,7 @@ class WorkflowPage(QWidget):
         qec_coverage = self._source_coverage.get("qec")
         choices = {
             "all": (self.download_all_button,
-                    "Alle QEC-Berichte herunterladen / aktualisieren", has_rows),
+                    "Alle QEC-Berichte neu abrufen", has_rows),
             "missing": (self.download_missing_button,
                         "Download fortsetzen",
                         bool(qec_coverage and qec_coverage.missing_qec)),
