@@ -66,11 +66,12 @@ def _part_keys(path: Path) -> set[str]:
         "".join(c for c in str(case.qec_part_number or "").upper() if c.isalnum())
         for case in parsed
     }
+    # Alte QEC-Exporte ohne Sachnummer bleiben importierbar. Unbekannte
+    # Sachnummern sind NICHT automatisch einem Projekt zuzuordnen.
+    # Zwei verschiedene unklare Master werden weiterhin gesperrt.
     if not values or "" in values:
-        raise ValueError(
-            "QEC-FIN-Liste enthält Fälle ohne gültige Sachnummer. "
-            "Eine projektbezogene Zuordnung ist damit nicht sicher."
-        )
+        values.discard("")
+        values.add("__SACHNUMMER_UNBEKANNT__")
     return values
 
 
