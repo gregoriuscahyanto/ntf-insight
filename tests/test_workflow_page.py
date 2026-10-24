@@ -141,6 +141,8 @@ def test_decision_step_has_chatgpt_export_import_without_bottom_button_grid(
     assert not hasattr(page, "tool_buttons")
     emitted = []
     page.action_requested.connect(emitted.append)
+    # Nicht den realen QFileDialog der verborgenen Datenquellen-Seite öffnen.
+    window.pages["sources"].ki_analyse_panel.import_button.setEnabled(False)
     page.ai_import_button.click()
     assert emitted[-1] == "ai_import"
     page.set_notice("QEC-Abruf fehlgeschlagen", error=True)
