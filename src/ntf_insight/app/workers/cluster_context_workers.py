@@ -38,6 +38,7 @@ class ClusterEvidenceImportWorker(QThread):
 class ClusterContextExportWorker(QThread):
     completed = Signal(object)
     failed = Signal(str)
+    progress = Signal(str)
 
     def __init__(
         self, store: ClusterEvidenceStore, profile: str, part_number: str,
@@ -60,6 +61,7 @@ class ClusterContextExportWorker(QThread):
                 self.first_package, self.destination,
                 include_originals=self.include_originals,
                 first_result=self.first_result,
+                progress=self.progress.emit,
             )
         except Exception as exc:  # Worker-Grenze: kein Qt-Thread-Absturz
             self.failed.emit(f"{type(exc).__name__}: {exc}")

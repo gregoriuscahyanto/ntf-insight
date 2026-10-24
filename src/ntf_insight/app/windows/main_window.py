@@ -3,13 +3,16 @@
 from __future__ import annotations
 
 import json
+import re
+import time
+from datetime import datetime
 from pathlib import Path
 
 from PySide6.QtCore import Qt, QEventLoop, QTimer, QUrl
 from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import (
     QApplication, QDialog, QFileDialog, QGraphicsBlurEffect, QHBoxLayout,
-    QInputDialog, QMainWindow, QMessageBox, QProgressDialog, QPushButton,
+    QInputDialog, QMainWindow, QMessageBox, QPushButton,
     QStackedWidget, QVBoxLayout, QWidget,
 )
 
@@ -36,6 +39,7 @@ from ntf_insight.app.pages.source_knowledge_page import SourceKnowledgePage
 from ntf_insight.app.pages.supplier_page import SupplierPage
 from ntf_insight.app.widgets.navigation import NavigationPanel
 from ntf_insight.app.widgets.loading_overlay import LoadingOverlay
+from ntf_insight.app.widgets.export_operation_dialog import ExportOperationDialog
 from ntf_insight.ingestion.manual_entry import ManualCaseService
 from ntf_insight.storage.duckdb_store import DuckDBStore
 from ntf_insight.storage.dtc_review_store import DtcReviewStore
@@ -69,7 +73,17 @@ class MainWindow(QMainWindow):
         self._context_scraper_failed: set[str] = set()
         self._context_worker = None
         self._project_transfer_worker = None
-        self._project_transfer_dialog = None
+        self._project_transfer_dialog: ExportOperationDialog | None = None
+        self._first_export_dialog: ExportOperationDialog | None = None
+        self._second_export_dialog: ExportOperationDialog | None = None
+        self._portable_export_dialog: ExportOperationDialog | None = None
+        self._fin_export_dialog: ExportOperationDialog | None = None
+        self._project_transfer_failure: str | None = None
+        self._diagnostics_dialog: ExportOperationDialog | None = None
+        self._diagnostics_path: Path | None = None
+        self._diagnostics_error_text: str | None = None
+        self._diagnostics_started_at = 0.0
+        self._diagnostics_phase = ""
         self._project_dialog: QDialog | None = None
         self._project_delete_worker = None
         self._project_delete_result = None
@@ -105,6 +119,30 @@ class MainWindow(QMainWindow):
         self.navigation.select_page("workflow")
 
     def closeEvent(self, event) -> None:  # noqa: N802
+        sources = self.pages["sources"]
+        cases = self.pages["cases"]
+        if (
+            self._project_transfer_worker is not None
+            or sources._diagnostics_worker is not None
+            or (
+                sources.ki_analyse_panel is not None
+                and sources.ki_analyse_panel.worker is not None
+            )
+            or (
+                sources.portable_backup_panel is not None
+                and sources.portable_backup_panel.worker is not None
+            )
+            or (
+                cases.fin_zip_export is not None
+                and cases.fin_zip_export.worker is not None
+            )
+            or isinstance(self._context_worker, ClusterContextExportWorker)
+        ):
+            # Der modale Fortschrittsdialog sperrt die Oberfläche, aber auch
+            # Alt+F4/Taskleisten-Schließen darf keinen noch laufenden ZIP-
+            # bzw. DuckDB-Transferthread zerstören.
+            event.ignore()
+            return
         if self._project_delete_worker is not None:
             event.ignore()
             QMessageBox.warning(
@@ -174,6 +212,12 @@ class MainWindow(QMainWindow):
         pages["workflow"].project_selected.connect(self._project_selected)
         pages["workflow"].cohort_updated.connect(self._sync_local_cluster)
         pages["workflow"].mount_local_cluster(pages["cases"].cluster_workspace)
+        sources = pages["sources"]
+        sources.diagnostics_started.connect(self._diagnostics_started)
+        sources.diagnostics_progress.connect(self._diagnostics_progress)
+        sources.diagnostics_saved.connect(self._diagnostics_saved)
+        sources.diagnostics_error.connect(self._diagnostics_failed)
+        sources.diagnostics_ended.connect(self._diagnostics_ended)
         if pages["sources"].qec_workflow is not None:
             pages["sources"].qec_workflow.set_project_scope(
                 pages["workflow"]._context_part
@@ -196,9 +240,22 @@ class MainWindow(QMainWindow):
             transfer.set_guard(self._portable_transfer_ready)
             transfer.transfer_busy.connect(self._portable_transfer_busy)
             transfer.restored.connect(self._portable_restored)
+            transfer.operation_started.connect(self._portable_operation_started)
+            transfer.operation_progress.connect(self._portable_operation_progress)
+            transfer.operation_completed.connect(self._portable_operation_completed)
+            transfer.operation_failed.connect(self._portable_operation_failed)
+        fin_export = pages["cases"].fin_zip_export
+        if fin_export is not None:
+            fin_export.export_started.connect(self._fin_export_started)
+            fin_export.export_progress.connect(self._fin_export_progress)
+            fin_export.export_completed.connect(self._fin_export_completed)
         analysis_export = pages["sources"].ki_analyse_panel
         if analysis_export is not None:
             analysis_export.set_guard(self._portable_transfer_ready)
+            analysis_export.use_shared_export_dialog()
+            analysis_export.export_options_requested.connect(self._first_export_prompt)
+            analysis_export.export_progress.connect(self._first_export_progress)
+            analysis_export.export_failed.connect(self._first_export_failed)
             analysis_export.transfer_busy.connect(self._portable_transfer_busy)
             analysis_export.first_package_export_started.connect(
                 self._first_export_started
@@ -206,6 +263,62 @@ class MainWindow(QMainWindow):
             analysis_export.first_package_exported.connect(self._first_export_completed)
             analysis_export.analysis_imported.connect(self._ai_import_completed)
         return pages
+
+    def _portable_operation_started(self, action: str) -> None:
+        title = (
+            "NTF-Gesamtstand exportieren"
+            if action == "export" else "NTF-Gesamtstand importieren"
+        )
+        self._portable_export_dialog = self._show_operation_progress(
+            title, "Gesamtdatenstand wird verarbeitet …",
+        )
+
+    def _portable_operation_progress(self, message: str) -> None:
+        if self._portable_export_dialog is not None:
+            self._portable_export_dialog.update_message(message)
+
+    def _portable_operation_completed(self, result: object) -> None:
+        dialog = self._portable_export_dialog
+        if dialog is not None:
+            dialog.complete(
+                Path(result.path) if hasattr(result, "path") else None,
+                details=(
+                    "Gesamtdatenstand sicher lokal exportiert."
+                    if hasattr(result, "path") else
+                    "Gesamtdatenstand lokal wiederhergestellt."
+                ),
+            )
+
+    def _portable_operation_failed(self, message: str) -> None:
+        if self._portable_export_dialog is not None:
+            self._portable_export_dialog.fail(message)
+
+    def _fin_export_started(self, destination: str) -> None:
+        self._fin_export_dialog = self._show_operation_progress(
+            "FIN-Diagnosepakete exportieren",
+            "FIN-ZIP-Dateien werden einzeln erzeugt …",
+        )
+
+    def _fin_export_progress(self, message: str) -> None:
+        if self._fin_export_dialog is not None:
+            self._fin_export_dialog.update_message(message)
+
+    def _fin_export_completed(self, payload: object) -> None:
+        dialog = self._fin_export_dialog
+        if dialog is None:
+            return
+        results, destination = payload
+        successful = [x for x in results if x.zip_path is not None]
+        if not successful:
+            dialog.fail("Keine FIN-ZIP-Datei konnte erfolgreich erstellt werden.")
+            return
+        failed = len(results) - len(successful)
+        dialog.complete_directory(
+            Path(destination), details=(
+                f"{len(successful)} FIN-ZIPs erstellt, {failed} ohne ZIP. "
+                "Vertrauliche Originalberichte nur intern freigegeben weitergeben."
+            ),
+        )
 
     def _adopt_existing_qec(self) -> None:
         """Bestehende QEC-Fälle zuordnen, niemals erneut importieren oder löschen."""
@@ -324,6 +437,98 @@ class MainWindow(QMainWindow):
             )
         )
 
+    def _show_export_prompt(
+        self, title: str, message: str, *,
+        options: tuple[tuple[str, str, bool], ...] = (),
+    ) -> ExportOperationDialog:
+        """Eine einheitliche Karte über dem ausgegrauten Workflow."""
+        self._begin_loading(message)
+        dialog = ExportOperationDialog(
+            title, message, options=options, parent=self,
+        )
+        dialog.finished.connect(self._finish_loading)
+        dialog.finished.connect(dialog.deleteLater)
+        dialog.open()
+        return dialog
+
+    def _show_operation_progress(
+        self, title: str, message: str,
+    ) -> ExportOperationDialog:
+        dialog = self._show_export_prompt(title, message)
+        dialog.begin(message)
+        return dialog
+
+    def _close_operation_progress(self, dialog: ExportOperationDialog) -> None:
+        dialog.close()
+        dialog.deleteLater()
+        self._finish_loading()
+
+    def _diagnostics_started(self, message: str) -> None:
+        self._diagnostics_path = None
+        self._diagnostics_error_text = None
+        self._diagnostics_started_at = time.monotonic()
+        self._diagnostics_phase = ""
+        self._diagnostics_dialog = self._show_operation_progress(
+            "Parser-Fehler-ZIP erstellen", message,
+        )
+
+    def _diagnostics_progress(self, message: str) -> None:
+        dialog = self._diagnostics_dialog
+        if dialog is None:
+            return
+        phase = message.partition(":")[0]
+        if phase != self._diagnostics_phase:
+            self._diagnostics_phase = phase
+            self._diagnostics_started_at = time.monotonic()
+        progress = re.search(r"(\d+)\s*/\s*(\d+)", message)
+        if progress and int(progress.group(2)) > 0:
+            done, total = (int(part) for part in progress.groups())
+            dialog.setRange(0, total)
+            dialog.setValue(min(done, total))
+            elapsed = time.monotonic() - self._diagnostics_started_at
+            eta = (
+                f" · ungefähr noch {int(elapsed * (total - done) / done)} s"
+                if 0 < done < total and elapsed >= 2 else
+                " · Restzeit wird ermittelt" if done < total else ""
+            )
+            dialog.setLabelText(message + eta)
+        else:
+            dialog.setRange(0, 0)
+            dialog.setLabelText(message + " · Dauer noch nicht abschätzbar")
+
+    def _diagnostics_saved(self, destination: str) -> None:
+        self._diagnostics_path = Path(destination)
+
+    def _diagnostics_failed(self, message: str) -> None:
+        self._diagnostics_error_text = message
+
+    def _diagnostics_ended(self) -> None:
+        dialog, self._diagnostics_dialog = self._diagnostics_dialog, None
+        path, self._diagnostics_path = self._diagnostics_path, None
+        error, self._diagnostics_error_text = self._diagnostics_error_text, None
+        if error is not None:
+            self.pages["workflow"].set_notice(
+                "Fehler-ZIP konnte nicht erstellt werden: " + error,
+                error=True,
+            )
+            if dialog is not None:
+                dialog.fail(error)
+            return
+        if path is None or not path.exists() or path.stat().st_size <= 0:
+            message = "Der Export hat keine überprüfbare, nicht leere ZIP-Datei hinterlassen."
+            if dialog is not None:
+                dialog.fail(message)
+            self.pages["workflow"].set_notice(message, error=True)
+            return
+        self.pages["workflow"].set_notice(
+            f"Parser-Diagnose-ZIP gespeichert: {path}",
+        )
+        if dialog is not None:
+            dialog.complete(
+                path,
+                details="ZIP-Integrität geprüft. Originale nur nach Freigabe weitergeben.",
+            )
+
     def _project_transfer_export(self) -> None:
         workflow = self.pages["workflow"]
         project = workflow.project_store.get(
@@ -413,16 +618,11 @@ class MainWindow(QMainWindow):
         )
         worker = self._project_transfer_worker
         worker.completed.connect(self._project_transfer_completed)
-        dialog = QProgressDialog(
-            "Projektpaket wird verarbeitet …", "", 0, 100, self,
+        self._project_transfer_failure = None
+        dialog = self._show_operation_progress(
+            "Projekt exportieren" if action == "export" else "Projekt importieren",
+            "Projektpaket wird verarbeitet …",
         )
-        dialog.setWindowTitle(
-            "Projekt exportieren" if action == "export" else "Projekt importieren"
-        )
-        dialog.setCancelButton(None)  # Nie laufende Datenbanktransaktion abbrechen.
-        dialog.setMinimumDuration(0)
-        dialog.setAutoClose(False)
-        dialog.setWindowModality(Qt.WindowModality.NonModal)
         self._project_transfer_dialog = dialog
         worker.progress.connect(self._project_transfer_progress)
         self._project_transfer_progress(0, "Projektpaket vorbereiten")
@@ -451,6 +651,11 @@ class MainWindow(QMainWindow):
     def _project_transfer_completed(self, result: object) -> None:
         workflow = self.pages["workflow"]
         if hasattr(result, "path"):
+            if self._project_transfer_dialog is not None:
+                self._project_transfer_dialog.complete(
+                    result.path,
+                    details="Projektpaket vollständig lokal erstellt.",
+                )
             warning = (
                 "Ein QEC-Original kann weitere Sachnummern enthalten. "
                 if result.shared_source_warning else ""
@@ -462,6 +667,10 @@ class MainWindow(QMainWindow):
                 + warning
             )
         else:
+            if self._project_transfer_dialog is not None:
+                self._project_transfer_dialog.complete(
+                    None, details="Projekt wurde lokal importiert.",
+                )
             self._project_import_result = result
             workflow.set_notice(
                 f"Projekt importiert: {result.part_number} · "
@@ -469,21 +678,24 @@ class MainWindow(QMainWindow):
             )
 
     def _project_transfer_failed(self, message: str) -> None:
+        self._project_transfer_failure = message
+        if self._project_transfer_dialog is not None:
+            self._project_transfer_dialog.fail(message)
         self.pages["workflow"].set_notice(
             "Projekttransfer nicht ausgeführt: " + message, error=True
         )
 
     def _project_transfer_finished(self) -> None:
         self.pages["workflow"].finish_project_transfer_progress()
-        dialog, self._project_transfer_dialog = self._project_transfer_dialog, None
-        if dialog is not None:
-            dialog.close()
-            dialog.deleteLater()
+        # Erfolgs- oder Fehlerkarte bleibt offen, bis der Nutzer den
+        # Speicherort gesehen bzw. auf „Dateiordner öffnen“ geklickt hat.
+        self._project_transfer_dialog = None
         worker, self._project_transfer_worker = self._project_transfer_worker, None
         if worker is not None:
             worker.deleteLater()
         self._portable_transfer_busy(False)
         result, self._project_import_result = self._project_import_result, None
+        self._project_transfer_failure = None
         if result is not None:
             self._reload_data()
             self._project_selected(result.profile_id, result.part_number)
@@ -610,31 +822,117 @@ class MainWindow(QMainWindow):
         workflow._open_step(4)
         self.navigation.select_page("workflow")
 
+    def _first_export_prompt(self) -> None:
+        """Auch direkt in Datenquellen gilt dieselbe sichere Exportkarte."""
+        if not self._portable_transfer_ready():
+            QMessageBox.warning(
+                self, "ChatGPT-Export gesperrt",
+                "Zuerst laufende Abrufe, Parser und Transfers abschließen.",
+            )
+            return
+        dialog = self._show_export_prompt(
+            "ChatGPT-Analysepaket exportieren",
+            "Vor dem Erstellen den Datenumfang wählen. Beide vertraulichen "
+            "Optionen sind standardmäßig AUS. Es erfolgt kein Upload. "
+            "Die getrennte FIN-Zuordnung niemals weitergeben.",
+            options=(
+                ("text",
+                 "QEC-/TIPS-/Werkstatt-/Lieferanten-Freitexte beifügen (vertraulich)",
+                 False),
+                ("originals",
+                 "Vollständige QEC-Befundungsdokumente und Anhänge beifügen "
+                 "(Originale, vertraulich)", False),
+            ),
+        )
+        self._first_export_dialog = dialog
+        dialog.start_requested.connect(self._first_export_start)
+        dialog.finished.connect(
+            lambda _code: self._clear_export_dialog("first", dialog)
+        )
+
+    def _clear_export_dialog(
+        self, kind: str, dialog: ExportOperationDialog,
+    ) -> None:
+        attr = {
+            "first": "_first_export_dialog",
+            "second": "_second_export_dialog",
+        }.get(kind)
+        if attr is not None and getattr(self, attr) is dialog:
+            setattr(self, attr, None)
+        if kind == "first" and self.pages["sources"].ki_analyse_panel.worker is None:
+            self.pages["sources"].ki_analyse_panel._next_workflow_fins = None
+
+    def _first_export_start(self, options: dict) -> None:
+        dialog = self._first_export_dialog
+        panel = self.pages["sources"].ki_analyse_panel
+        if dialog is None or panel is None:
+            return
+        filename, _ = QFileDialog.getSaveFileName(
+            dialog, "ChatGPT-Analyse-ZIP speichern",
+            str(Path.home() / (
+                "NTF-Insight-KI-Analyse-"
+                + datetime.now().strftime("%Y%m%d-%H%M")
+                + ".zip"
+            )),
+            "ChatGPT-Analysepaket (*.zip)",
+        )
+        if not filename:
+            return
+        destination = Path(filename)
+        if destination.suffix.lower() != ".zip":
+            destination = destination.with_suffix(".zip")
+        panel.start_export(
+            destination,
+            mit_freitext=bool(options.get("text")),
+            mit_qec_originalen=bool(options.get("originals")),
+            confirmation_parent=dialog,
+        )
+
+    def _first_export_progress(self, message: str) -> None:
+        if self._first_export_dialog is not None:
+            self._first_export_dialog.update_message(message)
+
+    def _first_export_failed(self, message: str) -> None:
+        self._pending_first_context = None
+        if self._first_export_dialog is not None:
+            self._first_export_dialog.fail(message)
+        self.pages["workflow"].set_notice(
+            "KI-Analyse-ZIP fehlgeschlagen: " + message, error=True,
+        )
+
     def _first_export_started(self, _destination: object) -> None:
         workflow = self.pages["workflow"]
         self._pending_first_context = (workflow.profile_id, workflow._context_part)
+        if self._first_export_dialog is not None:
+            self._first_export_dialog.begin("ChatGPT-Analysepaket wird erstellt …")
 
     def _first_export_completed(self, result: object) -> None:
         workflow = self.pages["workflow"]
         context = self._pending_first_context
         self._pending_first_context = None
-        if context is None:
-            return
-        try:
-            stored = workflow.ai_chain.register_first_export(
-                context[0], context[1], result.pfad
-            )
-        except (OSError, ValueError) as exc:
-            workflow.set_notice(
-                "KI-Paket erstellt, aber automatische Übernahme fehlgeschlagen: "
-                + str(exc), error=True,
-            )
-            return
-        workflow.refresh_ai_chain()
-        workflow.set_notice(
-            "1. KI-Paket automatisch lokal gesichert: "
-            + stored.paket_id[:12] + "… · kein erneutes Auswählen nötig."
+        detail = (
+            "Private FIN-/Fall-Zuordnung wird separat lokal gespeichert. "
+            "Die *_NICHT_HOCHLADEN_ZUORDNUNG.csv niemals weitergeben."
         )
+        if context is not None:
+            try:
+                stored = workflow.ai_chain.register_first_export(
+                    context[0], context[1], result.pfad
+                )
+            except (OSError, ValueError) as exc:
+                detail += " Workflow-Zuordnung fehlgeschlagen: " + str(exc)
+                workflow.set_notice(
+                    "KI-Paket erstellt, aber automatische Übernahme fehlgeschlagen: "
+                    + str(exc), error=True,
+                )
+            else:
+                workflow.refresh_ai_chain()
+                workflow.set_notice(
+                    "1. KI-Paket automatisch lokal gesichert: "
+                    + stored.paket_id[:12] + "… · kein erneutes Auswählen nötig."
+                )
+        if self._first_export_dialog is not None:
+            self._first_export_dialog.complete(result.pfad, details=detail)
 
     def _ai_import_completed(self, result: object) -> None:
         round_number = self._pending_ai_round
@@ -1324,6 +1622,9 @@ class MainWindow(QMainWindow):
         workflow.set_notice(f"{count} neue Unterlage(n) archiviert, Duplikate übersprungen.")
 
     def _context_failed(self, message: str) -> None:
+        if self._second_export_dialog is not None and self._context_worker is not None:
+            self._second_export_dialog.fail(message)
+            self._pending_cluster_context = None
         self.pages["workflow"].set_notice(
             "Unterlagenverarbeitung: " + message, error=True
         )
@@ -1338,18 +1639,13 @@ class MainWindow(QMainWindow):
         workflow.refresh()
 
     def _context_export(self) -> None:
-        """Nur Schritt 05; erste Basis + erste ChatGPT-Auswertung automatisch."""
+        """Die zweite ChatGPT-Runde verwendet dieselbe Exportkarte."""
         workflow = self.pages["workflow"]
         workflow.refresh_ai_chain()
         package = workflow.first_package
-        if package is None:
+        if package is None or package.analysis_id is None:
             workflow.set_notice(
-                "Zuerst in Schritt 03 das erste KI-Paket erstellen.", error=True
-            )
-            return
-        if package.analysis_id is None:
-            workflow.set_notice(
-                "Erstes ChatGPT-Ergebnis in Schritt 03 noch nicht importiert.",
+                "Zuerst erstes KI-Paket und ChatGPT-Rückimport abschließen.",
                 error=True,
             )
             return
@@ -1358,39 +1654,54 @@ class MainWindow(QMainWindow):
             return
         try:
             workflow.ai_chain.validate_cached_zip(package)
-            first_result = workflow.ai_chain.first_result(package.paket_id)
-            if first_result is None:
+            if workflow.ai_chain.first_result(package.paket_id) is None:
                 raise ValueError("Zugehörige erste ChatGPT-Auswertung fehlt.")
         except (OSError, ValueError) as exc:
-            workflow.set_notice("Erste KI-Analyse nicht verwendbar: " + str(exc), error=True)
-            return
-        originals = workflow.cluster_originals.isChecked()
-        warning = (
-            "Das zweite ChatGPT-Paket wird NUR LOKAL erzeugt.\n\n"
-            "Es enthält die erste ChatGPT-Auswertung, die pseudonymisierte "
-            "Analysebasis und das Inventar der Unterlagen aus Schritt 04. "
-            "Auch pseudonymisierte Daten und Modell-Freitexte können "
-            "vertraulich bzw. reidentifizierbar sein.\n\n"
-        )
-        if originals:
-            warning += (
-                "Unveränderte technische Originaldateien werden beigefügt. "
-                "Diese können echte FINs, Namen und vertrauliche Entwicklungs-"
-                "daten enthalten.\n\n"
+            workflow.set_notice(
+                "Erste KI-Analyse nicht verwendbar: " + str(exc),
+                error=True,
             )
-        warning += (
-            "Es erfolgt KEIN Upload. Nur intern freigegeben übertragen. "
-            "Lokales Clusterpaket jetzt erstellen?"
-        )
-        decision = QMessageBox.question(
-            self, "Clusterpaket · Datenfreigabe", warning,
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-            QMessageBox.StandardButton.No,
-        )
-        if decision != QMessageBox.StandardButton.Yes:
             return
+        dialog = self._show_export_prompt(
+            "ChatGPT-Clusterkontext exportieren · Durchlauf 2",
+            "Die erste ChatGPT-Auswertung und die vorhandene pseudonymisierte "
+            "Basis werden übernommen. Unveränderte technische Unterlagen "
+            "nur mit ausdrücklicher Freigabe beifügen. Kein Upload.",
+            options=(
+                (
+                    "technical_originals",
+                    "Technische Originalunterlagen beifügen (vertraulich)",
+                    False,
+                ),
+            ),
+        )
+        self._second_export_dialog = dialog
+        dialog.start_requested.connect(self._context_export_start)
+        dialog.finished.connect(
+            lambda _code: self._clear_export_dialog("second", dialog)
+        )
+
+    def _context_export_start(self, options: dict) -> None:
+        dialog = self._second_export_dialog
+        workflow = self.pages["workflow"]
+        package = workflow.first_package
+        if dialog is None or package is None:
+            return
+        originals = bool(options.get("technical_originals"))
+        if originals:
+            reply = QMessageBox.warning(
+                dialog, "Vertrauliche technische Originale beifügen?",
+                "Unveränderte technische Belege können echte FINs, Namen und "
+                "vertrauliche Entwicklungsinformationen enthalten. "
+                "Keine automatische Anonymisierung oder Verschlüsselung. "
+                "Nur intern freigegeben teilen. Originale wirklich einfügen?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No,
+            )
+            if reply != QMessageBox.StandardButton.Yes:
+                return
         dest, _ = QFileDialog.getSaveFileName(
-            self, "Zweiter ChatGPT-Durchlauf · Clusterkontext",
+            dialog, "Zweiter ChatGPT-Durchlauf · Clusterkontext",
             str(Path.home() / "NTF_Clusterkontext_Durchlauf2.zip"),
             "Clusterpaket (*.zip)",
         )
@@ -1399,6 +1710,21 @@ class MainWindow(QMainWindow):
         path = Path(dest)
         if path.suffix.lower() != ".zip":
             path = path.with_suffix(".zip")
+        if path.exists():
+            QMessageBox.warning(
+                dialog, "Zieldatei bereits vorhanden",
+                "Bitte einen neuen Dateinamen wählen. Vorhandene "
+                "ChatGPT-Pakete werden nicht überschrieben.",
+            )
+            return
+        try:
+            workflow.ai_chain.validate_cached_zip(package)
+            first_result = workflow.ai_chain.first_result(package.paket_id)
+            if first_result is None:
+                raise ValueError("Erste ChatGPT-Auswertung fehlt.")
+        except (OSError, ValueError) as exc:
+            dialog.fail(str(exc))
+            return
         self._pending_cluster_context = (
             workflow.profile_id, workflow._context_part, package.paket_id,
         )
@@ -1410,37 +1736,41 @@ class MainWindow(QMainWindow):
         self._context_worker = worker
         workflow.set_context_busy(True)
         workflow.set_notice("Zweites Clusterpaket wird lokal erstellt …")
+        worker.progress.connect(dialog.update_message)
         worker.completed.connect(self._context_export_completed)
         worker.failed.connect(self._context_failed)
         worker.finished.connect(self._context_worker_finished)
+        dialog.begin("Clusterkontext wird lokal erstellt …")
         worker.start()
 
     def _context_export_completed(self, result: object) -> None:
         workflow = self.pages["workflow"]
         context = self._pending_cluster_context
         self._pending_cluster_context = None
-        if context is None:
-            workflow.set_notice("Clusterpaket erstellt, Projektbindung fehlt.", error=True)
-            return
-        try:
-            workflow.ai_chain.register_second_export(
-                context[0], context[1], result.parent_package_id,
-                result.analysis_id,
-            )
-        except ValueError as exc:
-            workflow.set_notice(
-                "Clusterpaket erstellt, Rückimport-Kennung nicht gespeichert: "
-                + str(exc), error=True,
-            )
-            return
-        workflow.refresh_ai_chain()
-        workflow.set_notice(
-            f"2. KI-Paket erstellt: {result.path.name} · "
-            f"{result.file_count} Unterlagen, "
-            f"{result.included_files} Originale · "
-            f"neue Analyse-ID {result.analysis_id}. "
-            "Ergebnis-JSON später hier wieder importieren."
-        )
+        detail = "Zweites ChatGPT-Paket vollständig gespeichert."
+        if context is not None:
+            try:
+                workflow.ai_chain.register_second_export(
+                    context[0], context[1], result.parent_package_id,
+                    result.analysis_id,
+                )
+            except ValueError as exc:
+                detail += " Rückimport-Kennung nicht gespeichert: " + str(exc)
+                workflow.set_notice(
+                    "Clusterpaket erstellt, Rückimport-Kennung nicht gespeichert: "
+                    + str(exc), error=True,
+                )
+            else:
+                workflow.refresh_ai_chain()
+                workflow.set_notice(
+                    f"2. KI-Paket erstellt: {result.path.name} · "
+                    f"{result.file_count} Unterlagen, "
+                    f"{result.included_files} Originale · "
+                    f"neue Analyse-ID {result.analysis_id}. "
+                    "Ergebnis-JSON später hier wieder importieren."
+                )
+        if self._second_export_dialog is not None:
+            self._second_export_dialog.complete(result.path, details=detail)
 
     def _cluster_import(self) -> None:
         """Nur Antworten eines für dieses Projekt erzeugten 2. Pakets."""
@@ -1647,6 +1977,19 @@ class MainWindow(QMainWindow):
         workflow = self.pages["workflow"]
         source = self.pages["sources"]
         if action.startswith("parser_diagnostics:"):
+            if not self._portable_transfer_ready():
+                workflow.set_notice(
+                    "Fehler-ZIP erst nach Abschluss laufender Abrufe, Parser- "
+                    "oder Projekttransfers erstellen.",
+                    error=True,
+                )
+                QMessageBox.warning(
+                    self, "Fehler-ZIP derzeit gesperrt",
+                    "Ein Abruf, Parser oder Datentransfer ist noch aktiv. "
+                    "Bitte den laufenden Vorgang abschließen, bevor ein "
+                    "Fehlerpaket erzeugt wird.",
+                )
+                return
             category = action.partition(":")[2]
             coverage = workflow._source_coverage.get(category)
             if coverage is None or not coverage.local_paths:
@@ -1733,6 +2076,10 @@ class MainWindow(QMainWindow):
             dest = Path(filename)
             if dest.suffix.lower() != ".csv":
                 dest = dest.with_suffix(".csv")
+            dialog = self._show_operation_progress(
+                "QEC-FIN-Liste exportieren",
+                "Projektbezogene FIN-/QEC-Fälle werden als CSV gespeichert …",
+            )
             try:
                 count = source.workflow_store.export_csv(
                     dest, workflow.qec_root, part_number=part,
@@ -1741,8 +2088,15 @@ class MainWindow(QMainWindow):
                     },
                 )
             except (OSError, ValueError) as exc:
-                QMessageBox.warning(self, "QEC-FIN-Export", str(exc))
+                dialog.fail(str(exc))
                 return
+            dialog.complete(
+                dest,
+                details=(
+                    f"{count} QEC-Fälle exportiert. Die Datei enthält echte "
+                    "FINs: nur intern freigegeben weitergeben."
+                ),
+            )
             workflow.set_notice(
                 f"{count} QEC-Fälle lokal exportiert. "
                 "Die Datei enthält echte FINs: nur intern freigegeben weitergeben."

@@ -172,3 +172,70 @@ def test_parser_diagnostics_supports_tp_tips_and_cdd_without_originals(tmp_path)
         assert set(archive.namelist()) == {"diagnose.json", "HINWEISE.txt"}
         manifest = json.loads(archive.read("diagnose.json"))
         assert manifest["dateien"][0]["format"] == "tp_dashboard_csv"
+
+
+def test_existing_empty_zip_requires_consent_then_is_atomically_replaced(tmp_path):
+    service, _, _ = setup_bad_reports(tmp_path)
+    destination = tmp_path / "vorher-leeres-diagnosepaket.zip"
+    destination.write_bytes(b"")
+    with pytest.raises(FileExistsError):
+        export_parser_diagnostics(service, tmp_path, destination)
+    assert destination.stat().st_size == 0
+
+    messages = []
+    result = export_parser_diagnostics(
+        service, tmp_path, destination,
+        overwrite_existing=True, progress=messages.append,
+    )
+    assert result.path == destination
+    assert destination.stat().st_size > 0
+    assert any("ZIP-Dateien schreiben:" in message for message in messages)
+    with ZipFile(destination) as archive:
+        assert archive.testzip() is None
+        assert "diagnose.json" in archive.namelist()
+
+
+def test_failed_export_never_replaces_existing_zip(tmp_path):
+    service, _, _ = setup_bad_reports(tmp_path)
+    destination = tmp_path / "bereits-exportiert.zip"
+    old_bytes = b"VORHERIGES-PAKET"
+    destination.write_bytes(old_bytes)
+    source = service.list_artifacts()[0]
+    import pathlib
+    original = pathlib.Path(source.archived_path)
+    original.write_bytes(original.read_bytes() + b"geaendert")
+    with pytest.raises(ValueError, match="Archivprüfsumme"):
+        export_parser_diagnostics(
+            service, tmp_path, destination,
+            overwrite_existing=True, include_originals=True,
+        )
+    assert destination.read_bytes() == old_bytes
+    assert not list(tmp_path.glob(".ntf-parser-diagnose-*.zip"))
+
+
+def test_project_diagnostics_avoids_unrelated_global_pdf_scan(
+    tmp_path, monkeypatch,
+):
+    import ntf_insight.ingestion.parser_diagnostics as diagnostics
+
+    service, quicktest, _qec = setup_bad_reports(tmp_path)
+    monkeypatch.setattr(
+        diagnostics, "list_downloaded_quicktests",
+        lambda _root: (_ for _ in ()).throw(
+            AssertionError("Unrelated vehicle archives must not be scanned")
+        ),
+    )
+    monkeypatch.setattr(
+        diagnostics, "list_downloaded_qec_reports",
+        lambda _root: (_ for _ in ()).throw(
+            AssertionError("Unrelated QEC archives must not be scanned")
+        ),
+    )
+    progress = []
+    found = find_parser_problems(
+        service, tmp_path, progress=progress.append,
+        category="diagnosis_viewer", scope_paths=(quicktest,),
+    )
+    assert len(found) == 1
+    assert found[0].kind == "quicktests"
+    assert any("Projektdateien prüfen: 1/1" in msg for msg in progress)

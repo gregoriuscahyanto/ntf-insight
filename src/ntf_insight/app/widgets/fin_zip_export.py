@@ -39,6 +39,10 @@ class FinZipExportWorker(QThread):
 class FinZipExportPanel(QWidget):
     """One ZIP per unique FIN; selection is shared with QEC/QuickTest."""
 
+    export_started = Signal(str)
+    export_progress = Signal(str)
+    export_completed = Signal(object)
+
     def __init__(
         self,
         data_dir: Path,
@@ -119,12 +123,18 @@ class FinZipExportPanel(QWidget):
         # There must never be one combined all-FIN archive.
         self.worker = FinZipExportWorker(sorted(set(fins)), self.data_dir, Path(target))
         self.worker.progress.connect(self.status.setText)
+        self.worker.progress.connect(self.export_progress.emit)
         self.worker.completed.connect(self._completed)
         self.worker.finished.connect(self._finished)
         self.set_selection_count(self._all_count, self._selected_count)
+        self.export_started.emit(str(self.worker.destination))
         self.worker.start()
 
     def _completed(self, results: list[FinZipResult]) -> None:
+        self.export_completed.emit((
+            results,
+            str(self.worker.destination) if self.worker is not None else "",
+        ))
         succeeded = [item for item in results if item.zip_path is not None]
         no_data = [item for item in results
                    if item.zip_path is None and any(

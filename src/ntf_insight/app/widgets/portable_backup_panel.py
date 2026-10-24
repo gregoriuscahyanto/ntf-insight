@@ -51,6 +51,10 @@ class PortableBackupPanel(QWidget):
 
     restored = Signal(object)
     transfer_busy = Signal(bool)
+    operation_started = Signal(str)
+    operation_progress = Signal(str)
+    operation_completed = Signal(object)
+    operation_failed = Signal(str)
 
     def __init__(self, data_dir: Path, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -165,6 +169,7 @@ class PortableBackupPanel(QWidget):
         self._pending_restore = None
         self.worker = PortableTransferWorker(action, self.data_dir, package)
         self.worker.progress.connect(self.status.setText)
+        self.worker.progress.connect(self.operation_progress.emit)
         self.worker.completed.connect(self._completed)
         self.worker.failed.connect(self._failed)
         self.worker.finished.connect(self._finished)
@@ -174,11 +179,13 @@ class PortableBackupPanel(QWidget):
             "Ausgewerteten Bestand sichern …" if action == "export"
             else "Paket prüfen und Daten wiederherstellen …"
         )
+        self.operation_started.emit(action)
         self.transfer_busy.emit(True)
         self.worker.start()
 
     def _completed(self, result: object) -> None:
-        if isinstance(result, object) and hasattr(result, "path"):
+        self.operation_completed.emit(result)
+        if hasattr(result, "path"):
             self.status.setText(
                 "Gesamtstand in einer Datei gesichert: "
                 + result.path.name
@@ -192,6 +199,7 @@ class PortableBackupPanel(QWidget):
             )
 
     def _failed(self, message: str) -> None:
+        self.operation_failed.emit(message)
         self.status.setText(
             "Transfer fehlgeschlagen: " + message
             + " · Der bisherige Datenstand bleibt bei Prüfungsfehlern unverändert."

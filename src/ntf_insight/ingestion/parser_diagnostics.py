@@ -74,8 +74,8 @@ def find_parser_problems(
             if path.stat().st_size > MAX_PACKAGE_BYTES * 16:
                 continue
             scope_shas.add(sha256_file(path))
-            if progress and number % 25 == 0:
-                progress(f"Projektbezogene Quellen prüfen: {number}/{len(scope_paths)}")
+            if progress and (number == 1 or number % 10 == 0 or number == len(scope_paths)):
+                progress(f"Projektdateien prüfen: {number}/{len(scope_paths)}")
 
     from ntf_insight.storage.quicktest_store import QuickTestStore
     QuickTestStore(service.store)  # Bei einem frischen Roharchiv noch nicht angelegt.
@@ -112,17 +112,26 @@ def find_parser_problems(
     # detection. Attribute these only when their SHA matches a *real* local
     # downloaded QuickTest/QEC path, not an arbitrary other archive file.
     downloaded: dict[str, str] = {}
-    quicktests = list_downloaded_quicktests(data_dir)
-    qecs = list_downloaded_qec_reports(data_dir)
-    for index, (path, kind) in enumerate(
-        [(p, "quicktests") for p in quicktests] + [(p, "qec") for p in qecs],
-        start=1,
-    ):
-        if index % 100 == 0 and progress:
-            progress(f"Parser-Problemdateien abgleichen: {index}/{len(quicktests) + len(qecs)}")
-        digest = sha256_file(path)
-        if digest in artifacts:
-            downloaded[digest] = kind
+    if scope_shas is not None and category is not None:
+        # Schritt 04 hat seine exakte Projekt-/Quellmenge bereits bestimmt.
+        # Nicht zusätzlich tausende fremde PDF/JSONs im ganzen Bestand hashen.
+        kind = {"diagnosis_viewer": "quicktests", "qec": "qec"}.get(category)
+        if kind is not None:
+            downloaded = {digest: kind for digest in scope_shas}
+    else:
+        quicktests = list_downloaded_quicktests(data_dir)
+        qecs = list_downloaded_qec_reports(data_dir)
+        sources = [(p, "quicktests") for p in quicktests] + [
+            (p, "qec") for p in qecs
+        ]
+        for index, (path, kind) in enumerate(sources, start=1):
+            if progress and (index == 1 or index % 25 == 0 or index == len(sources)):
+                progress(
+                    f"Quellarchive prüfen: {index}/{len(sources)}"
+                )
+            digest = sha256_file(path)
+            if digest in artifacts:
+                downloaded[digest] = kind
 
     found: list[ParserProblem] = []
     root = service.archive.root.resolve()
@@ -208,6 +217,7 @@ def export_parser_diagnostics(
     destination: Path,
     *,
     include_originals: bool = False,
+    overwrite_existing: bool = False,
     progress: Callable[[str], None] | None = None,
     category: str | None = None,
     scope_paths: tuple[Path, ...] | None = None,
@@ -220,8 +230,11 @@ def export_parser_diagnostics(
     confidential; no claim of automatic anonymization is made.
     """
     destination = Path(destination).absolute()
-    if destination.exists():
-        raise FileExistsError("Das Fehlerpaket existiert bereits; bitte anderen Dateinamen wählen.")
+    if destination.exists() and not overwrite_existing:
+        raise FileExistsError(
+            "Die Zieldatei existiert bereits. Ein Überschreiben ist nur "
+            "nach ausdrücklicher Bestätigung erlaubt."
+        )
     if destination.suffix.lower() != ".zip":
         raise ValueError("Parser-Diagnosepaket muss die Endung .zip verwenden.")
     if progress:
@@ -296,8 +309,10 @@ def export_parser_diagnostics(
                     "originaldatei_enthalten": inclusion,
                     "datei_im_paket": entry_name if inclusion else None,
                 })
-                if progress and number % 5 == 0:
-                    progress(f"Diagnosepaket: {number}/{len(selected)} Fälle dokumentiert …")
+                if progress:
+                    progress(
+                        f"ZIP-Dateien schreiben: {number}/{len(selected)}"
+                    )
             archive.writestr(
                 "diagnose.json",
                 json.dumps({
@@ -308,9 +323,21 @@ def export_parser_diagnostics(
                     "dateien": manifest,
                 }, ensure_ascii=False, indent=2),
             )
-        if destination.exists():
-            raise FileExistsError("Das Ziel ist zwischenzeitlich bereits vorhanden.")
+        # Nur vollständig geschriebene und geprüfte ZIPs publizieren.
+        if tmp.stat().st_size <= 0:
+            raise ValueError("Das Parser-Diagnosepaket wurde leer erstellt.")
+        with ZipFile(tmp, "r") as verify:
+            if verify.testzip() is not None or not {
+                "diagnose.json", "HINWEISE.txt",
+            }.issubset(verify.namelist()):
+                raise ValueError("ZIP-Prüfung vor dem Speichern fehlgeschlagen.")
+        if destination.exists() and not overwrite_existing:
+            raise FileExistsError("Das Ziel wurde während des Exports bereits angelegt.")
         os.replace(tmp, destination)
+        if not destination.is_file() or destination.stat().st_size <= 0:
+            raise ValueError("Der ZIP-Export wurde nicht erfolgreich gespeichert.")
+        if progress:
+            progress("ZIP-Datei vollständig und überprüft gespeichert.")
     finally:
         tmp.unlink(missing_ok=True)
     return ParserDiagnosticsResult(

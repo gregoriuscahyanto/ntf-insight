@@ -70,10 +70,23 @@ def _ecu_header(lines: list[tuple[str, int]], index: int) -> dict[str, str] | No
     line = lines[index][0]
     if " - " not in line:
         return None
-    if not (
-        (index + 1 < len(lines) and lines[index + 1][0].casefold() == "general information")
-        or LEGACY_ECU.fullmatch(line)
-    ):
+    # XENTRY PDF cells sometimes wrap the ECU description onto one or two
+    # additional lines before "General information", even when the trailing
+    # fragment is long. We still require the actual code/location heading;
+    # never synthesize an unknown ECU to satisfy the reported count.
+    follows_general = any(
+        index + offset < len(lines)
+        and lines[index + offset][0].casefold() == "general information"
+        and all(
+            not re.match(
+                r"^(?:QuickTest\s+\d+|ECUS\s*\(|FAULT CODES\s*\()",
+                lines[intermediate][0], re.I,
+            )
+            for intermediate in range(index + 1, index + offset)
+        )
+        for offset in (1, 2, 3)
+    )
+    if not (follows_general or LEGACY_ECU.fullmatch(line)):
         return None
     head, _, name = line.partition(" - ")
     if "-" not in head:
@@ -246,11 +259,14 @@ def parse_quicktest_structure(page_texts: list[str]) -> dict[str, Any]:
     """
     if not any(page_texts):
         raise ValueError("QuickTest ohne durchsuchbare Textebene; OCR nicht verfuegbar.")
+    # First remove PDF extraction artefacts, THEN discard empty cells.
+    # Filtering before removing NUL produced phantom blank headers and
+    # caused otherwise complete reports to fail the strict ECU count check.
     lines = [
-        (line.strip().replace("\x00", ""), page)
+        (cleaned, page)
         for page, text in enumerate(page_texts, 1)
-        for line in text.splitlines()
-        if line.strip()
+        for raw in text.splitlines()
+        if (cleaned := raw.replace("\x00", "").strip())
     ]
     # Narrow PDF cells can put FC/EV in one text line and the DTC in the next.
     normalized: list[tuple[str, int]] = []

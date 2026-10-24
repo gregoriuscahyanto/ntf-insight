@@ -519,13 +519,26 @@ def test_source_row_colors_and_live_document_progress(tmp_path, monkeypatch):
     bar = page.context_operation_bars["diagnosis_viewer"]
     assert bar.maximum() == 171 and bar.value() == 12
     assert page.context_operation_labels["diagnosis_viewer"].isHidden() is False
+    assert page.context_operation_labels["diagnosis_viewer"].text() == (
+        "Abruf: 12/171 FINs"
+    )
+    assert page.context_coverage_bars["diagnosis_viewer"].isHidden()
+    assert page.context_source_dates["diagnosis_viewer"].isHidden()
     page.set_context_operation("diagnosis_viewer", False)
     assert bar.isHidden()
+    assert not page.context_coverage_bars["diagnosis_viewer"].isHidden()
+    assert not page.context_source_dates["diagnosis_viewer"].isHidden()
     page.set_context_operation(
         "tp_dashboard", True, "Lokale Quelle parsen (1/2) …",
     )
     assert page.context_operation_bars["tp_dashboard"].maximum() == 2
     assert page.context_operation_bars["tp_dashboard"].value() == 1
+    assert page.context_operation_labels["tp_dashboard"].text() == (
+        "Parsing: 1/2 Dateien"
+    )
+    assert page.context_operation_labels["tp_dashboard"].toolTip().startswith(
+        "Lokale Quelle parsen"
+    )
     page.set_context_operation("tp_dashboard", False)
     window.close()
     app.processEvents()
@@ -714,5 +727,184 @@ def test_chatgpt_buttons_pulse_only_after_two_green_steps_and_turn_green_on_impo
     page.first_package = None
     page._ai_export_ready = False
     page._update_ai_button_states()
+    window.close()
+    app.processEvents()
+
+
+def test_parser_zip_progress_modal_reports_eta_and_visible_failure(
+    tmp_path, monkeypatch,
+):
+    app, window = _window(tmp_path, monkeypatch)
+    window.show()
+    app.processEvents()
+    window._diagnostics_started("Fehler-ZIP erstellen …")
+    assert window._diagnostics_dialog is not None
+    assert window._loading_overlay.isVisible()
+    assert window.stack.graphicsEffect() is not None
+    window._diagnostics_progress("ZIP-Dateien schreiben: 2/5")
+    dialog = window._diagnostics_dialog
+    assert dialog.maximum() == 5
+    assert dialog.value() == 2
+    assert "2/5" in dialog.labelText()
+    window._diagnostics_failed("synthetischer Dateizugriffsfehler")
+    window._diagnostics_ended()
+    assert window._diagnostics_dialog is None
+    assert dialog.isVisible() and dialog.close_button.isVisible()
+    assert "synthetischer" in dialog.labelText()
+    assert not dialog.folder_button.isVisible()
+    assert window._loading_overlay.isVisible()
+    dialog.close()
+    app.processEvents()
+    assert not window._loading_overlay.isVisible()
+    assert window.stack.graphicsEffect() is None
+    window.close()
+    app.processEvents()
+
+
+def test_parser_zip_success_shows_real_destination_and_folder_action(
+    tmp_path, monkeypatch,
+):
+    app, window = _window(tmp_path, monkeypatch)
+    window.show()
+    app.processEvents()
+    destination = tmp_path / "synthetic-parser-errors.zip"
+    destination.write_bytes(b"synthetic nonempty file")
+    window._diagnostics_started("ZIP erstellen")
+    dialog = window._diagnostics_dialog
+    window._diagnostics_progress("ZIP-Dateien schreiben: 1/1")
+    window._diagnostics_saved(str(destination))
+    window._diagnostics_ended()
+    assert window._diagnostics_dialog is None
+    assert dialog.isVisible()
+    assert dialog.folder_button.isVisible()
+    assert str(destination) in dialog.destination_label.text()
+    assert "Byte" in dialog.destination_label.text()
+    assert window._loading_overlay.isVisible()
+    dialog.close()
+    app.processEvents()
+    assert not window._loading_overlay.isVisible()
+    window.close()
+    app.processEvents()
+
+
+def test_project_transfer_uses_same_blurred_progress_overlay(tmp_path, monkeypatch):
+    app, window = _window(tmp_path, monkeypatch)
+    window.show()
+    app.processEvents()
+    dialog = window._show_operation_progress(
+        "Projekt exportieren", "Projektpaket vorbereiten …",
+    )
+    window._project_transfer_dialog = dialog
+    assert window._loading_overlay.isVisible()
+    assert window.stack.graphicsEffect() is not None
+    window._project_transfer_progress(40, "Projektdateien sammeln")
+    assert dialog.maximum() == 100
+    assert dialog.value() == 40
+    assert "Projektdateien sammeln" in dialog.labelText()
+    destination = tmp_path / "synthetic-project.ntfproject"
+    destination.write_bytes(b"synthetic project package")
+    dialog.complete(destination)
+    assert dialog.folder_button.isVisible()
+    assert str(destination) in dialog.destination_label.text()
+    window._project_transfer_dialog = None
+    dialog.close()
+    app.processEvents()
+    assert not window._loading_overlay.isVisible()
+    assert window.stack.graphicsEffect() is None
+    window.close()
+    app.processEvents()
+
+
+def test_first_chatgpt_dialog_has_both_optins_unchecked_and_safely_passes_choices(
+    tmp_path, monkeypatch,
+):
+    from PySide6.QtWidgets import QFileDialog
+
+    app, window = _window(tmp_path, monkeypatch)
+    window.show()
+    app.processEvents()
+    panel = window.pages["sources"].ki_analyse_panel
+    assert panel._use_shared_export_dialog
+    panel.export_options_requested.emit()
+    dialog = window._first_export_dialog
+    assert dialog is not None and dialog.isVisible()
+    assert window._loading_overlay.isVisible()
+    assert not dialog.checkboxes["text"].isChecked()
+    assert not dialog.checkboxes["originals"].isChecked()
+    assert "QEC-/TIPS-/Werkstatt-/Lieferanten" in dialog.checkboxes["text"].text()
+    assert "Vollständige QEC" in dialog.checkboxes["originals"].text()
+
+    chosen = tmp_path / "chatgpt-erste-runde.zip"
+    monkeypatch.setattr(
+        QFileDialog, "getSaveFileName",
+        lambda *_args, **_kwargs: (str(chosen), ""),
+    )
+    calls = []
+    monkeypatch.setattr(
+        panel, "start_export",
+        lambda path, **kwargs: calls.append((path, kwargs)) or False,
+    )
+    dialog.checkboxes["text"].setChecked(True)
+    dialog.checkboxes["originals"].setChecked(True)
+    dialog.start_button.click()
+    assert len(calls) == 1
+    assert calls[0] == (chosen, {
+        "mit_freitext": True,
+        "mit_qec_originalen": True,
+        "confirmation_parent": dialog,
+    })
+    assert not dialog._running  # Nur ein erfolgreich gestarteter Export sperrt.
+    dialog.close()
+    app.processEvents()
+    assert window._first_export_dialog is None
+    assert not window._loading_overlay.isVisible()
+    window.close()
+    app.processEvents()
+
+
+def test_export_dialog_keeps_completed_file_and_estimated_remaining_time(
+    tmp_path, monkeypatch,
+):
+    from ntf_insight.app.widgets.export_operation_dialog import (
+        ExportOperationDialog,
+    )
+
+    app, window = _window(tmp_path, monkeypatch)
+    window.show()
+    app.processEvents()
+    dialog = window._show_operation_progress(
+        "Zweiter ChatGPT-Export", "Paket vorbereiten …",
+    )
+    assert isinstance(dialog, ExportOperationDialog)
+    dialog.update_message("KI-Basis kopieren: 2/8")
+    assert dialog.maximum() == 8 and dialog.value() == 2
+    assert "Restzeit" in dialog.time_label.text() or "geschätzt" in dialog.time_label.text()
+    directory = tmp_path / "FINs"
+    directory.mkdir()
+    dialog.complete_directory(directory, details="Sammel-Export erfolgreich.")
+    assert dialog.folder_button.isVisible()
+    assert str(directory) in dialog.destination_label.text()
+    dialog.close()
+    app.processEvents()
+    assert not window._loading_overlay.isVisible()
+    window.close()
+    app.processEvents()
+
+
+def test_window_cannot_close_mid_zip_or_project_transfer(tmp_path, monkeypatch):
+    from PySide6.QtGui import QCloseEvent
+
+    app, window = _window(tmp_path, monkeypatch)
+    window._project_transfer_worker = object()
+    event = QCloseEvent()
+    window.closeEvent(event)
+    assert not event.isAccepted()
+    window._project_transfer_worker = None
+
+    window.pages["sources"]._diagnostics_worker = object()
+    event = QCloseEvent()
+    window.closeEvent(event)
+    assert not event.isAccepted()
+    window.pages["sources"]._diagnostics_worker = None
     window.close()
     app.processEvents()

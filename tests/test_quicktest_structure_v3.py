@@ -128,3 +128,98 @@ def test_legacy_supplier_and_hardware_fields_are_not_mixed_with_labels():
     assert meta["hardware_version"] == "23/15 000"
     assert meta["supplier"] == "Example"
     assert meta["software_version"] == "25/04 002"
+
+
+def test_v4_ignoriert_nullzellen_zwischen_ecu_kopf_und_allgemeinen_daten():
+    lines = _header() + ["QuickTest 1", "ECU Count 1", "ECUS (1)"]
+    lines += [
+        "CPC3-N127 - Steuergeraet Antriebsstrang",
+        "\x00",  # Extraktionsartefakt aus einem PDF-Tabellenfeld
+        "General information",
+        "ECU variant CPC3_SYNTH",
+        "FAULT CODES (0)", "No fault codes",
+    ]
+    result = parse_quicktest_structure(["\n".join(lines)])
+    assert result["reported_ecu_count"] == 1
+    assert result["ecus"][0]["ecu_code"] == "CPC3"
+    assert result["observed_dtc_count"] == 0
+
+
+def test_v4_erkennt_umgebrochene_ecu_beschreibung_ohne_falsche_ecu_anzahl():
+    lines = _header() + ["QuickTest 1", "ECU Count 1", "ECUS (1)"]
+    lines += [
+        "CPC3-N127 - Steuergeraet Antriebsstrang",
+        "X",  # Einzelnes umgebrochenes Zeichen zwischen Kopf und Abschnitt
+        "General information",
+        "SW version 26/01",
+        "FAULT CODES (1)",
+        "FC", "P20EA9A - Testfehler. S",
+        "Name Value (first occurence or unknown)Value (last occurence)",
+        "Frequency_Count 2",
+    ]
+    result = parse_quicktest_structure(["\n".join(lines)])
+    assert result["reported_ecu_count"] == 1
+    assert result["ecus"][0]["faults"][0]["code"] == "P20EA9A"
+    assert result["observed_dtc_count"] == 1
+
+
+def test_v4_erfindet_auch_bei_pdf_artefakten_keine_fehlenden_ecus():
+    lines = _header() + ["QuickTest 1", "ECU Count 2", "ECUS (2)"]
+    lines += [
+        "CPC3-N127 - Steuergeraet Antriebsstrang",
+        "\x00", "General information",
+        "FAULT CODES (0)",
+    ]
+    with pytest.raises(ValueError, match="ECU-Anzahl stimmt nicht"):
+        parse_quicktest_structure(["\n".join(lines)])
+
+
+def test_v4_unterstuetzt_umfangreiche_aber_begrenzte_pdf_berichte(
+    tmp_path, monkeypatch,
+):
+    from ntf_insight.ingestion import quicktest_detailed
+    from ntf_insight.ingestion.real_source_parsers import QuickTestPdfParser
+
+    class FakePage:
+        def __init__(self, text=""):
+            self.text = text
+
+        def extract_text(self):
+            return self.text
+
+    class FakeReader:
+        is_encrypted = False
+
+        def __init__(self, _path, strict=False):
+            lines = _header() + [
+                "QuickTest 1", "ECU Count 1", "ECUS (1)",
+                "CPC3-N127 - Steuergeraet Antriebsstrang",
+                "General information",
+                "FAULT CODES (0)", "No fault codes",
+            ]
+            self.pages = [FakePage("\n".join(lines))]
+            self.pages.extend(FakePage() for _ in range(306))
+
+    monkeypatch.setattr(quicktest_detailed, "PdfReader", FakeReader)
+    pdf = tmp_path / "synthetischer_quicktest.pdf"
+    pdf.write_bytes(b"FAKE PDF reader monkeypatched")
+    parsed = QuickTestPdfParser("f" * 64).parse(pdf)
+    assert QuickTestPdfParser.version == "4.0.0"
+    assert parsed.quicktest_report is not None
+    assert parsed.quicktest_report["reported_ecu_count"] == 1
+
+
+def test_v4_erkennt_zwei_lange_umbruchzeilen_zwischen_ecu_kopf_und_metadaten():
+    lines = _header() + ["QuickTest 1", "ECU Count 1", "ECUS (1)"]
+    lines += [
+        "CPC3-N127 - Steuergeraet fuer synthetische Funktionsgruppe",
+        "mit einer weiteren harmlosen Beschreibung",
+        "und einer zweiten umgebrochenen Namensergaenzung",
+        "General information",
+        "ECU variant CPC3_SYNTH",
+        "FAULT CODES (0)", "No fault codes",
+    ]
+    result = parse_quicktest_structure(["\n".join(lines)])
+    assert result["reported_ecu_count"] == 1
+    assert result["ecus"][0]["ecu_code"] == "CPC3"
+    assert result["observed_dtc_count"] == 0
