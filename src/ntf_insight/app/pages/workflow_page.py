@@ -359,10 +359,10 @@ class WorkflowPage(QWidget):
         headings = QGridLayout(headers)
         headings.setContentsMargins(9, 0, 9, 0)
         for column, title in enumerate((
-            "Quelle", "Portalabruf", "Parser", "Fehlerpaket", "Status",
+            "Quelle", "Portalabruf", "Parser", "Berichte / FINs",
         )):
             headings.addWidget(QLabel(title, objectName="PageSubtitle"), 0, column)
-        headings.setColumnStretch(4, 1)
+        headings.setColumnStretch(3, 1)
         outer_actions.addWidget(headers)
 
         self.qec_action_row = QFrame(objectName="SourceCoverageRow")
@@ -373,8 +373,8 @@ class WorkflowPage(QWidget):
         grid.setColumnMinimumWidth(0, 105)
         grid.setColumnMinimumWidth(1, 235)
         grid.setColumnMinimumWidth(2, 220)
-        grid.setColumnMinimumWidth(3, 150)
-        grid.setColumnStretch(4, 1)
+        grid.setColumnMinimumWidth(3, 220)
+        grid.setColumnStretch(3, 1)
         grid.addWidget(QLabel("QEC-Befundung"), 0, 0)
 
         downloads = QVBoxLayout()
@@ -447,7 +447,7 @@ class WorkflowPage(QWidget):
 
         self.qec_status = QLabel(objectName="PageSubtitle")
         self.qec_status.setWordWrap(True)
-        grid.addWidget(self.qec_status, 0, 4)
+        grid.addWidget(self.qec_status, 0, 3)
         outer_actions.addWidget(self.qec_action_row)
         body.addLayout(outer_actions)
         donuts = QHBoxLayout()
@@ -459,7 +459,7 @@ class WorkflowPage(QWidget):
         body.addLayout(donuts)
         self.qec_coverage = QLabel(objectName="PageSubtitle")
         self.qec_coverage.setWordWrap(True)
-        body.addWidget(self.qec_coverage)
+        self.qec_coverage.hide()  # Parsing-Donut und Tabellenstatus reichen.
         self.qec_parse_progress = QProgressBar()
         self.qec_parse_progress.setMaximumHeight(9)
         self.qec_parse_progress.setTextVisible(False)
@@ -504,6 +504,7 @@ class WorkflowPage(QWidget):
         body.addLayout(dashboards)
         self.ai_package_status = QLabel(objectName="PageSubtitle")
         self.ai_package_status.setWordWrap(True)
+        self.ai_package_status.hide()
         body.addWidget(self.ai_package_status)
         self.ntf_status = QLabel(objectName="PageSubtitle")
         body.addWidget(self.ntf_status)
@@ -820,6 +821,7 @@ class WorkflowPage(QWidget):
         )
         self.cluster_base_status = QLabel(objectName="PageSubtitle")
         self.cluster_base_status.setWordWrap(True)
+        self.cluster_base_status.hide()
         body.addWidget(self.cluster_base_status)
         options = QHBoxLayout()
         self.cluster_originals = QCheckBox("Technische Originale beifügen (vertraulich)")
@@ -840,6 +842,7 @@ class WorkflowPage(QWidget):
         options.addStretch(1)
         body.addLayout(options)
         self.cluster_result_status = QLabel(objectName="PageSubtitle")
+        self.cluster_result_status.hide()
         body.addWidget(self.cluster_result_status)
         self.cluster_tabs = QTabWidget()
         self.cluster_tabs.setObjectName("ClusterMethodTabs")
@@ -1034,6 +1037,15 @@ class WorkflowPage(QWidget):
                 f"2. Durchlauf: {prepared} Clusterpaket(e) erzeugt, "
                 f"{imported} Ergebnis(se) validiert importiert."
             )
+        self.ai_package_status.setVisible(self.first_package is not None)
+        self.cluster_base_status.setVisible(
+            self.first_package is not None and self.first_package.analysis_id is not None
+        )
+        if self.first_package is not None:
+            prepared, imported = self.ai_chain.second_status(self.first_package.paket_id)
+            self.cluster_result_status.setVisible(bool(prepared or imported))
+        else:
+            self.cluster_result_status.hide()
         self._refresh_controls()
 
     def update_project_transfer_progress(self, percent: int, phase: str) -> None:
