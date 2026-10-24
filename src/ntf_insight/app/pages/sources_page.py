@@ -168,6 +168,7 @@ class SourcesPage(QWidget):
         self._worker: _SourceImportWorker | None = None
         self._diagnostics_worker: _ParserDiagnosticsWorker | None = None
         self._resume_kind: str | None = None
+        self._resume_paths: list[Path] = []
         self._pending_reload = False
         self._quicktests_added = 0
         self.import_service = (
@@ -504,6 +505,8 @@ class SourcesPage(QWidget):
             self._import_existing_qec()
         elif self._resume_kind == "quicktest_errors":
             self._import_failed_quicktests()
+        elif self._resume_kind == "files" and self._resume_paths:
+            self._archive_paths(self._resume_paths)
 
     def _export_parser_problems(self) -> None:
         if (
@@ -711,6 +714,11 @@ class SourcesPage(QWidget):
             self._resume_kind = local_kind
         elif retry_failed_quicktests:
             self._resume_kind = "quicktest_errors"
+        else:
+            # Auch der manuelle Self-Import kann nach Dateigrenze fortgesetzt
+            # werden. Das Archiv dedupliziert unveränderte Originale per SHA.
+            self._resume_kind = "files"
+            self._resume_paths = [Path(path) for path in paths]
         self.cancel_import_button.setEnabled(True)
         self.resume_import_button.setEnabled(False)
         self.problem_zip_button.setEnabled(False)
@@ -814,7 +822,7 @@ class SourcesPage(QWidget):
         )
         self.resume_import_button.setEnabled(
             self.import_service is not None and self.data_dir is not None
-            and self._resume_kind in {"quicktests", "qec", "quicktest_errors"}
+            and self._resume_kind in {"quicktests", "qec", "quicktest_errors", "files"}
         )
         self.archive_button.setEnabled(self.import_service is not None)
         self.local_quicktests_button.setEnabled(
