@@ -447,3 +447,45 @@ def test_legacy_single_part_adoption_keeps_unscoped_workflow_and_documents(
     assert workflow.progress_store.load("coolant_pump", "A 123 456").step == 2
     window.close()
     app.processEvents()
+
+
+def test_source_operation_buttons_toggle_to_stop_and_restore(tmp_path, monkeypatch):
+    app, window = _window(tmp_path, monkeypatch)
+    page = window.pages["workflow"]
+    received = []
+    monkeypatch.setattr(
+        window, "_context_scrape",
+        lambda category, scope: received.append(("abruf", category, scope)),
+    )
+    monkeypatch.setattr(
+        window, "_context_parse_cancel",
+        lambda category: received.append(("parsing_stop", category)),
+    )
+    buttons = page.context_scraper_buttons["diagnosis_viewer"]
+    assert "cancel" not in buttons
+    assert buttons["import"].minimumHeight() >= 64
+
+    page.set_context_scraper_busy("diagnosis_viewer", True, "missing")
+    assert buttons["missing"].text() == "Abruf stoppen"
+    assert buttons["missing"].isEnabled()
+    assert not buttons["all"].isEnabled()
+    page._trigger_context_fetch("diagnosis_viewer", "missing")
+    assert received[-1] == ("abruf", "diagnosis_viewer", "cancel")
+    assert not buttons["missing"].isEnabled()
+    page.set_context_scraper_busy("diagnosis_viewer", False)
+    assert buttons["missing"].text() == "Nur fehlende FINs abrufen"
+
+    page.set_context_parser_busy("diagnosis_viewer", True, "all")
+    assert buttons["parse"].text() == "Parsing stoppen"
+    assert not buttons["resume_parse"].isEnabled()
+    page._trigger_context_parse("diagnosis_viewer", "all")
+    assert received[-1] == ("parsing_stop", "diagnosis_viewer")
+    page.set_context_parser_busy("diagnosis_viewer", False)
+    assert buttons["parse"].text() == "Alle Dokumente neu parsen"
+
+    page.set_context_parser_busy("cdd_smrd", True, "resume")
+    assert page.context_technical_resume["cdd_smrd"].text() == "Parsing stoppen"
+    page.set_context_parser_busy("cdd_smrd", False)
+    assert page.context_technical_resume["cdd_smrd"].text() == "Parsing fortsetzen"
+    window.close()
+    app.processEvents()
