@@ -11,7 +11,7 @@ from PySide6.QtWidgets import QFileDialog, QHBoxLayout, QMainWindow, QMessageBox
 
 from ntf_insight.acquisition.qec_tool import QEC_START
 from ntf_insight.acquisition.diagnosis_viewer import parse_fins
- from ntf_insight.storage.cluster_evidence_store import CATEGORY_LABELS
+from ntf_insight.storage.cluster_evidence_store import CATEGORY_LABELS
 from ntf_insight.app.workers.cluster_context_workers import (
     ClusterContextExportWorker, ClusterEvidenceImportWorker,
 )
@@ -414,19 +414,8 @@ class MainWindow(QMainWindow):
                 )
                 return
             if tab == "cluster":
-                workflow = self.pages["workflow"]
-                if workflow.profile_id != "coolant_pump":
-                    QMessageBox.information(
-                        self, "Bauteilprofil",
-                        "Die vorhandene FIN-Clusteranalyse ist pumpenspezifisch. "
-                        "Für weitere Bauteile müssen passende Diagnosemerkmale "
-                        "zuerst fachlich hinterlegt werden.",
-                    )
-                    return
-                cases.cluster_workspace.set_workflow_part_number(
-                    workflow.part_number.text()
-                )
-                cases.detail_tabs.setCurrentWidget(cases.cluster_workspace)
+                self._open_cluster_from_case("")
+                return
             elif tab == "quicktests" and cases.quicktest_browser is not None:
                 cases.detail_tabs.setCurrentWidget(cases.quicktest_browser)
 
