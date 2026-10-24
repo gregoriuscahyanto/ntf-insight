@@ -835,16 +835,25 @@ class MainWindow(QMainWindow):
         finally:
             source.source_type.setCurrentIndex(before)
         worker = source._worker
-        if worker is not None:
-            worker.completed.connect(
-                lambda summary, ctx=context, cat=category,
-                paths=tuple(Path(name) for name in filenames):
-                self._context_parse_completed(cat, ctx, summary, paths)
+        if worker is None:
+            workflow.source_activity.record(
+                context[0], context[1], category, "Fehlgeschlagen",
             )
-            worker.failed.connect(
-                lambda _message, ctx=context, cat=category:
-                self._context_parse_failed(cat, ctx)
+            workflow.set_notice(
+                "Einlesen konnte nicht gestartet werden. "
+                "Importstatus unter Datenquellen prüfen.", error=True,
             )
+            workflow.refresh_context_files()
+            return
+        worker.completed.connect(
+            lambda summary, ctx=context, cat=category,
+            paths=tuple(Path(name) for name in filenames):
+            self._context_parse_completed(cat, ctx, summary, paths)
+        )
+        worker.failed.connect(
+            lambda _message, ctx=context, cat=category:
+            self._context_parse_failed(cat, ctx)
+        )
         workflow.refresh_context_files()
         if category == "celonis":
             workflow.set_notice(
@@ -862,16 +871,23 @@ class MainWindow(QMainWindow):
         paths: tuple[Path, ...] = (),
     ) -> None:
         workflow = self.pages["workflow"]
+        parsed = bool(summary.files_parsed or summary.quicktests_saved)
         result = (
             "Abgebrochen" if summary.cancelled
-            else "Archiviert" if category == "celonis"
-            else "Eingelesen" if summary.files_parsed or summary.quicktests_saved
+            else "Teilweise" if summary.files_failed and parsed
             else "Fehlgeschlagen" if summary.files_failed
-            else "Archiviert"
+            else "Archiviert" if category == "celonis" or not parsed
+            else "Eingelesen"
         )
         workflow.source_activity.record(context[0], context[1], category, result)
         workflow.refresh_context_files()
-        if summary.files_archived and paths and self._context_worker is None:
+        if (
+            paths and not summary.cancelled and self._context_worker is None
+            and (
+                summary.files_archived or summary.files_unchanged
+                or summary.files_parsed or summary.duplicates
+            )
+        ):
             # Derselbe nachweisliche Beleg wird auch der ausgewählten
             # Sachnummernsammlung zugeordnet – ohne zweiten Parserlauf.
             worker = ClusterEvidenceImportWorker(
