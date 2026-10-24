@@ -5,9 +5,13 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from PySide6.QtCore import Qt, QTimer, QUrl
-from PySide6.QtGui import QDesktopServices
-from PySide6.QtWidgets import QFileDialog, QHBoxLayout, QInputDialog, QMainWindow, QMessageBox, QProgressDialog, QStackedWidget, QWidget
+from PySide6.QtCore import Qt, QEventLoop, QTimer, QUrl
+from PySide6.QtGui import QDesktopServices, QPainterPath
+from PySide6.QtWidgets import (
+    QApplication, QDialog, QFileDialog, QGraphicsBlurEffect, QHBoxLayout,
+    QInputDialog, QMainWindow, QMessageBox, QProgressDialog, QPushButton,
+    QStackedWidget, QVBoxLayout, QWidget,
+)
 
 from ntf_insight.acquisition.qec_tool import QEC_START
 from ntf_insight.acquisition.diagnosis_viewer import parse_fins
@@ -31,6 +35,7 @@ from ntf_insight.app.pages.sources_page import SourcesPage
 from ntf_insight.app.pages.source_knowledge_page import SourceKnowledgePage
 from ntf_insight.app.pages.supplier_page import SupplierPage
 from ntf_insight.app.widgets.navigation import NavigationPanel
+from ntf_insight.app.widgets.loading_overlay import LoadingOverlay
 from ntf_insight.ingestion.manual_entry import ManualCaseService
 from ntf_insight.storage.duckdb_store import DuckDBStore
 from ntf_insight.storage.dtc_review_store import DtcReviewStore
@@ -65,6 +70,7 @@ class MainWindow(QMainWindow):
         self._context_worker = None
         self._project_transfer_worker = None
         self._project_transfer_dialog = None
+        self._project_dialog: QDialog | None = None
         self._project_delete_worker = None
         self._project_delete_result = None
         self._project_import_result = None
@@ -80,12 +86,20 @@ class MainWindow(QMainWindow):
         self.navigation = NavigationPanel()
         self.stack = QStackedWidget()
         self.pages = self._create_pages()
-        for page in self.pages.values():
-            self.stack.addWidget(page)
+        for name, page in self.pages.items():
+            if name != "project_settings":
+                self.stack.addWidget(page)
 
         layout.addWidget(self.navigation)
         layout.addWidget(self.stack, 1)
         self.setCentralWidget(root)
+        self._loading_overlay = LoadingOverlay(root)
+        self._modal_shade = QWidget(root)
+        self._modal_shade.setObjectName("ProjectModalShade")
+        self._modal_shade.setStyleSheet(
+            "QWidget#ProjectModalShade { background-color: rgba(10,21,37,105); }"
+        )
+        self._modal_shade.hide()
 
         self.navigation.page_selected.connect(self.show_page)
         self.navigation.select_page("workflow")
@@ -145,6 +159,8 @@ class MainWindow(QMainWindow):
         pages["project_settings"] = ProjectSettingsPage(
             WorkflowProjectStore(self.manual_service.store)
         )
+        pages["dashboard"].project_selected.connect(self._project_selected)
+        pages["dashboard"].loading_finished.connect(self._finish_loading)
         pages["project_settings"].project_selected.connect(self._project_selected)
         pages["project_settings"].project_delete_requested.connect(
             self._project_delete_requested
@@ -553,7 +569,7 @@ class MainWindow(QMainWindow):
                 "bleiben lokal gespeichert."
             )
         settings.status.setText(message)
-        self.navigation.select_page("project_settings")
+        self._show_project_settings()
 
     def _project_selected(self, profile: str, part: str) -> None:
         if not self._portable_transfer_ready():
@@ -567,6 +583,8 @@ class MainWindow(QMainWindow):
             self.pages["sources"].qec_workflow.set_project_scope(part)
         self.pages["project_settings"].select_project(profile, part)
         self._sync_local_cluster()
+        if self._project_dialog is not None and self._project_dialog.isVisible():
+            self._project_dialog.accept()
         self.navigation.select_page("workflow")
 
     def _sync_local_cluster(self) -> None:
@@ -760,14 +778,20 @@ class MainWindow(QMainWindow):
         self.repository = self.application_data.cases
         self.reference_repository = self.application_data.references
 
+        if self._project_dialog is not None:
+            self._project_dialog.close()
+            self._project_dialog.deleteLater()
+            self._project_dialog = None
         old_pages = list(self.pages.values())
         for old in old_pages:
-            self.stack.removeWidget(old)
+            if self.stack.indexOf(old) >= 0:
+                self.stack.removeWidget(old)
             old.deleteLater()
 
         self.pages = self._create_pages()
-        for page in self.pages.values():
-            self.stack.addWidget(page)
+        for name, page in self.pages.items():
+            if name != "project_settings":
+                self.stack.addWidget(page)
 
 
     @staticmethod
@@ -1654,11 +1678,7 @@ class MainWindow(QMainWindow):
             self._adopt_existing_qec()
             return
         if action in {"project_settings", "new_project"}:
-            page = self.pages["project_settings"]
-            page.select_project(workflow.profile_id, workflow._context_part)
-            if action == "new_project":
-                page.start_new()
-            self.navigation.select_page("project_settings")
+            self._show_project_settings(new=action == "new_project")
             return
         if action == "cluster_export":
             self._context_export()
@@ -1759,17 +1779,99 @@ class MainWindow(QMainWindow):
             self.navigation.select_page("sources")
             source.archive_button.click()
 
+    def _begin_loading(self, message: str) -> None:
+        """Status vor teuren Seitenwechseln sichtbar machen."""
+        self._loading_overlay.start(message)
+        if self._project_dialog is None or not self._project_dialog.isVisible():
+            effect = QGraphicsBlurEffect(self.stack)
+            effect.setBlurRadius(5)
+            self.stack.setGraphicsEffect(effect)
+        QApplication.processEvents(
+            QEventLoop.ProcessEventsFlag.ExcludeUserInputEvents
+        )
+
+    def _finish_loading(self) -> None:
+        self._loading_overlay.stop()
+        if self._project_dialog is None or not self._project_dialog.isVisible():
+            self.stack.setGraphicsEffect(None)
+
+    def _show_project_settings(self, *, new: bool = False) -> None:
+        """Projekteinstellungen als schwebende, modal bedienbare Projektkarte."""
+        page = self.pages["project_settings"]
+        workflow = self.pages["workflow"]
+        page.select_project(workflow.profile_id, workflow._context_part)
+        if new:
+            page.start_new()
+        if self._project_dialog is None:
+            dialog = QDialog(self)
+            dialog.setObjectName("ProjectSettingsDialog")
+            dialog.setWindowTitle("Projekteinstellungen")
+            dialog.setWindowModality(Qt.WindowModality.WindowModal)
+            dialog.setMinimumSize(650, 545)
+            dialog.resize(860, 690)
+            dialog.setStyleSheet(
+                "QDialog#ProjectSettingsDialog { background-color: #f4f6f9; "
+                "border: 1px solid #8799a9; border-radius: 12px; }"
+            )
+            frame = QVBoxLayout(dialog)
+            frame.setContentsMargins(7, 7, 7, 7)
+            frame.addWidget(page, 1)
+            footer = QHBoxLayout()
+            footer.addStretch(1)
+            close = QPushButton("Schließen")
+            close.clicked.connect(dialog.reject)
+            footer.addWidget(close)
+            frame.addLayout(footer)
+            dialog.finished.connect(self._project_dialog_closed)
+            self._project_dialog = dialog
+        self._modal_shade.setGeometry(self.centralWidget().rect())
+        self._modal_shade.raise_()
+        self._modal_shade.show()
+        effect = QGraphicsBlurEffect(self.stack)
+        effect.setBlurRadius(7)
+        self.stack.setGraphicsEffect(effect)
+        dialog = self._project_dialog
+        if dialog is not None:
+            dialog.move(self.frameGeometry().center() - dialog.rect().center())
+            dialog.open()
+
+    def _project_dialog_closed(self, _code: int) -> None:
+        self._modal_shade.hide()
+        if not self._loading_overlay.isVisible():
+            self.stack.setGraphicsEffect(None)
+
+    def resizeEvent(self, event) -> None:  # noqa: N802
+        super().resizeEvent(event)
+        if hasattr(self, "_loading_overlay"):
+            self._loading_overlay.setGeometry(self.centralWidget().rect())
+            self._modal_shade.setGeometry(self.centralWidget().rect())
+
     def show_page(self, key: str) -> None:
+        if key == "project_settings":
+            self._show_project_settings()
+            return
         page = self.pages.get(key)
         if page is None:
             return
-        if key == "workflow":
-            page.refresh_data()
-        if key == "cases":
-            page.cluster_workspace.refresh_review_priorities()
-            page._refresh_quicktest_download_dates()
-            page._refresh_qec_download_dates()
-            page._refresh_local_tips_status()
-            page._refresh_shared_credentials_status()
         self.stack.setCurrentWidget(page)
+        if key == "dashboard":
+            self._begin_loading("Projektübersicht wird geladen …")
+            if not page.refresh_async():
+                self._finish_loading()
+        elif key == "workflow":
+            self._begin_loading("Workflowdaten werden geladen …")
+            try:
+                page.refresh_data()
+            finally:
+                self._finish_loading()
+        elif key == "cases":
+            self._begin_loading("FIN- und Diagnosebestände werden geladen …")
+            try:
+                page.cluster_workspace.refresh_review_priorities()
+                page._refresh_quicktest_download_dates()
+                page._refresh_qec_download_dates()
+                page._refresh_local_tips_status()
+                page._refresh_shared_credentials_status()
+            finally:
+                self._finish_loading()
         self.stack.setFocus(Qt.FocusReason.OtherFocusReason)
