@@ -538,7 +538,7 @@ def test_qec_actions_match_source_table_and_parser_zip(tmp_path, monkeypatch):
     assert page.download_missing_button.text() == "Download fortsetzen"
     assert page.download_selected_button.text() == "Markierte herunterladen"
     assert page.qec_parse_all_button.text() == "Alle QEC-Berichte neu parsen"
-    assert page.qec_parse_resume_button.text() == "Ausstehendes Parsing fortsetzen"
+    assert page.qec_parse_resume_button.text() == "Parsing fortsetzen"
     assert "ZIP" in page.qec_problem_zip_button.text()
     assert page.cancel_download_button.isHidden()
     actions = []
@@ -554,12 +554,13 @@ def test_qec_actions_match_source_table_and_parser_zip(tmp_path, monkeypatch):
     assert "problem_zip" in page.context_scraper_buttons["diagnosis_viewer"]
     assert "problem_zip" in page.context_scraper_buttons["tips_writer"]
     assert "problem_zip" in page.context_scraper_buttons["tp_dashboard"]
-    assert "problem_zip" not in page.context_scraper_buttons["celonis"]
+    assert "problem_zip" in page.context_scraper_buttons["celonis"]
+    assert not page.context_scraper_buttons["celonis"]["problem_zip"].isEnabled()
     assert page.context_summary.isHidden()
     page.set_context_parser_busy("qec", True, "resume")
     assert page.qec_parse_resume_button.text() == "Parsing stoppen"
     page.set_context_parser_busy("qec", False)
-    assert page.qec_parse_resume_button.text() == "Ausstehendes Parsing fortsetzen"
+    assert page.qec_parse_resume_button.text() == "Parsing fortsetzen"
     window.close()
     app.processEvents()
 
@@ -586,47 +587,68 @@ def test_project_dropdown_uses_normalized_sachnummer_not_placeholder(
     app.processEvents()
 
 
-def test_qec_and_underlagen_share_aligned_action_columns(tmp_path, monkeypatch):
-    from ntf_insight.app.pages.workflow_page import _SOURCE_COLUMNS
+def test_qec_and_underlagen_share_compact_no_scroll_layout(tmp_path, monkeypatch):
+    from ntf_insight.app.pages.workflow_page import (
+        _SOURCE_ACTION_HEIGHT, _SOURCE_COLUMNS,
+    )
 
     app, window = _window(tmp_path, monkeypatch)
     page = window.pages["workflow"]
-    headers = (page.qec_action_header, page.context_source_header)
-    assert len(_SOURCE_COLUMNS) == 7
-    for header in headers:
+    window.resize(1336, 868)
+    window.show()
+    page._open_step(3)
+    app.processEvents()
+
+    assert len(_SOURCE_COLUMNS) == 5
+    assert [title for title, _ in _SOURCE_COLUMNS] == [
+        "Quelle", "Portalabruf", "Parser", "Datei / Fehler",
+        "Bestand / Letzter Abruf",
+    ]
+    assert sum(width or 0 for _, width in _SOURCE_COLUMNS) < 750
+    for header in (page.qec_action_header, page.context_source_header):
         grid = header.layout()
         assert [
             grid.itemAtPosition(0, column).widget().text()
-            for column in range(7)
-        ] == [name for name, _width in _SOURCE_COLUMNS]
-        for column, (_name, width) in enumerate(_SOURCE_COLUMNS):
-            if width is not None:
-                assert grid.itemAtPosition(0, column).widget().width() == width
+            for column in range(5)
+        ] == [name for name, _ in _SOURCE_COLUMNS]
 
     qec = page.qec_action_row.layout()
     diagnosis = page.context_source_rows["diagnosis_viewer"].layout()
-    assert qec.itemAtPosition(0, 3).widget() is page.qec_problem_zip_button
-    assert qec.itemAtPosition(0, 4).widget() is page.local_qec_button
-    diagnosis_buttons = page.context_scraper_buttons["diagnosis_viewer"]
-    assert diagnosis.itemAtPosition(0, 3).widget() is diagnosis_buttons["problem_zip"]
-    assert diagnosis.itemAtPosition(0, 4).widget() is diagnosis_buttons["import"]
-    assert qec.itemAtPosition(0, 1).widget().width() == _SOURCE_COLUMNS[1][1]
-    assert diagnosis.itemAtPosition(0, 1).widget().width() == _SOURCE_COLUMNS[1][1]
-    assert qec.itemAtPosition(0, 2).widget().width() == _SOURCE_COLUMNS[2][1]
-    assert diagnosis.itemAtPosition(0, 2).widget().width() == _SOURCE_COLUMNS[2][1]
-
-    assert page.qec_action_row.minimumHeight() >= 136
-    assert page.context_source_rows["diagnosis_viewer"].minimumHeight() >= 94
-    assert page.download_all_button.height() == 36
-    assert page.download_missing_button.height() == 36
-    assert page.download_selected_button.height() == 36
-    assert page.qec_parse_all_button.height() == 36
-    assert page.qec_parse_resume_button.height() == 36
-    assert diagnosis_buttons["parse"].height() == 36
-    assert diagnosis_buttons["resume_parse"].height() == 36
-    assert diagnosis_buttons["problem_zip"].height() == 78
-    assert diagnosis_buttons["import"].height() == 78
-    assert page.qec_problem_zip_button.height() == 78
-    assert page.local_qec_button.height() == 78
+    buttons = page.context_scraper_buttons["diagnosis_viewer"]
+    qec_actions = qec.itemAtPosition(0, 3).widget()
+    diagnosis_actions = diagnosis.itemAtPosition(0, 3).widget()
+    assert qec_actions.layout().itemAt(0).widget() is page.qec_problem_zip_button
+    assert qec_actions.layout().itemAt(1).widget() is page.local_qec_button
+    assert diagnosis_actions.layout().itemAt(0).widget() is buttons["problem_zip"]
+    assert diagnosis_actions.layout().itemAt(1).widget() is buttons["import"]
+    assert all(
+        qec.itemAtPosition(0, col).widget().width()
+        == diagnosis.itemAtPosition(0, col).widget().width()
+        == _SOURCE_COLUMNS[col][1]
+        for col in (1, 2, 3)
+    )
+    for button in (
+        page.download_all_button, page.download_missing_button,
+        page.download_selected_button, page.qec_parse_all_button,
+        page.qec_parse_resume_button, buttons["parse"],
+        buttons["resume_parse"], buttons["problem_zip"], buttons["import"],
+        page.qec_problem_zip_button, page.local_qec_button,
+    ):
+        assert button.height() == _SOURCE_ACTION_HEIGHT
+    assert page.qec_action_row.minimumHeight() >= 108
+    assert all(
+        frame.minimumHeight() >= 76
+        for frame in page.context_source_rows.values()
+    )
+    assert page.context_source_rows["celonis"].layout().itemAtPosition(0, 3)
+    # CDD über zwei Spalten; übrige sechs Kategorien in nur drei Zeilen.
+    technical_grid = page.context_technical_rows["cdd_smrd"].parentWidget()
+    assert page.context_technical_rows["cdd_smrd"].minimumHeight() >= 30
+    assert page.context_technical_rows["additional"].isVisible()
+    source_rows = list(page.context_source_rows.values())
+    assert all(
+        previous.geometry().bottom() < following.geometry().top()
+        for previous, following in zip(source_rows, source_rows[1:])
+    )
     window.close()
     app.processEvents()
