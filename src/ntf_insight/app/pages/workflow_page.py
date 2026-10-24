@@ -70,6 +70,7 @@ class WorkflowPage(QWidget):
     action_requested = Signal(str)
     project_selected = Signal(str, str)
     cohort_updated = Signal()
+    step_loading = Signal(bool)
 
     STEPS = (
         ("QEC-FIN-Liste", "QEC-Kohorte", "sources", "qec_list"),
@@ -1403,10 +1404,14 @@ class WorkflowPage(QWidget):
     def _open_step(self, index: int) -> None:
         if not 0 <= index < STEP_COUNT:
             return
-        self.state = replace(self.state, step=index)
-        self._error_step = None
-        self._notice = ""
-        self._save()
+        self.step_loading.emit(True)
+        try:
+            self.state = replace(self.state, step=index)
+            self._error_step = None
+            self._notice = ""
+            self._save()
+        finally:
+            self.step_loading.emit(False)
 
     def _review(self) -> None:
         if self.state.step not in (3, 4):
