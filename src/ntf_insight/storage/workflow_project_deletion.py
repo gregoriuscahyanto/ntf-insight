@@ -74,7 +74,7 @@ def remove_project_assignment(
 
 
 def _delete_where(con, table: str, column: str, values: set[str]) -> None:
-    if not values:
+    if not values or table not in _tables(con):
         return
     if not re.fullmatch(r"[a-z][a-z0-9_]*", table + column):
         raise ValueError("Ungültige Löschzuordnung.")
