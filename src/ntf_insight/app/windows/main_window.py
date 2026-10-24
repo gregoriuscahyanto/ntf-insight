@@ -992,15 +992,19 @@ class MainWindow(QMainWindow):
         self._case_quicktest_import_pending = True
         source_page._archive_paths(paths)
 
-    def _portable_transfer_ready(self) -> bool:
-        """Never replace data while a source import or background download runs."""
+    def _portable_transfer_ready(self, *, allow_source_parser: bool = False) -> bool:
+        """Keine parallelen Transfers; optionale Freigabe nur für Parser-Vormerkung."""
         source = self.pages["sources"]
         cases = self.pages["cases"]
         qec = cases.qec_download
         tips = getattr(cases, 'tips_download', None)
         exporter = cases.fin_zip_export
         return (
-            source._worker is None
+            (source._worker is None or (
+                allow_source_parser and bool(
+                    self.pages["workflow"]._context_parsers_busy
+                )
+            ))
             and source._diagnostics_worker is None
             and (
                 source.ki_analyse_panel is None
@@ -1610,7 +1614,16 @@ class MainWindow(QMainWindow):
             self._project_transfer_worker is not None
             or self._project_delete_worker is not None
             or self._context_worker is not None and not importing
-            or not (parsing or importing or self._portable_transfer_ready())
+            or not self._portable_transfer_ready(
+                allow_source_parser=parsing
+            ) and not (
+                importing and self._context_worker is not None
+                and self._project_transfer_worker is None
+                and self._project_delete_worker is None
+                and source._worker is None
+                and source._diagnostics_worker is None
+                and not self._case_quicktest_import_pending
+            )
         ):
             workflow.set_notice(
                 "Ein Import, Download oder exklusiver Datentransfer läuft bereits.",
