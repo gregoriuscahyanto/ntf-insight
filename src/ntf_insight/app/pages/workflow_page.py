@@ -2310,7 +2310,22 @@ class WorkflowPage(QWidget):
             button.setEnabled(not paused)
 
     def refresh(self) -> None:
-        self._update_tables()
+        try:
+            self._update_tables()
+        except OSError as exc:
+            # DuckDB meldet Windows-Dateisperren als IOException (OSError).
+            # Die Oberfläche mit ihrem letzten gültigen Zustand behalten.
+            self._data_error = (
+                "Datenbank derzeit gesperrt. Andere NTF-Insight-Instanzen "
+                "oder Python-Prozesse prüfen. " + str(exc)
+            )
+            self.note.setText(self._data_error)
+            self.note.setProperty("isError", True)
+            self.note.setVisible(True)
+            self.note.style().unpolish(self.note)
+            self.note.style().polish(self.note)
+            return
+        self._data_error = ""
         self._refresh_chatgpt_cluster_view()
         if self.qec_store is not None:
             stats = self.qec_store.summarize_rows(self._scoped_rows)
