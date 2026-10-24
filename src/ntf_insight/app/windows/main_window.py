@@ -588,87 +588,153 @@ class MainWindow(QMainWindow):
         workflow.refresh_context_files()
         workflow.refresh()
 
-    def _context_choose_base(self) -> None:
+    def _context_export(self) -> None:
+        """Nur Schritt 05; erste Basis + erste ChatGPT-Auswertung automatisch."""
         workflow = self.pages["workflow"]
-        if self._context_worker is not None:
-            return
-        filename, _ = QFileDialog.getOpenFileName(
-            self, "Erstes KI-Analysepaket als Clusterbasis wählen",
-            str(Path.home()), "NTF KI-Analysepaket (*.zip)",
-        )
-        if not filename:
-            return
-        try:
-            package_id = validate_first_package(Path(filename))
-        except (OSError, ValueError, BadZipFile) as exc:
+        workflow.refresh_ai_chain()
+        package = workflow.first_package
+        if package is None:
             workflow.set_notice(
-                "Ungültiges KI-Analysepaket: " + str(exc), error=True
+                "Zuerst in Schritt 03 das erste KI-Paket erstellen.", error=True
             )
             return
-        workflow.set_context_base(Path(filename))
-        workflow.set_notice(
-            "KI-Basispaket geprüft. Paket-ID " + package_id[:8]
-            + "… wird auch im zweiten Ergebnis verwendet."
-        )
-
-    def _context_export(self) -> None:
-        workflow = self.pages["workflow"]
-        if workflow.context_base_path is None:
-            workflow.set_notice("Zuerst die erste KI-Analyse-ZIP auswählen.", error=True)
+        if package.analysis_id is None:
+            workflow.set_notice(
+                "Erstes ChatGPT-Ergebnis in Schritt 03 noch nicht importiert.",
+                error=True,
+            )
             return
-        if not self._portable_transfer_ready():
-            workflow.set_notice("Ein Import oder Download läuft bereits.", error=True)
+        if self._context_worker is not None or not self._portable_transfer_ready():
+            workflow.set_notice("Ein anderer Export oder Download läuft bereits.", error=True)
             return
-        originals = workflow.context_originals.isChecked()
+        try:
+            workflow.ai_chain.validate_cached_zip(package)
+            first_result = workflow.ai_chain.first_result(package.paket_id)
+            if first_result is None:
+                raise ValueError("Zugehörige erste ChatGPT-Auswertung fehlt.")
+        except (OSError, ValueError) as exc:
+            workflow.set_notice("Erste KI-Analyse nicht verwendbar: " + str(exc), error=True)
+            return
+        originals = workflow.cluster_originals.isChecked()
         warning = (
-            "Das Paket wird LOKAL erstellt und NICHT automatisch hochgeladen.\n\n"
-            "Das KI-Basispaket und die technischen Unterlagen sind selbst bei "
-            "Pseudonymisierung nicht garantiert anonym.\n\n"
+            "Das zweite ChatGPT-Paket wird NUR LOKAL erzeugt.\n\n"
+            "Es enthält die erste ChatGPT-Auswertung, die pseudonymisierte "
+            "Analysebasis und das Inventar der Unterlagen aus Schritt 04. "
+            "Auch pseudonymisierte Daten und Modell-Freitexte können "
+            "vertraulich bzw. reidentifizierbar sein.\n\n"
         )
         if originals:
             warning += (
-                "ACHTUNG: Unveränderte Unterlagen können echte FINs, "
-                "Lieferanteninformationen, Mitarbeitendennamen und vertrauliche "
-                "Entwicklungsdaten enthalten.\n\n"
+                "Unveränderte technische Originaldateien werden beigefügt. "
+                "Diese können echte FINs, Namen und vertrauliche Entwicklungs-"
+                "daten enthalten.\n\n"
             )
-        warning += "Nur für freigegebene interne Übertragungswege. Export erstellen?"
+        warning += (
+            "Es erfolgt KEIN Upload. Nur intern freigegeben übertragen. "
+            "Lokales Clusterpaket jetzt erstellen?"
+        )
         decision = QMessageBox.question(
-            self, "Vertrauliche Clusterunterlagen", warning,
+            self, "Clusterpaket · Datenfreigabe", warning,
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             QMessageBox.StandardButton.No,
         )
         if decision != QMessageBox.StandardButton.Yes:
             return
         dest, _ = QFileDialog.getSaveFileName(
-            self, "Clusterkontext-Paket lokal speichern",
+            self, "Zweiter ChatGPT-Durchlauf · Clusterkontext",
             str(Path.home() / "NTF_Clusterkontext_Durchlauf2.zip"),
-            "NTF Clusterkontext (*.zip)",
+            "Clusterpaket (*.zip)",
         )
         if not dest:
             return
         path = Path(dest)
         if path.suffix.lower() != ".zip":
             path = path.with_suffix(".zip")
+        self._pending_cluster_context = (
+            workflow.profile_id, workflow._context_part, package.paket_id,
+        )
         worker = ClusterContextExportWorker(
             workflow.context_store, workflow.profile_id, workflow._context_part,
-            workflow.context_base_path, path, include_originals=originals,
+            package.path, path, include_originals=originals,
+            first_result=first_result,
         )
         self._context_worker = worker
         workflow.set_context_busy(True)
-        workflow.set_notice("Cluster-Kontextpaket wird lokal erstellt …")
+        workflow.set_notice("Zweites Clusterpaket wird lokal erstellt …")
         worker.completed.connect(self._context_export_completed)
         worker.failed.connect(self._context_failed)
         worker.finished.connect(self._context_worker_finished)
         worker.start()
 
     def _context_export_completed(self, result: object) -> None:
-        self.pages["workflow"].set_notice(
-            f"Clusterkontext bereit: {result.path.name} · "
-            f"{result.file_count} klassifizierte Unterlagen, "
-            f"davon {result.included_files} Originale beigefügt. "
-            "ChatGPT-JSON-Vorlage aus dem ersten KI-Paket ist enthalten. "
-            "Vor externer Weitergabe Inhalt und Freigabe prüfen."
+        workflow = self.pages["workflow"]
+        context = self._pending_cluster_context
+        self._pending_cluster_context = None
+        if context is None:
+            workflow.set_notice("Clusterpaket erstellt, Projektbindung fehlt.", error=True)
+            return
+        try:
+            workflow.ai_chain.register_second_export(
+                context[0], context[1], result.parent_package_id,
+                result.analysis_id,
+            )
+        except ValueError as exc:
+            workflow.set_notice(
+                "Clusterpaket erstellt, Rückimport-Kennung nicht gespeichert: "
+                + str(exc), error=True,
+            )
+            return
+        workflow.refresh_ai_chain()
+        workflow.set_notice(
+            f"2. KI-Paket erstellt: {result.path.name} · "
+            f"{result.file_count} Unterlagen, "
+            f"{result.included_files} Originale · "
+            f"neue Analyse-ID {result.analysis_id}. "
+            "Ergebnis-JSON später hier wieder importieren."
         )
+
+    def _cluster_import(self) -> None:
+        """Nur Antworten eines für dieses Projekt erzeugten 2. Pakets."""
+        workflow = self.pages["workflow"]
+        if not self._portable_transfer_ready():
+            workflow.set_notice("Import/Export läuft noch.", error=True)
+            return
+        filename, _ = QFileDialog.getOpenFileName(
+            self, "Zweites ChatGPT-Clusterergebnis auswählen",
+            str(Path.home()), "ChatGPT Ergebnis (*.json)",
+        )
+        if not filename:
+            return
+        path = Path(filename)
+        try:
+            if not path.is_file() or path.stat().st_size > 16 * 1024 * 1024:
+                raise ValueError("JSON-Datei fehlt oder ist zu groß.")
+            payload = json.loads(path.read_text(encoding="utf-8-sig"))
+            package_id = str(payload["paket_id"])
+            analyse_id = str(payload["analyse_id"])
+            package = workflow.ai_chain.latest_first_export(
+                workflow.profile_id, workflow._context_part
+            )
+            if package is None or package.paket_id != package_id:
+                raise ValueError("Falsche Paket-ID für das gewählte Projekt.")
+            if not workflow.ai_chain.is_prepared_second(
+                workflow.profile_id, workflow._context_part,
+                package_id, analyse_id,
+            ):
+                raise ValueError(
+                    "Diese Analyse-ID stammt nicht aus einem zweiten "
+                    "Clusterpaket dieses Projekts."
+                )
+        except (OSError, ValueError, KeyError, TypeError) as exc:
+            workflow.set_notice(
+                "Zweites ChatGPT-Ergebnis nicht zuordenbar: " + str(exc),
+                error=True,
+            )
+            return
+        self._pending_ai_round = 2
+        panel = self.pages["sources"].ki_analyse_panel
+        if panel is not None:
+            panel.import_from_path(path)
 
     def _context_remove(self) -> None:
         workflow = self.pages["workflow"]
@@ -801,11 +867,18 @@ class MainWindow(QMainWindow):
             if len(parts) == 3:
                 self._context_scrape(parts[1], parts[2])
             return
-        if action == "context_base":
-            self._context_choose_base()
+        if action in {"project_settings", "new_project"}:
+            page = self.pages["project_settings"]
+            page.select_project(workflow.profile_id, workflow._context_part)
+            if action == "new_project":
+                page.start_new()
+            self.navigation.select_page("project_settings")
             return
-        if action == "context_export":
+        if action == "cluster_export":
             self._context_export()
+            return
+        if action == "cluster_import":
+            self._cluster_import()
             return
         if action == "context_remove":
             self._context_remove()
@@ -884,6 +957,8 @@ class MainWindow(QMainWindow):
                 )
                 if answer != QMessageBox.StandardButton.Yes:
                     return
+            if action == "ai_import":
+                self._pending_ai_round = 1
             (panel.export_button if action == "ai_export" else panel.import_button).click()
         elif action in {"pc_export", "pc_import"}:
             panel = source.portable_backup_panel
