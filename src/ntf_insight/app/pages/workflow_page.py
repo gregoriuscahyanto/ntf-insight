@@ -1656,10 +1656,8 @@ class WorkflowPage(QWidget):
                         "done" if status.local_documents else "pending",
                     )
                 label.setStyleSheet(
-                    "color: #268763;" if (
-                        status.local_documents and
-                        status.local_documents == status.parsed_documents
-                    ) else "color: #bd8318;" if status.local_documents else ""
+                    "color: #268763; font-weight: 600;"
+                    if status.local_documents else ""
                 )
                 continue
             label.setText(status.display())
