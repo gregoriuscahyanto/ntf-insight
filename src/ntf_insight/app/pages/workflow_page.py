@@ -63,30 +63,28 @@ def _create_table(headers: tuple[str, ...]) -> tuple[QTableView, SimpleTableMode
     return table, model
 
 
-# Beide Quellenbereiche nutzen exakt dieselben Spaltenbreiten, Rasterabstände
-# und Buttonhöhen. Separate GridLayouts ohne diese Vorgaben würden auseinanderlaufen.
+# Kompaktes, gemeinsames Raster. Auch bei 1336 px Fensterbreite bleiben
+# Status und Aktionen vollständig im Fenster; kein horizontaler Scrollbereich.
 _SOURCE_COLUMNS = (
-    ("Quelle", 108),
-    ("Portalabruf", 274),
-    ("Parser", 230),
-    ("Fehleranalyse", 150),
-    ("Datei", 120),
-    ("Letzter Abruf / Import", 190),
-    ("Dokumente / FINs", None),
+    ("Quelle", 110),
+    ("Portalabruf", 218),
+    ("Parser", 210),
+    ("Datei / Fehler", 150),
+    ("Bestand / Letzter Abruf", None),
 )
-_SOURCE_ACTION_HEIGHT = 36
-_SOURCE_ACTION_SPACING = 6
-_SOURCE_DOUBLE_HEIGHT = _SOURCE_ACTION_HEIGHT * 2 + _SOURCE_ACTION_SPACING
+_SOURCE_ACTION_HEIGHT = 30
+_SOURCE_ACTION_SPACING = 4
+_SOURCE_DOUBLE_HEIGHT = 2 * _SOURCE_ACTION_HEIGHT + _SOURCE_ACTION_SPACING
 
 
 def _source_grid(frame: QFrame, *, header: bool = False) -> QGridLayout:
     grid = QGridLayout(frame)
-    grid.setContentsMargins(9, 0 if header else 8, 9, 0 if header else 8)
+    grid.setContentsMargins(8, 0 if header else 4, 8, 0 if header else 4)
     grid.setHorizontalSpacing(8)
     grid.setVerticalSpacing(0)
-    for index, (_heading, width) in enumerate(_SOURCE_COLUMNS):
+    for column, (_title, width) in enumerate(_SOURCE_COLUMNS):
         if width is not None:
-            grid.setColumnMinimumWidth(index, width)
+            grid.setColumnMinimumWidth(column, width)
     grid.setColumnStretch(len(_SOURCE_COLUMNS) - 1, 1)
     return grid
 
@@ -94,16 +92,16 @@ def _source_grid(frame: QFrame, *, header: bool = False) -> QGridLayout:
 def _source_header() -> QFrame:
     frame = QFrame(objectName="SourceTableHeader")
     grid = _source_grid(frame, header=True)
-    for index, (heading, width) in enumerate(_SOURCE_COLUMNS):
-        label = QLabel(heading, objectName="PageSubtitle")
+    for column, (title, width) in enumerate(_SOURCE_COLUMNS):
+        label = QLabel(title, objectName="PageSubtitle")
         if width is not None:
             label.setFixedWidth(width)
-        grid.addWidget(label, 0, index)
+        grid.addWidget(label, 0, column)
     return frame
 
 
 def _source_stack(column: int, buttons: list[QPushButton]) -> QWidget:
-    """Fixe Buttonhöhe und einheitliche vertikale Abstände ohne Abschneiden."""
+    """Alle Quelldatenaktionen behalten ihre volle Höhe und Spaltenbreite."""
     width = _SOURCE_COLUMNS[column][1]
     assert width is not None
     holder = QWidget(objectName="SourceActionStack")
@@ -113,17 +111,13 @@ def _source_stack(column: int, buttons: list[QPushButton]) -> QWidget:
     layout.setContentsMargins(0, 0, 0, 0)
     layout.setSpacing(_SOURCE_ACTION_SPACING)
     for button in buttons:
+        button.setProperty("sourceCompact", True)
         button.setFixedHeight(_SOURCE_ACTION_HEIGHT)
+        button.setSizePolicy(
+            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed
+        )
         layout.addWidget(button)
     return holder
-
-
-def _source_single(column: int, button: QPushButton) -> QPushButton:
-    width = _SOURCE_COLUMNS[column][1]
-    assert width is not None
-    button.setFixedWidth(width)
-    button.setFixedHeight(_SOURCE_DOUBLE_HEIGHT)
-    return button
 
 
 class WorkflowPage(QWidget):
