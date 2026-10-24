@@ -264,6 +264,7 @@ def test_context_collection_shows_provenance_and_part_specific_status(
     page.refresh()
     assert page.context_model.rowCount() == 1
     assert "0/1" in page.context_counts["cdd_smrd"].text()
+    assert page.context_technical_rows["cdd_smrd"].property("evidenceState") == "done"
     assert page.cards[3].property("workflowState") == "partial"
     page.cards[3].click()
     page.context_review_button.click()
@@ -318,10 +319,15 @@ def test_context_scrapers_use_only_current_qec_part_with_single_fetch_action(
     monkeypatch.setattr(cases, "_start_quicktest_download", fake_start)
     window._context_scrape("diagnosis_viewer", "all")
     assert calls == [("diagnosis", False, ["WDD12345678901234"], False)]
-    assert page.context_scraper_buttons["diagnosis_viewer"]["cancel"].isEnabled()
+    assert "cancel" not in page.context_scraper_buttons["diagnosis_viewer"]
+    assert page.context_scraper_buttons["diagnosis_viewer"]["all"].text() == "Abruf stoppen"
+    assert page.context_scraper_buttons["diagnosis_viewer"]["all"].isEnabled()
+    assert not page.context_scraper_buttons["diagnosis_viewer"]["missing"].isEnabled()
     cases._quicktest_worker = None
     quicktest_worker.finished.emit()
-    assert not page.context_scraper_buttons["diagnosis_viewer"]["cancel"].isEnabled()
+    assert page.context_scraper_buttons["diagnosis_viewer"]["all"].text() == (
+        "Alle FINs neu abrufen"
+    )
 
     tips = cases.tips_download
     assert tips is not None
@@ -333,7 +339,7 @@ def test_context_scrapers_use_only_current_qec_part_with_single_fetch_action(
 
     monkeypatch.setattr(tips, "_start", fake_tips_start)
     assert "selected" not in page.context_scraper_buttons["tips_writer"]
-    assert page.context_scraper_buttons["tips_writer"]["parse"].text() == "Dateien auswählen & einlesen …"
+    assert page.context_scraper_buttons["tips_writer"]["parse"].text() == "Alle Dokumente neu parsen"
     window._context_scrape("tips_writer", "all")
     assert calls[-1] == ("tips", ["WDD12345678901234"], True)
     assert "Abruf" in page.context_source_dates["tips_writer"].text()
