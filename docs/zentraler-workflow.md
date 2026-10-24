@@ -134,25 +134,60 @@ aktiviert. Für andere Bauteile müssen geeignete Diagnosemerkmale
 fachlich definiert werden. Für die Merkmalsbildung gelten weiterhin
 vor-Tausch-DTCs, nicht NTF-/Lieferantenbewertungen oder Nach-Tausch-Ergebnisse.
 
-## Projekte, Einstellungen und PC-Datenaustausch
+## Projekte, Einstellungen und Projekttransfer
 
-**Oben in der Workflow-Kopfzeile:** \`Bauteil [Sachnummer]\`,
-Projektauswahl, \`+ Neues Projekt\`, \`Einstellungen\`,
-\`PC-Export\`, \`PC-Import\`. Es gibt keinen sechsten Schritt für
-den Datenaustausch.
+**Workflow-Kopfzeile:** \`Kühlmittelpumpe [Sachnummer]\` mit optionaler
+ECU-Anzeige; \`Projekt wählen\`, \`+ Neues Projekt\`, \`Einstellungen\`,
+\`Projekt-Export\`, \`Projekt-Import\`. Es gibt **kein altes
+Bauteil-Dropdown** mehr in der sichtbaren Workflow-Kopfzeile und keinen
+sechsten Schritt für den Datenaustausch.
 
-Die **Projekteinstellungen** sind eine eigene Seite: Bauteilprofil,
-Sachnummer, editierbare Bauteilbezeichnung, freie Liste wichtiger
-Steuergeräte (z. B. CPC3, MCM) und optionale Projektbeschreibung.
-Ein neues Projekt benötigt eine neue Sachnummer; bereits vorhandene
-Bauteil-/Sachnummern-Kombinationen bleiben eindeutig und werden per
-Projektauswahl wieder aufgerufen. Das Projekt löst keinen Import und keine
-Neuanlage vorhandener Fallstammdaten aus.
+**Bestehender nicht zugeordneter QEC-Bestand**: Falls noch kein
+Sachnummernprojekt existiert, erscheint die Aktion
+\`Bestehenden QEC-Bestand übernehmen\`. Sie zeigt Sachnummern und die
+vorhandene QEC-Fallzahl. Erst nach ausdrücklicher Bestätigung wird
+ein Projekt mit dem passenden Bauteil/Sachnummern-Paar angelegt.
+Die bereits importierten QEC-, FIN-, Diagnose- und Archivdateien werden
+**nicht** neu importiert, gelöscht oder überschrieben. Im Projekt werden
+die betreffenden vorhandenen Fälle anhand ihrer Sachnummer angezeigt.
+Bei mehreren Sachnummern erfolgt eine Auswahl.
 
-Alle projektbezogenen Tabellen liegen in der bestehenden lokalen DuckDB.
-Die zwei ChatGPT-Runden sind über dieselbe Paket-ID verbunden und über den
-PC-Gesamtstandwechsel mitnehmbar. Der PC-Import **ersetzt** den lokalen
-Gesamtstand und führt ihn nicht mit der vorhandenen Datenbank zusammen.
+In \`Projekteinstellungen\` sind Bauteilprofil, Sachnummer,
+Bauteilbezeichnung, relevante Steuergeräte und Beschreibung editierbar.
+Neue Sachnummer = neues Projekt. Die Steuergeräteliste ist reine
+Projektkonfiguration und keine Ursachenfeststellung.
+
+### .ntfproject gegenüber .ntfbackup
+
+- **Projekt-Export** erstellt eine eigene \`.ntfproject\`-Datei mit dem
+  selektierten Projektdatensatz: Projektkonfiguration/Workflowfortschritt,
+  zugeordneten QEC- und Fallentscheidungen, FIN-bezogenen QuickTests,
+  Archivdateien, technischer Unterlagensammlung und projektgebundenen
+  ChatGPT-Zuordnungen. Die Projekt-Datenbank ist gefiltert;
+  *bekannte weitere Projekte* werden nicht als fremde Tabellenzeilen
+  exportiert. Es gibt keinen neuen Parserlauf.
+- **Projekt-Import** überprüft Hüllenformat, SHA-256-Prüfsummen und den
+  enthaltenen portablen Datenstand. Das neue Projekt wird zur bestehenden
+  Datenbank hinzugefügt, ohne andere Projekte oder deren Dateien zu
+  ersetzen. Bei gleicher bereits vorhandener Bauteilprofil/Sachnummer
+  wird **nicht** automatisch überschrieben oder zusammengeführt,
+  sondern der Vorgang mit erklärender Meldung abgelehnt.
+- **Wichtige Freigabegrenze:** Eine physische Originalquelldatei kann
+  mehrere Projekte enthalten (z. B. gemeinsame QEC-Master-Excel).
+  Sie kann nicht bytegleich UND auf nur eine Sachnummer reduziert sein;
+  der Export nimmt solche für das Projekt erforderlichen gemeinsamen
+  Rohbelege unverändert mit. Vor Weitergabe Inhaltsprüfung und Freigabe
+  notwendig. Das Paket ist nicht verschlüsselt und nicht signiert.
+- Bei neuen oder unbekannten Datenbanktabellen bricht der Transfer
+  kontrolliert ab statt unklassifizierte Daten anderer Projekte
+  ungeprüft mitzunehmen. Der erste Import in eine App-Version, die
+  die entsprechenden Tabellenschemata nicht kennt, wird ebenso verweigert.
+
+Der bisherige **Gesamtstandtransfer** \`.ntfbackup\` bleibt für
+explizite Komplettbackups über Datenquellen erreichbar, ist aber
+**kein Projekttransfer**: Die Wiederherstellung ersetzt den
+gesamten lokalen Bestand. Die zwei Schaltflächen in der Workflow-
+Kopfzeile verwenden ausschließlich \`.ntfproject\`.
 
 ## Speicher und Datenschutz
 
