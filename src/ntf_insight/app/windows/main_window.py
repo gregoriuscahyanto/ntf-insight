@@ -686,11 +686,20 @@ class MainWindow(QMainWindow):
     def _context_scraper_finished(self, category: str) -> None:
         workflow = self.pages["workflow"]
         workflow.set_context_scraper_busy(category, False)
+        importing = False
         if category == "diagnosis_viewer":
             # Die vorhandene Downloadpipeline stößt ggf. einen Quellenimport an.
-            if self.pages["sources"]._worker is None:
+            importing = self.pages["sources"]._worker is not None
+            if not importing:
                 self._workflow_quicktest_download_pending = False
         workflow.refresh_data()
+        if workflow._error_step is None:
+            workflow.set_notice(
+                "Download beendet. QuickTests werden jetzt ins Quellenarchiv "
+                "übernommen …" if importing else
+                "Quellenabruf abgeschlossen. Für die zweite Clusteranalyse "
+                "danach ein aktuelles erstes KI-Analysepaket erzeugen."
+            )
 
     def _workflow_action(self, action: str) -> None:
         workflow = self.pages["workflow"]
