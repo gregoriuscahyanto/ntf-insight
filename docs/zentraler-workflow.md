@@ -327,3 +327,54 @@ ein lokales vollständiges Backup anlegen und dessen Inhalt prüfen.
 Ein exportiertes \`.ntfproject\` ist selbst vertraulich, nicht verschlüsselt
 und nicht durch die Projektlöschung betroffen, wenn es außerhalb der lokalen
 App-Datenablage gespeichert ist.
+
+
+### Fortschritt je Datenquelle: Download und Parsing separat
+
+Die Oberfläche zeigt zwei **belegte, unterschiedliche** Verarbeitungszustände:
+**lokale Originaldokumente** und **Dokumente mit erfolgreich oder mit
+Hinweisen gespeichertem Parsergebnis**. Die Parserkennung/-version sowie die
+Datei-SHA müssen mit den aktuell vorhandenen Quellen übereinstimmen.
+Bei teilweiser Befundung wird die Anzahl mit Parserhinweisen separat
+ausgewiesen. Kein Checkmark nur wegen eines Dateinamens oder Dateidatums.
+
+- **QEC-Befundung (02):** pro QEC-Fall (volle FIN und Schadteilreferenz)
+  Zähler, lokales Download-Datum und Parserstatus in der Tabelle.
+  „Download fortsetzen“ ruft nur Fälle ohne gültigen aktuellen
+  JSON-Bericht ab; „Parsing fortsetzen“ indexiert nur noch nicht
+  erfolgreich gespeicherte lokale QEC-JSONs. Legacy-Downloads bleiben
+  Downloadnachweise, erfordern für strukturiertes Parsing aber einen
+  neuen JSON-Abruf.
+- **Diagnosis Viewer (04):** zählt vorhandene PDFs und geparste PDFs
+  getrennt; die FIN-Abdeckung ergibt sich aus bestätigten
+  QuickTest-Report-Verknüpfungen. Ein Abrufstatus ohne PDF ist kein
+  Download. „Fehlende abrufen“ berücksichtigt FINs ohne QuickTest
+  oder mit abgebrochenem/teilweisem Abruf. Ein vollständiger,
+  bekannter Abruf mit „Keine Quicktests“ wird nicht als Download
+  gezählt. Die Portal-Gesamtzahl von Sitzungen ist vor der Abfrage
+  nicht sicher bekannt.
+- **TIPS Writer (04):** zählt TIPS-Fallberichte \`tips.json\` unter
+  validierter FIN/Fallnummer und deren strukturierten Parserstatus.
+  Der neue \`TipsJsonParser\` (Schema 1) indexiert die sichtbaren
+  TIPS-Reiter und referenziert Anhänge nur als Inventar.
+  Anhänge selbst gelten **nicht** als geparste Dokumente.
+  Nicht vollständige/abgebrochene FIN-Abfragen können erneut
+  gestartet werden. Erfolgreiche Anfragen ohne TIPS-Fälle
+  erzeugen keinen erfundenen Fall.
+- **TP Dashboard (04):** aktuell nur importierte CSV-Originale und
+  vorhandene AutoExport-Parserläufe. FIN-Abdeckung wird nur aus
+  nachweisbaren TP-Quellenzeilen ermittelt. Da ein TP-Export mehrere
+  FINs enthalten kann, wird **keine** fiktive Eins-zu-eins-Beziehung
+  zwischen CSV-Dokument und Fahrzeug dargestellt. Ohne Portal-Scraper
+  gibt es kein „Download fortsetzen“, aber „Parsing fortsetzen“
+  für lokal vorhandene, noch nicht indexierte CSV.
+- **Celonis (04):** die Zahl archivierter Originaldateien ist bekannt;
+  Parser-, Portal- und FIN/Fall-Abdeckung sind **nicht verfügbar**.
+  Das UI zeigt dies ausdrücklich an. „Parsing fortsetzen“ ist
+  bis zu einem echten Celonis-Parser deaktiviert.
+
+Die neuen Zähler berücksichtigen stets die aktive Projekt-Sachnummer
+und den SSL-Endbefundfilter aus Schritt 01. *Geparst* ist keine
+fachlich bestätigte NTF-Bewertung und kein Nachweis, dass der Portaldatenstand
+aktuell oder vollständig ist. Die großen ZIP-/JSON-Aktionen aus
+03 und 05 bleiben davon unabhängig.
