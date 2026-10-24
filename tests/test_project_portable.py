@@ -137,3 +137,54 @@ def test_project_import_does_not_confuse_global_backup(tmp_path):
     export_portable_backup(tmp_path / "source", tmp_path / "all.ntfbackup")
     with pytest.raises(ValueError, match="reguläres"):
         import_project(tmp_path / "all.ntfbackup", tmp_path / "target")
+
+
+
+def test_two_independent_qec_excel_projects_survive_transfer_on_one_pc(tmp_path):
+    """Both QEC masters remain usable after transferring A onto PC B."""
+    from test_qec_workflow import _primary
+    from ntf_insight.ingestion.batch_import import LocalBatchImporter
+    from ntf_insight.ingestion.service import SourceImportService
+    from ntf_insight.storage.qec_workflow_store import QecWorkflowStore
+
+    left = tmp_path / "pc_a"
+    right = tmp_path / "pc_b"
+    left_store, left_projects = _setup(left)
+    right_store, right_projects = _setup(right)
+    left_projects.save(NTFProject(
+        "coolant_pump", "SYNTH-PART-A", "Pumpe A", ("CPC3",),
+    ))
+    right_projects.save(NTFProject(
+        "coolant_pump", "SYNTH-PART-B", "Pumpe B", ("SAM",),
+    ))
+    xlsx_a = tmp_path / "a.xlsx"
+    xlsx_b = tmp_path / "b.xlsx"
+    _primary(
+        xlsx_a, "11111", fin=FIN_A, part="SYNTH-PART-A",
+    )
+    _primary(
+        xlsx_b, "22222", fin=FIN_B, part="SYNTH-PART-B",
+    )
+    LocalBatchImporter(SourceImportService(
+        left / "raw", left / "ntf-insight.duckdb",
+    )).import_paths([xlsx_a])
+    LocalBatchImporter(SourceImportService(
+        right / "raw", right / "ntf-insight.duckdb",
+    )).import_paths([xlsx_b])
+    package = tmp_path / "A.ntfproject"
+    exported = export_project(
+        left, package, "coolant_pump", "SYNTH-PART-A",
+    )
+    assert exported.case_count == 1
+    assert exported.fin_count == 1
+    imported = import_project(package, right)
+    assert imported.case_count == 1
+    rows = QecWorkflowStore(right_store).rows(right / "qec")
+    assert len(rows) == 2
+    assert {r["part_number"] for r in rows} == {
+        "SYNTH-PART-A", "SYNTH-PART-B",
+    }
+    assert len(QecWorkflowStore(right_store).active_sources()) == 2
+    assert WorkflowProjectStore(right_store).get(
+        "coolant_pump", "SYNTH-PART-B"
+    ) is not None
