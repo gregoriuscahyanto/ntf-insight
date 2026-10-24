@@ -121,6 +121,7 @@ class WorkflowPage(QWidget):
         self._context_scrape_active: dict[str, str] = {}
         self._context_parsers_busy: dict[str, str] = {}
         self._context_stop_requested: set[tuple[str, str]] = set()
+        self._context_operation_started: dict[str, float] = {}
         self._transfer_started_at: float | None = None
 
 
@@ -987,6 +988,7 @@ class WorkflowPage(QWidget):
         bar.setVisible(active)
         label.setVisible(active)
         if active:
+            self._context_operation_started.setdefault(category, time.monotonic())
             # Die Quellen melden bearbeitete FINs bzw. lokale Parser-Positionen.
             # Nur bei bekanntem Nenner einen Prozentwert anzeigen.
             match = re.search(r"(?:FIN-Fortschritt:\s*|parsen \()(\d+)\s*/\s*(\d+)", message, re.I)
@@ -994,11 +996,21 @@ class WorkflowPage(QWidget):
                 done, total = map(int, match.groups())
                 bar.setRange(0, total)
                 bar.setValue(min(done, total))
-                label.setText(message)
+                elapsed = time.monotonic() - self._context_operation_started[category]
+                if done > 0 and done < total and elapsed >= 2:
+                    rest = round(elapsed * (total - done) / done)
+                    estimate = f" · grob noch {rest // 60} min {rest % 60:02d} s"
+                else:
+                    estimate = " · Restzeit wird ermittelt" if done < total else ""
+                label.setText(message + estimate)
             else:
                 bar.setRange(0, 0)
-                label.setText(message or "Verarbeitung läuft · Gesamtdauer unbekannt")
+                label.setText(
+                    (message or "Verarbeitung läuft")
+                    + " · Restzeit nach ersten FINs/Dateien abschätzbar"
+                )
         else:
+            self._context_operation_started.pop(category, None)
             bar.setRange(0, 100)
             bar.setValue(0)
 
@@ -1519,6 +1531,32 @@ class WorkflowPage(QWidget):
             "Noch kein Bericht": sum(not any(v) for v in by_fin.values()),
         }
         self.qec_donut.set_counts(qec_counts)
+        by_fin_parsing: dict[str, list[str]] = defaultdict(list)
+        for row in self._scoped_rows:
+            fin = str(row["fin"]).upper()
+            key = (fin, str(row["reference"]))
+            if key in qec_coverage.partial_qec:
+                state = "partial"
+            elif key in qec_coverage.parsed_qec:
+                state = "done"
+            else:
+                state = "missing"
+            by_fin_parsing[fin].append(state)
+        self.qec_parsing_donut.set_counts({
+            "Vollständig geparst": sum(
+                all(state == "done" for state in states)
+                for states in by_fin_parsing.values()
+            ),
+            "Teilweise / mit Hinweisen": sum(
+                any(state != "missing" for state in states)
+                and not all(state == "done" for state in states)
+                for states in by_fin_parsing.values()
+            ),
+            "Noch nicht geparst": sum(
+                all(state == "missing" for state in states)
+                for states in by_fin_parsing.values()
+            ),
+        })
         def proposal(row: dict) -> dict:
             return self._chatgpt_by_case.get(row["case_id"], {}).get("bewertung", {})
         statuses = {
@@ -1563,6 +1601,35 @@ class WorkflowPage(QWidget):
         self._refresh_ssl_menu()
         self._update_coverage_labels()
 
+    @staticmethod
+    def _source_traffic_state(status: SourceCoverage) -> str:
+        """Grün nur bei vollständig belegter FIN- und Parserabdeckung."""
+        if not status.local_documents:
+            return "pending"
+        if status.unsupported_parser or status.partial_documents:
+            return "partial"
+        if status.local_documents != status.parsed_documents:
+            return "partial"
+        if status.total_cases is not None and (
+            not status.total_cases
+            or status.downloaded_cases != status.total_cases
+            or status.parsed_cases != status.total_cases
+        ):
+            return "partial"
+        # Bei unbekannter Sollmenge keinen unbelegten Vollständigkeitsstatus.
+        if status.total_cases is None:
+            return "partial"
+        return "done"
+
+    @staticmethod
+    def _set_traffic_property(frame: QFrame, property_name: str, value: str) -> None:
+        if frame.property(property_name) == value:
+            return
+        frame.setProperty(property_name, value)
+        frame.style().unpolish(frame)
+        frame.style().polish(frame)
+        frame.update()
+
     def _update_coverage_labels(self) -> None:
         """Anzeige nur aus verifizierter Dateiliste und gespeicherten Parserläufen."""
         for category, label in self.context_counts.items():
@@ -1581,6 +1648,11 @@ class WorkflowPage(QWidget):
                     f"{status.local_documents} archiviert"
                 )
                 label.setToolTip(status.display() + "\n" + status.note)
+                if category in self.context_technical_rows:
+                    self._set_traffic_property(
+                        self.context_technical_rows[category], "evidenceState",
+                        "done" if status.local_documents else "pending",
+                    )
                 label.setStyleSheet(
                     "color: #268763;" if (
                         status.local_documents and
@@ -1590,6 +1662,11 @@ class WorkflowPage(QWidget):
                 continue
             label.setText(status.display())
             label.setToolTip(status.note)
+            if category in self.context_source_rows:
+                self._set_traffic_property(
+                    self.context_source_rows[category], "coverageState",
+                    self._source_traffic_state(status),
+                )
             bar = self.context_coverage_bars[category]
             if status.total_cases is not None:
                 ratio = 100 * (status.parsed_cases or 0) / max(1, status.total_cases)
@@ -1597,16 +1674,7 @@ class WorkflowPage(QWidget):
                 ratio = 100 * status.parsed_documents / max(1, status.local_documents)
             bar.setValue(round(ratio))
             bar.setToolTip(status.display() + "\n" + status.note)
-            complete = (
-                not status.unsupported_parser
-                and bool(status.local_documents)
-                and status.local_documents == status.parsed_documents
-                and not status.partial_documents
-                and (
-                    status.total_cases is None
-                    or status.parsed_cases == status.total_cases
-                )
-            )
+            complete = self._source_traffic_state(status) == "done"
             label.setStyleSheet(
                 "color: #268763;" if complete
                 else "color: #bd8318;" if status.local_documents else ""
