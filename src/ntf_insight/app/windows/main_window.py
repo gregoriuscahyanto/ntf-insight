@@ -16,6 +16,7 @@ from ntf_insight.app.workers.cluster_context_workers import (
     ClusterContextExportWorker, ClusterEvidenceImportWorker,
 )
 from ntf_insight.app.workers.project_transfer_worker import ProjectTransferWorker
+from ntf_insight.app.workers.project_delete_worker import ProjectDeleteWorker
 from ntf_insight.ingestion.project_portable import PROJECT_EXTENSION
 from ntf_insight.ingestion.artifacts import SourceType
 from ntf_insight.app.bootstrap import load_application_data
@@ -63,6 +64,8 @@ class MainWindow(QMainWindow):
         self._context_scraper_failed: set[str] = set()
         self._context_worker = None
         self._project_transfer_worker = None
+        self._project_delete_worker = None
+        self._project_delete_result = None
         self._project_import_result = None
         self._pending_first_context: tuple[str, str] | None = None
         self._pending_ai_round: int | None = None
@@ -130,6 +133,9 @@ class MainWindow(QMainWindow):
             WorkflowProjectStore(self.manual_service.store)
         )
         pages["project_settings"].project_selected.connect(self._project_selected)
+        pages["project_settings"].project_delete_requested.connect(
+            self._project_delete_requested
+        )
         pages["workflow"].navigate.connect(self._workflow_navigate)
         pages["workflow"].action_requested.connect(self._workflow_action)
         pages["workflow"].project_selected.connect(self._project_selected)
@@ -418,6 +424,92 @@ class MainWindow(QMainWindow):
             self._reload_data()
             self._project_selected(result.profile_id, result.part_number)
 
+    def _project_delete_requested(
+        self, profile: str, part: str, complete: bool,
+    ) -> None:
+        """Projekt nur bei inaktiven Import-/Transferarbeitern löschen."""
+        settings = self.pages["project_settings"]
+        if not self._portable_transfer_ready():
+            settings.status.setText(
+                "Projektlöschung nicht möglich, solange ein Import, "
+                "Download oder Datentransfer läuft."
+            )
+            return
+        if settings.projects.get(profile, part) is None:
+            settings.status.setText("Projekt existiert nicht mehr.")
+            settings.refresh_projects()
+            return
+        worker = ProjectDeleteWorker(
+            self.application_data.paths.data_dir,
+            profile, part, complete=complete,
+        )
+        self._project_delete_worker = worker
+        self._project_delete_result = None
+        worker.completed.connect(self._project_delete_completed)
+        worker.failed.connect(self._project_delete_failed)
+        worker.finished.connect(self._project_delete_finished)
+        settings.status.setText(
+            "Projektdaten werden kontrolliert gelöscht …" if complete
+            else "Projektregistrierung wird entfernt …"
+        )
+        self._portable_transfer_busy(True)
+        worker.start()
+
+    def _project_delete_completed(self, result: object) -> None:
+        self._project_delete_result = result
+
+    def _project_delete_failed(self, message: str) -> None:
+        self.pages["project_settings"].status.setText(message)
+
+    def _project_delete_finished(self) -> None:
+        worker, self._project_delete_worker = self._project_delete_worker, None
+        if worker is not None:
+            worker.deleteLater()
+        self._portable_transfer_busy(False)
+        result, self._project_delete_result = self._project_delete_result, None
+        if result is None:
+            return
+        self._reload_data()
+        workflow = self.pages["workflow"]
+        settings = self.pages["project_settings"]
+        projects = settings.projects.list_projects()
+        if projects:
+            # Falls das aktive Projekt gelöscht wurde, nächstes Projekt
+            # auswählen; alle anderen Projektkontexte unverändert lassen.
+            selected = workflow.project_store.get(
+                workflow.profile_id, workflow._context_part
+            )
+            if selected is None:
+                selected = projects[0]
+                workflow.activate_project(
+                    selected.profile_id, selected.part_number
+                )
+                if self.pages["sources"].qec_workflow is not None:
+                    self.pages["sources"].qec_workflow.set_project_scope(
+                        selected.part_number
+                    )
+            settings.select_project(selected.profile_id, selected.part_number)
+        else:
+            settings.refresh_projects()
+        self._sync_local_cluster()
+        if result.complete:
+            message = (
+                f"Projekt {result.project.title} gelöscht: "
+                f"{result.cases_deleted} Fälle, "
+                f"{result.report_count} QuickTests, "
+                f"{result.files_deleted} Archivobjekte. "
+                f"{result.shared_files_retained} gemeinsam verwendete "
+                "Quellobjekte geschützt."
+            )
+        else:
+            message = (
+                f"Projekt {result.project.title} entfernt. "
+                "Alle vorhandenen QEC-/Diagnose- und Analysedaten "
+                "bleiben lokal gespeichert."
+            )
+        settings.status.setText(message)
+        self.navigation.select_page("project_settings")
+
     def _project_selected(self, profile: str, part: str) -> None:
         if not self._portable_transfer_ready():
             self.pages["workflow"].set_notice(
@@ -550,6 +642,7 @@ class MainWindow(QMainWindow):
             and not self._case_quicktest_import_pending
             and self._context_worker is None
             and self._project_transfer_worker is None
+            and self._project_delete_worker is None
             and cases._quicktest_worker is None
             and (qec is None or qec.worker is None)
             and (tips is None or tips.worker is None)
