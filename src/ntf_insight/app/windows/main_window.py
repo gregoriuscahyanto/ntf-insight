@@ -12,6 +12,7 @@ from ntf_insight.app.pages.data_quality_page import DataQualityPage
 from ntf_insight.app.pages.dtc_page import DTCExplorerPage
 from ntf_insight.app.pages.prediction_page import PredictionPage
 from ntf_insight.app.pages.sources_page import SourcesPage
+from ntf_insight.app.pages.workflow_page import WorkflowPage
 from ntf_insight.app.pages.source_knowledge_page import SourceKnowledgePage
 from ntf_insight.app.pages.supplier_page import SupplierPage
 from ntf_insight.app.widgets.navigation import NavigationPanel
@@ -55,7 +56,7 @@ class MainWindow(QMainWindow):
         self.setCentralWidget(root)
 
         self.navigation.page_selected.connect(self.show_page)
-        self.navigation.select_page("dashboard")
+        self.navigation.select_page("workflow")
 
     def _create_pages(self) -> dict[str, QWidget]:
         # Fachmarkierungen bleiben im selben lokalen DuckDB wie die Quellen,
@@ -90,6 +91,12 @@ class MainWindow(QMainWindow):
             "prediction": PredictionPage(self.repository, str(self.application_data.paths.database_path), self.application_data.mode),
             "quality": DataQualityPage(self.repository, self.reference_repository),
         }
+        pages["workflow"] = WorkflowPage(
+            pages["sources"],
+            self.application_data.paths.database_path,
+            self.application_data.paths.data_dir,
+        )
+        pages["workflow"].open_page.connect(self.navigation.select_page)
         pages["cases"].case_saved.connect(self._reload_after_manual_change)
         pages["cases"].quicktests_downloaded.connect(self._import_downloaded_case_quicktests)
         pages["cases"].qec_reports_downloaded.connect(self._import_downloaded_case_quicktests)
@@ -191,11 +198,12 @@ class MainWindow(QMainWindow):
             self.navigation.select_page("cases")
             return
         self.pages["sources"].import_status.setText(summary)
+        self.pages["workflow"].refresh()
         if quicktests_saved:
             self.navigation.select_page("cases")
             self.pages["cases"].show_quicktests()
         else:
-            self.navigation.select_page("sources")
+            self.navigation.select_page("workflow")
 
     def _reload_after_manual_change(self, case_id: str) -> None:
         """Reload persisted data and rebuild derived views after one successful edit."""
@@ -222,6 +230,8 @@ class MainWindow(QMainWindow):
         page = self.pages.get(key)
         if page is None:
             return
+        if key == "workflow":
+            page.refresh()
         if key == "cases":
             page.cluster_workspace.refresh_review_priorities()
             page._refresh_quicktest_download_dates()
