@@ -461,7 +461,11 @@ class WorkflowPage(QWidget):
                 "nur als Original archiviert werden."
             )
             if category == "celonis":
-                parser.setText("Archivieren …")
+                parser.setText("Einlesen (Archiv)")
+                parser.setToolTip(
+                    "Celonis-Originaldatei lokal einlesen und archivieren. "
+                    "Ein strukturierter Celonis-Parser ist noch nicht verfügbar."
+                )
             buttons["parse"] = parser
             scraper_grid.addWidget(parser, index, 3)
             archive = QPushButton("+ Beleg", objectName="WorkflowAction")
