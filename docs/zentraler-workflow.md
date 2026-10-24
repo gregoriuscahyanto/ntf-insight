@@ -22,7 +22,7 @@ Der Einstiegspunkt **Workflow** verbindet bereits bestehende Ansichten, ohne bes
 
 ## Speicherung und Grenzen
 
-Der Bearbeitungsstand wird unter `workflow_progress` und `workflow_current_context` in derselben lokalen DuckDB gespeichert. Ein `.ntfbackup` übernimmt diese Tabellen mit dem restlichen Datenbestand. Die Sachnummer filtert auf der Workflow-Seite QEC-Abdeckung und NTF-Entscheidungen; **sie begrenzt noch nicht automatisch jede nachgelagerte Clusterrechnung**. Für die Clusterrechnung sind die dortigen vorhandenen Kohorten- und DTC-Filter weiter zu verwenden. Der Fortschritt ist also eine Navigations-/Review-Hilfe und keine automatische fachliche Freigabe.
+Der Bearbeitungsstand wird unter `workflow_progress` und `workflow_current_context` in derselben lokalen DuckDB gespeichert. Ein `.ntfbackup` übernimmt diese Tabellen mit dem restlichen Datenbestand. Die Sachnummer filtert auf der Workflow-Seite QEC-Abdeckung und NTF-Entscheidungen; **sie begrenzt noch nicht automatisch jede nachgelagerte Clusterrechnung**. Für die Clusterrechnung sind die dortigen vorhandenen Kohorten- und DTC-Filter weiter zu verwenden. Die Workflow-Sachnummer wird beim Öffnen der Pumpen-Clusteranalyse auf deren QEC-Fallkohorte angewendet. Die weitere AutoExport-Analyse ist an die dortige QEC-Kohorte gebunden. Für andere Bauteilprofile ist die bestehende pumpenspezifische Clusteransicht bewusst gesperrt. Der Fortschritt ist eine Navigations-/Review-Hilfe und keine automatische fachliche Freigabe.
 
 Die KI-Ergebnisvorlage liegt bereits im vorhandenen Export als `chatgpt_ergebnis_vorlage.json` zusammen mit `chatgpt_ergebnis_schema.json`; der Import prüft Paket-ID und Belegverweise und markiert die Ergebnisse zuerst ungeprüft.
 
