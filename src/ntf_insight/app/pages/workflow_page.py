@@ -25,9 +25,7 @@ from ntf_insight.storage.cluster_evidence_store import (
     CATEGORY_LABELS, ClusterEvidenceStore, EVIDENCE_CATEGORIES,
 )
 from ntf_insight.storage.workflow_ai_chain import WorkflowAIChainStore
-from ntf_insight.storage.workflow_projects import (
-    NTFProject, WorkflowProjectStore,
-)
+from ntf_insight.storage.workflow_projects import WorkflowProjectStore
 from ntf_insight.storage.workflow_progress import (
     STEP_COUNT, WorkflowProgressStore, normalize_part_number,
 )
@@ -479,6 +477,15 @@ class WorkflowPage(QWidget):
         self.context_review_button = QPushButton("Unterlagensammlung geprüft")
         self.context_review_button.clicked.connect(self._review)
         body.addWidget(self.context_review_button)
+        self.context_self_import_button = QPushButton("Sonstige Dateien importieren …")
+        self.context_self_import_button.setToolTip(
+            "Vorhandenen manuellen Quellenimport öffnen, ohne eine "
+            "zweite Importlogik zu erzeugen."
+        )
+        self.context_self_import_button.clicked.connect(
+            lambda: self.action_requested.emit("self_import")
+        )
+        body.addWidget(self.context_self_import_button)
         self.context_summary = QLabel(objectName="PageSubtitle")
         self.context_summary.setWordWrap(True)
         body.addWidget(self.context_summary)
