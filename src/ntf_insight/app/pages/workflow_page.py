@@ -85,7 +85,9 @@ class WorkflowPage(QWidget):
         self.mode = mode
         self.profile_id, part = progress_store.current_context()
         self._context_part = part
-        self.state = progress_store.load(self.profile_id, part)
+        self.state = replace(
+            progress_store.load(self.profile_id, part), paused=False
+        )
         self.qec_root = progress_store.store.path.parent / "qec"
         self._all_rows: list[dict] = []
         self._scoped_rows: list[dict] = []
@@ -711,7 +713,9 @@ class WorkflowPage(QWidget):
             self.profile.blockSignals(False)
         self.part_number.setText(part)
         self.progress_store.select_context(profile, part)
-        self.state = self.progress_store.load(profile, part)
+        self.state = replace(
+            self.progress_store.load(profile, part), paused=False
+        )
         self._notice = ""
         self._error_step = None
         self.refresh_context_files()
@@ -807,7 +811,9 @@ class WorkflowPage(QWidget):
             self.profile_id = profile_id
             self._context_part = part
             self.progress_store.select_context(profile_id, part)
-            self.state = self.progress_store.load(profile_id, part)
+            self.state = replace(
+                self.progress_store.load(profile_id, part), paused=False
+            )
             self._notice = ""
             self._error_step = None
             self.refresh_ai_chain()
@@ -822,24 +828,15 @@ class WorkflowPage(QWidget):
         self.refresh()
 
     def _open_step(self, index: int) -> None:
-        if self.state.paused or not 0 <= index < STEP_COUNT:
+        if not 0 <= index < STEP_COUNT:
             return
         self.state = replace(self.state, step=index)
         self._error_step = None
         self._notice = ""
         self._save()
 
-    def _move(self, delta: int) -> None:
-        if self.state.paused:
-            return
-        self._open_step(max(0, min(STEP_COUNT - 1, self.state.step + delta)))
-
-    def _toggle_pause(self) -> None:
-        self.state = replace(self.state, paused=not self.state.paused)
-        self._save()
-
     def _review(self) -> None:
-        if self.state.paused or self.state.step not in (3, 4):
+        if self.state.step not in (3, 4):
             return
         reviews = set(self.state.reviewed_steps)
         if self.state.step in reviews:
@@ -1190,11 +1187,8 @@ class WorkflowPage(QWidget):
         self._refresh_controls()
 
     def _refresh_controls(self) -> None:
-        paused = self.state.paused
+        paused = False
         has_rows = bool(self._scoped_rows)
-        self.previous_button.setEnabled(not paused and self.state.step > 0)
-        self.next_button.setEnabled(not paused and self.state.step < STEP_COUNT - 1)
-        self.pause_button.setText("Fortsetzen" if paused else "Pausieren")
         self.qec_import_button.setEnabled(not paused and not self._import_busy)
         for button in self.context_import_buttons.values():
             button.setEnabled(not paused and not self._context_busy)
@@ -1229,11 +1223,6 @@ class WorkflowPage(QWidget):
             buttons = self.context_scraper_buttons[category]
             busy = category in self._context_scrapers_busy
             buttons["all"].setEnabled(not paused and not busy and bool(self._scoped_rows))
-            buttons["selected"].setEnabled(
-                not paused and not busy and bool(
-                    self.qec_table.selectionModel().selectedRows()
-                )
-            )
             buttons["cancel"].setEnabled(busy)
         self.cancel_import_button.setEnabled(self._import_busy)
         self.resume_import_button.setEnabled(
@@ -1256,6 +1245,7 @@ class WorkflowPage(QWidget):
 
     def refresh(self) -> None:
         self._update_tables()
+        self._refresh_chatgpt_cluster_view()
         if self.qec_store is not None:
             stats = self.qec_store.summarize_rows(self._scoped_rows)
         else:
@@ -1319,7 +1309,7 @@ class WorkflowPage(QWidget):
                 f"{i + 1:02d}  {self.STEPS[i][0]}\n"
                 f"{lamps[status]}  {names[i]}"
             )
-            button.setEnabled(not self.state.paused)
+            button.setEnabled(True)
             button.style().unpolish(button)
             button.style().polish(button)
         self.workspaces.setCurrentIndex(self.state.step)
@@ -1333,9 +1323,7 @@ class WorkflowPage(QWidget):
                 if self.state.step in self.state.reviewed_steps
                 else "Als fachlich geprüft markieren"
             )
-        if self.state.paused:
-            self.note.setText("Workflow pausiert · Fortschritt lokal gespeichert.")
-        elif self._data_error:
+        if self._data_error:
             self.note.setText(self._data_error)
         elif self._notice:
             self.note.setText(self._notice)
