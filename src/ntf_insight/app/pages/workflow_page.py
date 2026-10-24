@@ -957,10 +957,15 @@ class WorkflowPage(QWidget):
         idx = 0
         for number in range(1, self.project_combo.count()):
             item = self.project_combo.itemData(number)
-            if (
+            matches_key = (
                 isinstance(item, (tuple, list)) and len(item) == 2
                 and item[0] == wanted[0] and part_key(item[1]) == wanted[1]
-            ):
+            )
+            matches_title = (
+                project is not None
+                and self.project_combo.itemText(number) == project.title
+            )
+            if matches_key or matches_title:
                 idx = number
                 break
         self.project_combo.setCurrentIndex(idx)
