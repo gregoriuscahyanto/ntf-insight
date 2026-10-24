@@ -963,7 +963,7 @@ class AutoExportFinWorkspace(QWidget):
         self._task = None
         self.start_button.setEnabled(True)
         self.filter_button.setEnabled(True)
-        self.only_qec.setEnabled(True)
+        self.only_qec.setEnabled(self._workflow_allowed_fins is None)
         self.workflow_handoff_only.setEnabled(bool(self._handed_off_fins))
         self.qec_anchor_mode.setEnabled(True)
         self.min_cluster_size.setEnabled(True)
