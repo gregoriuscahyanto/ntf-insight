@@ -788,8 +788,13 @@ class WorkflowPage(QWidget):
                 if activity:
                     timestamp, state = activity
                     label = timestamp.strftime("%d.%m.%Y %H:%M")
+                    kind = (
+                        "Einlesen" if state in {
+                            "Einlesen gestartet", "Eingelesen", "Archiviert",
+                        } else "Abruf"
+                    )
                     self.context_source_dates[key].setText(
-                        f"Abrufversuch: {label} · {state}"
+                        f"{kind}: {label} · {state}"
                     )
                 elif documents:
                     newest = max(f.imported_at for f in documents)
