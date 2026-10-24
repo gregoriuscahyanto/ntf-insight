@@ -32,12 +32,14 @@ class KIAnalyseWorker(QThread):
         *,
         mit_freitext: bool,
         mit_qec_originalen: bool = False,
+        selected_fins: set[str] | None = None,
     ) -> None:
         super().__init__()
         self.service = service
         self.path = Path(path)
         self.mit_freitext = mit_freitext
         self.mit_qec_originalen = mit_qec_originalen
+        self.selected_fins = selected_fins
 
     def run(self) -> None:
         try:
@@ -45,6 +47,7 @@ class KIAnalyseWorker(QThread):
                 self.service, self.path, mit_freitext=self.mit_freitext,
                 mit_qec_originalen=self.mit_qec_originalen,
                 progress=self.progress.emit,
+                selected_fins=self.selected_fins,
             )
         except Exception as exc:
             self.failed.emit(f"{type(exc).__name__}: {exc}")
@@ -94,6 +97,7 @@ class KIAnalysepaketPanel(QWidget):
         self.worker: KIAnalyseWorker | None = None
         self.import_worker: ChatGPTImportWorker | None = None
         self._guard: Callable[[], bool] | None = None
+        self._next_workflow_fins: set[str] | None = None
         self._visible: list[dict] = []
 
         layout = QVBoxLayout(self)
@@ -276,7 +280,13 @@ class KIAnalysepaketPanel(QWidget):
         )
         return reply == QMessageBox.StandardButton.Yes
 
+    def prepare_workflow_cohort(self, fins: set[str]) -> None:
+        """Einmaliger FIN-Filter für den nächsten Workflow-ZIP-Export."""
+        self._next_workflow_fins = set(fins)
+
     def _export(self) -> None:
+        selected = self._next_workflow_fins
+        self._next_workflow_fins = None
         if not self._can_start():
             return
         with_text = self.include_text.isChecked()
@@ -298,6 +308,7 @@ class KIAnalysepaketPanel(QWidget):
         self.worker = KIAnalyseWorker(
             self.service, destination, mit_freitext=with_text,
             mit_qec_originalen=with_originals,
+            selected_fins=selected,
         )
         self.worker.progress.connect(self.status.setText)
         self.worker.completed.connect(self._completed)
