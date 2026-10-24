@@ -237,24 +237,15 @@ class LocalBatchImporter:
         if only_new and local_kind not in {"quicktests", "qec"}:
             raise ValueError("Inkrementeller Import benötigt QuickTests oder QEC als Quellenart.")
 
-        # Completed state is persisted in DuckDB and survives app restarts.
-        # Failed files are also skipped when unchanged; a manual retry or
-        # future parser-version bump explicitly retries them.
+        # Resume überspringt nur nachweislich erfolgreich geparste SHA-Dateien
+        # (beliebige Parser-Version). Fehlversuche werden ausdrücklich erneut
+        # versucht; ein neuer Parser v4 darf alte v1-Erfolge nicht zurücksetzen.
         already_done: set[str] = set()
         if only_new:
             expected_name, expected_version = (
                 (QuickTestPdfParser.name, QuickTestPdfParser.version)
                 if local_kind == "quicktests" else (QECJsonParser.name, QECJsonParser.version)
             )
-            recent: dict[str, ParseRun] = {}
-            for run in self.sources.store.load_parse_runs():
-                if run.parser_name != expected_name or run.parser_version != expected_version:
-                    continue
-                previous = recent.get(run.artifact_sha256)
-                if previous is None or (run.completed_at or run.started_at) >= (
-                    previous.completed_at or previous.started_at
-                ):
-                    recent[run.artifact_sha256] = run
             if local_kind == "quicktests":
                 with self.sources.store.connect() as connection:
                     persisted = {
@@ -268,11 +259,13 @@ class LocalBatchImporter:
                     for document in self.knowledge.documents()
                     if document["source_kind"] == "qec_live_report"
                 }
-            for sha, run in recent.items():
-                if run.status == ParseStatus.FAILED or (
-                    run.status in {ParseStatus.SUCCESS, ParseStatus.PARTIAL} and sha in persisted
+            for run in self.sources.store.load_parse_runs():
+                if (
+                    run.parser_name == expected_name
+                    and run.status in {ParseStatus.SUCCESS, ParseStatus.PARTIAL}
+                    and run.artifact_sha256 in persisted
                 ):
-                    already_done.add(sha)
+                    already_done.add(run.artifact_sha256)
 
         def stop_requested() -> bool:
             return should_cancel is not None and should_cancel()
