@@ -2598,7 +2598,8 @@ class WorkflowPage(QWidget):
         )
         names = (
             f"{total} FINs", f"{downloaded}/{total} Berichte",
-            f"{reviewed}/{stats['cases']} QEC-entschieden",
+            f"{reviewed}/{stats['cases']} QEC-entschieden\n"
+            f"{imported}/{stats['cases']} KI-Vorschläge",
             f"{source_documents} Quelldokumente",
             "Geprüft" if statuses[4] == "done" else "Offen",
         )
