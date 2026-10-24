@@ -7,6 +7,7 @@ Rohdatenparser, QEC-Downloader und ChatGPT-Vertrag werden nicht dupliziert.
 from __future__ import annotations
 
 from collections import Counter, defaultdict
+import json
 from dataclasses import replace
 from datetime import datetime
 from pathlib import Path
@@ -887,36 +888,249 @@ class WorkflowPage(QWidget):
         self._refresh_project_selector()
         self.refresh()
 
+    def _ssl_categories(self) -> set[str]:
+        return set(self._fin_findings.values())
+
+    def _select_all_ssl(self, selected: bool) -> None:
+        categories = self._ssl_categories()
+        self.ssl_selection.save(
+            self.profile_id, self._context_part, categories,
+            categories if selected else set(),
+        )
+        self.refresh()
+
+    def _select_ssl_category(self, category: str, checked: bool) -> None:
+        categories = self._ssl_categories()
+        current = self.ssl_selection.selected(self.profile_id, self._context_part)
+        selected = set(categories if current is None else current)
+        if checked:
+            selected.add(category)
+        else:
+            selected.discard(category)
+        self.ssl_selection.save(
+            self.profile_id, self._context_part, categories, selected,
+        )
+        self.refresh()
+
+    def _refresh_ssl_menu(self) -> None:
+        categories = self._ssl_categories()
+        selected = self.ssl_selection.selected(self.profile_id, self._context_part)
+        if selected is None:
+            selected = categories
+        self.ssl_menu.clear()
+        fin_counts = Counter(self._fin_findings.values())
+        for category in sorted(categories):
+            action = QAction(
+                f"{category}  ·  {fin_counts[category]} FINs", self.ssl_menu
+            )
+            action.setCheckable(True)
+            action.setChecked(category in selected)
+            action.toggled.connect(
+                lambda checked, label=category:
+                self._select_ssl_category(label, checked)
+            )
+            self.ssl_menu.addAction(action)
+        included = sum(
+            1 for category in self._fin_findings.values() if category in selected
+        )
+        self.ssl_filter_button.setText(
+            f"Endbefunde wählen · {included}/{len(self._fin_findings)} FINs"
+        )
+        self.ssl_filter_button.setEnabled(bool(categories))
+        self.ssl_select_all.setEnabled(bool(categories))
+        self.ssl_selection_status.setText(
+            f"{included} FINs in den Schritten 02–05 berücksichtigt. "
+            "Die originale QEC-Liste bleibt vollständig erhalten."
+        )
+        self.ssl_donut.set_counts({
+            category: fin_counts[category] for category in sorted(fin_counts)
+        })
+
+    @staticmethod
+    def _per_fin_distribution(
+        rows: list[dict], field,
+        *, unknown: str, conflict: str = "Mehrere Bewertungen",
+    ) -> dict[str, int]:
+        grouped: dict[str, set[str]] = defaultdict(set)
+        for row in rows:
+            fin = str(row["fin"]).upper()
+            grouped[fin].add(str(field(row) or unknown).strip() or unknown)
+        counts = Counter(
+            next(iter(names)) if len(names) == 1 else conflict
+            for names in grouped.values()
+        )
+        return dict(counts)
+
     def _update_tables(self) -> None:
-        self._scoped_rows = self._rows_for_context()
+        self._project_rows = self._rows_for_context()
+        self._fin_findings = fin_ssl_groups(self._project_rows)
+        eligible = self.ssl_selection.allowed_fins(
+            self.profile_id, self._context_part, self._project_rows,
+        )
+        self._scoped_rows = [
+            row for row in self._project_rows
+            if str(row["fin"]).upper() in eligible
+        ]
         self.fin_model.set_rows([
             (
-                r["fin"], r["case_id"], r["reference"], r["part_number"],
-                r["finding"], "Ja" if r["tp_dashboard"] else "Fehlt",
-                r["decision"], "Ja" if r["report"] else "Nein",
+                row["fin"], row["case_id"], row["reference"],
+                row["part_number"], row["finding"],
+                "Ja" if row["tp_dashboard"] else "Fehlt",
+                row["decision"], "Ja" if row["report"] else "Nein",
             )
-            for r in self._scoped_rows
+            for row in self._project_rows
+        ], row_states=[
+            "info" if str(row["fin"]).upper() in eligible else "muted"
+            for row in self._project_rows
         ])
+        reports = [
+            local_qec_archive(self.qec_root, row["fin"], row["reference"])
+            for row in self._scoped_rows
+        ]
         self.qec_model.set_rows([
             (
-                r["fin"], r["case_id"], r["reference"], r["part_number"],
-                info.date_label if info else "—",
-                "Gespeichert" if info else "Ausstehend",
+                row["fin"], row["case_id"], row["reference"],
+                row["part_number"], report.date_label if report else "—",
+                "Gespeichert" if report else "Ausstehend",
             )
-            for r in self._scoped_rows
-            for info in [local_qec_archive(self.qec_root, r["fin"], r["reference"])]
+            for row, report in zip(self._scoped_rows, reports)
+        ], row_states=[
+            "success" if report else "muted" for report in reports
         ])
+        by_fin: dict[str, list[bool]] = defaultdict(list)
+        for row, report in zip(self._scoped_rows, reports):
+            by_fin[str(row["fin"]).upper()].append(bool(report))
+        qec_counts = {
+            "Alle Berichte vorhanden": sum(all(v) for v in by_fin.values()),
+            "Teilweise vorhanden": sum(any(v) and not all(v) for v in by_fin.values()),
+            "Noch kein Bericht": sum(not any(v) for v in by_fin.values()),
+        }
+        self.qec_donut.set_counts(qec_counts)
+        def proposal(row: dict) -> dict:
+            return self._chatgpt_by_case.get(row["case_id"], {}).get("bewertung", {})
+        statuses = {
+            "NTF plausibel": "success", "NTF fraglich": "warning",
+            "Kein reiner NTF": "error", "Nicht bewertbar": "muted",
+        }
         self.ntf_model.set_rows([
             (
-                r["fin"], r["case_id"], r["finding"], r["decision"],
-                self._chatgpt_by_case[r["case_id"]]["bewertung"].get(
-                    "ntf_bewertung", "Nicht bewertet"
-                ) if r["case_id"] in self._chatgpt_by_case else "—",
-                self._chatgpt_by_case[r["case_id"]]["review_status"]
-                if r["case_id"] in self._chatgpt_by_case else "—",
+                row["fin"], row["case_id"], row["finding"], row["decision"],
+                proposal(row).get("ntf_bewertung", "Nicht bewertet"),
+                proposal(row).get("verursachungsbereich", "Nicht zuordenbar"),
+                self._chatgpt_by_case[row["case_id"]]["review_status"]
+                if row["case_id"] in self._chatgpt_by_case else "Offen",
             )
-            for r in self._scoped_rows
+            for row in self._scoped_rows
+        ], row_states=[
+            statuses.get(proposal(row).get("ntf_bewertung"), "muted")
+            for row in self._scoped_rows
         ])
+        ratings = self._per_fin_distribution(
+            self._scoped_rows,
+            lambda row: proposal(row).get("ntf_bewertung", "Nicht bewertet"),
+            unknown="Nicht bewertet",
+        )
+        self.ntf_donut.set_counts({
+            key: ratings.get(key, 0) for key in (
+                "NTF plausibel", "NTF fraglich", "Kein reiner NTF",
+                "Nicht bewertbar", "Nicht bewertet", "Mehrere Bewertungen",
+            ) if ratings.get(key, 0)
+        })
+        causes = self._per_fin_distribution(
+            self._scoped_rows,
+            lambda row: proposal(row).get("verursachungsbereich", "Nicht zuordenbar"),
+            unknown="Nicht zuordenbar",
+            conflict="Mehrere Zuordnungen",
+        )
+        ordered = sorted(causes.items(), key=lambda item: (-item[1], item[0]))
+        grouped = dict(ordered[:5])
+        if len(ordered) > 5:
+            grouped["Weitere"] = sum(value for _, value in ordered[5:])
+        self.cause_donut.set_counts(grouped)
+        self._refresh_ssl_menu()
+
+    def _show_chatgpt_cluster_details(self) -> None:
+        index = self.chatgpt_cluster_table.currentIndex().row()
+        items = getattr(self, "_cluster_entries", [])
+        if 0 <= index < len(items):
+            entry = items[index]
+            self.chatgpt_cluster_details.setText(
+                str(entry.get("technische_hypothese") or "Keine technische Hypothese.")
+            )
+        else:
+            self.chatgpt_cluster_details.setText("")
+
+    def _refresh_chatgpt_cluster_view(self) -> None:
+        """Nur gespeicherte zweite Runde visualisieren; keine neue KI-Auswertung."""
+        self._cluster_entries = []
+        package = self.first_package
+        if package is None:
+            self.chatgpt_cluster_summary.setText(
+                "Kein erstes KI-Paket für dieses Projekt vorhanden."
+            )
+            self.chatgpt_cluster_model.set_rows([])
+            self.chatgpt_case_model.set_rows([])
+            return
+        with self.progress_store.store.connect() as con:
+            result = con.execute(
+                "SELECT r.analyse_id FROM workflow_ai_rounds r "
+                "JOIN chatgpt_imports i ON i.analyse_id=r.analyse_id "
+                "WHERE r.paket_id=? AND r.round_number=2 "
+                "ORDER BY i.importiert_am DESC,r.analyse_id DESC LIMIT 1",
+                [package.paket_id],
+            ).fetchone()
+            if not result:
+                self.chatgpt_cluster_summary.setText(
+                    "Noch kein importiertes Clusterergebnis. "
+                    "Dieses Tab zeigt ausschließlich den zweiten ChatGPT-Durchlauf."
+                )
+                self.chatgpt_cluster_model.set_rows([])
+                self.chatgpt_case_model.set_rows([])
+                return
+            analysis_id = result[0]
+            clusters = con.execute(
+                "SELECT payload_json FROM chatgpt_cluster "
+                "WHERE analyse_id=? ORDER BY cluster_id",
+                [analysis_id],
+            ).fetchall()
+            findings = con.execute(
+                "SELECT case_id,cluster_id,payload_json,review_status "
+                "FROM chatgpt_fallanalysen WHERE analyse_id=? ORDER BY case_id",
+                [analysis_id],
+            ).fetchall()
+        current = {str(row["case_id"]): row for row in self._scoped_rows}
+        self._cluster_entries = [json.loads(item[0]) for item in clusters]
+        self.chatgpt_cluster_model.set_rows([
+            (
+                entry.get("cluster_id", ""), entry.get("titel", ""),
+                len(entry.get("fall_ids") or []),
+                entry.get("sicherheit", "Offen"),
+            )
+            for entry in self._cluster_entries
+        ])
+        rendered = []
+        state = []
+        for case_id, cluster_id, payload, review in findings:
+            case = current.get(case_id)
+            if case is None:
+                continue
+            finding = json.loads(payload)
+            rendered.append((
+                case["fin"], case_id, cluster_id or "—",
+                finding.get("ntf_bewertung", "Nicht bewertet"),
+                finding.get("verursachungsbereich", "Nicht zuordenbar"), review,
+            ))
+            state.append(
+                "success" if review == "Bestätigt" else "info"
+                if review != "Abgelehnt" else "error"
+            )
+        self.chatgpt_case_model.set_rows(rendered, row_states=state)
+        self.chatgpt_cluster_summary.setText(
+            f"Analyse {analysis_id} · {len(self._cluster_entries)} ChatGPT-Cluster · "
+            f"{len(rendered)} aktuelle QEC-Fälle mit Ergebnissen. "
+            "Nur Anzeige – keine erneute KI-Ausführung."
+        )
+        self._show_chatgpt_cluster_details()
 
     def qec_targets(self, *, selected_only: bool = False) -> list[QecTarget]:
         """Niemals außerhalb der Sachnummern-Kohorte oder Referenz herunterladen."""
