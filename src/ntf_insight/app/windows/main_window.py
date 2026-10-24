@@ -993,6 +993,7 @@ class MainWindow(QMainWindow):
             workflow.source_activity.record(
                 context[0], context[1], category, result,
             )
+        workflow.set_context_operation(category, False)
         workflow.refresh_data()
         workflow.set_notice(
             f"Parsing: {summary.files_parsed} Dateien bearbeitet · "
@@ -1050,6 +1051,16 @@ class MainWindow(QMainWindow):
             )
             workflow.refresh_context_files()
             return
+        workflow.set_context_operation(
+            category, True, f"{len(filenames)} Dateien werden eingelesen …"
+        )
+        worker.progress.connect(
+            lambda message, cat=category:
+            workflow.set_context_operation(cat, True, message)
+        )
+        worker.finished.connect(
+            lambda cat=category: workflow.set_context_operation(cat, False)
+        )
         worker.imported.connect(
             lambda summary, ctx=context, cat=category,
             paths=tuple(Path(name) for name in filenames):
@@ -1084,6 +1095,7 @@ class MainWindow(QMainWindow):
             else "Archiviert" if category == "celonis" or not parsed
             else "Eingelesen"
         )
+        workflow.set_context_operation(category, False)
         workflow.source_activity.record(context[0], context[1], category, result)
         workflow.refresh_context_files()
         if (
@@ -1110,6 +1122,7 @@ class MainWindow(QMainWindow):
         self, category: str, context: tuple[str, str],
     ) -> None:
         workflow = self.pages["workflow"]
+        workflow.set_context_operation(category, False)
         workflow.source_activity.record(
             context[0], context[1], category, "Fehlgeschlagen",
         )
