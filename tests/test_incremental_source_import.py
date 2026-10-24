@@ -202,6 +202,7 @@ def test_unrecognized_qec_retries_failed_checkpoint_on_resume(tmp_path):
 def test_incremental_import_never_reparses_older_success_just_for_version(tmp_path):
     from datetime import datetime, timezone
     from ntf_insight.ingestion.artifacts import ParseRun
+    from ntf_insight.ingestion.qec_json import QECJsonParser
 
     source = service_for(tmp_path)
     importer = LocalBatchImporter(source)
@@ -215,7 +216,7 @@ def test_incremental_import_never_reparses_older_success_just_for_version(tmp_pa
                 run.model_copy(update={"parser_version": "historisch-v1"})
             )
     source.store.save_parse_run(ParseRun(
-        artifact_sha256=sha, parser_name="qec_json",
+        artifact_sha256=sha, parser_name=QECJsonParser.name,
         parser_version="v4",
         status=ParseStatus.FAILED,
         started_at=datetime.now(timezone.utc),
