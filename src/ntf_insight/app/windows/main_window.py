@@ -12,7 +12,7 @@ from PySide6.QtCore import Qt, QEventLoop, QTimer, QUrl
 from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import (
     QApplication, QDialog, QFileDialog, QGraphicsBlurEffect, QHBoxLayout,
-    QInputDialog, QLabel, QMainWindow, QMessageBox, QProgressBar, QPushButton,
+    QInputDialog, QMainWindow, QMessageBox, QPushButton,
     QStackedWidget, QVBoxLayout, QWidget,
 )
 
@@ -72,11 +72,10 @@ class MainWindow(QMainWindow):
         self._workflow_quicktest_download_pending = False
         self._context_scraper_failed: set[str] = set()
         self._context_worker = None
-        # Workflow-Abrufe und Parser benutzen dieselben Worker wie bisher,
-        # aber keine modale Importkarte und keinen ausgegrauten App-Hintergrund.
+        # Workflow-Abrufe und Parser laufen ohne modale Importkarte.
+        # Den aktiven Quellenimport nur kennzeichnen, damit er keinen
+        # allgemeinen Fortschrittsdialog oeffnet.
         self._workflow_background_source_import: str | None = None
-        self._background_task_kind: str | None = None
-        self._background_task_category: str | None = None
         # Importauswahl darf während des Parsings vorgemerkt werden; keine
         # zweite DuckDB-Schreiboperation vor Abschluss des aktiven Workers.
         self._pending_context_imports: list[
@@ -120,29 +119,6 @@ class MainWindow(QMainWindow):
         layout.addWidget(self.navigation)
         layout.addWidget(self.stack, 1)
         self.setCentralWidget(root)
-        # Kleiner, global sichtbarer Fortschritt auch beim Wechsel zu anderen Seiten.
-        self._background_task_panel = QWidget(self)
-        task_layout = QHBoxLayout(self._background_task_panel)
-        task_layout.setContentsMargins(8, 0, 8, 0)
-        task_layout.setSpacing(8)
-        self._background_task_label = QLabel()
-        self._background_task_label.setObjectName("BackgroundTaskLabel")
-        self._background_task_label.setMinimumWidth(220)
-        self._background_task_progress = QProgressBar()
-        self._background_task_progress.setObjectName("BackgroundTaskProgress")
-        self._background_task_progress.setRange(0, 0)
-        self._background_task_progress.setFixedWidth(110)
-        self._background_task_progress.setTextVisible(False)
-        self._background_task_stop = QPushButton(
-            "Stoppen", objectName="BackgroundTaskStop"
-        )
-        self._background_task_stop.setFixedHeight(26)
-        self._background_task_stop.clicked.connect(self._cancel_background_operation)
-        task_layout.addWidget(self._background_task_label)
-        task_layout.addWidget(self._background_task_progress)
-        task_layout.addWidget(self._background_task_stop)
-        self.statusBar().addPermanentWidget(self._background_task_panel)
-        self._background_task_panel.hide()
         self._loading_overlay = LoadingOverlay(root)
         self._modal_shade = QWidget(root)
         self._modal_shade.setObjectName("ProjectModalShade")
@@ -155,17 +131,29 @@ class MainWindow(QMainWindow):
         self.navigation.select_page("workflow")
 
     def closeEvent(self, event) -> None:  # noqa: N802
-        # Ein Hintergrund-Worker muss sauber beendet werden, bevor Qt die
-        # Seiten und QThreads zerstört. Kein blockierender Warn-Dialog.
-        if self._background_task_kind is not None:
+        # Keine QThreads durch Schliessen der App waehrend des Parsings oder
+        # Portalabrufs zerstoeren; zum Abbruch dient die jeweilige Quellzeile.
+        sources = self.pages["sources"]
+        cases = self.pages["cases"]
+        if (
+            self._workflow_background_source_import is not None
+            or sources._worker is not None
+            or cases._quicktest_worker is not None
+            or (
+                cases.qec_download is not None
+                and cases.qec_download.worker is not None
+            )
+            or (
+                cases.tips_download is not None
+                and cases.tips_download.worker is not None
+            )
+        ):
             event.ignore()
             self.statusBar().showMessage(
-                "Hintergrundvorgang läuft noch · zum Beenden zuerst stoppen.",
+                "Vorgang läuft noch · zuerst in der Quellenzeile stoppen.",
                 12000,
             )
             return
-        sources = self.pages["sources"]
-        cases = self.pages["cases"]
         if (
             self._project_transfer_worker is not None
             or sources._diagnostics_worker is not None
@@ -539,79 +527,14 @@ class MainWindow(QMainWindow):
                 card.accept()
                 setattr(self, name, None)
 
-    @staticmethod
-    def _background_source_name(category: str) -> str:
-        return {
-            "qec": "QEC-Befundung",
-            "diagnosis_viewer": "Diagnosis Viewer",
-            "tips_writer": "TIPS Writer",
-            "tp_dashboard": "TP Dashboard",
-            "cdd_smrd": "CDD / SMR-D",
-        }.get(category, category)
-
-    def _background_operation_started(
-        self, kind: str, category: str, message: str,
-    ) -> None:
-        """Laufende Workflow-Aufgabe ohne Overlay/Modal-Dialog anzeigen."""
-        self._background_task_kind = kind
-        self._background_task_category = category
-        self._background_task_progress.setRange(0, 0)
-        self._background_task_stop.setEnabled(True)
-        self._background_task_panel.show()
-        self._background_operation_progress(message)
-        self.statusBar().showMessage(
-            "Der Vorgang läuft im Hintergrund. Die App bleibt bedienbar.",
-            6000,
-        )
-
-    def _background_operation_progress(self, message: str) -> None:
-        if self._background_task_kind is None:
-            return
-        title = self._background_source_name(self._background_task_category or "")
-        full = f"{title} · {message}"
-        self._background_task_label.setText(
-            self._background_task_label.fontMetrics().elidedText(
-                full, Qt.TextElideMode.ElideRight, 440,
-            )
-        )
-        self._background_task_label.setToolTip(full)
-
-    def _background_operation_finished(self, message: str) -> None:
-        if self._background_task_kind is None:
-            return
-        self._background_task_kind = None
-        self._background_task_category = None
-        self._background_task_panel.hide()
-        self.statusBar().showMessage(message, 16000)
-
     def _background_source_import_finished(self) -> None:
-        category = self._workflow_background_source_import
-        if category is None:
-            return
+        """Worker ist beendet; die Workflow-Zeile verwaltet ihren Fortschritt."""
         self._workflow_background_source_import = None
-        self._background_operation_finished(
-            f"{self._background_source_name(category)}: "
-            "Parsing/Import beendet · Details unter Datenquellen und im Workflow."
-        )
-
-    def _cancel_background_operation(self) -> None:
-        category = self._background_task_category
-        if category is None:
-            return
-        if self._background_task_kind == "abruf":
-            self._context_scrape(category, "cancel")
-        elif self._background_task_kind == "parsing":
-            self.pages["sources"]._cancel_import()
-        self._background_task_stop.setEnabled(False)
-        self._background_operation_progress(
-            "Abbruch angefordert · laufender Schritt wird sicher beendet"
-        )
 
     def _source_import_started(self, message: str) -> None:
         if self._workflow_background_source_import is not None:
-            self._background_operation_started(
-                "parsing", self._workflow_background_source_import, message,
-            )
+            # Quellzeile zeigt Fortschritt und Abbruch bereits an.
+            # Kein zweites Popup und kein Statusleisten-Widget starten.
             return
         self._close_old_import_cards()
         dialog = self._show_operation_progress(
@@ -623,17 +546,12 @@ class MainWindow(QMainWindow):
 
     def _source_import_progress(self, message: str) -> None:
         if self._workflow_background_source_import is not None:
-            self._background_operation_progress(message)
             return
         if self._source_import_dialog is not None:
             self._source_import_dialog.update_message(message)
 
     def _source_import_completed(self, summary: str) -> None:
         if self._workflow_background_source_import is not None:
-            self._background_operation_progress(
-                "Import unterbrochen" if summary.startswith("Import unterbrochen")
-                else "Import abgeschlossen · Auswertung wird aktualisiert"
-            )
             return
         dialog = self._source_import_dialog
         if dialog is None:
@@ -648,7 +566,9 @@ class MainWindow(QMainWindow):
 
     def _source_import_failed(self, message: str) -> None:
         if self._workflow_background_source_import is not None:
-            self._background_operation_progress("Fehler: " + message)
+            self.pages["workflow"].set_notice(
+                "Quellenimport fehlgeschlagen: " + message, error=True,
+            )
             return
         if self._source_import_dialog is not None:
             self._source_import_dialog.fail(
@@ -2274,10 +2194,6 @@ class MainWindow(QMainWindow):
         if worker is None:
             # Nutzer hat SSO-/Mengenbestätigung abgebrochen.
             return
-        self._background_operation_started(
-            "abruf", category, f"{len(fins)} FIN(s) werden abgerufen …",
-        )
-        worker.progress.connect(self._background_operation_progress)
         self._context_scraper_failed.discard(category)
         workflow.source_activity.record(
             workflow.profile_id, workflow._context_part, category, "Gestartet",
@@ -2306,12 +2222,10 @@ class MainWindow(QMainWindow):
             workflow.profile_id, workflow._context_part, category, "Fehlgeschlagen",
         )
         workflow.set_notice("Quellenabruf fehlgeschlagen: " + message, error=True)
-        self._background_operation_progress("Fehler: " + message)
         workflow.refresh_context_files()
 
     def _context_scraper_finished(self, category: str) -> None:
         workflow = self.pages["workflow"]
-        failed = category in self._context_scraper_failed
         workflow.set_context_scraper_busy(category, False)
         if category not in self._context_scraper_failed:
             workflow.source_activity.record(
@@ -2325,12 +2239,6 @@ class MainWindow(QMainWindow):
             importing = self.pages["sources"]._worker is not None
             if not importing:
                 self._workflow_quicktest_download_pending = False
-        if not importing:
-            self._background_operation_finished(
-                f"{self._background_source_name(category)}: "
-                + ("Abruf abgebrochen/fehlgeschlagen." if failed
-                   else "Abruf abgeschlossen.")
-            )
         workflow.refresh_data()
         if workflow._error_step is None:
             workflow.set_notice(
