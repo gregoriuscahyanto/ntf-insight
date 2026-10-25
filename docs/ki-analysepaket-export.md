@@ -27,6 +27,55 @@ noch CPC3 voraus. Diagnosen und Ursachen werden nur bei vorhandenen
 Nachweisen als Hypothesen ausgewertet. Fehlt eine Quelle, ist das eine
 Datenlücke – kein Grund, ihre Inhalte zu erfinden.
 
+### Workflow 05: vollständiger technischer Kontext (zweiter ChatGPT-Export)
+
+Der zweite ZIP-Export übernimmt in `basis/` die **gesamte erste QEC-ZIP**
+und in `voranalyse/erstes_chatgpt_ergebnis.json` die validierte erste
+ChatGPT-Auswertung. Alle Fälle und Pseudonyme bleiben erhalten.
+
+Zusätzlich befinden sich im Ordner `diagnose/` automatisch,
+aber **nur für FINs der gewählten Profil-/Sachnummern-Fallkohorte**:
+
+- `quicktests.csv`: alle lokal geparsten Diagnosis-Viewer-Berichte mit
+  Pseudonym, Diagnosezeitpunkt, Kilometerstand und DTC-/ECU-Anzahlen.
+- `ecu_staende.csv`, `dtc_beobachtungen.csv`,
+  `dtc_parameter.csv`: geparste ECU- und DTC-Einzelwerte samt
+  Fehlerstatus, Häufigkeit, Kilometerständen und Parameterwerten.
+- `quicktest_fallbezug.csv`: zeitlicher Vergleich je ausgewähltem
+  QEC-Fall; bei fehlendem **QEC-belegtem** Tauschdatum ausdrücklich
+  `tauschdatum_nicht_belegt`, bei identischem Tag `zeitlich_unklar`.
+  Keine automatische Zuschreibung zum Bauteil oder Lieferanten.
+- `tp_dashboard_dtc.csv`, `tp_dashboard_reparaturen.csv`,
+  `tp_dashboard_tips.csv`: geparste TP-Dashboard-Zeilen der ausgewählten
+  FINs. Multi-FIN-Sammeldateien werden nie ungefiltert kopiert.
+- `tips_writer.csv`: gegebenenfalls strukturierte TIPS-Writer-Einträge.
+  Mit expliziter Freigabe auch `quicktest_seitentexte.csv` mit dem
+  geparsten Text der vorhandenen Diagnosis-Viewer-Seiten.
+- `LESEHINWEISE.txt`: genaue Tabellenbezüge, Quellenstatus und
+  Trennung von Fahrzeugbeobachtung und Schadteilbefund.
+
+Mit **getrennter Freigabe** umfasst `unterlagen/` zusätzlich alle
+diesem Projekt explizit zugeordneten Originalunterlagen aus Schritt 04,
+nicht geparste QuickTest-PDFs als Fallback sowie abrufbare TIPS-Writer-
+Originale/Anhänge. Ein bereits geparster QuickTest wird nicht noch
+einmal als PDF mitgeschickt. Die vollständigen QEC-Freitexte/Originale
+aus Runde 1 haben **ihre eigene Freigabe**, unabhängig von den
+zusätzlichen technischen Unterlagen.
+
+Das `cluster_kontext_manifest.json` nennt den Projektbezug, den
+Diagnosedatenumfang, die Kategorie der Originalbelege und
+**Auslassungsgründe**. Beispiele: ein Beleg hat einen unpassenden
+FIN-/Fallhinweis, ist bereits geparst, ist nicht freigegeben oder
+ist eine nicht filterbare globale TP-Sammeldatei.
+
+**Wichtig:** Unstrukturierte, manuell einem Projekt zugeordnete Dateien
+werden nach Profil/Sachnummer archiviert, ihr gesamter Inhalt kann aber
+nicht automatisch auf weitere Sachnummern/FINs geprüft werden.
+Alle Daten benötigen eine Unternehmensfreigabe. Das Programm erstellt
+nur eine lokale ZIP; einen Upload löst es nicht aus.
+Für mehr als 1 GiB unkomprimierte Unterlagen ist eine bewusste Aufteilung
+erforderlich; die App ersetzt keine Dateibelege stillschweigend.
+
 Die Schaltfläche **QEC-Neuauswertung exportieren (ZIP)** in Schritt 03 ist
 absichtlich **enger** als der bisherige allgemeine Quellenexport:
 
