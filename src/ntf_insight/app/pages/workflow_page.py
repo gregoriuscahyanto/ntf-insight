@@ -2565,7 +2565,6 @@ class WorkflowPage(QWidget):
                 ("fins", "cases", "downloaded", "with_tp", "open", "ntf", "not_ntf"), 0
             )
         total, downloaded = stats["fins"], stats["downloaded"]
-        reviewed = stats["ntf"] + stats["not_ntf"]
         qec_coverage = self._source_coverage.get("qec")
         qec_complete = bool(
             total and downloaded == total and qec_coverage is not None
