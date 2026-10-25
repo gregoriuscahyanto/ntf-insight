@@ -94,6 +94,8 @@ def test_second_package_preserves_same_day_qt_and_km_detail(tmp_path):
         assert "fehlerbilder[]" in prompt
         schema = json.loads(archive.read("chatgpt_ergebnis_schema.json"))
         assert "fehlerbilder" in schema["$defs"]["ChatGPTFall"]["properties"]
+        template = json.loads(archive.read("chatgpt_ergebnis_vorlage.json"))
+        assert template["fehlerbild_methodik"] == "multilabel_symptom_nachweis_v2"
         manifest = json.loads(archive.read("cluster_kontext_manifest.json"))
         assert manifest["fehlerbild_methodik"] == "multilabel_symptom_nachweis_v2"
 
