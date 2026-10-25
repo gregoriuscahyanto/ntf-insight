@@ -228,3 +228,29 @@ def test_step03_new_package_keeps_prior_analysis_and_round_two_works(tmp_path):
         assert "basis/qec_felder.csv" in archive.namelist()
         assert "voranalyse/erstes_chatgpt_ergebnis.json" in archive.namelist()
         assert "basis/quicktests.csv" not in archive.namelist()
+
+
+def test_only_qec_excel_replacement_anchor_is_exported(tmp_path):
+    """Tauschereignisse aus fremden Quellen sind kein Schritt-01-Beweis."""
+    source = _set_up(tmp_path)
+    without = _export(source, tmp_path / "ohne-qec-anker.zip")
+    with ZipFile(without.pfad) as archive:
+        row = _rows(archive, "faelle.csv")[0]
+        assert row["tauschanker_vorhanden"] == "0"
+        assert row["tausch_km"] == ""
+        assert _rows(archive, "qec_datenluecken.csv")[0][
+            "qec_tauschanker_fehlend"
+        ] == "1"
+
+    case = source.store.get_case(CASE_ID)
+    case.source_ref = "raw:" + "d" * 64 + "#Schadteile QEC!2"
+    case.replacements[0].source_ref = case.source_ref
+    source.store.save_case(case)
+    with_qec = _export(source, tmp_path / "mit-qec-anker.zip")
+    with ZipFile(with_qec.pfad) as archive:
+        row = _rows(archive, "faelle.csv")[0]
+        assert row["tauschanker_vorhanden"] == "1"
+        assert row["tausch_km"] == "12000"
+        assert _rows(archive, "qec_datenluecken.csv")[0][
+            "qec_tauschanker_fehlend"
+        ] == "0"
