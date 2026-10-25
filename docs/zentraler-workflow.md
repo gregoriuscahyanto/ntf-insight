@@ -226,11 +226,28 @@ Projektkonfiguration und keine Ursachenfeststellung.
   filtert erst danach die Fälle der ausgewählten Projektsachnummer.
   QEC-Entscheidungen bleiben weiterhin über die konkrete Quell-SHA gebunden.
 - **Projekt-Import** überprüft Hüllenformat, SHA-256-Prüfsummen und den
-  enthaltenen portablen Datenstand. Das neue Projekt wird zur bestehenden
-  Datenbank hinzugefügt, ohne andere Projekte oder deren Dateien zu
-  ersetzen. Bei gleicher bereits vorhandener Bauteilprofil/Sachnummer
-  wird **nicht** automatisch überschrieben oder zusammengeführt,
-  sondern der Vorgang mit erklärender Meldung abgelehnt.
+  enthaltenen portablen Datenstand. Eine neue Sachnummer wird zur bestehenden
+  Datenbank hinzugefügt, ohne andere Projekte oder deren Dateien zu ersetzen.
+- **Vorhandenes Projekt ersetzen:** Wenn beim Import Bauteilprofil UND
+  normalisierte Sachnummer übereinstimmen, bietet die GUI ausdrücklich
+  **„Vorhandenes Projekt ersetzen“** oder Abbrechen an. Der Ersatz ist
+  **kein Merge**: Der bisherige Stand dieses Projekts (einschließlich KI-
+  Ergebnisse) wird durch den Stand der eingelesenen `.ntfproject` ersetzt.
+  Der Nutzer legt zuerst den Speicherort einer dauerhaften, vollständigen
+  `.ntfbackup`-Sicherung des bisherigen Ziel-Laptops fest. Eine Sicherung
+  wird ohne Überschreiben erstellt, bevor irgendeine Löschung stattfindet.
+  Anschließend wird der Ersatz **nur in einer separaten Arbeitskopie**
+  durchgeführt und der geprüfte neue Gesamtstand erst danach eingespielt.
+  Die ursprüngliche `.ntfproject` wird unverändert übernommen. Das
+  Sicherungspaket bleibt auch nach erfolgreichem Ersatz erhalten.
+- **Sicherheitsgrenzen:** Die bestehende strenge Voll-Löschprüfung wird in
+  der Arbeitskopie angewandt. Nicht eindeutig zuordenbare Fälle, gemeinsam
+  genutzte FINs/QEC-Master, mehrdeutige Quellen oder unbekannte Tabellen
+  **blockieren** den Ersatz; andere Projektstände werden nicht bewusst
+  verändert. Bei einem Fehler vor der Endübernahme bleibt der Originalstand
+  erhalten; zur Wiederherstellung nach einem unerwarteten Fehler beim letzten
+  Dateiaustausch dient die zuvor erzeugte `.ntfbackup`. Auf ausreichend
+  freien Platz für Sicherung und Arbeitskopie achten.
 - **Wichtige Freigabegrenze:** Eine physische Originalquelldatei kann
   mehrere Projekte enthalten (z. B. gemeinsame QEC-Master-Excel).
   Sie kann nicht bytegleich UND auf nur eine Sachnummer reduziert sein;

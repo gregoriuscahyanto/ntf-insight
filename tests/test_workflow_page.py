@@ -1219,3 +1219,116 @@ def test_step_four_counts_unique_auto_and_selected_technical_documents(tmp_path)
     assert counts.automatic == 2
     assert counts.manual == 2
     assert counts.overlap == 1
+
+
+def test_project_import_offers_replace_only_for_matching_sachnummer(
+    tmp_path, monkeypatch,
+):
+    """Die Import-Schaltflaeche zeigt den expliziten sicheren Ersatzweg."""
+    from PySide6.QtWidgets import QFileDialog, QMessageBox
+
+    from ntf_insight.app.windows import main_window as main_window_module
+    from ntf_insight.ingestion.project_portable import ProjectPackageIdentity
+    from ntf_insight.storage.workflow_projects import NTFProject
+
+    app, window = _window(tmp_path, monkeypatch)
+    window.pages["workflow"].project_store.save(
+        NTFProject("coolant_pump", "A 100 200", "Kühlmittelpumpe", ("CPC3",)),
+    )
+    monkeypatch.setattr(window, "_portable_transfer_ready", lambda: True)
+    filename = str(tmp_path / "ein_projekt.ntfproject")
+    save_path = tmp_path / "Sicherung-vor-Ersatz.ntfbackup"
+    monkeypatch.setattr(
+        QFileDialog, "getOpenFileName",
+        lambda *_args, **_kwargs: (filename, ""),
+    )
+    monkeypatch.setattr(
+        QFileDialog, "getSaveFileName",
+        lambda *_args, **_kwargs: (str(save_path), ""),
+    )
+    identity = ProjectPackageIdentity(
+        "coolant_pump", "A100200", "Kühlmittelpumpe",
+    )
+    monkeypatch.setattr(
+        main_window_module, "inspect_project_identity", lambda _f: identity,
+    )
+    seen_dialogs = []
+
+    def accept_replacement(dialog):
+        seen_dialogs.append(
+            (dialog.windowTitle(), [button.text() for button in dialog.buttons()])
+        )
+        choice = next(
+            b for b in dialog.buttons()
+            if dialog.buttonRole(b) == QMessageBox.ButtonRole.DestructiveRole
+        )
+        choice.click()
+        return 0
+
+    monkeypatch.setattr(QMessageBox, "exec", accept_replacement)
+    actions = []
+    monkeypatch.setattr(
+        window, "_start_project_transfer",
+        lambda action, file, **kwargs: actions.append((action, file, kwargs)),
+    )
+    window._project_transfer_import()
+    assert len(seen_dialogs) == 1
+    assert seen_dialogs[0][0] == "Vorhandenes Projekt erkannt"
+    assert "Vorhandenes Projekt ersetzen" in seen_dialogs[0][1]
+    assert actions == [
+        ("replace", tmp_path / "ein_projekt.ntfproject",
+         {"backup_path": save_path}),
+    ]
+
+    # Andere Sachnummer: nur der normale, nicht-destruktive Import.
+    monkeypatch.setattr(
+        main_window_module, "inspect_project_identity",
+        lambda _f: ProjectPackageIdentity(
+            "coolant_pump", "B900800", "Andere Pumpe",
+        ),
+    )
+    monkeypatch.setattr(
+        QMessageBox, "question",
+        lambda *_args, **_kwargs: QMessageBox.StandardButton.Yes,
+    )
+    window._project_transfer_import()
+    assert len(seen_dialogs) == 1
+    assert actions[-1] == ("import", tmp_path / "ein_projekt.ntfproject", {})
+    window.close()
+    app.processEvents()
+
+
+def test_project_import_cancel_replacement_does_not_start_transfer(
+    tmp_path, monkeypatch,
+):
+    from PySide6.QtWidgets import QFileDialog, QMessageBox
+
+    from ntf_insight.app.windows import main_window as main_window_module
+    from ntf_insight.ingestion.project_portable import ProjectPackageIdentity
+    from ntf_insight.storage.workflow_projects import NTFProject
+
+    app, window = _window(tmp_path, monkeypatch)
+    window.pages["workflow"].project_store.save(
+        NTFProject("coolant_pump", "A 100 200", "Kühlmittelpumpe", ("CPC3",)),
+    )
+    monkeypatch.setattr(window, "_portable_transfer_ready", lambda: True)
+    monkeypatch.setattr(
+        QFileDialog, "getOpenFileName",
+        lambda *_args, **_kwargs: (str(tmp_path / "projekt.ntfproject"), ""),
+    )
+    monkeypatch.setattr(
+        main_window_module, "inspect_project_identity",
+        lambda _f: ProjectPackageIdentity(
+            "coolant_pump", "A 100 200", "Kühlmittelpumpe",
+        ),
+    )
+    monkeypatch.setattr(QMessageBox, "exec", lambda _dialog: 0)
+    calls = []
+    monkeypatch.setattr(
+        window, "_start_project_transfer",
+        lambda *args, **kwargs: calls.append((args, kwargs)),
+    )
+    window._project_transfer_import()
+    assert calls == []
+    window.close()
+    app.processEvents()
