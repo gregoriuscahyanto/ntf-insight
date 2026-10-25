@@ -688,7 +688,23 @@ class ChatGPTAnalyseStore:
                 )
             for field in stable:
                 before = old.get(field, ChatGPTFall.model_fields[field].default)
-                if getattr(case, field) != before:
+                current = getattr(case, field)
+                obsolete_note = (
+                    " | QEC-Monteurfeld fehlt im registrierten Erstexport; "
+                    "Werkstattzitat daher keine verifizierte Originalfundstelle."
+                )
+                # Ein früherer Kompatibilitätsimport fügte diesen
+                # pauschalen (hier nachprüfbar überholten) Warnsatz hinzu.
+                # Nach erfolgreicher feldgenauer Original-ZIP-Prüfung darf
+                # NUR dieser exakt bekannte Satz entfallen. Sämtliche
+                # übrigen fachlichen Bewertungen bleiben identisch.
+                repaired_qec_label = (
+                    field == "pruefungen_grenzen"
+                    and isinstance(before, str)
+                    and before == current + obsolete_note
+                    and any(e.quelle == "qec_felder" for e in case.belege)
+                )
+                if current != before and not repaired_qec_label:
                     raise ValueError(
                         f"NTF-/Verursacher-/Wiederkehrwert verändert: {pseudo}/{field}"
                     )
