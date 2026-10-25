@@ -537,33 +537,53 @@ fachlich bestätigte NTF-Bewertung und kein Nachweis, dass der Portaldatenstand
 aktuell oder vollständig ist. Die großen ZIP-/JSON-Aktionen aus
 03 und 05 bleiben davon unabhängig.
 
-### T/S-Gesamtclusterung im zweiten ChatGPT-Paket
+### Vollständige T/S/H-Clusterung im zweiten ChatGPT-Durchlauf
 
-Der zweite ZIP-Export enthält **eine** verpflichtende Ergebnisvorlage
-(`chatgpt_ergebnis_vorlage.json`) und **ein** verbindliches Schema
-(`chatgpt_ergebnis_schema.json`) mit `cluster_abdeckung=T_S_v1`.
-Für die zugehörigen QEC-Fälle gilt eine vollständige, exklusive
-Gruppenzuordnung: `cluster_id` darf in der zweiten Runde **nicht null**
-sein. **Txx** bezeichnet eine durch technische Indizien begründete
-Ähnlichkeitsgruppe, beispielsweise DTC-/ECU-/Laborbefundmuster.
-**Sxx** bezeichnet eine vorsichtig benannte Ähnlichkeit des gemeldeten
-Fehlerbilds oder eine explizite Datenlage-/Prozessgruppe bei fehlendem
-technischem Nachweis. S bedeutet ausdrücklich **keinen** nachgewiesenen
-Pumpendefekt und keine Lieferantenverantwortung.
+Die App exportiert im **zweiten ZIP-Paket** eine verbindliche
+`chatgpt_ergebnis_vorlage.json` und das passende
+`chatgpt_ergebnis_schema.json` mit
+`cluster_abdeckung="T_S_H_v1"`. Eine **einzige** Ergebnis-JSON
+wird über die unveränderte Schaltfläche **„Cluster-Ergebnis importieren“**
+eingelesen. Es ist **kein separater Folgedurchlauf-/H-Importmodus** nötig.
 
-Beim Klick auf **„Cluster-Ergebnis importieren“** wird **immer derselbe
-Importweg** verwendet. Die App validiert die T/S-Abdeckung, Fall- und
-Clusteridentitäten sowie Originalbelegstellen. Eine Neuverteilung der S-Fälle
-aus einer bereits importierten zweiten Analyse ist über
-`analyse_id_vorher` an genau dieses Projekt und die frühere zweite
-Auswertung gebunden. Es gibt keinen zweiten Button oder zusätzlichen
-Folgeanalyse-Importdialog. Die frühere Analyse bleibt revisionssicher
-gespeichert. Technische T-Cluster, NTF-Urteile, Verursacherhypothesen und
-Wiederkehrbewertungen dürfen dabei **nicht stillschweigend geändert** werden.
-Beim Projekt-Export werden beide importierten Versionen mitgenommen.
+Das Modell muss alle exportierten QEC-Fälle **genau einmal**
+einem der drei exklusiven Hauptcluster-Typen zuweisen:
 
-Die GUI zeigt T und S gemeinsam in `cluster[]`, weist aber beide Ebenen
-separat aus. **100 % gruppiert bedeutet nicht 100 % technische Ursachen
-aufgeklärt.** Die unverändert getrennten Gruppierungen nach Fehlerbild,
-Nachweisbasis und Verursachungsbereich behalten ihre Bedeutung.
+1. **T – Technischer Cluster:** Zuerst nur bei konkreten technischen
+   Labor-, ECU-/DTC- oder Messindizien ein technisch vergleichbares Muster
+   annehmen. Der Nachweis eines Fahrzeug-DTC ist nicht zwingend der
+   Nachweis eines Pumpenfehlers oder einer Lieferantenschuld.
+2. **S – Symptomcluster:** Nur die noch nicht T-zugeordneten Fälle,
+   deren tatsächlich dokumentierte Kunden-/Werkstattsymptome vergleichbar
+   sind. KDM-/Arbeitsanweisung, gleiche Baureihe oder gleiche Sachnummer
+   **allein** sind **kein** dokumentiertes Symptom.
+3. **H – Hypothesencluster:** **Erst nach T und S** verbleibende Fälle
+   aus der gesamten verfügbaren QEC-, Diagnose-, Reparatur- und
+   Kontextdatenlage in nachvollziehbare, vom Modell **selbst abgeleitete**
+   Prüf- und Ursachenhypothesen aufteilen. Alle H-Gruppen und H-Fälle
+   müssen `hypothese_von="ChatGPT"` und
+   `hypothese_bestaetigt=false` tragen. In H-Gruppen auch
+   `technische_hypothese`, Originalbelege, `abgrenzung` mit
+   Alternativen/Gegenindizien und `empfohlene_pruefung` angeben.
+   Unzureichende Datenlage ist als Unsicherheit kenntlich zu machen,
+   nicht als bestätigter technischer Defekt auszugeben.
 
+Die Cluster stehen in **einem** `cluster[]`-Array in dieser Reihenfolge
+T → S → H. Alle Fälle stehen in **einem** `faelle[]`-Array;
+`cluster_id=null` ist in Runde 2 verboten. Die Summe der
+Cluster-Mitgliedschaften muss genau der Zahl der QEC-Fälle entsprechen.
+Eine 100-%-Zuordnung bedeutet **nicht**, dass 100 % technische Ursachen
+oder Lieferantenverantwortlichkeiten geklärt wären.
+
+Eine erneute Aufteilung kann mit einer neuen `analyse_id` und der
+`analyse_id_vorher` einer bereits importierten zweiten Analyse als
+eigener Ergebnisstand über **denselben Import-Button** zurückkommen.
+Die App prüft die Paket-/Projektbindung, Fallanzahl, Quellenbelege,
+bisherigen technischen T-Bestand und unveränderte NTF- und
+Verursacherbewertungen. Ein zusätzlich auf T angehobener Fall erfordert
+konkrete neue DTC- und QT-Fundstellen und darf keinen Kausalitätsbeweis
+behaupten. Der vorherige JSON-Stand bleibt revisionssicher archiviert.
+
+Die GUI unterscheidet T, S und H, zeigt sie im Clusterfilter und in der
+Fallansicht, ohne H als belegte technische Ursache oder Schuldzuweisung
+zu behandeln. Der .ntfproject-Transfer nimmt importierte Analyseversionen mit.
