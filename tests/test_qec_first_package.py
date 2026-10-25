@@ -191,7 +191,9 @@ def test_step03_keeps_all_cases_when_no_qec_documents_exist(tmp_path):
 
 
 def test_step03_new_package_keeps_prior_analysis_and_round_two_works(tmp_path):
-    source = _set_up(tmp_path)
+    data_dir = tmp_path / "data"
+    data_dir.mkdir()
+    source = _set_up(data_dir)
     first = _export(source, tmp_path / "runde1-alt.zip")
     chain = WorkflowAIChainStore(source.store)
     first_pkg = chain.register_first_export("coolant_pump", PART, first.pfad)
@@ -316,7 +318,9 @@ def test_generic_first_and_second_round_without_documents(
     tmp_path, profile, component_name,
 ):
     """Beide ChatGPT-Exporte gehen auch ohne Diagnoseunterlagen und CPC3."""
-    service = SourceImportService(tmp_path / "raw", tmp_path / "ntf.duckdb")
+    data_dir = tmp_path / "data"
+    data_dir.mkdir()
+    service = SourceImportService(data_dir / "raw", data_dir / "ntf.duckdb")
     project = WorkflowProjectStore(service.store)
     project.save(
         NTFProject(profile, "A 678 910", component_name, ("BMS",))
