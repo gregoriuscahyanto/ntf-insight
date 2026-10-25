@@ -17,6 +17,7 @@ from typing import Callable
 from zipfile import ZipFile
 
 from ntf_insight.acquisition.tips_archive import local_tips_cases
+from ntf_insight.analysis.quicktest_swap_relation import compare_quicktest_to_swap
 from ntf_insight.domain.case import NTFCase
 from ntf_insight.ingestion.artifacts import SourceType, sha256_file
 from ntf_insight.storage.duckdb_store import DuckDBStore
@@ -75,6 +76,10 @@ def _redact(value: object, vins: set[str]) -> str:
 
 def _csv_safe(value: object) -> str:
     result = str(value or "")
+    # Kanonische negative Messwerte / km-Differenzen sind Zahlen, keine
+    # Excel-Formeln. Ein wirklicher Formel-Ausdruck bleibt weiterhin maskiert.
+    if re.fullmatch(r"-[0-9]+(?:\.[0-9]+)?", result):
+        return result
     return "'" + result if result.lstrip().startswith(("=", "+", "-", "@")) else result
 
 
@@ -443,10 +448,11 @@ def export_parsed_diagnostics(
     with _PartitionedCsvWriter(
         archive, relation_name,
         ("fall_id", "quicktest_id", "lage_zum_tausch",
-         "tage_relativ_zum_tausch", "belegregel"),
+         "tage_relativ_zum_tausch", "km_quicktest", "km_tausch",
+         "km_differenz_zum_tausch", "zeitliche_sicherheit", "belegregel"),
         progress,
     ) as writer:
-        for report_id, fin, diagnosed, _km, _ecu, _dtc in reports:
+        for report_id, fin, diagnosed, qt_km, _ecu, _dtc in reports:
             for case in by_fin.get(fin, ()):
                 anchor = case.investigated_replacement()
                 source_ref = str(case.source_ref or "")
@@ -456,19 +462,33 @@ def export_parsed_diagnostics(
                 ):
                     phase = "tauschdatum_nicht_belegt"
                     days = ""
+                    delta_km = ""
+                    swap_km = ""
+                    confidence = "Offen"
+                    explanation = (
+                        "Kein QEC-belegter Tauschanker fuer genau diesen Fall. "
+                        "QuickTest-Datum und km sind keine Tauschnachweise."
+                    )
                 else:
-                    delta = (diagnosed.date() - anchor.occurred_at.date()).days
-                    if delta == 0:
-                        phase = "zeitlich_unklar_gleicher_tag"
-                    else:
-                        phase = "vor_tausch" if delta < 0 else "nach_tausch"
-                    days = delta
+                    relation = compare_quicktest_to_swap(
+                        diagnosed, qt_km, anchor.occurred_at, anchor.mileage_km,
+                    )
+                    phase = relation.phase
+                    days = relation.days
+                    delta_km = relation.km_difference
+                    swap_km = anchor.mileage_km
+                    confidence = relation.confidence
+                    explanation = relation.explanation
                 writer.writerow({
                     "fall_id": scope.cases[case.case_id],
                     "quicktest_id": aliases[str(report_id)],
                     "lage_zum_tausch": phase,
                     "tage_relativ_zum_tausch": days,
-                    "belegregel": "Nur Zeitvergleich; keine bewiesene Fehlerursache",
+                    "km_quicktest": qt_km,
+                    "km_tausch": swap_km,
+                    "km_differenz_zum_tausch": delta_km,
+                    "zeitliche_sicherheit": confidence,
+                    "belegregel": explanation,
                 })
     count_rel = writer.total_rows
     if table_files is not None:

@@ -311,7 +311,52 @@ def export_cluster_context(
         "Das Manifest listet ALLE Teile und ihre Zeilenzahlen unter "
         "diagnose_tabellen auf. Fuer eine vollstaendige Analyse muessen "
         "saemtliche Teile mitgezahlt und ausgewertet werden. "
-        "Die Wiederholung des CSV-Headers ist KEINE Diagnosezeile."
+        "Die Wiederholung des CSV-Headers ist KEINE Diagnosezeile.",
+        "15. ZWEI ANALYSEEBENEN - ALLE FAELLE: Ebene A sind GEMELDETE "
+        "FEHLERBILDER, Ebene B ist der technische NACHWEISGRAD. "
+        "Fuer JEDEN Fall fehlerbilder[] und nachweisprofil[] nach dem "
+        "JSON-Schema ausfuellen. Mehrere Fehlerbilder pro Fall sind "
+        "ERWUENSCHT. Generische Kategorien sind Stromaufnahme zu "
+        "hoch/zu niedrig, Kurzschluss/Sicherung, Bus/Kommunikation, "
+        "Versorgung/Masse, Ansteuerung, Leistung/Temperatur, Mechanik, "
+        "Feuchte/Korrosion, Sensorik oder Sonstige Symptome. Ohne "
+        "zuordenbares Symptom EXPLIZIT 'Unbekannt' statt still leer. "
+        "Nur dokumentierte Originalangaben verwenden.",
+        "16. FEHLERBILD IST KEINE URSACHE: Jede Fehlerbild-Kategorie "
+        "traegt nachweisstatus, sicherheit, begruendung und wirkliche "
+        "belege. Eine Werkstattbeanstandung ist 'Werkstattangabe', "
+        "kein laborbestaetigter Defekt; ein Pumpen-DTC ist ein "
+        "Diagnosehinweis, kein Beweis fuer den Tauschkomponentendefekt. "
+        "QEC-/SSL-/NTF-Endlabels und behauptete Lieferantenschuld NIE "
+        "als Clustermerkmal oder Kausalnachweis einsetzen. "
+        "Nachweisprofil separat aus den vorhandenen Quellen ableiten.",
+        "17. KEINE FORCIERTE URSACHENCLUSTERUNG: cluster[] und "
+        "cluster_id bleiben fuer technisch begruendete Muster mit "
+        "positiven fallbezogenen Indizien reserviert. Ein Fall darf "
+        "mehrere Fehlerbild-Kategorien tragen, aber hoechstens EINE "
+        "technische cluster_id. Alle nicht technisch clusterbaren "
+        "Faelle haben cluster_id=null, ABER mindestens ein "
+        "Fehlerbild oder 'Unbekannt'. Beide Abdeckungen getrennt "
+        "darstellen; keine Ursache erfinden.",
+        "18. QUICKTESTS AM TAUSCHTAG NICHT IGNORIEREN: "
+        "diagnose/quicktest_fallbezug.csv enthaelt km_quicktest, "
+        "km_tausch, km_differenz_zum_tausch und zeitliche_sicherheit. "
+        "gleicher_tag_km_vor_tausch_indiz bedeutet einen plausiblen "
+        "Vortausch-KANDIDATEN, NICHT einen bewiesenen Vortausch-QT. "
+        "gleicher_tag_km_nach_tausch_indiz ist ein Nachtausch-Indiz. "
+        "Gleiches Datum und gleicher/fehlender km-Stand bleibt "
+        "zeitlich_unklar_gleicher_tag. datum_km_widerspruch gesondert "
+        "als ungeklärt behandeln. Ohne originale QEC-Tausch-Uhrzeit "
+        "keine Chronologie behaupten. Niemals pauschal "
+        "'kein Vortausch-QuickTest' behaupten, wenn ein taggleicher "
+        "plausibler Kandidat vorhanden ist: seine km-Werte und "
+        "die Unsicherheit nennen.",
+        "19. FAELLE VOLLSTAENDIG UND OHNE ERFUNDENE BELEGE: "
+        "auch am Tauschtag vorliegende QuickTests mit DTCs beruecksichtigen. "
+        "DTCs koennen andere Pumpen/ECUs/Baugruppen betreffen. Ein "
+        "historisch gespeicherter DTC nach Tausch ist ohne neuen "
+        "Ereignis-km/Loeschhistorie KEIN Wiederkehrbeweis. "
+        "Datenluecken getrennt ausweisen, statt Faelle auszuschliessen."
     ]
     # Diese neutralen Zusatzanforderungen bleiben unabhaengig vom
     # CSV-Groesstdaten-Fix im separaten PR #60.
@@ -365,6 +410,8 @@ def export_cluster_context(
             list(project.ecu_names) if project is not None else []
         ),
         "sachnummer_wurde_lokal_gefiltert": project_scoped,
+        "fehlerbild_methodik": "multilabel_symptom_nachweis_v2",
+        "quicktest_zeitrelation": "datum_plus_km_indiz_ohne_tausch_uhrzeit",
         "unterlagen_nach_sachnummer_zugeordnet": bool(part_number.strip()),
         "basis_nicht_nach_sachnummer_gefiltert": not project_scoped,
         "erster_chatgpt_durchlauf": {
@@ -433,6 +480,11 @@ def export_cluster_context(
             # aber eine neue eindeutige ID statt einer Kopie der 1.-Runde-Vorlage.
             followup_template = ergebnis_vorlage(package_id)
             followup_template["analyse_id"] = analysis_id
+            # Kennzeichnet das NEUE zweite Ergebnis; beim Import werden
+            # damit Fehlerbild und Nachweisgrad je QEC-Fall verlangt.
+            followup_template["fehlerbild_methodik"] = (
+                "multilabel_symptom_nachweis_v2"
+            )
             _zip_text(
                 archive, "chatgpt_ergebnis_vorlage.json",
                 json.dumps(followup_template, ensure_ascii=False, indent=2),

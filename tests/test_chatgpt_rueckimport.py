@@ -328,3 +328,83 @@ def test_unidentifiable_qec_json_blocks_incomplete_original_export(tmp_path):
             service, tmp_path / "unsafe.zip", mit_qec_originalen=True,
         )
     assert not (tmp_path / "unsafe.zip").exists()
+
+
+
+def test_nested_multilabel_belege_require_local_alias_validation(tmp_path):
+    """Neue fehlerbilder[].belege sind KEIN Weg um die Zuordnung zu umgehen."""
+    service = make_data(tmp_path)
+    exported = export_ki_analysepaket(service, tmp_path / "analyse.zip")
+    template, _manifest, cases, qecs, _names = read_package(exported.pfad)
+    path = tmp_path / "two-level-result.json"
+    content = write_answer(
+        path, template, cases[0]["fall_id"], qecs[0]["qec_bericht_id"],
+    )
+    content["faelle"][0]["fehlerbilder"] = [{
+        "kategorie": "Kurzschluss / Sicherung",
+        "nachweisstatus": "Werkstattangabe",
+        "sicherheit": "Niedrig",
+        "begruendung": "Nur aus Werkstatttext uebernommen; kein Schuldbeweis.",
+        "belege": [{
+            "quelle": "qec_berichte", "quelle_id": "Q99999",
+            "fundstelle": "Originalbericht", "aussage": "Test",
+            "belegstatus": "Nicht verifiziert",
+        }],
+    }]
+    content["faelle"][0]["nachweisprofil"] = [
+        "Werkstattangabe vorhanden",
+    ]
+    path.write_text(json.dumps(content), encoding="utf-8")
+    store = ChatGPTAnalyseStore(service.store)
+    with pytest.raises(ValueError, match="Beleg referenziert"):
+        store.import_file(path)
+
+    content["faelle"][0]["fehlerbilder"][0]["belege"][0]["quelle_id"] = (
+        qecs[0]["qec_bericht_id"]
+    )
+    path.write_text(json.dumps(content), encoding="utf-8")
+    result = store.import_file(path)
+    assert result["faelle"] == 1
+    stored = store.latest_for_case("Original-interner-Fall-123")
+    assert stored is not None
+    assert stored["bewertung"]["fehlerbilder"][0]["kategorie"] == (
+        "Kurzschluss / Sicherung"
+    )
+    assert stored["bewertung"]["nachweisprofil"] == [
+        "Werkstattangabe vorhanden"
+    ]
+
+
+
+def test_new_llm2_requires_evidence_aware_symptom_and_proof_per_case(tmp_path):
+    """Neuer LLM2-Durchlauf darf unclusterbare Faelle nicht mehr auslassen."""
+    source = make_data(tmp_path)
+    exported = export_ki_analysepaket(source, tmp_path / "base.zip")
+    template, _manifest, cases, _qecs, _names = read_package(exported.pfad)
+    template["fehlerbild_methodik"] = "multilabel_symptom_nachweis_v2"
+    template["analyse_id"] = "Cluster-Synthetic-Multilabel"
+    template["faelle"] = [{
+        "fall_id": cases[0]["fall_id"],
+        "ntf_bewertung": "Nicht bewertbar",
+    }]
+    path = tmp_path / "multilabel-llm2.json"
+    source_store = ChatGPTAnalyseStore(source.store)
+    path.write_text(json.dumps(template), encoding="utf-8")
+    with pytest.raises(ValueError, match="ohne Fehlerbild"):
+        source_store.import_file(path)
+
+    template["faelle"][0]["fehlerbilder"] = [{
+        "kategorie": "Unbekannt",
+        "nachweisstatus": "Hypothese / unbestätigt",
+        "sicherheit": "Offen",
+        "begruendung": "Trotz gepruefter QEC-Angaben keine Richtung belegbar.",
+    }]
+    path.write_text(json.dumps(template), encoding="utf-8")
+    with pytest.raises(ValueError, match="ohne Nachweisprofil"):
+        source_store.import_file(path)
+
+    template["faelle"][0]["nachweisprofil"] = ["Datenlage unzureichend"]
+    path.write_text(json.dumps(template), encoding="utf-8")
+    result = source_store.import_file(path)
+    assert result["faelle"] == 1
+    assert result["cluster"] == 0
