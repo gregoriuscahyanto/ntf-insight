@@ -1,4 +1,4 @@
-"""GUI für den zweistufigen KI-Analyseexport und geprüften ChatGPT-Rückimport."""
+"""GUI für den zweistufigen KI-Analyseexport und geprüften LLM-Rückimport."""
 from __future__ import annotations
 
 import json
@@ -138,7 +138,7 @@ class KIAnalysepaketPanel(QWidget):
         layout.setContentsMargins(0, 8, 0, 8)
         layout.setSpacing(8)
         layout.addWidget(QLabel(
-            "KI-Analysepaket · ChatGPT-Austausch und geprüfter Rückimport",
+            "KI-Analysepaket · LLM-Austausch und geprüfter Rückimport",
             objectName="CardTitle",
         ))
         description = QLabel(
@@ -185,7 +185,7 @@ class KIAnalysepaketPanel(QWidget):
         )
         self.export_button.setToolTip(
             "CSV-Clusterdateien und Excel-Übersicht, vollständige einheitliche "
-            "ChatGPT-Ergebnisvorlage, lokale private Pseudonymzuordnung."
+            "LLM-Ergebnisvorlage, lokale private Pseudonymzuordnung."
         )
         self.export_button.clicked.connect(self._request_export)
         row.addWidget(self.export_button)
@@ -203,12 +203,12 @@ class KIAnalysepaketPanel(QWidget):
         layout.addWidget(self.status)
 
         layout.addWidget(QLabel(
-            "ChatGPT-Ergebnisse wieder in die App übernehmen",
+            "LLM-Ergebnisse wieder in die App übernehmen",
             objectName="CardTitle",
         ))
         hint = QLabel(
             "Das Analyse-ZIP enthält chatgpt_ergebnis_vorlage.json und "
-            "chatgpt_ergebnis_schema.json. ChatGPT kann damit eine "
+            "chatgpt_ergebnis_schema.json. LLM kann damit eine "
             "chatgpt_ergebnis.json zurückgeben. Beim Import werden Paket-ID, "
             "Fallpseudonyme und Belegverweise geprüft. Ergebnisse bleiben "
             "von fachlichen Entscheidungen GETRENNT und zunächst ungeprüft.",
@@ -217,7 +217,7 @@ class KIAnalysepaketPanel(QWidget):
         hint.setWordWrap(True)
         layout.addWidget(hint)
         import_row = QHBoxLayout()
-        self.import_button = QPushButton("ChatGPT-Auswertung als JSON importieren…")
+        self.import_button = QPushButton("LLM-Auswertung als JSON importieren…")
         self.import_button.clicked.connect(self._import_result)
         import_row.addWidget(self.import_button)
         self.review_confirm = QPushButton("Markierten Vorschlag als geprüft bestätigen")
@@ -260,12 +260,12 @@ class KIAnalysepaketPanel(QWidget):
         self.review_details.setMinimumHeight(80)
         self.review_details.setMaximumHeight(155)
         self.review_details.setPlaceholderText(
-            "Eine importierte ChatGPT-Fallanalyse auswählen, um alle "
+            "Eine importierte LLM-Fallanalyse auswählen, um alle "
             "Begründungen, Prüfgrenzen, Empfehlungen und Belege zu lesen."
         )
         layout.addWidget(self.review_details)
         self.review_note = QLabel(
-            "Review-Status ändert nur den Prüfvermerk der ChatGPT-Analyse. "
+            "Review-Status ändert nur den Prüfvermerk der LLM-Analyse. "
             "QEC-Entscheidung, Lieferantenursache und bestehende Fallbewertung "
             "werden ausdrücklich NICHT überschrieben.",
             objectName="PageSubtitle",
@@ -457,8 +457,8 @@ class KIAnalysepaketPanel(QWidget):
         if not self._can_start():
             return
         filename, _ = QFileDialog.getOpenFileName(
-            self, "ChatGPT-Ergebnis im NTF-Insight-JSON-Vertrag wählen",
-            str(Path.home()), "NTF ChatGPT-Auswertung (*.json)",
+            self, "LLM-Ergebnis im NTF-Insight-JSON-Vertrag wählen",
+            str(Path.home()), "NTF LLM-Auswertung (*.json)",
         )
         if not filename:
             return
@@ -504,7 +504,7 @@ class KIAnalysepaketPanel(QWidget):
         self.import_worker.finished.connect(self._import_finished)
         self.import_button.setEnabled(False)
         self.export_button.setEnabled(False)
-        self.status.setText("ChatGPT-Ergebnis und lokale Fallzuordnung prüfen …")
+        self.status.setText("LLM-Ergebnis und lokale Fallzuordnung prüfen …")
         self.analysis_import_started.emit(path.name)
         self.transfer_busy.emit(True)
         self.import_worker.start()
@@ -517,7 +517,7 @@ class KIAnalysepaketPanel(QWidget):
     def _import_completed(self, result: dict) -> None:
         suffix = " (bereits identisch importiert)" if result["bereits_importiert"] else ""
         self.status.setText(
-            f"ChatGPT-Analyse {result['analyse_id']} lokal gespeichert: "
+            f"LLM-Analyse {result['analyse_id']} lokal gespeichert: "
             f"{result['faelle']} Fälle, {result['cluster']} Cluster{suffix}. "
             "Vorschläge bleiben separat und bis zur fachlichen Prüfung offen."
         )
@@ -526,7 +526,7 @@ class KIAnalysepaketPanel(QWidget):
         self.analysis_imported.emit(result)
 
     def _import_failed(self, message: str) -> None:
-        self.status.setText("ChatGPT-Rückimport abgebrochen: " + message)
+        self.status.setText("LLM-Rückimport abgebrochen: " + message)
         self.analysis_import_failed.emit(message)
 
     def _import_finished(self) -> None:
@@ -578,7 +578,7 @@ class KIAnalysepaketPanel(QWidget):
             return
         finding = self._visible[row]
         prompt = (
-            f"ChatGPT-Vorschlag für Fall {finding['case_id']} "
+            f"LLM-Vorschlag für Fall {finding['case_id']} "
             f"als {status.lower()} markieren?\n\n"
             "Dies ist nur ein Prüfvermerk. Die eigentliche Fallbewertung, "
             "der QEC-Status und Lieferantenangaben bleiben unverändert."
