@@ -76,6 +76,10 @@ def _redact(value: object, vins: set[str]) -> str:
 
 def _csv_safe(value: object) -> str:
     result = str(value or "")
+    # Kanonische negative Messwerte / km-Differenzen sind Zahlen, keine
+    # Excel-Formeln. Ein wirklicher Formel-Ausdruck bleibt weiterhin maskiert.
+    if re.fullmatch(r"-[0-9]+(?:\\.[0-9]+)?", result):
+        return result
     return "'" + result if result.lstrip().startswith(("=", "+", "-", "@")) else result
 
 
