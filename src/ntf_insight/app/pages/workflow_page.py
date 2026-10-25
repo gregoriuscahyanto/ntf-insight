@@ -2292,6 +2292,7 @@ class WorkflowPage(QWidget):
     def _clear_llm_dashboard(self) -> None:
         """Leere oder gewechselte Sachnummernprojekte ohne Altwerte anzeigen."""
         self._cluster_entries = []
+        self._llm_overview = None
         self._llm_case_summaries = []
         self.chatgpt_cluster_model.set_rows([])
         self.chatgpt_case_model.set_rows([])
@@ -2542,13 +2543,19 @@ class WorkflowPage(QWidget):
         self.chatgpt_cluster_table.clearSelection()
         self._apply_llm_case_filters()
         self.chatgpt_cluster_summary.show()
+        missing_clusters = (
+            " Keine technisch begründeten Cluster vorhanden; "
+            "ungesicherte Fälle werden nicht künstlich gruppiert."
+            if not overview.groups else ""
+        )
         self.chatgpt_cluster_summary.setText(
             f"LLM-Analyse {analysis_id} · {len(overview.groups)} "
             f"technische Cluster · {overview.total_cases} von "
             f"{len(current)} aktuellen QEC-Fällen bewertet · "
             f"{overview.unknown_causes} Ursachen nicht sicher zugeordnet. "
-            "Die Diagramme sind eine Visualisierung der importierten "
-            "LLM-Auswertung, keine lokale Nachklassifikation."
+            "Die Diagramme zeigen importierte Hypothesen und führen "
+            "keine neue KI-Auswertung aus."
+            + missing_clusters
         )
 
     def qec_targets(self, *, selected_only: bool = False) -> list[QecTarget]:
