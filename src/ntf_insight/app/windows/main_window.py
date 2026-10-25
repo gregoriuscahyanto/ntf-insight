@@ -993,7 +993,7 @@ class MainWindow(QMainWindow):
             panel is not None and panel._next_workflow_project is not None
         )
         dialog = self._show_export_prompt(
-            "03 · QEC-Neuauswertung exportieren"
+            "03 · LLM-Analysepaket erstellen (ZIP)"
             if first_qec else "LLM-Analysepaket exportieren",
             (
                 "Nur Schritt 01 (FIN-/Bauteiltausch-Faelle) und Schritt 02 "
