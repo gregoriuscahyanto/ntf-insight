@@ -227,7 +227,7 @@ def export_qec_first_package(
         }
         for fin in sorted(fin_alias, key=lambda x: fin_alias[x])
     ]
-    cases_rows, features, ssl_rows, cluster_input = [], [], [], []
+    cases_rows, features, ssl_rows = [], [], []
     for case in chosen:
         fid = case_alias[case.case_id]
         vid = fin_alias[case.vin]
@@ -259,16 +259,12 @@ def export_qec_first_package(
         }
         cases_rows.append(row)
         features.append(dict(row))
-        cluster_input.append({
-            "fall_id": fid, "fahrzeug_id": vid,
-            "baureihe": row["baureihe"], "teilegruppe": "T0001",
-        })
         ssl_rows.append({
             "fall_id": fid, "ssl_endbefund_code": _code(case.qec_ssl_end_code),
             "ssl_endbefund_text_opt_in": (
                 str(case.qec_ssl_end_finding or "") if mit_freitext else ""
             ),
-            "hinweis": "QEC-Ergebnis NUR zur spaeteren Validierung; kein Clustermerkmal",
+            "hinweis": "QEC-Endbefund ist ein Vorbefund, kein Ursachenbeweis.",
         })
         gaps.append({
             "fall_id": fid, "qec_bericht_status": status,
@@ -375,9 +371,6 @@ def export_qec_first_package(
                 tell(f"QEC-Belege erfasst: {row_count} Zeilen ...")
 
     table_items = {
-        "cluster_input": ((
-            "fall_id", "fahrzeug_id", "baureihe", "teilegruppe",
-        ), cluster_input),
         "fahrzeuge": (("fahrzeug_id", "baureihe", "anzahl_faelle"), vehicles),
         "faelle": (tuple(cases_rows[0]), cases_rows),
         "fallmerkmale": (tuple(features[0]), features),
@@ -392,7 +385,7 @@ def export_qec_first_package(
         "methodik": (("thema", "regel"), [
             {"thema": "Analyseumfang", "regel": "Nur Workflow-Schritt 01 und 02. Keine QuickTests, AutoExport, TIPS, SMR-D oder technische Unterlagen aus Schritt 04."},
             {"thema": "NTF", "regel": "QEC-SSL-Endbefunde und Lieferantenaussagen sind nachgelagerte Bewertungen, kein Beweis fuer die Ursache und keine Clustermerkmale."},
-            {"thema": "Clustering", "regel": "Vorlaeufige Muster anhand erlaubter QEC-Fallmerkmale und Befundthemen. Keine DTC-, Wiederkehr- oder Lieferantenursachen ohne getrennte Belege ableiten."},
+            {"thema": "Erstentscheidung", "regel": "Nur pro Fall eine vorlaeufige NTF-Einstufung und einen begruendeten moeglichen Verursachungsbereich abgeben. KEINE Clusterbildung."},
             {"thema": "Datenluecken", "regel": "Nicht vorhandene QEC-Reiter, vorangegangene Abrufe, unanalysierte Anhaenge und fehlende Freitextfreigabe je Fall beruecksichtigen."},
             {"thema": "Fachtexte", "regel": "QEC-Freitexte nur nach gesondertem Opt-in enthalten; sie sind NICHT anonymisiert. Standardexport kann eine NTF-Hypothese nicht fuer jeden Fall absichern."},
             {"thema": "Zweite Runde", "regel": "Erst nach dieser ersten QEC-Auswertung die Zusatzquellen aus Schritt 04 in Schritt 05 gesondert interpretieren."},
@@ -434,32 +427,56 @@ def export_qec_first_package(
         ergebnis_schema(), ensure_ascii=False, indent=2
     ).encode("utf-8")
     files["CHATGPT_ANWEISUNG.txt"] = (
-        "NTF INSIGHT / ERSTE QEC-NEUAUSWERTUNG (SCHRITTE 01-03)\n\n"
-        "Analysiere ALLE Faelle in faelle.csv; gib ausschliesslich eine Datei "
-        "chatgpt_ergebnis.json nach chatgpt_ergebnis_schema.json zurueck.\n"
-        "Nutze die paket_id und F-/Q-Pseudonyme unveraendert. "
-        "Belege QEC-Berichte mit quelle=qec_berichte oder qec_felder, "
-        "quelle_id=Q00001 und feldgenauer Fundstelle aus qec_felder.csv.\n"
-        "Die fuenf QEC-Reiter sind Befund-/Nachanalysekontext, keine "
-        "automatische Vor-Tausch-Diagnose. Bilde nur begruendbare, "
-        "vorlaeufige Fallmuster/Cluster; bei duennen Daten kein Cluster erzwingen.\n"
-        "Der SSL-Endbefund und die Lieferantenstellungnahme sind "
-        "Ergebnis-/Kontextdaten, keine Beweise fuer Lieferantenschuld. "
-        "Vorher-/Nachher-DTCs oder TIPS/AutoExport/QuickTests NICHT "
-        "vortaeuschen, denn diese Quellen sind in Runde 1 nicht enthalten.\n"
-        "Fehlende QEC-Berichte/Dokumente sind legitim: jeden Fall auch "
-        "OHNE QEC-Belege in die JSON aufnehmen, dann nur mit "
-        "'Nicht bewertbar' und konkreter Datenluecke dokumentieren. "
-        "Nicht aus fehlenden Dokumenten auf NTF, Verschulden oder "
-        "Fehlerfreiheit schliessen. "
-        "Jeden Fall bewerten, auch 'Nicht bewertbar', Unsicherheit und "
-        "naechsten konkreten Pruefschritt nennen. "
-        "Alle QEC-Datenluecken aus qec_datenluecken.csv beruecksichtigen.\n"
-        "Falls die Freitextoption deaktiviert ist, die begrenzte "
-        "Aussagekraft der strukturierten Daten klar kennzeichnen.\n"
-        "Keine echten FINs, QEC-Referenzen oder lokalen Dateipfade in die "
-        "Rueckgabe einfuegen. Keine unbelegte Schuldzuweisung.\n"
-        "Die private *_NICHT_HOCHLADEN_ZUORDNUNG.csv niemals hochladen.\n"
+        "NTF INSIGHT / LLM-DURCHLAUF 1: VORLAEUFIGE NTF-ENTSCHEIDUNG\n\n"
+        "ZIEL: Jeden ausgewaehlten QEC-Fall einzeln und ausschliesslich "
+        "auf Basis der QEC-Fallliste (01) und vorhandenen QEC-Befunde (02) "
+        "vorlaeufig einstufen, ob der Fall ein plausibler NTF, ein "
+        "fraglicher NTF oder kein reiner NTF ist.\n"
+        "AUSGABE: Ausschliesslich eine Ergebnis-JSON gemaess "
+        "chatgpt_ergebnis_schema.json und der Vorlage "
+        "chatgpt_ergebnis_vorlage.json erzeugen. paket_id, analyse_id "
+        "und F-/Q-Pseudonyme beibehalten. Fuer jeden Fall EINEN "
+        "Datensatz in faelle[] ausgeben; keinen Fall auslassen.\n"
+        "ntf_bewertung ist exakt eine dieser Aussagen:\n"
+        "  - NTF plausibel: QEC-Befunde lassen einen im untersuchten "
+        "Bauteil nicht reproduzierbaren Fehler begruendet plausibel "
+        "erscheinen, ohne Fehlerfreiheit zu behaupten.\n"
+        "  - NTF fraglich: QEC-Befunde sind unvollstaendig, unsicher "
+        "oder widerspruechlich; eine NTF-Einstufung ist nicht belastbar.\n"
+        "  - Kein reiner NTF: Es gibt konkrete QEC-Indizien fuer einen "
+        "tatsaechlichen technischen Fehler oder eine andere Stoerungsursache.\n"
+        "  - Nicht bewertbar / Nicht zuordenbar: Es fehlen geeignete "
+        "QEC-Dokumente, Pruefbelege oder die Zuordnung ist unsicher. "
+        "Niemals einen Nachweis erfinden.\n"
+        "Bei fehlenden QEC-Berichten immer 'Nicht bewertbar' oder "
+        "'Nicht zuordenbar' verwenden und die Datenluecke in "
+        "pruefungen_grenzen nennen. Keine automatische NTF-Annahme.\n"
+        "MOEGLICHEN VERURSACHUNGSBEREICH getrennt von ntf_bewertung "
+        "in verursachungsbereich angeben: z. B. Bauteil/Lieferant, "
+        "Ansteuerung/Netzwerk, Stecker/Leitung/Versorgung, "
+        "Montage/Transport, Werkstatt oder Nicht zuordenbar. "
+        "Immer sicherheit_zuordnung und begruendung_zuordnung "
+        "ausfuellen. Lieferantenverantwortung nie ohne technische "
+        "Belege behaupten.\n"
+        "Konkrete Originalbefunde mit quelle=qec_berichte oder "
+        "quelle=qec_felder, zugehoeriger Q-Kennung und der wirklichen "
+        "feldgenauen Fundstelle belegen. SSL-Endbefund, "
+        "QEC-Fachentscheidungen und Lieferantenstellungen sind "
+        "Kontext, kein Beweis fuer Verursachung.\n"
+        "WICHTIG: RUNDE 1 ENTHAELT KEINE CLUSTERUNG. "
+        "cluster muss [] sein, clustermethode muss '' sein und "
+        "cluster_id jedes Falls muss null bleiben. "
+        "KEINE umfassende Ursachenpruefung, DTC-Wiederkehranalyse, "
+        "Vollfahrzeugdiagnose oder technische Cluster ableiten. "
+        "Diese Aufgaben erfolgen erst in LLM-DURCHLAUF 2 (Schritt 05) "
+        "mit den zusaetzlichen Unterlagen aus Schritt 04.\n"
+        "Alle Hinweise in qec_datenluecken.csv beruecksichtigen, "
+        "insbesondere fehlende oder alte Reiter und nicht freigegebene "
+        "Fachtexte. Sind QEC-Fachtexte nicht freigegeben, "
+        "die reduzierte Aussagekraft angeben.\n"
+        "Keine echten FINs, Originalreferenzen oder lokalen Pfade in "
+        "das Ergebnis aufnehmen. Private *_NICHT_HOCHLADEN_ZUORDNUNG.csv "
+        "niemals hochladen. Nur mit Unternehmensfreigabe verarbeiten.\n"
     ).encode("utf-8")
     files["README.txt"] = (
         "NTF INSIGHT - QEC-ERSTANALYSE - NUR SCHRITTE 01 UND 02\n\n"
@@ -471,7 +488,8 @@ def export_qec_first_package(
         "ausdruecklich ZULAESSIG und blockieren den Export nicht. "
         "Alle Faelle aus Schritt 01 bleiben im Paket; ohne Beleg "
         "nur 'Nicht bewertbar' statt erfundener Aussage. "
-        "QEC-SSL-Endbefunde NICHT als Clustermerkmal verwenden.\n"
+        "RUNDE 1: EINZELFALLBEWERTUNG UND MOEGLICHER VERURSACHUNGSBEREICH, "
+        "KEINE CLUSTERUNG. Umfassende Pruefung erst in Runde 2.\n"
         + ("ACHTUNG: NICHT ANONYMISIERTE QEC-FACHTEXTE ENTHALTEN.\n"
            if mit_freitext else
            "QEC-Freitexte sind NICHT enthalten; Befundtiefe ist begrenzt.\n")
@@ -496,6 +514,7 @@ def export_qec_first_package(
     files["manifest.json"] = json.dumps({
         "schema_version": EXPORT_VERSION,
         "analyseumfang": "workflow_01_02_qec",
+        "analysezweck": "ntf_erstentscheidung_ohne_cluster",
         "projektprofil": profile_id,
         "teilgruppe_pseudonym": "T0001",
         "paket_id": paket_id,
