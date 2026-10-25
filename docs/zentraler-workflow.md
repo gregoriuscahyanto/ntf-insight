@@ -350,10 +350,17 @@ Neustart in den neuen Workflow migriert und nicht als Sperre weitergeführt.
 - \`Lokal · HDBSCAN / Cosinus\` zeigt die einmalig vorhandene
   lokale Clusterimplementierung, mit sinnvollem Scrollbereich.
   Doppelte Beschreibungs-/Quellenabdeckungs-Texte entfallen.
-- \`LLM · Ergebnis anzeigen\` zeigt **nur die validierte
-  zweite LLM-Rückgabe** mit Clustertiteln, Hypothesen,
-  Sicherheit, FIN/Fall-Zuordnung und fachlichem Prüfstatus.
-  Dieser Tab führt **keinen** neuen LLM-Request aus.
+- `LLM · Cluster & Verursachung` visualisiert ausschließlich die
+  **validiert importierte zweite LLM-Rückgabe des aktiven Profil-/
+  Sachnummernprojekts**. Balkendiagramme zeigen Clustergrößen und
+  mögliche Verursachungsbereiche. Anklicken filtert die Fallliste;
+  zusätzlich gibt es Suche, Filter und Rücksetzschaltfläche.
+- Pro Cluster: technische Hypothese, Sicherheit, Ursachenhäufigkeiten
+  und Belegfundstellen. Pro Fall: NTF-Neubewertung, mögliche Ursache,
+  Vor-/Nach-Tausch-Wiederkehr, Gegenindizien und Folgeprüfung.
+- `Lieferant als Hypothese` ist KEIN nachgewiesenes Lieferantenverschulden.
+  Nicht gruppierbare Fälle bleiben sichtbar. Die Visualisierung führt
+  **keine neue KI-Berechnung** durch.
 - Die zwei zentralen Bedienelemente für den zweiten ZIP-Export und
   JSON-Rückimport sind groß hervorgehoben. Beide Durchläufe bleiben
   paket-/analyse-ID-gebunden.
