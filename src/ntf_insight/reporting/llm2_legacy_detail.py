@@ -137,6 +137,11 @@ def normalize_legacy_llm2_detail(
                 "kategorie", "nachweisstatus", "sicherheit", "begruendung", "belege",
             }:
                 raise ValueError("Ungueltiges LLM2-Fehlerbildobjekt.")
+            if any(
+                not isinstance(symptom[key], str)
+                for key in ("kategorie", "nachweisstatus", "sicherheit", "begruendung")
+            ):
+                raise ValueError("Ungueltige LLM2-Fehlerbildwerte.")
             category = _CATEGORY.get(symptom["kategorie"])
             status = _STATUS.get(symptom["nachweisstatus"])
             if category is None or status is None:
@@ -157,12 +162,22 @@ def normalize_legacy_llm2_detail(
                 for finding in findings
             )
             statuses = {_STATUS[f["nachweisstatus"]] for f in findings}
+            evidence_types = {
+                item.get("quelle")
+                for finding in findings
+                for item in finding["belege"]
+                if isinstance(item, dict) and isinstance(item.get("quelle"), str)
+            }
+            # Zwei Belegzeilen aus derselben Quelle sind kein
+            # unabhaengiger Mehrfachnachweis.
+            proof_level = (
+                next(iter(statuses)) if len(statuses) == 1
+                else "Mehrfach belegt" if len(evidence_types) >= 2
+                else "Hypothese / unbestätigt"
+            )
             normalized.append({
                 "kategorie": category,
-                "nachweisstatus": (
-                    next(iter(statuses)) if len(statuses) == 1
-                    else "Mehrfach belegt"
-                ),
+                "nachweisstatus": proof_level,
                 # Unterschiedliche Quellen rechtfertigen keine hoehere Sicherheit.
                 "sicherheit": (
                     findings[0]["sicherheit"] if len(findings) == 1
@@ -177,12 +192,20 @@ def normalize_legacy_llm2_detail(
         if not isinstance(detailed_profiles, list) or len(detailed_profiles) > 12:
             raise ValueError("Ungueltiges detailliertes LLM2-Nachweisprofil.")
         labels = []
-        combined = list(row.get("belege", []))
+        raw_belege = row.get("belege", [])
+        if not isinstance(raw_belege, list):
+            raise ValueError("Ungueltige LLM2-Fallbelege.")
+        combined = list(raw_belege)
         for entry in detailed_profiles:
             if not isinstance(entry, dict) or set(entry) != {
                 "quelle", "nachweisstatus", "sicherheit", "begruendung", "belege",
             }:
                 raise ValueError("Ungueltiges LLM2-Nachweisobjekt.")
+            if any(
+                not isinstance(entry[key], str)
+                for key in ("quelle", "nachweisstatus", "sicherheit", "begruendung")
+            ):
+                raise ValueError("Ungueltige LLM2-Nachweiswerte.")
             label = _PROFILE.get(entry["nachweisstatus"])
             if label is None:
                 raise ValueError("Unbekannter LLM2-Nachweisprofilstatus.")

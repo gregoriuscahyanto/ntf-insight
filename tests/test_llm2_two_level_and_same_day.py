@@ -291,7 +291,11 @@ def test_legacy_detail_json_imports_without_editing_file(tmp_path):
     finding = importer.latest_for_case(CASE_ID)["bewertung"]
     assert len(finding["fehlerbilder"]) == 1
     assert finding["fehlerbilder"][0]["kategorie"] == "Bus / Kommunikation"
-    assert finding["fehlerbilder"][0]["nachweisstatus"] == "Mehrfach belegt"
+    # Zwei Statusbehauptungen mit derselben Fundstelle sind noch keine
+    # voneinander unabhaengigen Mehrfachbelege.
+    assert finding["fehlerbilder"][0]["nachweisstatus"] == (
+        "Hypothese / unbestätigt"
+    )
     assert finding["nachweisprofil"] == ["Laborbefund optisch auffällig"]
     assert any(e["fundstelle"] == proof["fundstelle"] for e in finding["belege"])
     with source.store.connect() as con:
