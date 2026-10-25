@@ -2,7 +2,7 @@
 
 Die fünf Workflow-Stationen stehen nebeneinander. Darunter zeigt eine
 QStackedWidget genau EINEN Arbeitsschritt; nur Tabellen scrollen intern.
-Rohdatenparser, QEC-Downloader und ChatGPT-Vertrag werden nicht dupliziert.
+Rohdatenparser, QEC-Downloader und LLM-Vertrag werden nicht dupliziert.
 """
 from __future__ import annotations
 
@@ -181,7 +181,7 @@ class WorkflowPage(QWidget):
         ("QEC-Befundung", "Berichte", "cases", "qec_reports"),
         ("NTF-Entscheidung", "Prüfung", "sources", "qec_decision"),
         ("Unterlagen", "CPC3 / TP", "workflow", "evidence"),
-        ("Clusteranalyse", "Lokal + ChatGPT", "workflow", "cluster"),
+        ("Clusteranalyse", "Lokal + LLM", "workflow", "cluster"),
     )
 
     def __init__(
@@ -615,7 +615,7 @@ class WorkflowPage(QWidget):
             button.setObjectName("ClusterStartButton")
         dashboards = QHBoxLayout()
         self.ntf_donut = WorkflowDonut("NTF-Bewertung · eindeutige FINs")
-        self.cause_donut = WorkflowDonut("Verursachungsbereich · ChatGPT-Vorschlag")
+        self.cause_donut = WorkflowDonut("Verursachungsbereich · LLM-Vorschlag")
         dashboards.addWidget(self.ntf_donut, 1)
         dashboards.addWidget(self.cause_donut, 1)
         body.addLayout(dashboards)
@@ -628,7 +628,7 @@ class WorkflowPage(QWidget):
         self.ntf_status.setToolTip(
             "Der SSL-Endbefund kommt aus der QEC-Liste. "
             "Die QEC-Fachentscheidung wird separat gespeichert. "
-            "Ein importierter ChatGPT-Vorschlag ist bis zur "
+            "Ein importierter LLM-Vorschlag ist bis zur "
             "menschlichen Bestätigung oder Ablehnung ungeprüft."
         )
         # Keine redundante Fachentscheidungs-/LLM-Textwand unter den Donuts.
@@ -665,7 +665,7 @@ class WorkflowPage(QWidget):
         self._ntf_filter_labels = {
             2: "SSL-Endbefund",
             3: "QEC-Entscheidung",
-            4: "ChatGPT-Vorschlag",
+            4: "LLM-Vorschlag",
             5: "Verursachungsbereich",
             6: "KI-Prüfstatus",
         }
@@ -689,7 +689,7 @@ class WorkflowPage(QWidget):
 
         self.ntf_table, self.ntf_model = _create_table((
             "FIN", "QEC-Fall", "SSL-Endbefund", "QEC-Entscheidung",
-            "ChatGPT-Vorschlag", "Verursachungsbereich", "ChatGPT-Prüfstatus",
+            "LLM-Vorschlag", "Verursachungsbereich", "LLM-Prüfstatus",
         ))
         self.ntf_proxy = _DecisionFilterProxy(self)
         self.ntf_proxy.setSourceModel(self.ntf_model)
@@ -748,7 +748,7 @@ class WorkflowPage(QWidget):
     def _build_step_four(self) -> None:
         """Unterlagenzentrale: Quellenabrufe und kategorisierte technische Dokumente."""
         _, body = self._workspace(
-            "04 · Unterlagen für den zweiten ChatGPT-Durchlauf",
+            "04 · Unterlagen für den zweiten LLM-Durchlauf",
             "Quellen abrufen oder Dateien einsammeln · Unbekannte Scraper werden nicht simuliert.",
         )
         scraper_grid = QVBoxLayout()
@@ -1028,7 +1028,7 @@ class WorkflowPage(QWidget):
         """Die lokale FIN-Clusterberechnung wird in Schritt 05 eingehängt."""
         _, body = self._workspace(
             "05 · Clusteranalyse",
-            "Lokale DTC-Cluster und zweiter ChatGPT-Durchlauf. "
+            "Lokale DTC-Cluster und zweiter LLM-Durchlauf. "
             "Technische Unterlagen dienen der Erklärung und Plausibilisierung.",
         )
         self.cluster_base_status = QLabel(objectName="PageSubtitle")
@@ -1040,14 +1040,14 @@ class WorkflowPage(QWidget):
         self.cluster_originals.setChecked(False)
         self.cluster_originals.setToolTip(
             "Originale sind nicht anonymisiert. Auch das importierte erste "
-            "ChatGPT-Ergebnis kann vertrauliche Freitexte enthalten."
+            "LLM-Ergebnis kann vertrauliche Freitexte enthalten."
         )
         # Die Freigabe erfolgt ausschließlich im neuen Exportpopup.
         # Als verborgenes Layout-Widget bleibt die bestehende Qt-Referenz gültig.
         options.addWidget(self.cluster_originals)
         self.cluster_originals.hide()
         self.cluster_export_button = self._add_action(
-            options, "2. ChatGPT-Paket exportieren",
+            options, "2. LLM-Paket exportieren",
             lambda: self.action_requested.emit("cluster_export"),
         )
         self.cluster_import_button = self._add_action(
@@ -1118,7 +1118,7 @@ class WorkflowPage(QWidget):
         ))
         self.chatgpt_case_table.setMinimumHeight(110)
         review_layout.addWidget(self.chatgpt_case_table, 1)
-        self.cluster_tabs.addTab(self.chatgpt_cluster_page, "ChatGPT · Ergebnis anzeigen")
+        self.cluster_tabs.addTab(self.chatgpt_cluster_page, "LLM · Ergebnis anzeigen")
         body.addWidget(self.cluster_tabs, 1)
         for button in (self.cluster_export_button, self.cluster_import_button):
             button.setMinimumHeight(52)
@@ -1244,7 +1244,7 @@ class WorkflowPage(QWidget):
                 "Noch keine KI-Analysebasis registriert."
             )
             self.cluster_base_status.setText(
-                "Zuerst in Schritt 03 das erste ChatGPT-Paket exportieren "
+                "Zuerst in Schritt 03 das erste LLM-Paket exportieren "
                 "und das erste Ergebnis als JSON importieren."
             )
             self.cluster_result_status.setText("Noch kein zweiter Durchlauf.")
@@ -1256,7 +1256,7 @@ class WorkflowPage(QWidget):
             )
             if package.analysis_id is None:
                 self.cluster_base_status.setText(
-                    "1. KI-Paket vorhanden; die ChatGPT-Ergebnis-JSON aus "
+                    "1. KI-Paket vorhanden; die LLM-Ergebnis-JSON aus "
                     "Schritt 03 wurde noch nicht importiert."
                 )
             else:
@@ -1656,7 +1656,7 @@ class WorkflowPage(QWidget):
             f"{automatic_parsed} geparst · "
             f"{len(active_categories)} von {len(counts)} Kategorien mit Bestand. "
             "Quelldokumente und manuelle Zuordnungen sind getrennte Bestände; "
-            "Dateien werden nicht automatisch an ChatGPT gesendet."
+            "Dateien werden nicht automatisch an LLM gesendet."
         )
         if self._source_coverage:
             self._update_coverage_labels()
@@ -1785,7 +1785,7 @@ class WorkflowPage(QWidget):
         except (OSError, ValueError) as exc:
             # Keine rohen Berichtsdetails oder FINs in Logs/Dialoge übertragen.
             self._data_error = (
-                "QEC-/ChatGPT-Daten konnten nicht geladen werden: "
+                "QEC-/LLM-Daten konnten nicht geladen werden: "
                 + type(exc).__name__
             )
         self.refresh_context_files()
@@ -2148,7 +2148,7 @@ class WorkflowPage(QWidget):
                 f"{doc_counts.manual} manuell zugeordnete Dokumente · "
                 f"{len(available_categories)} von {len(CATEGORY_LABELS)} Kategorien "
                 "mit Bestand. Quelldokumente sind nicht gleich manuelle "
-                "Zuordnungen. Keine automatische ChatGPT-Übertragung."
+                "Zuordnungen. Keine automatische LLM-Übertragung."
             )
 
     def _show_chatgpt_cluster_details(self) -> None:
@@ -2226,7 +2226,7 @@ class WorkflowPage(QWidget):
         self.chatgpt_case_model.set_rows(rendered, row_states=state)
         self.chatgpt_cluster_summary.show()
         self.chatgpt_cluster_summary.setText(
-            f"Analyse {analysis_id} · {len(self._cluster_entries)} ChatGPT-Cluster · "
+            f"Analyse {analysis_id} · {len(self._cluster_entries)} LLM-Cluster · "
             f"{len(rendered)} aktuelle QEC-Fälle mit Ergebnissen. "
             "Nur Anzeige – keine erneute KI-Ausführung."
         )
@@ -2355,7 +2355,7 @@ class WorkflowPage(QWidget):
             "true" if imported else "false",
         )
         self.ai_import_button.setToolTip(
-            "ChatGPT-Ergebnis für dieses Projekt erfolgreich importiert"
+            "LLM-Ergebnis für dieses Projekt erfolgreich importiert"
             if imported else
             "JSON-Ergebnis des zuvor exportierten Analysepakets importieren"
         )
