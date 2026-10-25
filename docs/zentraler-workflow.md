@@ -358,6 +358,20 @@ Neustart in den neuen Workflow migriert und nicht als Sperre weitergeführt.
 - Pro Cluster: technische Hypothese, Sicherheit, Ursachenhäufigkeiten
   und Belegfundstellen. Pro Fall: NTF-Neubewertung, mögliche Ursache,
   Vor-/Nach-Tausch-Wiederkehr, Gegenindizien und Folgeprüfung.
+- **Zwei getrennte Cluster-Ebenen:** Im selben Dashboard erscheinen
+  zusaetzlich Balkendiagramme fuer `Fehlerbilder (Mehrfachnennungen)` und
+  `Nachweisbasis` mit eigenen Suchfiltern. Auch nicht technisch
+  clusterbare Faelle erhalten damit eine Fehlerbildzuordnung (soweit
+  das LLM eine solche zur Verfuegung stellt). Werkstatt- und
+  Diagnosenennungen duerfen kombiniert, aber nicht als nachgewiesene
+  Ursache interpretiert werden. Ein Fall kann mehrere Fehlerbilder
+  tragen, waehrend `cluster_id` nur eine technische Gruppe bezeichnet.
+- **Alt-JSON:** Falls `fehlerbilder[]` noch fehlt, werden ausschliesslich
+  bereits vorhandene `themen[]` unter deutlicher Kennzeichnung
+  `Alt-LLM` visualisiert. Daraus werden KEINE neuen technischen
+  Ursachen oder Aussagen zur zeitlichen Reihenfolge von QuickTests
+  erzeugt. Erst der neue zweite Export plus LLM-Rueckgabe fuellt die
+  Nachweisprofile mit den taggleichen km-Indizien.
 - `Lieferant als Hypothese` ist KEIN nachgewiesenes Lieferantenverschulden.
   Nicht gruppierbare Fälle bleiben sichtbar. Die Visualisierung führt
   **keine neue KI-Berechnung** durch.
