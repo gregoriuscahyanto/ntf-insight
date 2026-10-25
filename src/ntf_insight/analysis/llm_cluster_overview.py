@@ -252,9 +252,10 @@ def build_llm_cluster_overview(
     proof_profiles = Counter(
         label for item in cases for label in item.proof_profiles
     )
-    counts = lambda values: tuple(sorted(
-        values.items(), key=lambda item: (-item[1], item[0]),
-    ))
+    def counts(values: Counter) -> tuple[tuple[str, int], ...]:
+        return tuple(sorted(
+            values.items(), key=lambda item: (-item[1], item[0]),
+        ))
     return LlmClusterOverview(
         cases=tuple(cases),
         groups=tuple(groups),
