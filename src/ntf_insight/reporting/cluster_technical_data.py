@@ -439,40 +439,40 @@ def export_parsed_diagnostics(
     by_fin = {}
     for case in scope.selected_cases:
         by_fin.setdefault(case.vin, []).append(case)
-    rel_rows = []
-    for report_id, fin, diagnosed, _km, _ecu, _dtc in reports:
-        for case in by_fin.get(fin, ()):
-            anchor = case.investigated_replacement()
-            source_ref = str(case.source_ref or "")
-            if (
-                anchor is None or not source_ref.startswith("raw:")
-                or anchor.source_ref != source_ref
-            ):
-                phase = "tauschdatum_nicht_belegt"
-                days = ""
-            else:
-                delta = (diagnosed.date() - anchor.occurred_at.date()).days
-                if delta == 0:
-                    phase = "zeitlich_unklar_gleicher_tag"
+    relation_name = "diagnose/quicktest_fallbezug.csv"
+    with _PartitionedCsvWriter(
+        archive, relation_name,
+        ("fall_id", "quicktest_id", "lage_zum_tausch",
+         "tage_relativ_zum_tausch", "belegregel"),
+        progress,
+    ) as writer:
+        for report_id, fin, diagnosed, _km, _ecu, _dtc in reports:
+            for case in by_fin.get(fin, ()):
+                anchor = case.investigated_replacement()
+                source_ref = str(case.source_ref or "")
+                if (
+                    anchor is None or not source_ref.startswith("raw:")
+                    or anchor.source_ref != source_ref
+                ):
+                    phase = "tauschdatum_nicht_belegt"
+                    days = ""
                 else:
-                    phase = "vor_tausch" if delta < 0 else "nach_tausch"
-                days = delta
-            rel_rows.append({
-                "fall_id": scope.cases[case.case_id],
-                "quicktest_id": aliases[str(report_id)],
-                "lage_zum_tausch": phase, "tage_relativ_zum_tausch": days,
-                "belegregel": "Nur Zeitvergleich; keine bewiesene Fehlerursache",
-            })
-    # Relationen kommen aus den bereits validierten Faellen und Berichten.
-    with archive.open("diagnose/quicktest_fallbezug.csv", "w") as target:
-        with io.TextIOWrapper(target, encoding="utf-8-sig", newline="") as stream:
-            writer = csv.DictWriter(stream, fieldnames=(
-                "fall_id", "quicktest_id", "lage_zum_tausch",
-                "tage_relativ_zum_tausch", "belegregel",
-            ), lineterminator="\n")
-            writer.writeheader()
-            writer.writerows(rel_rows)
-    count_rel = len(rel_rows)
+                    delta = (diagnosed.date() - anchor.occurred_at.date()).days
+                    if delta == 0:
+                        phase = "zeitlich_unklar_gleicher_tag"
+                    else:
+                        phase = "vor_tausch" if delta < 0 else "nach_tausch"
+                    days = delta
+                writer.writerow({
+                    "fall_id": scope.cases[case.case_id],
+                    "quicktest_id": aliases[str(report_id)],
+                    "lage_zum_tausch": phase,
+                    "tage_relativ_zum_tausch": days,
+                    "belegregel": "Nur Zeitvergleich; keine bewiesene Fehlerursache",
+                })
+    count_rel = writer.total_rows
+    if table_files is not None:
+        table_files[relation_name] = writer.parts
 
     stats = {
         "quicktests_geparst": count_report, "ecu_eintraege": count_ecu,
