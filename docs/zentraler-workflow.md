@@ -342,6 +342,35 @@ Neustart in den neuen Workflow migriert und nicht als Sperre weitergeführt.
 - Die zwei zentralen Bedienelemente für den zweiten ZIP-Export und
   JSON-Rückimport sind groß hervorgehoben. Beide Durchläufe bleiben
   paket-/analyse-ID-gebunden.
+- **Vollständiger technischer Kontext:** Das ZIP enthält die gesamte
+  erste QEC-Basis (`basis/`), die importierte erste ChatGPT-Auswertung
+  (`voranalyse/`), und aus Schritt 04 **automatisch FIN-gefilterte**
+  geparste Diagnosis-Viewer-QuickTests (Berichte, ECUs, DTCs, Parameter,
+  zeitliche Fallvergleiche), TP-Dashboard-Diagnosen und vorhandene
+  TIPS-Writer-Befunde (`diagnose/`). Es werden keine fremden FINs aus
+  globalen AutoExport-/TP-Sammeldateien übernommen.
+- **Originale nach Freigabe:** Mit der im Dialog getrennt bestätigten
+  umfassenden Exportoption werden alle explizit diesem Sachnummernprojekt
+  zugeordneten technischen Originale aus Schritt 04 und nur die
+  **nicht geparsten** FIN-bezogenen QuickTest-PDFs als Fallback in
+  `unterlagen/` aufgenommen. Geparste QuickTests werden nicht nochmals
+  als PDF dupliziert. Automatisch abgerufene TIPS-Writer-Originale samt
+  erreichbaren Anhängen können ebenfalls aufgenommen werden.
+- **Zwei eigenständige Freigaben:** (1) bereits vertrauliche Freitexte/
+  Originale aus dem ersten QEC-ZIP; (2) neue technische Originale und
+  geparste Diagnoseseitentexte. Die Modaloberfläche bestätigt den
+  Datenschutz vor dem lokalen Export erneut. Es findet kein Upload statt.
+- **Sachnummernschutz:** Die Fall-/FIN-Kohorte wird aus dem lokalen
+  Pseudonym-Mapping der ersten QEC-ZIP gelesen und mit dem ausgewählten
+  Profil-/Sachnummernprojekt abgeglichen. Unpassende Fremd-FIN-/Fallhinweise
+  verhindern den betreffenden Originalbeleg; die Auslassung steht im
+  Manifest. Manuell verknüpfte *unstrukturierte* Dokumente können jedoch
+  weitere FINs erwähnen und müssen vor externer Weitergabe geprüft werden.
+- **Grenzen:** Die Multi-FIN-TP-Dashboard-Original-CSV wird bewusst
+  **nicht** ungefiltert hochladbar verpackt, sondern nur als geparste
+  FIN-gefilterte Diagnosezeilen. Die ZIP ist auf 1 GiB unkomprimiert,
+  einzelne Dateien auf 200 MiB begrenzt; bei Überschreitung wird ein
+  verständlicher Fehler statt eines stillen Teilauszugs ausgegeben.
 
 
 ### Projekt entfernen oder vollständig löschen (Projekteinstellungen)
