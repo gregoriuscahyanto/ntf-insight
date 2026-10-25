@@ -134,3 +134,14 @@ def test_multilabel_fields_are_optional_in_old_json_and_strict_in_new():
     payload["faelle"][0]["fehlerbilder"][0]["kategorie"] = "Lieferant schuld"
     with pytest.raises(ValidationError):
         ChatGPTRueckgabe.model_validate(payload)
+
+
+
+def test_csv_injection_protection_preserves_real_negative_measurements():
+    from ntf_insight.reporting.cluster_technical_data import _csv_safe
+
+    assert _csv_safe("-82") == "-82"
+    assert _csv_safe("-1.25") == "-1.25"
+    assert _csv_safe("-A1") == "'-A1"
+    assert _csv_safe("=HYPERLINK(1,2)") == "'=HYPERLINK(1,2)"
+    assert _csv_safe("+A1") == "'+A1"
