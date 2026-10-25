@@ -29,6 +29,48 @@ Datenlücke – kein Grund, ihre Inhalte zu erfinden.
 
 ### Workflow 05: vollständiger technischer Kontext (zweiter LLM-Export)
 
+#### Zwei unabhängige Analyseebenen statt künstlicher Cluster
+
+**Fehlerbild (mehrfach pro Fall):** Der zweite LLM-Durchlauf ordnet jedem
+QEC-Fall `fehlerbilder[]` zu. Eine Werkstattmeldung über Überstrom, einen
+Kurzschluss oder Kommunikationsausfälle darf als Fehlerbild erfasst werden,
+auch wenn ein Vortausch-QuickTest fehlt. Pro Kategorie sind **Nachweisstatus,
+Sicherheit, Begründung und konkrete Belegreferenzen** getrennt anzugeben.
+Mehrere Fehlerbilder pro Fall sind möglich. Bei völlig fehlenden Hinweisen
+lautet die Kategorie `Unbekannt`, niemals ein erfundenes technisches Muster.
+
+**Nachweisprofil (eigenständige Achse):** `nachweisprofil[]` unterscheidet
+Werkstattangaben, QEC-/Laborbefunde, eindeutig früher datierte QuickTests,
+taggleiche QuickTests mit km-Indiz, echte Nachtauschdiagnosen und offen
+gebliebene Datenlücken. Ein originales Werkstattzitat ist dabei **nicht**
+automatisch ein reproduzierter Fehler oder ein bewiesener Verursacher.
+
+**Technische Ursachencluster:** Die bisherigen Felder `cluster[]` und
+`cluster_id` bleiben **separat**. Sie dienen nur technisch begründeten
+Fallmustern; ein gemeinsames Symptom beweist keinen identischen Defekt
+oder Lieferantenfehler. Die Fehlerbildgruppen umfassen daher in der Regel
+mehr Fälle als die strenger begründbaren Ursachencluster. Ältere JSONs
+ohne `fehlerbilder` und `nachweisprofil` bleiben rückwärtskompatibel.
+
+#### QuickTests am selben Tauschtag
+
+`diagnose/quicktest_fallbezug.csv` enthält zusätzlich zu Datum und
+`lage_zum_tausch` den Diagnose-/Tausch-Kilometerstand, dessen Differenz,
+die zeitliche Sicherheit und die Belegregel. Liegt der Diagnose-km-Wert
+am Tauschtag unter dem QEC-Tausch-km-Wert, wird dies ausdrücklich als
+`gleicher_tag_km_vor_tausch_indiz` ausgegeben – **nicht als bewiesener
+Vortausch-QuickTest und nicht mehr als fehlende Diagnose**. Gleiche oder
+unbekannte km-Werte bleiben zeitlich unklar; Widersprüche von Datum und
+Kilometerstand werden gesondert markiert. Dasselbe gilt für nach dem
+Tausch liegende Kilometer-Indizien. Ohne originale Tauschuhrzeit darf
+keine sichere Reihenfolge behauptet werden.
+
+Eine erneute LLM-Auswertung nach dem verbesserten Export ist erforderlich,
+damit die Felder neu ausgefüllt werden. Die bereits importierte ältere
+Runde-2-JSON wird nicht rückwirkend umgedeutet oder überschrieben.
+
+
+
 Der zweite ZIP-Export übernimmt in `basis/` die **gesamte erste QEC-ZIP**
 und in `voranalyse/erstes_chatgpt_ergebnis.json` die validierte erste
 LLM-Auswertung. Alle Fälle und Pseudonyme bleiben erhalten.
