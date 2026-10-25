@@ -190,3 +190,113 @@ def test_qec_field_display_label_must_match_original_zip(tmp_path):
         importer._verify_qec_field_locations(
             first.paket_id, {(alias, f"{location}/feld:999 [{label}]")},
         )
+
+
+
+def test_legacy_detail_json_imports_without_editing_file(tmp_path):
+    """Die bisherige Detail-JSON wird nur appintern kanonisiert.
+
+    Originaltext bleibt gespeichert; auch Nachweisprofil-Belege werden geprueft.
+    Keine echten Kunden- oder Produktionsdaten in den Testdaten.
+    """
+    source, evidence, *_ = _create_test_data(tmp_path)
+    first, first_result = _first(
+        source, tmp_path / "first-legacy.zip", mit_freitext=True,
+    )
+    with ZipFile(first.path) as archive:
+        row = next(
+            item for item in _csv(archive, "qec_felder.csv")
+            if item["original_beschriftung_opt_in"]
+        )
+        case_info = _csv(archive, "faelle.csv")[0]
+    proof = {
+        "quelle": "qec_felder",
+        "quelle_id": row["qec_bericht_id"],
+        "fundstelle": (
+            f"{row['fundstelle']} [{row['original_beschriftung_opt_in']}]"
+        ),
+        "aussage": "Synthetische QEC-Fundstelle.",
+        "belegstatus": "Originalbefund",
+    }
+    answer = dict(first_result)
+    answer["analyse_id"] = "Cluster-Synthetic-Legacy-Detail"
+    answer["fehlerbild_methodik"] = "multilabel_symptom_nachweis_v2"
+    answer["erklaerung_zusatzfelder"] = "Altes Detailformat."
+    answer["faelle"][0].update({
+        "fahrzeug_id": case_info["fahrzeug_id"],
+        "qec_bericht_id": row["qec_bericht_id"],
+        "baureihe": "214",
+        "sachnummer_pseudonym": "A-EXAMPLE-001",
+        "tausch_monat": "2026-01",
+        "tausch_km": 12000,
+        "cluster_alt": None,
+        "ntf_bewertung_alt": "NTF fraglich",
+        "aenderung_gegenueber_erstlauf": "Neue Diagnosequelle",
+        "fehlerbilder": [
+            {
+                "kategorie": "Bus/Kommunikation",
+                "nachweisstatus": "Werkstattangabe",
+                "sicherheit": "Niedrig",
+                "begruendung": "Nur Werkstattbehauptung.",
+                "belege": [proof],
+            },
+            {
+                "kategorie": "Bus/Kommunikation",
+                "nachweisstatus": "Diagnosehinweis",
+                "sicherheit": "Mittel",
+                "begruendung": "Diagnoseereignis, kein Kausalbeweis.",
+                "belege": [proof],
+            },
+        ],
+        "nachweisprofil": [{
+            "quelle": "QEC-Lieferantenbericht (Erstrunde)",
+            "nachweisstatus": "Optischer Sichtbefund NOK",
+            "sicherheit": "Mittel",
+            "begruendung": "Synthetischer Befund.",
+            "belege": [proof],
+        }],
+        "fehlerwiederkehr": "Nicht beurteilbar",
+        "begruendung_fehlerwiederkehr": "Kein echter Nachtest.",
+        "qt_anzahl": 2,
+        "qt_zeitkategorien": {"vor_tausch": 1, "nach_tausch": 1},
+        "vortausch_dtc_codes": "P26F100/CPC3",
+        "vortausch_ecu_versionen": [],
+        "datumsbezogen_vor_tausch_qt": 1,
+        "gleicher_tag_km_vor_tausch_indiz_qt": 0,
+        "dato_km_widerspruch_qt": 0,
+        "nach_tausch_neuer_ereigniskm_dtc": 0,
+        "fall_duplikat_pruefen": [],
+    })
+    path = tmp_path / "legacy-llm2.json"
+    importer = ChatGPTAnalyseStore(source.store)
+    answer["faelle"][0]["nicht_erlaubt"] = "keine unkontrollierten Extras"
+    path.write_text(json.dumps(answer), encoding="utf-8")
+    with pytest.raises(ValueError, match="Unbekannte LLM2-Zusatzfelder"):
+        importer.import_file(path)
+    del answer["faelle"][0]["nicht_erlaubt"]
+
+    answer["faelle"][0]["nachweisprofil"][0]["belege"][0] = {
+        **proof, "fundstelle": f"{row['fundstelle']} [erfundene Beschriftung]",
+    }
+    path.write_text(json.dumps(answer), encoding="utf-8")
+    with pytest.raises(ValueError, match="nicht im exportierten Original"):
+        importer.import_file(path)
+    answer["faelle"][0]["nachweisprofil"][0]["belege"][0] = proof
+    path.write_text(json.dumps(answer), encoding="utf-8")
+    original = path.read_bytes()
+
+    result = importer.import_file(path)
+    assert result["faelle"] == 1
+    assert path.read_bytes() == original
+    finding = importer.latest_for_case(CASE_ID)["bewertung"]
+    assert len(finding["fehlerbilder"]) == 1
+    assert finding["fehlerbilder"][0]["kategorie"] == "Bus / Kommunikation"
+    assert finding["fehlerbilder"][0]["nachweisstatus"] == "Mehrfach belegt"
+    assert finding["nachweisprofil"] == ["Laborbefund optisch auffällig"]
+    assert any(e["fundstelle"] == proof["fundstelle"] for e in finding["belege"])
+    with source.store.connect() as con:
+        archived = con.execute(
+            "SELECT payload_json FROM chatgpt_imports WHERE analyse_id=?",
+            [answer["analyse_id"]],
+        ).fetchone()[0]
+    assert archived == original.decode("utf-8")
