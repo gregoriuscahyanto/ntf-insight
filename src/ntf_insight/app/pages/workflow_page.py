@@ -2632,18 +2632,6 @@ class WorkflowPage(QWidget):
                 if qec_coverage is not None else
                 f"{downloaded}/{total} FINs mit Bericht"
             )
-        imported = sum(
-            row["case_id"] in self._chatgpt_by_case
-            for row in self._scoped_rows
-        )
-        accepted = sum(
-            self._chatgpt_by_case.get(row["case_id"], {}).get("review_status")
-            == "Bestätigt" for row in self._scoped_rows
-        )
-        rejected = sum(
-            self._chatgpt_by_case.get(row["case_id"], {}).get("review_status")
-            == "Abgelehnt" for row in self._scoped_rows
-        )
         # Die NTF-Tabelle zeigt die Details bereits; kein weiterer
         # mehrzeiliger Fachentscheidungs-/LLM-Hinweis in Schritt 03.
         self.ntf_status.clear()
