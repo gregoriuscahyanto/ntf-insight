@@ -65,7 +65,7 @@ def test_quicktest_swap_timing_remains_auditable(
     if offset_days == 0:
         assert result.days == 0
     if "widerspruch" in expected_hint:
-        assert "Widerspruch" in result.rule
+        assert "widerspruch" in result.rule.casefold()
 
 
 def test_unknown_swap_not_silently_classified():
