@@ -1,4 +1,4 @@
-"""Versionierter ChatGPT-Rückgabe-Vertrag für NTF-/QEC-Fallbewertungen.
+"""Versionierter LLM-Rückgabe-Vertrag für NTF-/QEC-Fallbewertungen.
 
 Die Antwort aus einem externen Analysemodell bleibt eine überprüfbare Hypothese,
 kein automatischer Ersatz für QEC-Entscheidungen oder manuelle Fallbewertungen.
@@ -143,7 +143,7 @@ def _csv_private_mapping(csv_path: Path, paket_id: str) -> list[dict]:
         raise ValueError("Private Zuordnung ist leer oder zu groß.")
     if any(row["paket_id"] != paket_id for row in rows):
         raise ValueError(
-            "Paketkennung der privaten Zuordnung stimmt nicht mit dem ChatGPT-Ergebnis überein."
+            "Paketkennung der privaten Zuordnung stimmt nicht mit dem LLM-Ergebnis überein."
         )
     return rows
 
@@ -324,7 +324,7 @@ class ChatGPTAnalyseStore:
         if row is None:
             raise ValueError(
                 "Zur Prüfung der AE-/LB-Belegzeilen fehlt das ursprünglich "
-                "exportierte ChatGPT-Analyse-ZIP im lokalen Projektarchiv. "
+                "exportierte LLM-Analyse-ZIP im lokalen Projektarchiv. "
                 "Bitte den passenden Projektstand bzw. das erste Analysepaket "
                 "auf diesem PC wiederherstellen; Belege werden nicht geraten."
             )
@@ -536,12 +536,12 @@ class ChatGPTAnalyseStore:
             if progress is not None:
                 progress(message)
 
-        report("ChatGPT-Datei prüfen …")
+        report("LLM-Datei prüfen …")
         path = Path(path)
         if path.suffix.casefold() != ".json" or not path.is_file():
-            raise ValueError("Bitte eine ChatGPT-Ergebnisdatei im Format .json wählen.")
+            raise ValueError("Bitte eine LLM-Ergebnisdatei im Format .json wählen.")
         if path.stat().st_size > MAX_JSON_SIZE:
-            raise ValueError("ChatGPT-Ergebnisdatei ist zu groß.")
+            raise ValueError("LLM-Ergebnisdatei ist zu groß.")
         content = path.read_bytes()
         try:
             data = ChatGPTRueckgabe.model_validate_json(content)
@@ -551,11 +551,11 @@ class ChatGPTAnalyseStore:
                 for item in exc.errors()[:3]
             )
             raise ValueError(
-                "ChatGPT-Ergebnis entspricht nicht der gültigen Analysevorlage: "
+                "LLM-Ergebnis entspricht nicht der gültigen Analysevorlage: "
                 + details
             ) from exc
         except ValueError as exc:
-            raise ValueError("ChatGPT-Ergebnis enthält ungültiges JSON.") from exc
+            raise ValueError("LLM-Ergebnis enthält ungültiges JSON.") from exc
         if not _IDENT.fullmatch(data.analyse_id) or not _PAKET_ID.fullmatch(data.paket_id):
             raise ValueError("Ungültige Paket- oder Analysekennung.")
         report("Lokale Paket- und FIN-Zuordnung prüfen …")
@@ -629,7 +629,7 @@ class ChatGPTAnalyseStore:
                 report(f"Fallbewertungen prüfen ({number}/{len(data.faelle)}) …")
             pseudo = finding.fall_id
             if pseudo not in case_by_alias or pseudo in input_cases:
-                raise ValueError("Unbekannte oder doppelte Fallkennung in ChatGPT-Ergebnis.")
+                raise ValueError("Unbekannte oder doppelte Fallkennung in LLM-Ergebnis.")
             input_cases.add(pseudo)
             if finding.cluster_id is not None:
                 if finding.cluster_id not in cluster_ids:
@@ -731,4 +731,4 @@ class ChatGPTAnalyseStore:
                  analyse_id, case_id],
             ).fetchone()
         if not updated:
-            raise ValueError("ChatGPT-Fallbewertung nicht gefunden.")
+            raise ValueError("LLM-Fallbewertung nicht gefunden.")
