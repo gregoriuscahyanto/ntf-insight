@@ -11,8 +11,8 @@ from ntf_insight.reporting import cluster_technical_data as technical
 from ntf_insight.reporting.cluster_context_package import export_cluster_context
 from ntf_insight.storage.duckdb_store import DuckDBStore
 from ntf_insight.storage.source_knowledge_store import SourceKnowledgeStore
-from test_cluster_technical_export import _create_test_data, _first
-from test_ki_analysepaket import FIN, OTHER_FIN
+from test_cluster_technical_export import OTHER_FIN, _create_test_data, _first
+from test_ki_analysepaket import FIN
 
 
 def _csv(archive: ZipFile, name: str) -> list[dict]:
