@@ -25,6 +25,14 @@ from ntf_insight.storage.cluster_evidence_store import (
     CATEGORY_LABELS, ClusterEvidenceStore, MAX_EVIDENCE_BYTES, part_key,
 )
 from ntf_insight.storage.workflow_projects import WorkflowProjectStore
+from ntf_insight.reporting.cluster_technical_data import (
+    export_parsed_diagnostics,
+    export_tips_filtered,
+    export_tp_filtered,
+    load_technical_scope,
+    parsed_source_hashes,
+    plan_original_context,
+)
 
 FORMAT = "ntf-cluster-kontext"
 VERSION = 1
@@ -134,6 +142,7 @@ def export_cluster_context(
     destination: Path,
     *,
     include_originals: bool = False,
+    include_confidential_basis: bool = False,
     first_result: dict | None = None,
     progress: Callable[[str], None] | None = None,
 ) -> ClusterContextExport:
@@ -176,6 +185,12 @@ def export_cluster_context(
                 "Erste Analysebasis ist nicht zu diesem Sachnummernprojekt "
                 "registriert oder die ZIP-Pruefsumme weicht ab."
             )
+    scope = None
+    if project_scoped:
+        with ZipFile(first_package) as base:
+            scope = load_technical_scope(
+                store.store, package_id, base, profile_id, part_number,
+            )
     verified_result = (
         ChatGPTRueckgabe.model_validate(first_result)
         if first_result is not None else None
@@ -188,21 +203,44 @@ def export_cluster_context(
     analysis_id = (
         "Cluster-" + package_id[:12] + "-" + secrets.token_hex(4)
     )
-    files_manifest: list[dict] = []
-    for index, item in enumerate(evidence, 1):
-        label = f"D{index:04d}"
-        target = (
-            f"unterlagen/{item.category}/{label}{item.source_path.suffix.lower()}"
-            if include_originals else None
+    planned_originals = []
+    if scope is not None:
+        parsed_shas = parsed_source_hashes(store.store, scope)
+        files_manifest, planned_originals = plan_original_context(
+            store.store, scope, evidence, parsed_shas,
+            include_originals=include_originals,
         )
-        files_manifest.append({
-            "beleg_id": label, "kategorie": item.category,
-            "kategorie_name": CATEGORY_LABELS[item.category],
-            "datei_im_paket": target,
-            "original_aufgenommen": bool(target),
-        })
-    if include_originals and sum(x.size_bytes for x in evidence) > MAX_PACKAGE_BYTES:
+        for item in files_manifest:
+            item["kategorie_name"] = CATEGORY_LABELS.get(
+                item["kategorie"], "Nicht geparster Diagnosis-Viewer-Beleg",
+            )
+    else:
+        # Legacy-Pakete ohne Projektumfang nur mit explizitem Warnhinweis.
+        files_manifest = []
+        for index, item in enumerate(evidence, 1):
+            label = f"D{index:04d}"
+            target = (
+                f"unterlagen/{item.category}/{label}{item.source_path.suffix.lower()}"
+                if include_originals else None
+            )
+            files_manifest.append({
+                "beleg_id": label, "kategorie": item.category,
+                "kategorie_name": CATEGORY_LABELS[item.category],
+                "datei_im_paket": target,
+                "original_aufgenommen": bool(target),
+                "zuordnung": "Manuell/Legacy, nicht projektgeprueft",
+            })
+    if include_originals and sum(
+        item.size_bytes for item in evidence
+    ) > MAX_PACKAGE_BYTES and scope is None:
         raise ValueError("Fachunterlagen überschreiten zusammen 1 GiB.")
+    if include_originals and sum(
+        item.path.stat().st_size for item in planned_originals
+    ) > MAX_PACKAGE_BYTES:
+        raise ValueError(
+            "Mehr als 1 GiB projektbezogene Originale. "
+            "Bitte Unterlagen sachgerecht aufteilen, nicht still auslassen."
+        )
     component_name = (
         project.component_name if project is not None
         else profile_id.replace("_", " ")
@@ -259,6 +297,11 @@ def export_cluster_context(
         },
         "analyse_id_zweiter_durchlauf": analysis_id,
         "inhalt_originaldateien": include_originals,
+        "vertrauliche_basis_gesondert_freigegeben": include_confidential_basis,
+        "technischer_exportmodus": (
+            "projektbezogen_strukturiert_mit_pdf_fallback"
+            if project_scoped else "legacy_ungefiltert"
+        ),
         "bestand": counts,
         "belege": files_manifest,
         "datenfreigabe_automatisch": False,
@@ -282,21 +325,27 @@ def export_cluster_context(
             base_manifest = json.loads(base.read("manifest.json"))
             if base_manifest.get("paket_id") != package_id:
                 raise ValueError("Analysepaket wurde seit der Auswahl verändert.")
-            if not include_originals and not base_manifest.get("pseudonymisiert", False):
+            if (
+                not base_manifest.get("pseudonymisiert", False)
+                and not include_confidential_basis
+            ):
                 raise ValueError(
-                    "Die gewählte KI-Basis enthält Freitext/Originaldaten. "
-                    "Bitte eine pseudonymisierte Basis auswählen oder "
-                    "Originale nach Unternehmensfreigabe ausdrücklich aktivieren."
+                    "Die erste ChatGPT-Basis enthält vertrauliche QEC-Texte "
+                    "oder QEC-Originale. Bitte die getrennte Freigabe "
+                    "'Vertrauliche erste QEC-Basis übernehmen' aktivieren."
                 )
             for index, info in enumerate(infos, 1):
                 if progress:
                     progress(f"KI-Basis kopieren: {index}/{len(infos)}")
                 # Bereits pseudonymisierte Daten und gegebenenfalls vom Nutzer
                 # freigegebene Originale der Basis exakt und ohne Umbenennung erhalten.
-                if not include_originals and info.filename.startswith("qec_originale/"):
+                if (
+                    not include_confidential_basis
+                    and info.filename.startswith("qec_originale/")
+                ):
                     raise ValueError(
-                        "Basis-ZIP enthält QEC-Originale; bitte Original-Option "
-                        "bewusst aktivieren oder Basis ohne Originale erstellen."
+                        "Die erste QEC-Basis enthält Originalbelege; "
+                        "hierfür ist eine gesonderte QEC-Basisfreigabe erforderlich."
                     )
                 with base.open(info, "r") as source:
                     total_bytes += _copy_member(
@@ -321,27 +370,110 @@ def export_cluster_context(
                     archive, "voranalyse/erstes_chatgpt_ergebnis.json",
                     verified_result.model_dump_json(indent=2, exclude_none=True),
                 )
+            if scope is not None:
+                if progress:
+                    progress(
+                        "Diagnosis-Viewer-QuickTests, ECUs und DTCs "
+                        "sachnummernbezogen aus Parserdaten exportieren ..."
+                    )
+                diagnosis_stats, _source_shas = export_parsed_diagnostics(
+                    archive, store.store, scope,
+                    include_fulltext=include_originals, progress=progress,
+                )
+                if progress:
+                    progress(
+                        "TP-Dashboard- und TIPS-Quelldaten nach FIN filtern ..."
+                    )
+                tp_stats = export_tp_filtered(
+                    archive, store.store, scope, progress=progress,
+                )
+                tips_stats = export_tips_filtered(
+                    archive, store.store, scope,
+                    include_fulltext=include_originals,
+                )
+                manifest["diagnose_auszug"] = {
+                    **diagnosis_stats, **tp_stats, **tips_stats,
+                    "originale_projektdateien": len(planned_originals),
+                    "nicht_aufgenommene_unterlagen": sum(
+                        not item["original_aufgenommen"]
+                        for item in files_manifest
+                    ),
+                }
+                manifest["diagnose_hinweis"] = (
+                    "QuickTests/TP sind FIN-bezogene Gesamtfahrzeugdaten. "
+                    "Keine bewiesene Bauteilverursachung. Projektbelege "
+                    "sind manuell zugeordnet; fremde FINs innerhalb "
+                    "unstrukturierter Dateien sind nicht sicher ausgeschlossen. "
+                    "Parsertexte sind NICHT garantiert anonymisiert."
+                )
             if include_originals:
-                raw_root = store.archive.root.resolve()
-                for index, (original, meta) in enumerate(
-                    zip(evidence, files_manifest), 1,
-                ):
-                    if progress:
-                        progress(f"Fachunterlagen einfügen: {index}/{len(evidence)}")
-                    path = original.source_path
-                    if (
-                        path.is_symlink() or not path.is_file()
-                        or not path.resolve().is_relative_to(raw_root)
-                        or path.stat().st_size > MAX_EVIDENCE_BYTES
+                if scope is not None:
+                    # Exakt nach Profil/Sachnummer geplante Projektdateien
+                    # sowie nur ungeparste PDF-Fallbacks.
+                    total_originals = len(planned_originals)
+                    for index, original in enumerate(planned_originals, 1):
+                        if progress:
+                            progress(
+                                f"Technische Unterlagen beifuegen "
+                                f"({index}/{total_originals}) ..."
+                            )
+                        path = original.path
+                        if (
+                            path.is_symlink() or not path.is_file()
+                            or path.stat().st_size > MAX_EVIDENCE_BYTES
+                        ):
+                            raise ValueError(
+                                "Technische Originaldatei nicht mehr verfuegbar."
+                            )
+                        # Datenhaltung im Roharchiv ODER FIN-bezogenes
+                        # Downloadverzeichnis; keine fremden Dateipfade.
+                        raw_root = store.archive.root.resolve()
+                        quick_root = store.store.path.parent.joinpath(
+                            "quicktests"
+                        ).resolve()
+                        if not (
+                            path.resolve().is_relative_to(raw_root)
+                            or (
+                                original.category == "diagnosis_viewer_fallback"
+                                and path.resolve().is_relative_to(quick_root)
+                            )
+                        ):
+                            raise ValueError(
+                                "Original liegt ausserhalb der erlaubten "
+                                "projektbezogenen Quellverzeichnisse."
+                            )
+                        with path.open("rb") as original_file:
+                            total_bytes += _copy_member(
+                                original_file, archive, original.zip_path,
+                                expected_sha=original.sha256,
+                            )
+                        if total_bytes > MAX_PACKAGE_BYTES:
+                            raise ValueError("Export ueberschreitet 1 GiB.")
+                else:
+                    raw_root = store.archive.root.resolve()
+                    for index, (original, meta) in enumerate(
+                        zip(evidence, files_manifest), 1,
                     ):
-                        raise ValueError("Unterlage fehlt oder liegt außerhalb des Quellarchivs.")
-                    with path.open("rb") as source:
-                        total_bytes += _copy_member(
-                            source, archive, meta["datei_im_paket"],
-                            expected_sha=original.sha256,
-                        )
-                    if total_bytes > MAX_PACKAGE_BYTES:
-                        raise ValueError("Export überschreitet 1 GiB.")
+                        if progress:
+                            progress(
+                                f"Fachunterlagen einfuegen: {index}/{len(evidence)}"
+                            )
+                        path = original.source_path
+                        if (
+                            path.is_symlink() or not path.is_file()
+                            or not path.resolve().is_relative_to(raw_root)
+                            or path.stat().st_size > MAX_EVIDENCE_BYTES
+                        ):
+                            raise ValueError("Fachunterlage ungueltig.")
+                        with path.open("rb") as source:
+                            total_bytes += _copy_member(
+                                source, archive, meta["datei_im_paket"],
+                                expected_sha=original.sha256,
+                            )
+                        if total_bytes > MAX_PACKAGE_BYTES:
+                            raise ValueError("Export ueberschreitet 1 GiB.")
+            if sum(item.file_size for item in archive.infolist()) > MAX_PACKAGE_BYTES:
+                raise ValueError("Zweiter ChatGPT-Export ueberschreitet 1 GiB.")
             _zip_text(
                 archive, "cluster_kontext_manifest.json",
                 json.dumps(manifest, ensure_ascii=False, indent=2),
@@ -359,6 +491,9 @@ def export_cluster_context(
         parent_package_id=package_id,
         category_count=sum(value > 0 for value in counts.values()),
         file_count=len(evidence),
-        included_files=len(evidence) if include_originals else 0,
+        included_files=(
+            len(planned_originals) if scope is not None
+            else len(evidence) if include_originals else 0
+        ),
         analysis_id=analysis_id,
     )
