@@ -71,6 +71,36 @@ Runde-2-JSON wird nicht rückwirkend umgedeutet oder überschrieben.
 
 
 
+**Ziel des zweiten LLM-Durchlaufs:** Belegorientierte technische Neubewertung
+aller ausgewählten QEC-Fälle. Gemeinsamkeiten in DTCs, ECU-Daten, Betriebs-
+bedingungen, Zeitverläufen und tatsächlich vorhandenen Dokumenten
+dürfen zu nachvollziehbaren Clustern zusammengeführt werden. Fälle ohne
+belastbare Gemeinsamkeiten bleiben `cluster_id=null` und dürfen
+nicht künstlich zugeordnet werden. Cluster sind Hypothesen, keine
+Beweise einer technischen oder rechtlichen Verursachung.
+
+Die mögliche Ursache wird **pro Fall** mit Verursachungsbereich,
+Zuordnungssicherheit, Begründung, Gegenindizien, Quelle und
+empfohlener Prüfung dokumentiert. Eine Aussage über Lieferanten-
+verantwortung braucht unabhängige technische Nachweise; eine
+Häufung gleicher Fehler oder ein SSL-/NTF-Endbefund reicht nicht.
+
+Das rückwärtskompatibel erweiterte Rückgabeformat unterscheidet
+`fehlerwiederkehr` und `begruendung_fehlerwiederkehr` mit den
+Werten „Nach Tausch erneut nachgewiesen“, „Hinweise auf Wiederkehr“,
+„Kein erneuter Fehler im dokumentierten Nachtest“ und
+„Nicht beurteilbar“. Ohne gesicherte Zeitanker und Nachtests ist
+keine Aussage über ausbleibende Fehler möglich.
+
+**Visualisierung in Schritt 05:** Nach erfolgreichem Rückimport
+zeigt `LLM · Cluster & Verursachung` interaktive Balkendiagramme,
+Clustergrößen und Verursacher-Hypothesen sowie eine filterbare
+Falltabelle. Die Belegfundstellen, technische Clusterhypothese und
+Vor-/Nach-Tausch-Aussagen sind im Detailbereich lesbar. Die Anzeige
+übernimmt nur validierte Daten des aktuellen Sachnummernprojekts.
+
+
+
 Der zweite ZIP-Export übernimmt in `basis/` die **gesamte erste QEC-ZIP**
 und in `voranalyse/erstes_chatgpt_ergebnis.json` die validierte erste
 LLM-Auswertung. Alle Fälle und Pseudonyme bleiben erhalten.
@@ -85,8 +115,10 @@ aber **nur für FINs der gewählten Profil-/Sachnummern-Fallkohorte**:
   Fehlerstatus, Häufigkeit, Kilometerständen und Parameterwerten.
 - `quicktest_fallbezug.csv`: zeitlicher Vergleich je ausgewähltem
   QEC-Fall; bei fehlendem **QEC-belegtem** Tauschdatum ausdrücklich
-  `tauschdatum_nicht_belegt`, bei identischem Tag `zeitlich_unklar`.
-  Keine automatische Zuschreibung zum Bauteil oder Lieferanten.
+  `tauschdatum_nicht_belegt`, am selben Tag nach Kilometer-Indiz
+  als Vortausch-/Nachtausch-Kandidat oder bei fehlenden/gleichen km
+  weiterhin `zeitlich_unklar_gleicher_tag`. Keine automatische
+  Zuschreibung zum Bauteil oder Lieferanten.
 - `tp_dashboard_dtc.csv`, `tp_dashboard_reparaturen.csv`,
   `tp_dashboard_tips.csv`: geparste TP-Dashboard-Zeilen der ausgewählten
   FINs. Multi-FIN-Sammeldateien werden nie ungefiltert kopiert.

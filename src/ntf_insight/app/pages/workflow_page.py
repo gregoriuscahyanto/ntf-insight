@@ -20,8 +20,9 @@ from PySide6.QtGui import QAction
 from PySide6.QtGui import QCursor
 from PySide6.QtWidgets import (
     QAbstractItemView, QCheckBox, QComboBox, QGridLayout, QHBoxLayout,
-    QFrame, QHeaderView, QLabel, QLayout, QLineEdit, QMenu, QProgressBar,
-    QPushButton, QScrollArea, QSizePolicy, QStackedWidget, QTabWidget, QTableView,
+    QFrame, QHeaderView, QLabel, QLayout, QLineEdit, QMenu, QPlainTextEdit,
+    QProgressBar, QPushButton, QScrollArea, QSizePolicy, QStackedWidget,
+    QTabWidget, QTableView,
     QToolButton, QVBoxLayout, QWidget,
 )
 
@@ -30,6 +31,12 @@ from ntf_insight.acquisition.qec_tool import QecTarget, parse_qec_targets
 from ntf_insight.ingestion.artifacts import SourceType
 from ntf_insight.app.models.simple_table_model import SimpleTableModel
 from ntf_insight.app.widgets.workflow_donut import WorkflowDonut
+from ntf_insight.app.widgets.llm_cluster_charts import (
+    LlmCaseFilterProxy, LlmClusterBarChart,
+)
+from ntf_insight.analysis.llm_cluster_overview import (
+    build_llm_cluster_overview, evidence_lines,
+)
 from ntf_insight.components.registry import list_component_profiles
 from ntf_insight.reporting.chatgpt_exchange import ChatGPTAnalyseStore
 from ntf_insight.storage.cluster_evidence_store import (
@@ -1093,32 +1100,206 @@ class WorkflowPage(QWidget):
         self.cluster_tabs.addTab(
             self.local_cluster_scroll, "Lokal · HDBSCAN / Cosinus"
         )
+        # Zweiter LLM-Durchlauf: vertikale, scrollbar-sichere Visualisierung
+        # statt zweier schmuckloser Tabellen. Keine neue KI-Berechnung.
+        self.chatgpt_cluster_scroll = QScrollArea()
+        self.chatgpt_cluster_scroll.setObjectName("LLMClusterResultScroll")
+        self.chatgpt_cluster_scroll.setWidgetResizable(True)
+        self.chatgpt_cluster_scroll.setVerticalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAsNeeded
+        )
+        self.chatgpt_cluster_scroll.setHorizontalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAlwaysOff
+        )
         self.chatgpt_cluster_page = QWidget()
         review_layout = QVBoxLayout(self.chatgpt_cluster_page)
-        review_layout.setContentsMargins(5, 5, 5, 5)
+        review_layout.setContentsMargins(8, 8, 8, 12)
+        review_layout.setSpacing(10)
         self.chatgpt_cluster_summary = QLabel(objectName="PageSubtitle")
         self.chatgpt_cluster_summary.setWordWrap(True)
-        self.chatgpt_cluster_summary.hide()
         review_layout.addWidget(self.chatgpt_cluster_summary)
-        self.chatgpt_cluster_table, self.chatgpt_cluster_model = _create_table((
-            "Cluster", "Titel", "Fälle", "Sicherheit",
+
+        metrics = QHBoxLayout()
+        self.llm_metric_labels: dict[str, QLabel] = {}
+        for key, caption in (
+            ("cases", "LLM-Fallbewertungen"),
+            ("clusters", "Technische Cluster"),
+            ("ungrouped", "Nicht gruppierte Fälle"),
+            ("supplier", "Lieferant als Hypothese"),
+            ("recurrence", "Wiederkehr-Hinweise · LLM"),
+        ):
+            frame = QFrame(objectName="LLMClusterMetricCard")
+            frame.setFrameShape(QFrame.Shape.StyledPanel)
+            frame_layout = QVBoxLayout(frame)
+            frame_layout.setContentsMargins(9, 7, 9, 7)
+            frame_layout.setSpacing(2)
+            value = QLabel("0")
+            value.setStyleSheet("font-size: 21px; font-weight: 700;")
+            value.setAccessibleName(caption)
+            description = QLabel(caption, objectName="PageSubtitle")
+            description.setWordWrap(True)
+            frame_layout.addWidget(value)
+            frame_layout.addWidget(description)
+            self.llm_metric_labels[key] = value
+            metrics.addWidget(frame, 1)
+        review_layout.addLayout(metrics)
+
+        self.llm_causality_warning = QLabel(
+            "Verursachungsbereiche und Cluster sind validiert importierte "
+            "LLM-Hypothesen, keine automatisch nachgewiesenen Verantwortlichkeiten. "
+            "Lieferantenverursachung bedarf technischer Gegenprüfung.",
+            objectName="PageSubtitle",
+        )
+        self.llm_causality_warning.setWordWrap(True)
+        review_layout.addWidget(self.llm_causality_warning)
+
+        charts = QHBoxLayout()
+        charts.setSpacing(10)
+        self.llm_cluster_chart = LlmClusterBarChart(
+            "Clustergrößen · QEC-Fälle"
+        )
+        self.llm_cause_chart = LlmClusterBarChart(
+            "Mögliche Verursachungsbereiche · Fallhypothesen"
+        )
+        charts.addWidget(self.llm_cluster_chart, 1)
+        charts.addWidget(self.llm_cause_chart, 1)
+        review_layout.addLayout(charts)
+        self.llm_cluster_chart.selected.connect(self._filter_llm_cluster)
+        self.llm_cause_chart.selected.connect(self._filter_llm_cause)
+
+        review_layout.addWidget(QLabel(
+            "Fehlerbild-Ebene (Mehrfachnennungen) und Nachweis-Ebene · "
+            "unabhängig von Ursache und technischem Cluster"
         ))
-        self.chatgpt_cluster_table.setMinimumHeight(110)
+        dimension_charts = QHBoxLayout()
+        dimension_charts.setSpacing(10)
+        self.llm_symptom_chart = LlmClusterBarChart(
+            "Gemeldete Fehlerbilder · mehrere je Fall möglich"
+        )
+        self.llm_proof_chart = LlmClusterBarChart(
+            "Nachweisbasis · Werkstatt / Diagnose / Labor"
+        )
+        dimension_charts.addWidget(self.llm_symptom_chart, 1)
+        dimension_charts.addWidget(self.llm_proof_chart, 1)
+        review_layout.addLayout(dimension_charts)
+        self.llm_symptom_chart.selected.connect(self._filter_llm_symptom)
+        self.llm_proof_chart.selected.connect(self._filter_llm_proof)
+        self.llm_symptom_note = QLabel(
+            "Mehrfachzuordnung: Die Balken summieren sich nicht zu einer "
+            "Fallgesamtzahl. 'Alt-LLM' bezeichnet aus bestehenden Themen "
+            "übernommene Hinweise, keine neu bestätigten Befunde.",
+            objectName="PageSubtitle",
+        )
+        self.llm_symptom_note.setWordWrap(True)
+        review_layout.addWidget(self.llm_symptom_note)
+
+        review_layout.addWidget(
+            QLabel("Technische Cluster · auswählen für Details und Fallfilter")
+        )
+        self.chatgpt_cluster_table, self.chatgpt_cluster_model = _create_table((
+            "Cluster", "Technisches Muster", "Fälle", "Sicherheit",
+            "Häufigster Verursachungsbereich",
+        ))
+        self.chatgpt_cluster_table.setMinimumHeight(170)
+        self.chatgpt_cluster_table.setMaximumHeight(260)
+        self.chatgpt_cluster_table.setSelectionMode(
+            QAbstractItemView.SelectionMode.SingleSelection
+        )
         self.chatgpt_cluster_table.selectionModel().selectionChanged.connect(
             lambda *_: self._show_chatgpt_cluster_details()
         )
-        review_layout.addWidget(self.chatgpt_cluster_table, 1)
-        self.chatgpt_cluster_details = QLabel(objectName="PageSubtitle")
-        self.chatgpt_cluster_details.setWordWrap(True)
-        self.chatgpt_cluster_details.setMaximumHeight(80)
+        review_layout.addWidget(self.chatgpt_cluster_table)
+        self.chatgpt_cluster_details = QPlainTextEdit()
+        self.chatgpt_cluster_details.setObjectName("LLMClusterDetails")
+        self.chatgpt_cluster_details.setReadOnly(True)
+        self.chatgpt_cluster_details.setMinimumHeight(145)
+        self.chatgpt_cluster_details.setMaximumHeight(205)
+        self.chatgpt_cluster_details.setPlaceholderText(
+            "Cluster auswählen: technische Hypothese, mögliche Ursache "
+            "und tatsächliche Belegfundstellen werden hier angezeigt."
+        )
         review_layout.addWidget(self.chatgpt_cluster_details)
+
+        filters = QHBoxLayout()
+        self.llm_case_search = QLineEdit()
+        self.llm_case_search.setPlaceholderText(
+            "Fall, FIN, Cluster, DTC-Hinweis oder Ursache suchen ..."
+        )
+        self.llm_case_search.setAccessibleName("LLM-Fallresultate durchsuchen")
+        self.llm_cluster_filter = QComboBox()
+        self.llm_cluster_filter.setAccessibleName("LLM-Cluster filtern")
+        self.llm_cause_filter = QComboBox()
+        self.llm_cause_filter.setAccessibleName("Verursachungsbereich filtern")
+        self.llm_clear_filters = QPushButton("Alle Fälle anzeigen")
+        self.llm_clear_filters.clicked.connect(self._reset_llm_filters)
+        filters.addWidget(self.llm_case_search, 2)
+        filters.addWidget(self.llm_cluster_filter, 1)
+        filters.addWidget(self.llm_cause_filter, 1)
+        filters.addWidget(self.llm_clear_filters)
+        review_layout.addLayout(filters)
+        dimension_filters = QHBoxLayout()
+        self.llm_symptom_filter = QComboBox()
+        self.llm_symptom_filter.setAccessibleName("Fehlerbild filtern")
+        self.llm_proof_filter = QComboBox()
+        self.llm_proof_filter.setAccessibleName("Nachweisprofil filtern")
+        dimension_filters.addWidget(QLabel("Fehlerbild:"))
+        dimension_filters.addWidget(self.llm_symptom_filter, 2)
+        dimension_filters.addWidget(QLabel("Nachweisbasis:"))
+        dimension_filters.addWidget(self.llm_proof_filter, 2)
+        review_layout.addLayout(dimension_filters)
+        self.llm_case_filter_info = QLabel(objectName="PageSubtitle")
+        self.llm_case_filter_info.setWordWrap(True)
+        review_layout.addWidget(self.llm_case_filter_info)
+
         self.chatgpt_case_table, self.chatgpt_case_model = _create_table((
             "FIN", "QEC-Fall", "Cluster", "NTF-Einschätzung",
-            "Verursachungsbereich", "Fachstatus",
+            "Verursachungsbereich", "Wiederkehr", "Sicherheit", "Fachstatus",
         ))
-        self.chatgpt_case_table.setMinimumHeight(110)
-        review_layout.addWidget(self.chatgpt_case_table, 1)
-        self.cluster_tabs.addTab(self.chatgpt_cluster_page, "LLM · Ergebnis anzeigen")
+        self.chatgpt_case_proxy = LlmCaseFilterProxy(self)
+        self.chatgpt_case_proxy.setSourceModel(self.chatgpt_case_model)
+        self.chatgpt_case_table.setModel(self.chatgpt_case_proxy)
+        self.chatgpt_case_table.setSortingEnabled(True)
+        self.chatgpt_case_table.setMinimumHeight(220)
+        self.chatgpt_case_table.setMaximumHeight(375)
+        self.chatgpt_case_table.horizontalHeader().setSectionResizeMode(
+            QHeaderView.ResizeMode.ResizeToContents
+        )
+        self.chatgpt_case_table.horizontalHeader().setStretchLastSection(True)
+        self.chatgpt_case_table.setHorizontalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAsNeeded
+        )
+        self.chatgpt_case_table.selectionModel().selectionChanged.connect(
+            lambda *_: self._show_llm_case_details()
+        )
+        review_layout.addWidget(self.chatgpt_case_table)
+        self.chatgpt_case_details = QPlainTextEdit()
+        self.chatgpt_case_details.setObjectName("LLMCaseDetails")
+        self.chatgpt_case_details.setReadOnly(True)
+        self.chatgpt_case_details.setMinimumHeight(175)
+        self.chatgpt_case_details.setMaximumHeight(230)
+        self.chatgpt_case_details.setPlaceholderText(
+            "Fall auswählen: NTF-Bewertung, Ursachenbegründung, "
+            "Vorher-/Nachher-Bewertung, offene Nachweise und nächste Prüfung."
+        )
+        review_layout.addWidget(self.chatgpt_case_details)
+
+        self.llm_case_search.textChanged.connect(self._apply_llm_case_filters)
+        self.llm_cluster_filter.currentIndexChanged.connect(
+            self._apply_llm_case_filters
+        )
+        self.llm_cause_filter.currentIndexChanged.connect(
+            self._apply_llm_case_filters
+        )
+        self.llm_symptom_filter.currentIndexChanged.connect(
+            self._apply_llm_case_filters
+        )
+        self.llm_proof_filter.currentIndexChanged.connect(
+            self._apply_llm_case_filters
+        )
+        self.chatgpt_cluster_scroll.setWidget(self.chatgpt_cluster_page)
+        self.cluster_tabs.addTab(
+            self.chatgpt_cluster_scroll, "LLM · Cluster & Verursachung"
+        )
         body.addWidget(self.cluster_tabs, 1)
         for button in (self.cluster_export_button, self.cluster_import_button):
             button.setMinimumHeight(52)
@@ -2151,42 +2332,202 @@ class WorkflowPage(QWidget):
                 "Zuordnungen. Keine automatische LLM-Übertragung."
             )
 
+    def _clear_llm_dashboard(self) -> None:
+        """Leere oder gewechselte Sachnummernprojekte ohne Altwerte anzeigen."""
+        self._cluster_entries = []
+        self._llm_overview = None
+        self._llm_case_summaries = []
+        self.chatgpt_cluster_model.set_rows([])
+        self.chatgpt_case_model.set_rows([])
+        self.chatgpt_case_proxy.set_label_index([])
+        self.llm_cluster_chart.set_items([])
+        self.llm_cause_chart.set_items([])
+        self.llm_symptom_chart.set_items([])
+        self.llm_proof_chart.set_items([])
+        for label in self.llm_metric_labels.values():
+            label.setText("0")
+        for combo, title in (
+            (self.llm_cluster_filter, "Alle Cluster"),
+            (self.llm_cause_filter, "Alle Verursachungsbereiche"),
+            (self.llm_symptom_filter, "Alle Fehlerbilder"),
+            (self.llm_proof_filter, "Alle Nachweisprofile"),
+        ):
+            combo.blockSignals(True)
+            combo.clear()
+            combo.addItem(title, "")
+            combo.blockSignals(False)
+        self.llm_case_search.clear()
+        self.chatgpt_cluster_details.clear()
+        self.chatgpt_case_details.clear()
+        self.chatgpt_cluster_summary.setText(
+            "Noch keine validiert importierte zweite LLM-Analyse. "
+            "Nach dem JSON-Import erscheinen hier Cluster und "
+            "Einzelfallbegründungen."
+        )
+        self._apply_llm_case_filters()
+
+    def _filter_llm_cluster(self, cluster_id: str) -> None:
+        index = self.llm_cluster_filter.findData(cluster_id)
+        if index >= 0:
+            self.llm_cluster_filter.setCurrentIndex(index)
+            if cluster_id != "__nicht_gruppiert__":
+                for row, entry in enumerate(self._cluster_entries):
+                    if entry.get("cluster_id") == cluster_id:
+                        self.chatgpt_cluster_table.selectRow(row)
+                        break
+            else:
+                self.chatgpt_cluster_table.clearSelection()
+
+    def _filter_llm_cause(self, cause: str) -> None:
+        index = self.llm_cause_filter.findData(cause)
+        if index >= 0:
+            self.llm_cause_filter.setCurrentIndex(index)
+
+    def _filter_llm_symptom(self, symptom: str) -> None:
+        index = self.llm_symptom_filter.findData(symptom)
+        if index >= 0:
+            self.llm_symptom_filter.setCurrentIndex(index)
+
+    def _filter_llm_proof(self, proof: str) -> None:
+        index = self.llm_proof_filter.findData(proof)
+        if index >= 0:
+            self.llm_proof_filter.setCurrentIndex(index)
+
+    def _reset_llm_filters(self) -> None:
+        self.llm_case_search.clear()
+        self.llm_cluster_filter.setCurrentIndex(0)
+        self.llm_cause_filter.setCurrentIndex(0)
+        self.llm_symptom_filter.setCurrentIndex(0)
+        self.llm_proof_filter.setCurrentIndex(0)
+        self.chatgpt_cluster_table.clearSelection()
+        self.chatgpt_cluster_details.clear()
+        self._apply_llm_case_filters()
+
+    def _apply_llm_case_filters(self, *_args) -> None:
+        cluster_id = str(self.llm_cluster_filter.currentData() or "")
+        cause = str(self.llm_cause_filter.currentData() or "")
+        symptom = str(self.llm_symptom_filter.currentData() or "")
+        proof = str(self.llm_proof_filter.currentData() or "")
+        self.chatgpt_case_proxy.update_filter(
+            cluster_id=cluster_id, cause=cause,
+            symptom=symptom, proof=proof,
+            query=self.llm_case_search.text(),
+        )
+        self.llm_cluster_chart.set_selected(cluster_id)
+        self.llm_cause_chart.set_selected(cause)
+        self.llm_symptom_chart.set_selected(symptom)
+        self.llm_proof_chart.set_selected(proof)
+        total = self.chatgpt_case_model.rowCount()
+        visible = self.chatgpt_case_proxy.rowCount()
+        self.llm_case_filter_info.setText(
+            f"{visible} von {total} importierten LLM-Fallbewertungen angezeigt · "
+            "Filter verändern weder die gespeicherten Ergebnisse "
+            "noch die Sachnummern-Kohorte."
+        )
+        self._show_llm_case_details()
+
     def _show_chatgpt_cluster_details(self) -> None:
-        index = self.chatgpt_cluster_table.currentIndex().row()
-        items = getattr(self, "_cluster_entries", [])
-        if 0 <= index < len(items):
-            entry = items[index]
-            self.chatgpt_cluster_details.setText(
-                str(entry.get("technische_hypothese") or "Keine technische Hypothese.")
+        selected = self.chatgpt_cluster_table.selectionModel().selectedRows()
+        index = selected[0].row() if selected else -1
+        overview = getattr(self, "_llm_overview", None)
+        groups = overview.groups if overview is not None else ()
+        if not 0 <= index < len(groups):
+            self.chatgpt_cluster_details.clear()
+            return
+        group = groups[index]
+        self.llm_cluster_filter.setCurrentIndex(
+            self.llm_cluster_filter.findData(group.cluster_id)
+        )
+        causes = ", ".join(
+            f"{name}: {count}" for name, count in group.cause_counts
+        )
+        self.chatgpt_cluster_details.setPlainText(
+            f"Cluster {group.cluster_id} · {group.title}\n"
+            f"Fälle: {group.count} · LLM-Sicherheit: {group.confidence}\n"
+            f"Technische Hypothese: "
+            f"{group.hypothesis or 'Nicht spezifiziert'}\n"
+            f"Mögliche Verursachungsbereiche der Mitgliedsfälle: "
+            f"{causes or 'Nicht zuordenbar'}\n"
+            f"Belege (nur tatsächlich vom LLM angegebene Fundstellen):\n"
+            f"{evidence_lines(group.evidence)}\n"
+            "Achtung: Ein Cluster belegt weder Kausalität noch "
+            "eine Lieferantenverantwortung."
+        )
+
+    def _show_llm_case_details(self) -> None:
+        indices = self.chatgpt_case_table.selectionModel().selectedRows()
+        if not indices:
+            self.chatgpt_case_details.clear()
+            return
+        source_row = self.chatgpt_case_proxy.mapToSource(indices[0]).row()
+        cases = getattr(self, "_llm_case_summaries", [])
+        if not 0 <= source_row < len(cases):
+            self.chatgpt_case_details.clear()
+            return
+        case = cases[source_row]
+        payload = case.payload
+        recurrence_reason = case.recurrence_source
+        structured_symptoms = payload.get("fehlerbilder") or []
+        if structured_symptoms:
+            symptom_details = "\n".join(
+                f"• {entry.get('kategorie', 'Unbekannt')} "
+                f"[{entry.get('nachweisstatus', 'Offen')}; "
+                f"Sicherheit {entry.get('sicherheit', 'Offen')}]: "
+                f"{entry.get('begruendung') or 'Keine Begründung'}\n"
+                f"  Belege: {evidence_lines(entry.get('belege') or [], max_entries=4)}"
+                for entry in structured_symptoms
+                if isinstance(entry, dict)
             )
         else:
-            self.chatgpt_cluster_details.setText("")
+            symptom_details = (
+                "Legacy-Themen (nicht nach neuem Nachweisvertrag validiert): "
+                + "; ".join(case.symptoms)
+            )
+        self.chatgpt_case_details.setPlainText(
+            f"Fall {case.case_id} · FIN {case.fin}\n"
+            f"NTF-Einschätzung: {case.ntf} "
+            f"(Sicherheit: {payload.get('sicherheit_bewertung', 'Offen')})\n"
+            f"Möglicher Verursachungsbereich: {case.cause} "
+            f"(LLM-Zuordnung: {case.confidence}; "
+            f"Fachstatus: {case.review_status})\n"
+            f"Befund: {payload.get('befund') or 'Kein Befund angegeben'}\n"
+            f"Ursachenhypothese: "
+            f"{payload.get('ursachenhypothese') or 'Nicht zuordenbar'}\n"
+            f"Begründung: "
+            f"{payload.get('begruendung_zuordnung') or 'Nicht begründet'}\n"
+            f"Fehlerwiederkehr nach Tausch: {case.recurrence} · "
+            f"{recurrence_reason}\n"
+            f"Fehlerbild-Ebene (Mehrfachnennungen):\n{symptom_details}\n"
+            f"Nachweis-Ebene: "
+            f"{'; '.join(case.proof_profiles) or 'Nicht vorhanden'}\n"
+            f"Technische Hinweise laut LLM: "
+            f"{'; '.join(payload.get('themen') or []) or 'Keine'}\n"
+            f"Gegenindizien / Datenlücken: "
+            f"{payload.get('pruefungen_grenzen') or 'Nicht dokumentiert'}\n"
+            f"Klärung durch: {payload.get('klaerung_durch') or 'Offen'}\n"
+            f"Nächste Prüfung: "
+            f"{payload.get('naechster_schritt') or 'Nicht angegeben'}\n"
+            f"Belege:\n{evidence_lines(payload.get('belege') or [])}"
+        )
 
     def _refresh_chatgpt_cluster_view(self) -> None:
-        """Nur gespeicherte zweite Runde visualisieren; keine neue KI-Auswertung."""
-        self._cluster_entries = []
+        """Nur Runde 2 des aktuellen Profil-/Sachnummernpakets visualisieren."""
         package = self.first_package
         if package is None:
-            self.chatgpt_cluster_summary.clear()
-            self.chatgpt_cluster_summary.hide()
-            self.chatgpt_cluster_model.set_rows([])
-            self.chatgpt_case_model.set_rows([])
+            self._clear_llm_dashboard()
             return
         with self.progress_store.store.connect() as con:
-            result = con.execute(
+            latest = con.execute(
                 "SELECT r.analyse_id FROM workflow_ai_rounds r "
                 "JOIN chatgpt_imports i ON i.analyse_id=r.analyse_id "
                 "WHERE r.paket_id=? AND r.round_number=2 "
                 "ORDER BY i.importiert_am DESC,r.analyse_id DESC LIMIT 1",
                 [package.paket_id],
             ).fetchone()
-            if not result:
-                self.chatgpt_cluster_summary.clear()
-                self.chatgpt_cluster_summary.hide()
-                self.chatgpt_cluster_model.set_rows([])
-                self.chatgpt_case_model.set_rows([])
+            if latest is None:
+                self._clear_llm_dashboard()
                 return
-            analysis_id = result[0]
+            analysis_id = str(latest[0])
             clusters = con.execute(
                 "SELECT payload_json FROM chatgpt_cluster "
                 "WHERE analyse_id=? ORDER BY cluster_id",
@@ -2197,40 +2538,137 @@ class WorkflowPage(QWidget):
                 "FROM chatgpt_fallanalysen WHERE analyse_id=? ORDER BY case_id",
                 [analysis_id],
             ).fetchall()
-        current = {str(row["case_id"]): row for row in self._scoped_rows}
-        self._cluster_entries = [json.loads(item[0]) for item in clusters]
+        current = {
+            str(row["case_id"]): row for row in self._scoped_rows
+        }
+        self._llm_overview = build_llm_cluster_overview(
+            [json.loads(item[0]) for item in clusters],
+            findings, current,
+        )
+        overview = self._llm_overview
+        self._cluster_entries = [
+            {"cluster_id": group.cluster_id, "titel": group.title}
+            for group in overview.groups
+        ]
+        self._llm_case_summaries = list(overview.cases)
+        cause_by_cluster = {
+            group.cluster_id: (
+                "Mehrere gleich häufige Hypothesen"
+                if len(group.cause_counts) > 1
+                and group.cause_counts[0][1] == group.cause_counts[1][1]
+                else group.cause_counts[0][0]
+                if group.cause_counts else "Nicht zuordenbar"
+            ) for group in overview.groups
+        }
         self.chatgpt_cluster_model.set_rows([
             (
-                entry.get("cluster_id", ""), entry.get("titel", ""),
-                len(entry.get("fall_ids") or []),
-                entry.get("sicherheit", "Offen"),
+                group.cluster_id, group.title, group.count,
+                group.confidence, cause_by_cluster[group.cluster_id],
             )
-            for entry in self._cluster_entries
+            for group in overview.groups
         ])
-        rendered = []
-        state = []
-        for case_id, cluster_id, payload, review in findings:
-            case = current.get(case_id)
-            if case is None:
-                continue
-            finding = json.loads(payload)
-            rendered.append((
-                case["fin"], case_id, cluster_id or "—",
-                finding.get("ntf_bewertung", "Nicht bewertet"),
-                finding.get("verursachungsbereich", "Nicht zuordenbar"), review,
-            ))
-            state.append(
-                "success" if review == "Bestätigt" else "info"
-                if review != "Abgelehnt" else "error"
+        statuses = {
+            "Bestätigt": "success",
+            "Abgelehnt": "error",
+        }
+        self.chatgpt_case_model.set_rows([
+            (
+                item.fin, item.case_id, item.cluster_id or "Nicht gruppiert",
+                item.ntf, item.cause, item.recurrence,
+                item.confidence, item.review_status,
             )
-        self.chatgpt_case_model.set_rows(rendered, row_states=state)
+            for item in overview.cases
+        ], row_states=[
+            statuses.get(item.review_status, "info")
+            for item in overview.cases
+        ])
+        self.chatgpt_case_proxy.set_label_index([
+            (item.symptoms, item.proof_profiles)
+            for item in overview.cases
+        ])
+
+        top_groups = list(overview.groups[:10])
+        cluster_bars = [
+            (
+                group.cluster_id,
+                f"{group.cluster_id} · {group.title}", group.count,
+            )
+            for group in top_groups
+        ]
+        if overview.ungrouped:
+            cluster_bars.append((
+                "__nicht_gruppiert__", "Nicht gruppiert", overview.ungrouped,
+            ))
+        self.llm_cluster_chart.set_items(cluster_bars)
+        self.llm_cause_chart.set_items([
+            (cause, cause, count) for cause, count in overview.causes[:9]
+        ])
+        self.llm_symptom_chart.set_items([
+            (label, label, count) for label, count in overview.symptoms[:16]
+        ])
+        self.llm_proof_chart.set_items([
+            (label, label, count) for label, count in overview.proof_profiles[:16]
+        ])
+        for key, value in (
+            ("cases", overview.total_cases),
+            ("clusters", len(overview.groups)),
+            ("ungrouped", overview.ungrouped),
+            ("supplier", overview.supplier_hypotheses),
+            ("recurrence", overview.recurrence_signals),
+        ):
+            self.llm_metric_labels[key].setText(str(value))
+
+        self.llm_cluster_filter.blockSignals(True)
+        self.llm_cluster_filter.clear()
+        self.llm_cluster_filter.addItem("Alle Cluster", "")
+        for group in overview.groups:
+            self.llm_cluster_filter.addItem(
+                f"{group.cluster_id} · {group.title}", group.cluster_id,
+            )
+        if overview.ungrouped:
+            self.llm_cluster_filter.addItem(
+                "Nicht gruppiert", "__nicht_gruppiert__",
+            )
+        self.llm_cluster_filter.blockSignals(False)
+        self.llm_cause_filter.blockSignals(True)
+        self.llm_cause_filter.clear()
+        self.llm_cause_filter.addItem("Alle Verursachungsbereiche", "")
+        for cause, _count in overview.causes:
+            self.llm_cause_filter.addItem(cause, cause)
+        self.llm_cause_filter.blockSignals(False)
+        for combo, title, values in (
+            (self.llm_symptom_filter, "Alle Fehlerbilder", overview.symptoms),
+            (self.llm_proof_filter, "Alle Nachweisprofile", overview.proof_profiles),
+        ):
+            combo.blockSignals(True)
+            combo.clear()
+            combo.addItem(title, "")
+            for label, _count in values:
+                combo.addItem(label, label)
+            combo.blockSignals(False)
+        self.llm_case_search.clear()
+        self.chatgpt_cluster_details.clear()
+        self.chatgpt_case_details.clear()
+        self.chatgpt_cluster_table.clearSelection()
+        self._apply_llm_case_filters()
         self.chatgpt_cluster_summary.show()
-        self.chatgpt_cluster_summary.setText(
-            f"Analyse {analysis_id} · {len(self._cluster_entries)} LLM-Cluster · "
-            f"{len(rendered)} aktuelle QEC-Fälle mit Ergebnissen. "
-            "Nur Anzeige – keine erneute KI-Ausführung."
+        missing_clusters = (
+            " Keine technisch begründeten Cluster vorhanden; "
+            "ungesicherte Fälle werden nicht künstlich gruppiert."
+            if not overview.groups else ""
         )
-        self._show_chatgpt_cluster_details()
+        self.chatgpt_cluster_summary.setText(
+            f"LLM-Analyse {analysis_id} · {len(overview.groups)} "
+            f"technische Cluster · {overview.total_cases} von "
+            f"{len(current)} aktuellen QEC-Fällen bewertet · "
+            f"{overview.unknown_causes} Ursachen nicht sicher zugeordnet. "
+            f"{overview.structurally_classified} Fälle mit neuer "
+            "Mehrfach-Fehlerbildklassifikation, "
+            f"{overview.legacy_without_symptom_fields} mit ausschließlich "
+            "älteren LLM-Themen. Fehlerbilder und technische Kausalcluster "
+            "sind bewusst getrennte Ebenen."
+            + missing_clusters
+        )
 
     def qec_targets(self, *, selected_only: bool = False) -> list[QecTarget]:
         """Nur QEC-Ziele der ausgewaehlten Profil-/Sachnummern-Kohoerte."""
