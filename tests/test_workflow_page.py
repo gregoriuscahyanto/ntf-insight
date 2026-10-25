@@ -54,6 +54,61 @@ def test_workflow_upsert_and_context_survive_reopen(tmp_path):
     assert restored.load("hv_battery", "A 123 456") == WorkflowProgress()
 
 
+def test_generic_qec_project_scope_and_targets(tmp_path, monkeypatch):
+    """HV-/DC-DC-Projekte bekommen QEC-Faelle; uneindeutige Profile nie."""
+    from ntf_insight.storage.workflow_projects import NTFProject
+
+    app, window = _window(tmp_path, monkeypatch)
+    page = window.pages["workflow"]
+    source = page.qec_store
+    try:
+        page.project_store.save(
+            NTFProject("hv_battery", "A 100 001", "HV-Batterie", ("BMS",))
+        )
+        page.project_store.save(
+            NTFProject("dcdc_converter", "B 200 002", "DC/DC-Wandler", ())
+        )
+        rows = [
+            {
+                "fin": "WDD12345678901234", "case_id": "QEC-BAT-1",
+                "reference": "123456", "part_number": "A 100 001",
+                "component_profile_id": None,
+                "component_type": "HV-Batterie",
+                "finding": "Nicht geprüft", "tp_dashboard": False,
+                "decision": "Offen", "reason": "", "report": False,
+            },
+            {
+                "fin": "WDD12345678901235", "case_id": "QEC-DCDC-1",
+                "reference": "123457", "part_number": "B 200 002",
+                "component_profile_id": None,
+                "component_type": "DC/DC-Wandler",
+                "finding": "", "tp_dashboard": False,
+                "decision": "Offen", "reason": "", "report": False,
+            },
+        ]
+        monkeypatch.setattr(source, "rows", lambda _root: rows)
+        monkeypatch.setattr(source, "active_sources", lambda: [])
+        page.activate_project("hv_battery", "A 100 001")
+        assert [item["case_id"] for item in page._scoped_rows] == ["QEC-BAT-1"]
+        assert [(x.fin, x.reference) for x in page.qec_targets()] == [
+            ("WDD12345678901234", "123456")
+        ]
+        assert page.ai_export_button.isEnabled()
+
+        page.activate_project("dcdc_converter", "B 200 002")
+        assert [item["case_id"] for item in page._scoped_rows] == ["QEC-DCDC-1"]
+
+        # Nachträglich doppelt deklarierte Sachnummer: kein erratenes Profil.
+        page.project_store.save(
+            NTFProject("hv_battery", "B 200 002", "HV-Batterie", ())
+        )
+        page.refresh_data()
+        assert page._scoped_rows == []
+    finally:
+        window.close()
+        app.processEvents()
+
+
 def test_five_horizontal_steps_show_inline_workspaces_and_resume(tmp_path, monkeypatch):
     app, window = _window(tmp_path, monkeypatch)
     page = window.pages["workflow"]
