@@ -253,12 +253,10 @@ def test_ntf_table_combined_filters_search_sort_and_original_counts(tmp_path, mo
         assert page.ntf_model.rowCount() == 3
         assert page.ntf_table.isSortingEnabled()
         assert page.ntf_proxy.rowCount() == 3
-        assert "QEC-Fachentscheidungen: 1/3" in page.ntf_status.text()
-        assert "ChatGPT-Vorschläge: 3/3 importiert" in page.ntf_status.text()
-        assert "1 bestätigt" in page.ntf_status.text()
-        assert "1 abgelehnt" in page.ntf_status.text()
-        assert "1 ungeprüft" in page.ntf_status.text()
-        assert "1/3 QEC-entschieden" in page.cards[2].text()
+        assert not page.ntf_status.isVisible()
+        assert not page.ntf_status.text()
+        assert "LLM-Analyse offen" in page.cards[2].text()
+        assert page.cards[2].property("workflowState") == "pending"
         assert "3 von 3" in page.ntf_filter_count.text()
 
         page.ntf_search.setText("WDD12345678901236 stecker")
@@ -268,7 +266,7 @@ def test_ntf_table_combined_filters_search_sort_and_original_counts(tmp_path, mo
         # SSL-Kohorte und Verteilung dürfen NICHT neu berechnet werden.
         assert len(page._scoped_rows) == 3
         assert page.ntf_model.rowCount() == 3
-        assert "1/3 QEC-entschieden" in page.cards[2].text()
+        assert "LLM-Analyse offen" in page.cards[2].text()
 
         page.ntf_search.clear()
         review_filter = page.ntf_filter_boxes[6]
@@ -1047,7 +1045,7 @@ def test_export_dialog_keeps_completed_file_and_estimated_remaining_time(
     window.show()
     app.processEvents()
     dialog = window._show_operation_progress(
-        "Zweiter ChatGPT-Export", "Paket vorbereiten …",
+        "Zweiter LLM-Export", "Paket vorbereiten …",
     )
     assert isinstance(dialog, ExportOperationDialog)
     dialog.update_message("KI-Basis kopieren: 2/8")
