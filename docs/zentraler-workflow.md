@@ -50,10 +50,10 @@ und keine Wahrscheinlichkeit einer Lieferantenverursachung.
 
 ## 03 – NTF-Entscheidung
 
-- **QEC-Neuauswertung exportieren (ZIP)** erzeugt eine neue, nur aus den
+- **LLM-Analysepaket erstellen (ZIP)** erzeugt eine neue, nur aus den
   **projektbezogenen QEC-Fällen (Schritt 01)** und den nach FIN, QEC-Referenz
   und Sachnummer passenden **QEC-Befundungsdaten (Schritt 02)** gebildete
-  Analysebasis mit ChatGPT-Ergebnisvorlage und -Schema. QuickTests, AutoExport,
+  Analysebasis mit LLM-Ergebnisvorlage und -Schema. QuickTests, AutoExport,
   TIPS, SMR-D und technische Unterlagen aus Schritt 04/05 sind **nicht**
   Bestandteil dieses Erstexports. Keine automatische Übertragung.
 - Alle fünf QEC-Reiter werden strukturiert ausgegeben. Fach-/Lieferantenfreitexte
@@ -68,37 +68,42 @@ und keine Wahrscheinlichkeit einer Lieferantenverursachung.
 - Eine neue ZIP erhält eine **neue Paket-ID**. Ältere Ergebnisse bleiben
   lokal archiviert und werden nicht überschrieben; die neue Auswertung
   wird erst nach dem zugehörigen, validierten JSON-Rückimport sichtbar.
-- **ChatGPT-Ergebnis importieren (JSON)** prüft Paket-ID, Belegreferenzen,
+- **LLM-Ergebnis importieren (JSON)** prüft Paket-ID, Belegreferenzen,
   Pseudonym-Zuordnung und speichert Vorschläge **getrennt und ungeprüft**.
 - Tabelle: FIN, QEC-Fall, SSL-Endbefund, manuelle QEC-Entscheidung,
-  ChatGPT-Vorschlag, Verursachungsbereich und **ChatGPT-Prüfstatus**.
-  Ein importierter ChatGPT-Vorschlag überschreibt **keine**
+  LLM-Vorschlag, Verursachungsbereich und **LLM-Prüfstatus**.
+  Ein importierter LLM-Vorschlag überschreibt **keine**
   QEC-Entscheidung und weist **keine** Schuld zu.
-- **Zähler trennen:** `QEC-entschieden` zählt ausschließlich die manuell
-  in `qec_workflow_decisions` gespeicherten NTF-/Kein-NTF-Fachentscheidungen.
-  Ein bereits vorhandener SSL-Endbefund oder eine importierte ChatGPT-JSON
-  erhöht diesen Zähler nicht. Der zweite Zähler zeigt separat importierte
-  ChatGPT-Vorschläge; diese beginnen mit Prüfstatus `Offen`.
+- **Statuskachel 03:** Gruen nur nach erfolgreich importiertem und mit
+  dem aktuellen Profil-/Sachnummernpaket verknuepftem ersten LLM-Ergebnis.
+  Gelb nach Paketexport ohne JSON-Import, sonst offen. Die manuelle
+  QEC-Entscheidungsquote und die Anzahl LLM-Fallvorschlaege bestimmen
+  diesen Status **nicht**.
+- **Rundentrennung:** Die erste LLM-Runde bewertet ausschliesslich den
+  NTF-Status einzelner Faelle (NTF plausibel, NTF fraglich, Kein reiner
+  NTF, Nicht bewertbar/Nicht zuordenbar) sowie den moeglichen
+  Verursachungsbereich. Sie enthaelt **keine Cluster**. Die vertiefte
+  Ursachenpruefung und Clusterung erfolgen erst in Runde 2.
 - **Fachlich entscheiden:** Unter **Datenquellen → QEC-Prüfworkflow** den Fall
   auswählen, `NTF` oder `Kein NTF` festlegen und
   **Bewertung speichern** drücken. Die KI-Vorschläge werden getrennt unter
-  **Datenquellen → ChatGPT-Auswertung** einzeln geprüft und
+  **Datenquellen → LLM-Auswertung** einzeln geprüft und
   **Bestätigt** oder **Abgelehnt** markiert.
 - **Tabelle filtern und sortieren:** Freitextsuche über alle sieben Spalten,
   kombinierbare Auswahlfilter für SSL-Endbefund, QEC-Entscheidung,
-  ChatGPT-Vorschlag, Verursachungsbereich und ChatGPT-Prüfstatus;
+  LLM-Vorschlag, Verursachungsbereich und LLM-Prüfstatus;
   Klick auf einen Spaltenkopf sortiert auf- bzw. absteigend.
   **Filter zurücksetzen** zeigt wieder alle Fälle. Die Anzahl sichtbarer
   Tabellenzeilen wird separat angezeigt; Filter verändern **weder**
   die QEC-Kohorte **noch** Auswertungen, Entscheidungsstatus oder Exporte.
   Beim Wechsel des Sachnummernprojekts werden die Filter zurückgesetzt.
-- **Projektschutz:** Beide ChatGPT-Runden nutzen das ausgewählte Profil
+- **Projektschutz:** Beide LLM-Runden nutzen das ausgewählte Profil
   plus Sachnummer. Der Erstexport nimmt nur die QEC-Fall-IDs aus Schritt 01;
   gleiche FIN allein reicht nicht zur Übernahme fremder Schadteile.
   Der zweite Export verifiziert die zu diesem Projekt registrierte erste
   KI-Basis und liest nur die eigenen Kontextunterlagen aus Schritt 04.
 - **Bauteilneutral:** Batterie, DC/DC-Wandler und weitere Bauteile können die
-  QEC-Erstrunde sowie die vertiefte zweite ChatGPT-Runde verwenden. QEC-Fälle
+  QEC-Erstrunde sowie die vertiefte zweite LLM-Runde verwenden. QEC-Fälle
   mit unbekannter Benennung brauchen eine eindeutige Projekt-Sachnummer.
   Bei mehrdeutiger Zuordnung wird nicht geraten. Die **lokale**
   Clustering-Implementierung kann unabhängig davon weiterhin eigene
@@ -107,7 +112,7 @@ und keine Wahrscheinlichkeit einer Lieferantenverursachung.
   Funktion mit anderem Datenumfang.
 
 
-## 04 – Unterlagen für die zweite ChatGPT-Clusteranalyse
+## 04 – Unterlagen für die zweite LLM-Clusteranalyse
 
 Die fünf Workflowstationen bleiben **in einer Zeile**. Schritt 04 zeigt
 darunter **ein Sammel-Dashboard**, keinen zusätzlichen Seiten-Scrollbereich.
@@ -121,7 +126,7 @@ Tabellen darin dürfen für viele Dateien intern scrollen.
 | **TIPS Writer** | TIPS-Fälle für alle bzw. markierte QEC-FINs abrufen, Stop | Bestehender TIPS-Worker; Live-Abruf bedarf Prüfung im Unternehmensnetz |
 | **Celonis** | Exportdateien auswählen und archivieren | Noch kein Celonis-Scraper/Portal-Link implementiert, daher kein erfundener Abruf |
 | **CDD / SMR-D** | Ein oder mehrere technische Quelldokumente wählen | Als Original archiviert, keine automatische Validierung der DTC-Setzbedingungen |
-| **ECU-Nachrichtenliste** | Datei auswählen | Fachliche Interpretation erfolgt erst im ChatGPT-Kontext |
+| **ECU-Nachrichtenliste** | Datei auswählen | Fachliche Interpretation erfolgt erst im LLM-Kontext |
 | **Setzbedingungen** | Excel auswählen | Keine automatische Extraktion aus beliebigen Excel-Varianten |
 | **Vehicle Network Topology** | Dateien auswählen | Keine erfundene Topologie aus Dateinamen |
 | **HW-Änderungsstände** | Dateien auswählen | Fachliche HW-Zuordnung nicht aus Dateinamen ableiten |
@@ -143,23 +148,23 @@ einer einzigen integrierten lokalen Clusteranalyse:
 1. **QEC-FIN-Liste:** Excel/Portal, Sachnummern-Kohorte.
 2. **QEC-Befundung:** Berichte nach FIN und QEC-Referenz.
 3. **QEC-Neuauswertung:** Erstes KI-Paket nur aus Schritt 01/02 exportieren,
-   Rückgabe-JSON über den bestehenden validierten ChatGPT-Import einlesen.
+   Rückgabe-JSON über den bestehenden validierten LLM-Import einlesen.
    Bei erfolgreich exportierten Paketen wird zusätzlich eine
    **SHA-256-gesicherte Kopie im lokalen raw/-Archiv** registriert.
    Paket-ID, Profil und Sachnummer werden in DuckDB gespeichert und
    über das vorhandene \`.ntfbackup\` mitgenommen.
 4. **Unterlagen:** Nur Sammeln, Klassifizieren und Anzeigen der technischen
-   Dokumente. Kein \`erstes Paket wählen\` und kein ChatGPT-Export.
+   Dokumente. Kein \`erstes Paket wählen\` und kein LLM-Export.
 5. **Clusteranalyse:** Der **bestehende HDBSCAN-/AutoExport-/QEC-Workspace**
    wird genau einmal in der Workflow-Seite angezeigt. Die bisherige
    Clusterregisterkarte in Fälle/FIN entfällt; Fälle/FIN dient weiterhin
    dem Fall- und Diagnosenachweis. Außerdem:
-   **\`2. ChatGPT-Paket exportieren\`**, **\`Cluster-Ergebnis importieren\`**
+   **\`2. LLM-Paket exportieren\`**, **\`Cluster-Ergebnis importieren\`**
    und fachliche Bestätigung. Das erste exportierte Paket und die erste
    importierte JSON-Auswertung werden automatisch mittels \`paket_id\`
    miteinander verknüpft. Der Export funktioniert erst, wenn beides vorliegt.
 
-Das zweite Clusterpaket enthält das **erste gespeicherte ChatGPT-Ergebnis**
+Das zweite Clusterpaket enthält das **erste gespeicherte LLM-Ergebnis**
 als \`voranalyse/erstes_chatgpt_ergebnis.json\` zusätzlich zu \`basis/\`,
 \`cluster_kontext_manifest.json\`, \`CHATGPT_2_DURCHLAUF.txt\` und einer
 **neuen** \`analyse_id\` mit derselben \`paket_id\`. Die Rückimportprüfung
@@ -169,7 +174,7 @@ Analyse-ID; nicht zugeordnete Pakete werden abgewiesen.
 Die technischen Unterlagen aus Schritt 04 erscheinen im Kontextmanifest
 als Kategorien/Belegkennungen. Die unveränderten Fachdateien selbst werden
 nur bei aktiver **\`Technische Originale beifügen (vertraulich)\`**-Option
-beigefügt. Die erste ChatGPT-Auswertung kann ebenfalls vertrauliche
+beigefügt. Die erste LLM-Auswertung kann ebenfalls vertrauliche
 Freitexte enthalten; vor jeder Weitergabe prüfen und intern freigeben.
 Es erfolgen keine automatischen Uploads.
 
@@ -212,7 +217,7 @@ Projektkonfiguration und keine Ursachenfeststellung.
   selektierten Projektdatensatz: Projektkonfiguration/Workflowfortschritt,
   zugeordneten QEC- und Fallentscheidungen, FIN-bezogenen QuickTests,
   Archivdateien, technischer Unterlagensammlung und projektgebundenen
-  ChatGPT-Zuordnungen. Die Projekt-Datenbank ist gefiltert;
+  LLM-Zuordnungen. Die Projekt-Datenbank ist gefiltert;
   *bekannte weitere Projekte* werden nicht als fremde Tabellenzeilen
   exportiert. Es gibt keinen neuen Parserlauf.
 - **Mehrere QEC-FIN-Listen** für verschiedene Sachnummern sind erlaubt;
@@ -276,9 +281,9 @@ Neustart in den neuen Workflow migriert und nicht als Sperre weitergeführt.
 - Die FIN-Liste zeigt weiterhin **sämtliche** QEC-Fälle des Projekts.
   Ausgeschlossene FINs sind dezent grau hinterlegt. Erst ab Schritt 02
   werden ausschließlich ausgewählte FINs berücksichtigt: QEC-Abruf,
-  ChatGPT-1-Export, QuickTests/TIPS-Abruf, lokales Clustering und
-  ChatGPT-2-Auswertung. Der QEC-CSV-Export respektiert dieselbe Auswahl.
-- Die erste ChatGPT-ZIP enthält **nur** die ausgewählten QEC-Fälle der
+  LLM-1-Export, QuickTests/TIPS-Abruf, lokales Clustering und
+  LLM-2-Auswertung. Der QEC-CSV-Export respektiert dieselbe Auswahl.
+- Die erste LLM-ZIP enthält **nur** die ausgewählten QEC-Fälle der
   aktuellen Sachnummer und die passenden QEC-Befunde. Sie nimmt **keine**
   FIN-weiten QuickTests, AutoExport-Daten oder separaten TIPS-Berichte auf.
   Die private FIN-/Fallzuordnung bleibt lokal und gehört niemals in den Upload.
@@ -299,7 +304,9 @@ Neustart in den neuen Workflow migriert und nicht als Sperre weitergeführt.
 - Die erste Auswertung ist vorläufig. SSL-Endbefunde und Lieferantenberichte
   sind kein Nachweis der Ursache; DTC-Wiederkehr und weitere Diagnosequellen
   werden erst in Schritt 04/05 gesondert geprüft.
-- Die ZIP-Export- und JSON-Import-Schaltflächen sind vergrößert.
+- Die Schaltflächen heißen „LLM-Analysepaket erstellen (ZIP)“ und
+  „LLM-Ergebnis importieren (JSON)“. Vermeidbare Erklärungstexte und
+  doppelte QEC-Fachentscheidungsstatistiken unter den Diagrammen entfallen.
 - Ein Donut für \`NTF plausibel\`, \`NTF fraglich\`, \`Kein reiner NTF\`,
   \`Nicht bewertbar\`, \`Nicht bewertet\` sowie ggf. \`Mehrere Bewertungen\`;
   ein zweiter für die vorgeschlagenen Verursachungsbereiche.
@@ -307,9 +314,17 @@ Neustart in den neuen Workflow migriert und nicht als Sperre weitergeführt.
   Kategorien zusammengefasst. Die Tabelle kennzeichnet Status
   semantisch farbig und zeigt den vorgeschlagenen Verursachungsbereich.
 - Es werden nur die **validiert importierten Bewertungen des ersten
-  ChatGPT-Durchlaufs** angezeigt. Die QEC-Entscheidung bleibt unverändert.
+  LLM-Durchlaufs** angezeigt. Die QEC-Entscheidung bleibt unverändert.
 
 ### 04 Unterlagen / Einlesen und Aktualität
+
+- Die Kachel 04 zählt **alle eindeutigen lokal vorhandenen Dokumente**
+  aus TP Dashboard, Diagnosis Viewer und TIPS Writer sowie sämtliche
+  dem Projekt manuell zugeordneten technischen Originalunterlagen.
+  CDD/SMR-D, ECU-Nachrichten, Setzbedingungen, Netzwerktopologie,
+  HW-/SW-Änderungen und weitere Belege werden mitgezählt.
+  Identische SHA-256-Dateien zählen nur einmal; QEC-Berichte aus Schritt 02
+  gehören nicht zu diesem Schritt-04-Zähler.
 
 - TP Dashboard, Diagnosis Viewer, TIPS Writer und Celonis besitzen
   jeweils eine explizite **Einlesen**-Aktion. Diese nutzt die
@@ -335,15 +350,15 @@ Neustart in den neuen Workflow migriert und nicht als Sperre weitergeführt.
 - \`Lokal · HDBSCAN / Cosinus\` zeigt die einmalig vorhandene
   lokale Clusterimplementierung, mit sinnvollem Scrollbereich.
   Doppelte Beschreibungs-/Quellenabdeckungs-Texte entfallen.
-- \`ChatGPT · Ergebnis anzeigen\` zeigt **nur die validierte
-  zweite ChatGPT-Rückgabe** mit Clustertiteln, Hypothesen,
+- \`LLM · Ergebnis anzeigen\` zeigt **nur die validierte
+  zweite LLM-Rückgabe** mit Clustertiteln, Hypothesen,
   Sicherheit, FIN/Fall-Zuordnung und fachlichem Prüfstatus.
-  Dieser Tab führt **keinen** neuen ChatGPT-Request aus.
+  Dieser Tab führt **keinen** neuen LLM-Request aus.
 - Die zwei zentralen Bedienelemente für den zweiten ZIP-Export und
   JSON-Rückimport sind groß hervorgehoben. Beide Durchläufe bleiben
   paket-/analyse-ID-gebunden.
 - **Vollständiger technischer Kontext:** Das ZIP enthält die gesamte
-  erste QEC-Basis (`basis/`), die importierte erste ChatGPT-Auswertung
+  erste QEC-Basis (`basis/`), die importierte erste LLM-Auswertung
   (`voranalyse/`), und aus Schritt 04 **automatisch FIN-gefilterte**
   geparste Diagnosis-Viewer-QuickTests (Berichte, ECUs, DTCs, Parameter,
   zeitliche Fallvergleiche), TP-Dashboard-Diagnosen und vorhandene
@@ -381,12 +396,12 @@ KI-Exporten oder Datentransfers sind beide Aktionen gesperrt.
 
 - **Projekt entfernen** entfernt ausschließlich den Projekt-Registrierungseintrag
   (Profil, Sachnummer, Name und ECU-Einstellungen). QEC-Quellen, FIN-/Falldaten,
-  Unterlagen, Workflowfortschritt und ChatGPT-Auswertungen bleiben im lokalen
+  Unterlagen, Workflowfortschritt und LLM-Auswertungen bleiben im lokalen
   Datenbestand. Dieselbe Sachnummer kann später wieder als Projekt aufgenommen
   werden.
 - **Projekt vollständig löschen** entfernt die eindeutig diesem Profil/
   dieser Sachnummer zugeordneten Fall-/QEC-Entscheidungen, FIN-QuickTests,
-  manuelle Bewertungen, ChatGPT-Paket- und Auswertungsdaten, Workflow- und
+  manuelle Bewertungen, LLM-Paket- und Auswertungsdaten, Workflow- und
   Unterlagenzuordnungen sowie exklusive lokale Archivdateien.
   **Gemeinsame QEC-/TP-Quelldateien oder überlappende FIN-/KI-Zuordnungen
   führen zum vollständigen Abbruch der Aktion.** Globale ECU-Diagnose-
