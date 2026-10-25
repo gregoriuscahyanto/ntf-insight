@@ -19,6 +19,9 @@ from ntf_insight.reporting.qec_first_package import export_qec_first_package
 from ntf_insight.storage.cluster_evidence_store import ClusterEvidenceStore
 from ntf_insight.storage.source_knowledge_store import SourceKnowledgeStore
 from ntf_insight.storage.workflow_ai_chain import WorkflowAIChainStore
+from ntf_insight.storage.workflow_projects import NTFProject, WorkflowProjectStore
+from ntf_insight.storage.qec_project_scope import qec_case_matches_project
+from ntf_insight.ingestion.service import SourceImportService
 from test_ki_analysepaket import (
     FIN, PRIVATE_TEXT, SECRET_QEC_TEXT, _set_up,
 )
@@ -269,3 +272,148 @@ def test_only_qec_excel_replacement_anchor_is_exported(tmp_path):
         assert _rows(archive, "qec_datenluecken.csv")[0][
             "qec_tauschanker_fehlend"
         ] == "0"
+
+
+def test_some_cases_without_qec_report_remain_in_export(tmp_path):
+    source = _set_up(tmp_path)
+    extra = NTFCase(
+        case_id="QEC-KEIN-BERICHT",
+        vehicle=Vehicle(vin="WDD12345678901235", model_series="214"),
+        component_type="Kühlmittelpumpe",
+        component_profile_id="coolant_pump",
+        qec_reference="654321",
+        qec_part_number=PART,
+    )
+    source.store.save_case(extra)
+    result = export_qec_first_package(
+        source, tmp_path / "teilweise-berichte.zip",
+        profile_id="coolant_pump", part_number=PART,
+        selected_fins={FIN, extra.vin},
+        selected_case_ids={CASE_ID, extra.case_id},
+    )
+    assert result.faelle == 2
+    assert result.qec_berichte == 1
+    with ZipFile(result.pfad) as archive:
+        cases = _rows(archive, "faelle.csv")
+        gaps = _rows(archive, "qec_datenluecken.csv")
+        assert len(cases) == len(gaps) == 2
+        assert sum(row["qec_bericht_status"] == "Nicht vorhanden" for row in cases) == 1
+        assert sum(row["qec_bericht_status"] == "Vollstaendig" for row in cases) == 1
+        assert len(_rows(archive, "qec_felder.csv")) == 2
+        manifest = json.loads(archive.read("manifest.json"))
+        assert manifest["datenreihen"]["qec_berichte_nicht_vorhanden"] == 1
+
+
+@pytest.mark.parametrize(
+    ("profile", "component_name"),
+    [
+        ("hv_battery", "HV-Batterie"),
+        ("dcdc_converter", "DC/DC-Wandler"),
+        ("other_component", "Sensor / Ventil"),
+    ],
+)
+def test_generic_first_and_second_round_without_documents(
+    tmp_path, profile, component_name,
+):
+    """Beide ChatGPT-Exporte gehen auch ohne Diagnoseunterlagen und CPC3."""
+    service = SourceImportService(tmp_path / "raw", tmp_path / "ntf.duckdb")
+    project = WorkflowProjectStore(service.store)
+    project.save(
+        NTFProject(profile, "A 678 910", component_name, ("BMS",))
+    )
+    vehicle = "WDD12345678901239"
+    case = NTFCase(
+        case_id="QEC-FREMDPROFIL-123",
+        vehicle=Vehicle(vin=vehicle, model_series="X"),
+        component_type=component_name,
+        component_profile_id=None,  # Generischer QEC-Parser.
+        qec_reference="777788",
+        qec_part_number="A678910",
+    )
+    service.store.save_case(case)
+    output = export_qec_first_package(
+        service, tmp_path / "erstes-qec.zip",
+        profile_id=profile, part_number="A 678 910",
+        selected_fins={vehicle}, selected_case_ids={case.case_id},
+    )
+    assert output.faelle == 1
+    assert output.qec_berichte == 0
+    with ZipFile(output.pfad) as archive:
+        manifest = json.loads(archive.read("manifest.json"))
+        assert manifest["projektprofil"] == profile
+        assert manifest["datenreihen"]["qec_berichte_nicht_vorhanden"] == 1
+        assert archive.read("CHATGPT_ANWEISUNG.txt").decode(
+            "utf-8"
+        ).count("Nicht bewertbar") >= 1
+        template = json.loads(archive.read("chatgpt_ergebnis_vorlage.json"))
+        alias = _rows(archive, "faelle.csv")[0]["fall_id"]
+    chain = WorkflowAIChainStore(service.store)
+    first = chain.register_first_export(profile, "A 678 910", output.pfad)
+    template["faelle"] = [{
+        "fall_id": alias,
+        "ntf_bewertung": "Nicht bewertbar",
+        "pruefungen_grenzen": "QEC-Dokumente fuer diesen Fall fehlen.",
+        "belege": [],
+    }]
+    answer = tmp_path / "qec-antwort.json"
+    answer.write_text(json.dumps(template), encoding="utf-8")
+    result = ChatGPTAnalyseStore(service.store).import_file(answer)
+    assert result["faelle"] == 1
+    assert chain.record_import(result["analyse_id"], round_number=1)
+    technical = ClusterEvidenceStore(service.store)
+    second = export_cluster_context(
+        technical, profile, "A 678 910", first.path,
+        tmp_path / "zweiter-kontext.zip",
+        first_result=chain.first_result(first.paket_id),
+    )
+    with ZipFile(second.path) as archive:
+        manifest = json.loads(archive.read("cluster_kontext_manifest.json"))
+        assert manifest["profil"] == profile
+        assert manifest["basis_nicht_nach_sachnummer_gefiltert"] is False
+        assert manifest["sachnummer_wurde_lokal_gefiltert"] is True
+        assert manifest["bestand"] is not None
+        prompt = archive.read("CHATGPT_2_DURCHLAUF.txt").decode("utf-8")
+        assert component_name in prompt
+        assert "CPC3" not in prompt
+        assert "Pumpe" not in prompt
+        assert "Fehlende QEC-Berichte" in prompt
+        assert "voranalyse/erstes_chatgpt_ergebnis.json" in archive.namelist()
+
+    with pytest.raises(ValueError, match="Sachnummernprojekt"):
+        export_cluster_context(
+            technical, profile, "A 000 001", first.path,
+            tmp_path / "falsche-sachnummer.zip",
+        )
+    with pytest.raises(ValueError, match="Bauteilprofil"):
+        export_cluster_context(
+            technical, "coolant_pump", "A 678 910", first.path,
+            tmp_path / "falsches-profil.zip",
+        )
+
+
+def test_unknown_qec_component_cannot_cross_ambiguous_project_boundaries(tmp_path):
+    source = SourceImportService(tmp_path / "raw", tmp_path / "db.duckdb")
+    projects = WorkflowProjectStore(source.store)
+    pump = projects.save(NTFProject("coolant_pump", "A-ONE", "Pumpe", ()))
+    battery = projects.save(NTFProject("hv_battery", "A ONE", "Batterie", ()))
+    assert not qec_case_matches_project(
+        case_part_number="AONE",
+        source_profile_id=None,
+        project_profile_id="hv_battery",
+        project_part_number="A ONE",
+        projects=[pump, battery],
+    )
+    assert qec_case_matches_project(
+        case_part_number="AONE",
+        source_profile_id="hv_battery",
+        project_profile_id="hv_battery",
+        project_part_number="A ONE",
+        projects=[pump, battery],
+    )
+    assert not qec_case_matches_project(
+        case_part_number="AONE",
+        source_profile_id="coolant_pump",
+        project_profile_id="hv_battery",
+        project_part_number="A ONE",
+        projects=[pump, battery],
+    )
