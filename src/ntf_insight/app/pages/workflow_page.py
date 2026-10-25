@@ -592,17 +592,18 @@ class WorkflowPage(QWidget):
     def _build_step_three(self) -> None:
         _, body = self._workspace(
             "03 · NTF-Neuauswertung auf QEC-Basis",
-            "Erste ChatGPT-Bewertung ausschliesslich aus QEC-FIN-Liste (01) "
-            "und Befundungsberichten (02); Vorschlaege bleiben ungeprueft.",
+            "Erste ChatGPT-Bewertung aus QEC-FIN-Liste (01) und vorhandenen "
+            "QEC-Berichten (02). Fehlende Dokumente sind zulaessig und "
+            "werden als Datenluecke erfasst; Vorschlaege bleiben ungeprueft.",
         )
         actions = QHBoxLayout()
         self.ai_export_button = self._add_action(
             actions, "QEC-Neuauswertung exportieren (ZIP)",
             lambda: self.action_requested.emit("ai_export"),
             tooltip=(
-                "Nur QEC-Schadteilfaelle (01) und strukturierte QEC-Befunde "
-                "(02). Keine QuickTests, AutoExport oder TIPS. "
-                "Eine neue Auswertung bewahrt bisherige KI-Ergebnisse."
+                "Nur QEC-Schadteilfaelle (01) und vorhandene QEC-Befunde (02). "
+                "Fehlende Berichte sind erlaubt. Keine QuickTests, AutoExport "
+                "oder TIPS; bisherige KI-Ergebnisse bleiben bestehen."
             ),
         )
         self.ai_import_button = self._add_action(
