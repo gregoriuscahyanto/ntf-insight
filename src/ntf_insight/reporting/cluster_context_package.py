@@ -271,6 +271,40 @@ def export_cluster_context(
         "6. Die private Pseudonymzuordnung gehoert niemals in den Upload. "
         "Pseudonymisierte technische Daten sind nicht garantiert anonymisiert. "
         "Externe Verarbeitung nur mit Unternehmensfreigabe.",
+        "7. Der Ordner diagnose/ enthaelt geparste Diagnosis-Viewer-QuickTests "
+        "(Berichte, ECU-Staende, alle DTCs, DTC-Parameter und fallbezogene "
+        "Zeitvergleiche), FIN-gefilterte TP-Dashboard-Zeilen und vorhandene "
+        "TIPS-Writer-Reiter. Die eigentlichen Diagnoseinformationen stammen "
+        "vom Gesamtfahrzeug und sind noch kein Nachweis fuer das untersuchte "
+        "Bauteil. Die QuickTest-Seitentexte koennen vertraulich sein.",
+        "8. unterlagen/ enthaelt die explizit freigegebenen Originalbelege "
+        "des Sachnummernprojekts und pro FIN fehlende Parserfassungen "
+        "als QuickTest-PDF-Fallback. Geparste QuickTests werden nicht "
+        "zusaetzlich als PDF dupliziert. Wenn ein Beleg im Manifest "
+        "als nicht aufgenommen gekennzeichnet ist, NICHT so tun, als "
+        "waere sein Inhalt ausgewertet worden.",
+        "9. Untersuche ALLE Faelle einzeln und fasse gemeinsame Muster "
+        "nur mit positiven technischen Indizien zusammen. Gleiche FIN "
+        "bedeutet nicht gleicher Schadteilfall. QEC- und SSL-Ergebnislabels "
+        "nicht als Ursache oder Clustermerkmal verwenden.",
+        "10. Untersuche diagnostisch belegte Fehler vor und nach dem "
+        "Bauteiltausch nur bei belegtem Tauschanker, Diagnosezeitpunkt "
+        "und vorliegenden Vergleichsdaten. Wiederkehr und Dauerhaftigkeit "
+        "getrennt beurteilen; fehlende Nachtests sind nicht fehlerfrei.",
+        "11. Dokumentiere pro Fall: NTF-Hypothese, moeglichen "
+        "Verursachungsbereich (Lieferant/Integration/Netzwerk/Werkstatt/"
+        "unbekannt, nur wenn belegt), Gegenindizien, Unsicherheit, "
+        "zu bestaetigende Hypothesen und konkrete naechste Pruefung. "
+        "Markiere jeden fehlenden Nachweis explizit.",
+        "12. Fuehre die vorhandene erste KI-Bewertung als Ausgangshypothese "
+        "mit, bewerte ihre Sicherheit anhand der NEUEN technischen Quellen "
+        "erneut und benenne Aenderungen explizit. Belege fuer neue "
+        "technische Zeilen als quelle=technische_referenz mit der "
+        "tatsaechlichen Datei und Zeilen-/Seitenfundstelle angeben. "
+        "Nur wirklich vorhandene Anhaenge und Fundstellen zitieren.",
+        "13. Die Original-TP-Dashboard-Sammel-CSV wird wegen "
+        "Fahrzeuguebergreifung NICHT ungefiltert in die ZIP kopiert: "
+        "die zulassigen FIN-bezogenen Befundzeilen liegen unter diagnose/."
     ]
     if project is not None and project.ecu_names:
         instruction_lines.insert(
@@ -285,6 +319,8 @@ def export_cluster_context(
         "basis_paket_id": package_id,
         "profil": profile_id,
         "bauteilbezeichnung": component_name,
+        "ausgewaehlte_fahrzeuge": len(scope.fins) if scope else None,
+        "ausgewaehlte_qec_faelle": len(scope.cases) if scope else None,
         "relevante_ecus_konfiguriert": (
             list(project.ecu_names) if project is not None else []
         ),
@@ -405,6 +441,33 @@ def export_cluster_context(
                     "sind manuell zugeordnet; fremde FINs innerhalb "
                     "unstrukturierter Dateien sind nicht sicher ausgeschlossen. "
                     "Parsertexte sind NICHT garantiert anonymisiert."
+                )
+                _zip_text(
+                    archive, "diagnose/LESEHINWEISE.txt",
+                    "NTF INSIGHT / DIAGNOSEDATEN DER VERTIEFUNG\n\n"
+                    "Erstes QEC-Paket: basis/; erster KI-Befund: voranalyse/.\n"
+                    "Diagnosis-Viewer-QuickTests: quicktests.csv. "
+                    "Dazu ECU-Staende, DTC-Beobachtungen, DTC-Parameter, "
+                    "geparste Seitentexte (nur nach Freigabe) und "
+                    "Fall-Zeitvergleiche im Ordner diagnose/.\n"
+                    "Berichtspseudonym QTnnnnnn ist NUR lokal fuer diese "
+                    "zweite ZIP. QEC-Fall Fnnnn und Fahrzeug Vnnnn stammen "
+                    "aus der ersten QEC-Basis.\n"
+                    "Die VIN-gefilterten TP-Dashboard-Tabellen liegen "
+                    "unter diagnose/tp_dashboard_*.csv. TIPS-Writer-Auswertung "
+                    "liegt unter diagnose/tips_writer.csv.\n"
+                    "Originale aus Schritt 04 und ungeparste QT-PDFs liegen "
+                    "nach Freigabe unter unterlagen/. Sie sind nicht "
+                    "automatisch anonymisiert. Das Manifest dokumentiert "
+                    "auch ausgelassene / mehrdeutige Dateien.\n"
+                    "Quellen sind fahrzeugbezogen, nicht zwingend "
+                    "schadteilursachlich. Fallzuordnungen zu Diagnose-"
+                    "Zeitpunkten nur mit belegtem QEC-Tauschanker auswerten.\n"
+                    "Als Beleg in JSON quelle=technische_referenz und "
+                    "fundstelle='diagnose/<datei>.csv/Zeile...' bzw. "
+                    "'unterlagen/<kategorie>/<datei> Seite...' verwenden.\n"
+                    "Nicht durch andere Sachnummern oder Fremd-FINs "
+                    "ergaenzen. Fehlende Dokumente sind zulaessig.\n"
                 )
             if include_originals:
                 if scope is not None:
