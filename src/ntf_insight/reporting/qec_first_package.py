@@ -282,7 +282,7 @@ def export_qec_first_package(
             "SELECT source_sha256,category,source_location,label,payload_json "
             "FROM source_knowledge_rows WHERE source_sha256 IN ("
             + ",".join("?" for _ in shas) + ") AND category IN "
-            "('qec_section','qec_field','qec_table_row','qec_attachment') "
+            "('qec_section','qec_field','qec_value','qec_table_row','qec_attachment') "
             "ORDER BY source_sha256,record_number"
         )
         with service.store.connect() as con:
@@ -310,6 +310,12 @@ def export_qec_first_package(
                         kind = "anhang"
                     if category == "qec_field":
                         literal = _safe_value(data.get("wert"), kind.lower())
+                        original = str(data.get("wert") or "")
+                    elif category == "qec_value":
+                        # Normalisierte Formular-/Tabellenwerte sind oft
+                        # fachlich relevanter als reine Feldrohtexte.
+                        kind = "normalisierter_wert"
+                        literal = _safe_value(data.get("wert"), "text")
                         original = str(data.get("wert") or "")
                     elif category == "qec_section":
                         literal = ""
