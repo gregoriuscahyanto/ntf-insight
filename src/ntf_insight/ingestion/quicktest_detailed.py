@@ -187,9 +187,21 @@ def extract_quicktest(path: Path, source_sha: str) -> ParsedSource:
     if path.stat().st_size > 80 * 1024 * 1024:
         raise ValueError("QuickTest-PDF exceeds maximum supported size (80 MB).")
     reader = PdfReader(path, strict=False)
-    if reader.is_encrypted or not 1 <= len(reader.pages) <= 400:
-        raise ValueError("QuickTest-PDF encrypted or invalid page count.")
-    page_texts = [page.extract_text() or "" for page in reader.pages]
+    # XENTRY-Exporte mit mehreren Durchläufen können mehr als 400 Seiten
+    # enthalten. Ein geprüftes Beispiel umfasst neun Durchläufe auf 632 Seiten.
+    # Schutzgrenzen für Dateigröße, Seitenzahl und Textmenge beibehalten.
+    if reader.is_encrypted or not 1 <= len(reader.pages) <= 1000:
+        raise ValueError(
+            "QuickTest-PDF verschlüsselt oder ungültige Seitenanzahl (max. 1000)."
+        )
+    page_texts: list[str] = []
+    text_length = 0
+    for page in reader.pages:
+        text = page.extract_text() or ""
+        text_length += len(text)
+        if text_length > 8_000_000:
+            raise ValueError("QuickTest-PDF überschreitet die sichere Textmenge.")
+        page_texts.append(text)
     structure = parse_quicktest_structure(page_texts)
     fin = canonical_fin(structure["fin"])
     if not fin:

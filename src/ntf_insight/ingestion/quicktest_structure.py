@@ -68,6 +68,12 @@ def _timestamp(text: str | None) -> datetime:
 
 def _ecu_header(lines: list[tuple[str, int]], index: int) -> dict[str, str] | None:
     line = lines[index][0]
+    # Ein EV-DEV-/FC-DEV-Fehler kann direkt vor "General information" der
+    # folgenden ECU stehen. Der bisherige Drei-Zeilen-Rueckblick verwechselte
+    # einen solchen DTC mit einem weiteren ECU-Kopf. Zuerst die DTC-Grammatik
+    # pruefen; echte ECU-Namen duerfen Leerzeichen, Klammern und Kommas haben.
+    if DTC_START.fullmatch(line):
+        return None
     if " - " not in line:
         return None
     # XENTRY PDF cells sometimes wrap the ECU description onto one or two

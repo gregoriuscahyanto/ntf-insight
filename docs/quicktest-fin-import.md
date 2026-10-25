@@ -22,6 +22,37 @@ Das QuickTest enthält die FIN **selbst**. Du musst sie weder manuell
 eingeben noch vor dem Import einen QEC-Fall anlegen. Ein optionaler manueller
 FIN-Hinweis wird **niemals** verwendet, um die berichtete FIN zu überschreiben.
 
+## Parser 4.1.0: große Diagnosis-Viewer-Berichte und erneuter Fehlerimport
+
+Eine lokale Diagnoseprobe mit drei zuvor fehlgeschlagenen
+XENTRY-QuickTest-PDFs zeigte zwei konkrete Fehlerursachen:
+Ein Bericht mit **632 Seiten und neun QuickTest-Durchläufen** lag
+über der bisherigen Grenze von 400 Seiten. Zwei weitere Berichte
+enthielten **EV-DEV-Fehlereinträge unmittelbar vor dem nächsten
+Steuergerät**; der Parser zählte sie fälschlich als weitere ECU.
+Parser **4.1.0** akzeptiert bis zu **1000 Seiten** (weiterhin maximal
+80 MiB PDF-Dateigroesse und 8 Mio. Zeichen extrahierter Text) und
+unterscheidet den DTC-Beginn vor der ECU-Kopferkennung.
+
+Die bestehenden Konsistenzprüfungen bleiben erhalten: Die deklarierte
+ECU-Anzahl und die DTC-Anzahl jeder ECU müssen mit der extrahierten
+Struktur uebereinstimmen. Es werden keine fiktiven Steuergeräte oder
+DTCs ergänzt, um fehlende Eintraege zu kaschieren.
+
+**Nach dem Update** unter **Datenquellen** zuerst die Aktion
+**„Nur fehlerhafte QuickTests erneut einlesen“** ausführen.
+Sie versucht gezielt bereits protokollierte fehlgeschlagene Quellen aus
+dem lokalen, per SHA-256 geschützten Archiv erneut und laesst
+erfolgreich gespeicherte Berichte unberührt. Im Workflow kann
+**„Parsing fortsetzen“** ausstehende verifizierte Quelldateien nachholen.
+Ein erneuter Download oder ein komplettes „Alle neu parsen“ ist für
+diese drei Fehlfälle normalerweise nicht notwendig, sofern die
+Originaldateien weiterhin lokal vorhanden sind.
+
+Die Diagnoseprobe wurde ausschließlich lokal untersucht;
+**keine Original-PDFs, realen FINs oder extrahierten Diagnosedaten**
+sind Bestandteil des Repository-Commits oder der Regressionstests.
+
 ## Was gespeichert wird?
 
 Die Daten liegen in separaten, relationalen FIN-Tabellen in
