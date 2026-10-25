@@ -64,7 +64,7 @@ def _examples():
                     [{"kategorie": "Kurzschluss / Sicherung",
                       "nachweisstatus": "Werkstattangabe"}]
                     if case == "FALL-002" else
-                    [{"kategorie": "Mechanik / Geraeusch / Beschaedigung",
+                    [{"kategorie": "Mechanik / Geräusch / Beschädigung",
                       "nachweisstatus": "Laborbefund"}]
                     if case == "FALL-003" else []
                 ),
@@ -72,7 +72,7 @@ def _examples():
                     ["Werkstattangabe vorhanden", "Diagnose vor Tausch (Datum)"]
                     if case == "FALL-001" else
                     ["Werkstattangabe vorhanden"] if case == "FALL-002"
-                    else ["Laborbefund optisch auffaellig"] if case == "FALL-003"
+                    else ["Laborbefund optisch auffällig"] if case == "FALL-003"
                     else []
                 ),
                 "themen": (
