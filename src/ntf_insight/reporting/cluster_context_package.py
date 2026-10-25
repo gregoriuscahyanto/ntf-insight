@@ -431,11 +431,20 @@ def export_cluster_context(
                         quick_root = store.store.path.parent.joinpath(
                             "quicktests"
                         ).resolve()
+                        tips_root = store.store.path.parent.joinpath(
+                            "tips"
+                        ).resolve()
                         if not (
                             path.resolve().is_relative_to(raw_root)
                             or (
                                 original.category == "diagnosis_viewer_fallback"
                                 and path.resolve().is_relative_to(quick_root)
+                            )
+                            or (
+                                original.category in {
+                                    "tips_writer_fall", "tips_writer_anhang",
+                                }
+                                and path.resolve().is_relative_to(tips_root)
                             )
                         ):
                             raise ValueError(
