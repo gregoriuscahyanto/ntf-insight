@@ -45,6 +45,7 @@ class ClusterContextExportWorker(QThread):
     def __init__(
         self, store: ClusterEvidenceStore, profile: str, part_number: str,
         first_package: Path, destination: Path, *, include_originals: bool,
+        include_confidential_basis: bool = False,
         first_result: dict | None = None,
     ) -> None:
         super().__init__()
@@ -54,6 +55,7 @@ class ClusterContextExportWorker(QThread):
         self.first_package = Path(first_package)
         self.destination = Path(destination)
         self.include_originals = include_originals
+        self.include_confidential_basis = include_confidential_basis
         self.first_result = first_result
 
     def run(self) -> None:
@@ -62,6 +64,7 @@ class ClusterContextExportWorker(QThread):
                 self.store, self.profile, self.part_number,
                 self.first_package, self.destination,
                 include_originals=self.include_originals,
+                include_confidential_basis=self.include_confidential_basis,
                 first_result=self.first_result,
                 progress=self.progress.emit,
             )
