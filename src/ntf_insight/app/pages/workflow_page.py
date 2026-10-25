@@ -1123,8 +1123,8 @@ class WorkflowPage(QWidget):
         self.llm_metric_labels: dict[str, QLabel] = {}
         for key, caption in (
             ("cases", "LLM-Fallbewertungen"),
-            ("clusters", "Technische Cluster"),
-            ("ungrouped", "Ohne technischen Cluster"),
+            ("clusters", "T- und S-Cluster gesamt"),
+            ("ungrouped", "Ohne T/S-Zuordnung"),
             ("supplier", "Lieferant als Hypothese"),
             ("recurrence", "Wiederkehr-Hinweise · LLM"),
         ):
@@ -1145,9 +1145,9 @@ class WorkflowPage(QWidget):
         review_layout.addLayout(metrics)
 
         self.llm_causality_warning = QLabel(
-            "Verursachungsbereiche und Cluster sind validiert importierte "
-            "LLM-Hypothesen, keine automatisch nachgewiesenen Verantwortlichkeiten. "
-            "Lieferantenverursachung bedarf technischer Gegenprüfung.",
+            "T = technische Ähnlichkeit mit Belegen. S = gemeinsames gemeldetes "
+            "Symptom oder fehlende Datenbasis, kein technischer Ursachenbeweis. "
+            "Verursachungs- und Lieferantenhypothesen benötigen fachliche Prüfung.",
             objectName="PageSubtitle",
         )
         self.llm_causality_warning.setWordWrap(True)
@@ -1195,10 +1195,10 @@ class WorkflowPage(QWidget):
         review_layout.addWidget(self.llm_symptom_note)
 
         review_layout.addWidget(
-            QLabel("Technische Cluster · auswählen für Details und Fallfilter")
+            QLabel("T-Cluster (technisch) und S-Cluster (Symptom / Datenlage) · Details und Filter")
         )
         self.chatgpt_cluster_table, self.chatgpt_cluster_model = _create_table((
-            "Cluster", "Technisches Muster", "Fälle", "Sicherheit",
+            "Cluster", "Technisches Muster / Symptom", "Fälle", "Sicherheit",
             "Häufigster Verursachungsbereich",
         ))
         self.chatgpt_cluster_table.setMinimumHeight(170)
@@ -2442,10 +2442,12 @@ class WorkflowPage(QWidget):
         causes = ", ".join(
             f"{name}: {count}" for name, count in group.cause_counts
         )
+        is_symptom = group.cluster_id.startswith("S")
         self.chatgpt_cluster_details.setPlainText(
             f"Cluster {group.cluster_id} · {group.title}\n"
+            f"Ebene: {'S – Symptom / Datenlage, kein Ursachenbeweis' if is_symptom else 'T – technische Ähnlichkeit'}\n"
             f"Fälle: {group.count} · LLM-Sicherheit: {group.confidence}\n"
-            f"Technische Hypothese: "
+            f"{'Gemeldetes Muster / Prüfannahme' if is_symptom else 'Technische Hypothese'}: "
             f"{group.hypothesis or 'Nicht spezifiziert'}\n"
             f"Mögliche Verursachungsbereiche der Mitgliedsfälle: "
             f"{causes or 'Nicht zuordenbar'}\n"
@@ -2501,6 +2503,8 @@ class WorkflowPage(QWidget):
             f"Fehlerbild-Ebene (Mehrfachnennungen):\n{symptom_details}\n"
             f"Nachweis-Ebene: "
             f"{'; '.join(case.proof_profiles) or 'Nicht vorhanden'}\n"
+            f"T/S-Nachweis der Zuordnung: "
+            f"{payload.get('symptomcluster_begruendung') or 'Technische T-Hypothese bzw. kein zusätzlicher S-Text'}\n"
             f"Technische Hinweise laut LLM: "
             f"{'; '.join(payload.get('themen') or []) or 'Keine'}\n"
             f"Gegenindizien / Datenlücken: "
@@ -2653,14 +2657,20 @@ class WorkflowPage(QWidget):
         self.chatgpt_cluster_table.clearSelection()
         self._apply_llm_case_filters()
         self.chatgpt_cluster_summary.show()
+        t_groups = sum(1 for g in overview.groups if g.cluster_id.startswith("T"))
+        s_groups = sum(1 for g in overview.groups if g.cluster_id.startswith("S"))
+        t_cases = sum(1 for case in overview.cases if str(case.cluster_id or "").startswith("T")) if overview.cases else 0
+        s_cases = sum(1 for case in overview.cases if str(case.cluster_id or "").startswith("S")) if overview.cases else 0
         missing_clusters = (
-            " Keine technisch begründeten Cluster vorhanden; "
-            "ungesicherte Fälle werden nicht künstlich gruppiert."
-            if not overview.groups else ""
+            " Ohne technische T-Cluster kann nur eine S-Symptomgruppierung "
+            "abgeleitet werden."
+            if not t_groups else ""
         )
         self.chatgpt_cluster_summary.setText(
-            f"LLM-Analyse {analysis_id} · {len(overview.groups)} "
-            f"technische Cluster · {overview.total_cases} von "
+            f"LLM-Analyse {analysis_id} · {t_groups} technische T-Cluster "
+            f"({t_cases} Fälle), {s_groups} S-Symptom-/Datenlagecluster "
+            f"({s_cases} Fälle, KEINE bestätigten Ursachen). "
+            f"{overview.total_cases} von "
             f"{len(current)} aktuellen QEC-Fällen bewertet · "
             f"{overview.unknown_causes} Ursachen nicht sicher zugeordnet. "
             f"{overview.structurally_classified} Fälle mit neuer "

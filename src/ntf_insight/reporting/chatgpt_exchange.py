@@ -67,6 +67,7 @@ class ChatGPTBeleg(BaseModel):
 FehlerbildKategorie = Literal[
     "Stromaufnahme zu hoch / Überstrom",
     "Stromaufnahme zu niedrig / fehlender Strom",
+    "Stromaufnahme unplausibel (hoch/niedrig)",
     "Kurzschluss / Sicherung",
     "Bus / Kommunikation",
     "Versorgung / Spannung / Masse",
@@ -139,6 +140,7 @@ class ChatGPTFall(BaseModel):
     fehlerbilder: list[LLMFehlerbild] = Field(default_factory=list, max_length=15)
     nachweisprofil: list[NachweisProfil] = Field(default_factory=list, max_length=12)
     belege: list[ChatGPTBeleg] = Field(default_factory=list, max_length=40)
+    symptomcluster_begruendung: str = Field(default="", max_length=3500)
 
 
 class ChatGPTCluster(BaseModel):
@@ -149,6 +151,11 @@ class ChatGPTCluster(BaseModel):
     technische_hypothese: str = Field(default="", max_length=4000)
     sicherheit: Sicherheit = "Offen"
     belege: list[ChatGPTBeleg] = Field(default_factory=list, max_length=40)
+    ebene: Literal["T", "S"] | None = None
+    cluster_typ: str = Field(default="", max_length=180)
+    evidenzklasse: str = Field(default="", max_length=1000)
+    abgrenzung: str = Field(default="", max_length=2000)
+    empfohlene_pruefung: str = Field(default="", max_length=2000)
 
 
 class ChatGPTRueckgabe(BaseModel):
@@ -157,6 +164,8 @@ class ChatGPTRueckgabe(BaseModel):
     schema_version: Literal[1] = SCHEMA_VERSION
     paket_id: str = Field(pattern=r"^[0-9a-f]{32}$")
     analyse_id: str = Field(max_length=90)
+    analyse_id_vorher: str | None = Field(default=None, max_length=90)
+    cluster_abdeckung: Literal["T_S_v1"] | None = None
     # Nur der NEUE LLM2-Export setzt diese optionale Markierung. Alte
     # JSONs und LLM1 bleiben unveraendert kompatibel.
     fehlerbild_methodik: Literal["multilabel_symptom_nachweis_v2"] | None = None
@@ -176,6 +185,7 @@ def ergebnis_vorlage(paket_id: str) -> dict:
         "schema_version": SCHEMA_VERSION,
         "paket_id": paket_id,
         "analyse_id": "Analyse-" + paket_id[:12] + "-01",
+        "cluster_abdeckung": None,
         "clustermethode": "",
         "verwendete_merkmale": ["Vor-Tausch-DTCs; keine NTF-/SSL-Ergebnis-Labels"],
         "unsicherheiten": [],
@@ -609,6 +619,80 @@ class ChatGPTAnalyseStore:
                     f"{item.quelle}/{item.quelle_id}"
                 )
 
+    def _validate_ts_revision(self, data: ChatGPTRueckgabe) -> None:
+        """Die einmal validierten T-Cluster/NTF-Urteile bei Neuverteilung erhalten."""
+        parent = data.analyse_id_vorher
+        if parent is None:
+            return
+        if (data.cluster_abdeckung != "T_S_v1"
+                or not _IDENT.fullmatch(parent)
+                or parent == data.analyse_id):
+            raise ValueError("Neue T/S-Version braucht eine gültige Vorgänger-ID.")
+        with self.store.connect() as con:
+            linked = con.execute(
+                "SELECT 1 FROM workflow_ai_rounds r "
+                "JOIN chatgpt_imports i ON i.analyse_id=r.analyse_id "
+                "WHERE r.paket_id=? AND r.analyse_id=? "
+                "AND r.round_number=2 AND i.paket_id=?",
+                [data.paket_id, parent, data.paket_id],
+            ).fetchone()
+            if not linked:
+                raise ValueError("Die vorherige zweite Analyse ist nicht importiert.")
+            cases = con.execute(
+                "SELECT fall_pseudonym,cluster_id,payload_json "
+                "FROM chatgpt_fallanalysen WHERE analyse_id=?",
+                [parent],
+            ).fetchall()
+            clusters = con.execute(
+                "SELECT cluster_id,payload_json "
+                "FROM chatgpt_cluster WHERE analyse_id=?",
+                [parent],
+            ).fetchall()
+        old_cases = {pseudo: (cid, json.loads(payload))
+                     for pseudo, cid, payload in cases}
+        updated_cases = {case.fall_id: case for case in data.faelle}
+        if not old_cases or set(old_cases) != set(updated_cases):
+            raise ValueError("Die neue T/S-JSON muss exakt dieselben Fälle enthalten.")
+        old_t = {cid: json.loads(raw) for cid, raw in clusters
+                 if cid.startswith("T")}
+        new_t = {group.cluster_id: group for group in data.cluster
+                 if group.ebene == "T"}
+        if set(old_t) != set(new_t):
+            raise ValueError("Die bisherigen technischen T-Cluster wurden verändert.")
+        for code, old in old_t.items():
+            now = new_t[code]
+            for field in ("titel", "fall_ids", "technische_hypothese",
+                          "sicherheit", "belege"):
+                if now.model_dump(mode="json")[field] != old.get(field):
+                    raise ValueError(
+                        f"Technischer Cluster {code} weicht vom Vorgänger ab."
+                    )
+        stable = (
+            "ntf_bewertung", "prioritaet", "befund", "verursachungsbereich",
+            "sicherheit_zuordnung", "begruendung_zuordnung",
+            "begruendung_ntf", "ursachenhypothese", "klaerung_durch",
+            "naechster_schritt", "pruefungen_grenzen",
+            "sicherheit_bewertung", "fehlerwiederkehr",
+            "begruendung_fehlerwiederkehr",
+        )
+        for pseudo, case in updated_cases.items():
+            old_id, old = old_cases[pseudo]
+            if old_id is not None and old_id.startswith("T"):
+                if case.cluster_id != old_id:
+                    raise ValueError(
+                        f"Technische Fallzuordnung geändert: {pseudo}"
+                    )
+            elif not case.cluster_id or not case.cluster_id.startswith("S"):
+                raise ValueError(
+                    f"Nicht technisch belegter Fall braucht S-Cluster: {pseudo}"
+                )
+            for field in stable:
+                before = old.get(field, ChatGPTFall.model_fields[field].default)
+                if getattr(case, field) != before:
+                    raise ValueError(
+                        f"NTF-/Verursacher-/Wiederkehrwert verändert: {pseudo}/{field}"
+                    )
+
     def import_file(
         self, path: Path, *, private_csv: Path | None = None,
         progress: Callable[[str], None] | None = None,
@@ -772,6 +856,29 @@ class ChatGPTAnalyseStore:
                 )
             for symptom in finding.fehlerbilder:
                 self._validate_belege(symptom.belege, mapping, verified_rows)
+
+        if data.cluster_abdeckung == "T_S_v1":
+            if set(input_cases) != set(members):
+                raise ValueError(
+                    "Nicht alle Fälle haben eine T- oder S-Zuordnung."
+                )
+            for group in data.cluster:
+                prefix = group.cluster_id[:1]
+                if (prefix not in ("T", "S")
+                        or not re.fullmatch(r"[TS][0-9]{2,4}", group.cluster_id)
+                        or group.ebene != prefix):
+                    raise ValueError(
+                        "T/S-Cluster benötigen eindeutige Kennung und Ebene."
+                    )
+                if prefix == "S" and group.sicherheit == "Hoch":
+                    raise ValueError(
+                        "Symptomcluster dürfen nicht als technisch hoch "
+                        "gesicherter Ursachencluster ausgegeben werden."
+                    )
+            for case in data.faelle:
+                if case.cluster_id is None:
+                    raise ValueError("Fall ohne Cluster: " + case.fall_id)
+            self._validate_ts_revision(data)
 
         if data.fehlerbild_methodik == "multilabel_symptom_nachweis_v2":
             missing = set(case_by_alias) - input_cases

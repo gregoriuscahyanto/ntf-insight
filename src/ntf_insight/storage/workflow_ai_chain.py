@@ -164,10 +164,31 @@ class WorkflowAIChainStore:
                     [package_id, analyse_id],
                 ).fetchone()
                 if prepared is None:
-                    raise ValueError(
-                        "Zweites LLM-Ergebnis passt zu keinem zuvor "
-                        "erzeugten Cluster-Kontextpaket."
-                    )
+                    # Neu verteilte Cluster sind weiterhin Runde 2 und
+                    # durch die alte importierte Analyse identifiziert.
+                    # Keine gefälschte Exportregistrierung erzeugen.
+                    source = con.execute(
+                        "SELECT original_json FROM chatgpt_imports "
+                        "WHERE paket_id=? AND analyse_id=?",
+                        [package_id, analyse_id],
+                    ).fetchone()
+                    try:
+                        previous_id = json.loads(source[0]).get(
+                            "analyse_id_vorher"
+                        ) if source else None
+                    except (TypeError, ValueError):
+                        previous_id = None
+                    previous = con.execute(
+                        "SELECT 1 FROM workflow_ai_rounds "
+                        "WHERE paket_id=? AND analyse_id=? AND round_number=2",
+                        [package_id, previous_id],
+                    ).fetchone() if previous_id else None
+                    if not previous:
+                        raise ValueError(
+                            "Zweites LLM-Ergebnis ist weder ein erzeugtes "
+                            "Clusterpaket noch eine validierte Neuverteilung "
+                            "der importierten zweiten Analyse."
+                        )
             con.execute(
                 "INSERT INTO workflow_ai_rounds "
                 "(paket_id,analyse_id,round_number) VALUES (?,?,?) "
@@ -238,6 +259,29 @@ class WorkflowAIChainStore:
                 "SELECT 1 FROM workflow_second_ai_exports WHERE "
                 "profile_id=? AND part_key=? AND paket_id=? AND analyse_id=?",
                 [profile, key, paket_id, analyse_id],
+            ).fetchone() is not None
+
+    def is_authorized_second_result(
+        self, profile_id: str, part_number: str, paket_id: str,
+        analyse_id: str, previous_id: str | None = None,
+    ) -> bool:
+        """Einziger Import-Button: Originalexport oder geprüfte T/S-Neuverteilung."""
+        if self.is_prepared_second(
+            profile_id, part_number, paket_id, analyse_id,
+        ):
+            return True
+        if not previous_id or previous_id == analyse_id:
+            return False
+        profile, key = _profile_id(profile_id), part_key(part_number)
+        with self.store.connect() as con:
+            return con.execute(
+                "SELECT 1 FROM workflow_first_ai_packages f "
+                "JOIN workflow_ai_rounds r ON r.paket_id=f.paket_id "
+                "JOIN chatgpt_imports i ON i.paket_id=r.paket_id "
+                "AND i.analyse_id=r.analyse_id "
+                "WHERE f.profile_id=? AND f.part_key=? AND f.paket_id=? "
+                "AND r.analyse_id=? AND r.round_number=2",
+                [profile, key, paket_id, previous_id],
             ).fetchone() is not None
 
     def second_status(self, paket_id: str) -> tuple[int, int]:

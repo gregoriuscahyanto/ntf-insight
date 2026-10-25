@@ -2117,13 +2117,14 @@ class MainWindow(QMainWindow):
             )
             if package is None or package.paket_id != package_id:
                 raise ValueError("Falsche Paket-ID für das gewählte Projekt.")
-            if not workflow.ai_chain.is_prepared_second(
+            if not workflow.ai_chain.is_authorized_second_result(
                 workflow.profile_id, workflow._context_part,
-                package_id, analyse_id,
+                package_id, analyse_id, payload.get("analyse_id_vorher"),
             ):
                 raise ValueError(
-                    "Diese Analyse-ID stammt nicht aus einem zweiten "
-                    "Clusterpaket dieses Projekts."
+                    "Diese Analyse-ID ist weder ein erzeugtes zweites "
+                    "Clusterpaket noch eine zugeordnete Neuverteilung "
+                    "der bereits importierten zweiten Analyse."
                 )
         except (OSError, ValueError, KeyError, TypeError) as exc:
             workflow.set_notice(

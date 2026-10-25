@@ -226,11 +226,28 @@ Projektkonfiguration und keine Ursachenfeststellung.
   filtert erst danach die Fälle der ausgewählten Projektsachnummer.
   QEC-Entscheidungen bleiben weiterhin über die konkrete Quell-SHA gebunden.
 - **Projekt-Import** überprüft Hüllenformat, SHA-256-Prüfsummen und den
-  enthaltenen portablen Datenstand. Das neue Projekt wird zur bestehenden
-  Datenbank hinzugefügt, ohne andere Projekte oder deren Dateien zu
-  ersetzen. Bei gleicher bereits vorhandener Bauteilprofil/Sachnummer
-  wird **nicht** automatisch überschrieben oder zusammengeführt,
-  sondern der Vorgang mit erklärender Meldung abgelehnt.
+  enthaltenen portablen Datenstand. Eine neue Sachnummer wird zur bestehenden
+  Datenbank hinzugefügt, ohne andere Projekte oder deren Dateien zu ersetzen.
+- **Vorhandenes Projekt ersetzen:** Wenn beim Import Bauteilprofil UND
+  normalisierte Sachnummer übereinstimmen, bietet die GUI ausdrücklich
+  **„Vorhandenes Projekt ersetzen“** oder Abbrechen an. Der Ersatz ist
+  **kein Merge**: Der bisherige Stand dieses Projekts (einschließlich KI-
+  Ergebnisse) wird durch den Stand der eingelesenen `.ntfproject` ersetzt.
+  Der Nutzer legt zuerst den Speicherort einer dauerhaften, vollständigen
+  `.ntfbackup`-Sicherung des bisherigen Ziel-Laptops fest. Eine Sicherung
+  wird ohne Überschreiben erstellt, bevor irgendeine Löschung stattfindet.
+  Anschließend wird der Ersatz **nur in einer separaten Arbeitskopie**
+  durchgeführt und der geprüfte neue Gesamtstand erst danach eingespielt.
+  Die ursprüngliche `.ntfproject` wird unverändert übernommen. Das
+  Sicherungspaket bleibt auch nach erfolgreichem Ersatz erhalten.
+- **Sicherheitsgrenzen:** Die bestehende strenge Voll-Löschprüfung wird in
+  der Arbeitskopie angewandt. Nicht eindeutig zuordenbare Fälle, gemeinsam
+  genutzte FINs/QEC-Master, mehrdeutige Quellen oder unbekannte Tabellen
+  **blockieren** den Ersatz; andere Projektstände werden nicht bewusst
+  verändert. Bei einem Fehler vor der Endübernahme bleibt der Originalstand
+  erhalten; zur Wiederherstellung nach einem unerwarteten Fehler beim letzten
+  Dateiaustausch dient die zuvor erzeugte `.ntfbackup`. Auf ausreichend
+  freien Platz für Sicherung und Arbeitskopie achten.
 - **Wichtige Freigabegrenze:** Eine physische Originalquelldatei kann
   mehrere Projekte enthalten (z. B. gemeinsame QEC-Master-Excel).
   Sie kann nicht bytegleich UND auf nur eine Sachnummer reduziert sein;
@@ -519,3 +536,34 @@ und den SSL-Endbefundfilter aus Schritt 01. *Geparst* ist keine
 fachlich bestätigte NTF-Bewertung und kein Nachweis, dass der Portaldatenstand
 aktuell oder vollständig ist. Die großen ZIP-/JSON-Aktionen aus
 03 und 05 bleiben davon unabhängig.
+
+### T/S-Gesamtclusterung im zweiten ChatGPT-Paket
+
+Der zweite ZIP-Export enthält **eine** verpflichtende Ergebnisvorlage
+(`chatgpt_ergebnis_vorlage.json`) und **ein** verbindliches Schema
+(`chatgpt_ergebnis_schema.json`) mit `cluster_abdeckung=T_S_v1`.
+Für die zugehörigen QEC-Fälle gilt eine vollständige, exklusive
+Gruppenzuordnung: `cluster_id` darf in der zweiten Runde **nicht null**
+sein. **Txx** bezeichnet eine durch technische Indizien begründete
+Ähnlichkeitsgruppe, beispielsweise DTC-/ECU-/Laborbefundmuster.
+**Sxx** bezeichnet eine vorsichtig benannte Ähnlichkeit des gemeldeten
+Fehlerbilds oder eine explizite Datenlage-/Prozessgruppe bei fehlendem
+technischem Nachweis. S bedeutet ausdrücklich **keinen** nachgewiesenen
+Pumpendefekt und keine Lieferantenverantwortung.
+
+Beim Klick auf **„Cluster-Ergebnis importieren“** wird **immer derselbe
+Importweg** verwendet. Die App validiert die T/S-Abdeckung, Fall- und
+Clusteridentitäten sowie Originalbelegstellen. Eine Neuverteilung der S-Fälle
+aus einer bereits importierten zweiten Analyse ist über
+`analyse_id_vorher` an genau dieses Projekt und die frühere zweite
+Auswertung gebunden. Es gibt keinen zweiten Button oder zusätzlichen
+Folgeanalyse-Importdialog. Die frühere Analyse bleibt revisionssicher
+gespeichert. Technische T-Cluster, NTF-Urteile, Verursacherhypothesen und
+Wiederkehrbewertungen dürfen dabei **nicht stillschweigend geändert** werden.
+Beim Projekt-Export werden beide importierten Versionen mitgenommen.
+
+Die GUI zeigt T und S gemeinsam in `cluster[]`, weist aber beide Ebenen
+separat aus. **100 % gruppiert bedeutet nicht 100 % technische Ursachen
+aufgeklärt.** Die unverändert getrennten Gruppierungen nach Fehlerbild,
+Nachweisbasis und Verursachungsbereich behalten ihre Bedeutung.
+
