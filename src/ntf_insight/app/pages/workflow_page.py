@@ -2468,8 +2468,11 @@ class WorkflowPage(QWidget):
         self._llm_case_summaries = list(overview.cases)
         cause_by_cluster = {
             group.cluster_id: (
-                group.cause_counts[0][0] if group.cause_counts
-                else "Nicht zuordenbar"
+                "Mehrere gleich häufige Hypothesen"
+                if len(group.cause_counts) > 1
+                and group.cause_counts[0][1] == group.cause_counts[1][1]
+                else group.cause_counts[0][0]
+                if group.cause_counts else "Nicht zuordenbar"
             ) for group in overview.groups
         }
         self.chatgpt_cluster_model.set_rows([
