@@ -85,8 +85,21 @@ def export_qec_first_package(
     # Ein unbekanntes Quellprofil ist nur bei EINDEUTIGEM registriertem
     # Sachnummernprojekt erlaubt (z. B. HV-Batterie oder DC/DC-Wandler).
     projects = WorkflowProjectStore(service.store).list_projects()
+    all_cases = service.store.load_cases()
+    # QEC-Original ohne Sachnummer nur eindeutig per FIN+Referenz
+    # einem einzigen Sachnummernkontext zuordnen.
+    parts_by_qec_ref: dict[tuple[str, str], set[str]] = defaultdict(set)
+    for source_case in all_cases:
+        key = (
+            source_case.vin.strip().upper(),
+            str(source_case.qec_reference or "").strip(),
+        )
+        if key[0] and key[1]:
+            parts_by_qec_ref[key].add(
+                part_key(str(source_case.qec_part_number or ""))
+            )
     chosen = [
-        case for case in service.store.load_cases()
+        case for case in all_cases
         if case.case_id in case_ids
         and case.vin.strip().upper() in fins
         and qec_case_matches_project(
@@ -156,6 +169,16 @@ def export_qec_first_package(
                 doc_part = part_key(str(candidate["metadata"].get("part_number") or ""))
                 if doc_part and doc_part != part_key(part_number):
                     status, reason = "Pruefbedarf", "Widerspruechliche QEC-Sachnummer"
+                elif (
+                    not doc_part
+                    and parts_by_qec_ref.get((fin, ref), set())
+                    != {part_key(part_number)}
+                ):
+                    status, reason = (
+                        "Pruefbedarf",
+                        "QEC-Bericht ohne Sachnummer ist projektuebergreifend "
+                        "nicht eindeutig zuordenbar",
+                    )
                 else:
                     doc = candidate
                     meta = candidate["metadata"]
@@ -178,7 +201,8 @@ def export_qec_first_package(
                     if not doc_part:
                         reason = (
                             (reason + "; " if reason else "")
-                            + "Sachnummer im QEC-Bericht nicht angegeben"
+                            + "Sachnummer fehlt im Bericht; FIN/QEC-Referenz "
+                            "ist im lokalen Datenbestand eindeutig"
                         )
                     ready += 1
                     chosen_docs[candidate["source_sha256"]] = candidate
