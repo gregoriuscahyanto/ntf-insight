@@ -1126,6 +1126,7 @@ class WorkflowPage(QWidget):
             ("clusters", "Technische Cluster"),
             ("ungrouped", "Nicht gruppierte Fälle"),
             ("supplier", "Lieferant als Hypothese"),
+            ("recurrence", "Wiederkehr-Hinweise · LLM"),
         ):
             frame = QFrame(objectName="LLMClusterMetricCard")
             frame.setFrameShape(QFrame.Shape.StyledPanel)
@@ -2400,9 +2401,7 @@ class WorkflowPage(QWidget):
             return
         case = cases[source_row]
         payload = case.payload
-        recurrence_reason = payload.get("begruendung_fehlerwiederkehr") or (
-            "Kein gesonderter Vor-/Nach-Tausch-Nachweis in dieser LLM-Rückgabe."
-        )
+        recurrence_reason = case.recurrence_source
         self.chatgpt_case_details.setPlainText(
             f"Fall {case.case_id} · FIN {case.fin}\n"
             f"NTF-Einschätzung: {case.ntf} "
@@ -2417,6 +2416,8 @@ class WorkflowPage(QWidget):
             f"{payload.get('begruendung_zuordnung') or 'Nicht begründet'}\n"
             f"Fehlerwiederkehr nach Tausch: {case.recurrence} · "
             f"{recurrence_reason}\n"
+            f"Technische Hinweise laut LLM: "
+            f"{'; '.join(payload.get('themen') or []) or 'Keine'}\n"
             f"Gegenindizien / Datenlücken: "
             f"{payload.get('pruefungen_grenzen') or 'Nicht dokumentiert'}\n"
             f"Klärung durch: {payload.get('klaerung_durch') or 'Offen'}\n"
@@ -2519,6 +2520,7 @@ class WorkflowPage(QWidget):
             ("clusters", len(overview.groups)),
             ("ungrouped", overview.ungrouped),
             ("supplier", overview.supplier_hypotheses),
+            ("recurrence", overview.recurrence_signals),
         ):
             self.llm_metric_labels[key].setText(str(value))
 
