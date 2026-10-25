@@ -56,6 +56,18 @@ def _cause(value: object) -> str:
     return text if text and text != "—" else "Nicht zuordenbar"
 
 
+def _supplier_hypothesis(cause: str) -> bool:
+    """Eine explizite Verneinung ist KEINE Lieferantenhypothese."""
+    value = cause.casefold()
+    return "lieferant" in value and not any(
+        negation in value for negation in (
+            "kein lieferant", "nicht lieferant", "nicht beim lieferanten",
+            "lieferant ausgeschlossen", "lieferant unwahrscheinlich",
+            "keine lieferanten", "nicht durch lieferant",
+        )
+    )
+
+
 def build_llm_cluster_overview(
     cluster_payloads: Sequence[dict],
     finding_rows: Sequence[tuple[str, str | None, str, str]],
@@ -118,7 +130,7 @@ def build_llm_cluster_overview(
         causes=tuple(sorted(causes.items(), key=lambda item: (-item[1], item[0]))),
         ungrouped=sum(not item.cluster_id for item in cases),
         supplier_hypotheses=sum(
-            "lieferant" in item.cause.casefold() for item in cases
+            _supplier_hypothesis(item.cause) for item in cases
         ),
         unknown_causes=sum(
             item.cause.casefold() in {"nicht zuordenbar", "unbekannt", "offen"}
