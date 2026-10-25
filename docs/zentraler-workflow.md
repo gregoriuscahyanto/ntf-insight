@@ -50,9 +50,23 @@ und keine Wahrscheinlichkeit einer Lieferantenverursachung.
 
 ## 03 – NTF-Entscheidung
 
-- **Für ChatGPT exportieren (ZIP)** verwendet das schon vorhandene
-  pseudonymisierte Analysepaket mit \`chatgpt_ergebnis_vorlage.json\` und
-  \`chatgpt_ergebnis_schema.json\`. Keine automatische Übertragung.
+- **QEC-Neuauswertung exportieren (ZIP)** erzeugt eine neue, nur aus den
+  **projektbezogenen QEC-Fällen (Schritt 01)** und den nach FIN, QEC-Referenz
+  und Sachnummer passenden **QEC-Befundungsdaten (Schritt 02)** gebildete
+  Analysebasis mit ChatGPT-Ergebnisvorlage und -Schema. QuickTests, AutoExport,
+  TIPS, SMR-D und technische Unterlagen aus Schritt 04/05 sind **nicht**
+  Bestandteil dieses Erstexports. Keine automatische Übertragung.
+- Alle fünf QEC-Reiter werden strukturiert ausgegeben. Fach-/Lieferantenfreitexte
+  und Nachanalyse-Texte sind standardmäßig ausgeschlossen; sie dürfen nur mit
+  ausdrücklichem Freitext-Opt-in ins ZIP. Unveränderte QEC-Berichte und Anhänge
+  benötigen zusätzlich eine eigenständige Original-Opt-in-Freigabe.
+- Die Datei qec_datenluecken.csv dokumentiert fehlende oder ältere Reiter,
+  unsichere Zuordnungen und nicht ausgewertete Anhänge. Ohne wenigstens
+  einen eindeutig zugeordneten, geparsten QEC-Bericht ist die erste
+  Neuauswertung nicht ausführbar.
+- Eine neue ZIP erhält eine **neue Paket-ID**. Ältere Ergebnisse bleiben
+  lokal archiviert und werden nicht überschrieben; die neue Auswertung
+  wird erst nach dem zugehörigen, validierten JSON-Rückimport sichtbar.
 - **ChatGPT-Ergebnis importieren (JSON)** prüft Paket-ID, Belegreferenzen,
   Pseudonym-Zuordnung und speichert Vorschläge **getrennt und ungeprüft**.
 - Tabelle: FIN, QEC-Fall, SSL-Endbefund, manuelle QEC-Entscheidung,
@@ -77,9 +91,12 @@ und keine Wahrscheinlichkeit einer Lieferantenverursachung.
   Tabellenzeilen wird separat angezeigt; Filter verändern **weder**
   die QEC-Kohorte **noch** Auswertungen, Entscheidungsstatus oder Exporte.
   Beim Wechsel des Sachnummernprojekts werden die Filter zurückgesetzt.
-- **Wichtig:** Der bestehende KI-Analysepaketexport umfasst zurzeit **alle
-  lokal importierten Fälle**, nicht automatisch nur die gewählte Sachnummer.
-  Bei gesetztem Sachnummernfilter gibt es davor eine explizite Warnung.
+- **Projektschutz:** Der Workflow-Erstexport nimmt ausschließlich die in
+  Schritt 01 aktuell ausgewählten QEC-Fall-IDs, die korrekte Sachnummer
+  und dieses Bauteilprofil auf. Eine gemeinsame FIN reicht nicht aus,
+  um fremde Schadteilfälle aufzunehmen. Der allgemeine Quellenexport unter
+  Datenquellen bleibt eine separate Funktion.
+
 
 ## 04 – Unterlagen für die zweite ChatGPT-Clusteranalyse
 
@@ -116,8 +133,8 @@ einer einzigen integrierten lokalen Clusteranalyse:
 
 1. **QEC-FIN-Liste:** Excel/Portal, Sachnummern-Kohorte.
 2. **QEC-Befundung:** Berichte nach FIN und QEC-Referenz.
-3. **NTF-Entscheidung:** Erstes pseudonymisiertes KI-Paket exportieren,
-   Rückgabe-JSON über bestehenden validierten ChatGPT-Import einlesen.
+3. **QEC-Neuauswertung:** Erstes KI-Paket nur aus Schritt 01/02 exportieren,
+   Rückgabe-JSON über den bestehenden validierten ChatGPT-Import einlesen.
    Bei erfolgreich exportierten Paketen wird zusätzlich eine
    **SHA-256-gesicherte Kopie im lokalen raw/-Archiv** registriert.
    Paket-ID, Profil und Sachnummer werden in DuckDB gespeichert und
@@ -252,10 +269,10 @@ Neustart in den neuen Workflow migriert und nicht als Sperre weitergeführt.
   werden ausschließlich ausgewählte FINs berücksichtigt: QEC-Abruf,
   ChatGPT-1-Export, QuickTests/TIPS-Abruf, lokales Clustering und
   ChatGPT-2-Auswertung. Der QEC-CSV-Export respektiert dieselbe Auswahl.
-- Die erste ChatGPT-ZIP wird in dieser Oberfläche tatsächlich auf
-  die gewählten FINs und zugehörige Fall-/QuickTest-/QEC-Daten begrenzt.
-  Die privat aufbewahrte Pseudonymzuordnung enthält ebenfalls nur
-  die ausgewählten FINs. Vor Übertragung immer lokal kontrollieren.
+- Die erste ChatGPT-ZIP enthält **nur** die ausgewählten QEC-Fälle der
+  aktuellen Sachnummer und die passenden QEC-Befunde. Sie nimmt **keine**
+  FIN-weiten QuickTests, AutoExport-Daten oder separaten TIPS-Berichte auf.
+  Die private FIN-/Fallzuordnung bleibt lokal und gehört niemals in den Upload.
 
 ### 02 QEC-Befundung
 
@@ -266,8 +283,13 @@ Neustart in den neuen Workflow migriert und nicht als Sperre weitergeführt.
   ausstehende Zeilen neutral. Das vorhandene lokale Download-Datum
   bleibt je FIN/Referenz sichtbar.
 
-### 03 NTF-Entscheidung
+### 03 QEC-basierte Neuauswertung und NTF-Hypothesen
 
+- Erneuter Export bildet eine **neue** erste Analysebasis. Bereits
+  gespeicherte KI-Ergebnisse und QEC-Fachentscheidungen bleiben bestehen.
+- Die erste Auswertung ist vorläufig. SSL-Endbefunde und Lieferantenberichte
+  sind kein Nachweis der Ursache; DTC-Wiederkehr und weitere Diagnosequellen
+  werden erst in Schritt 04/05 gesondert geprüft.
 - Die ZIP-Export- und JSON-Import-Schaltflächen sind vergrößert.
 - Ein Donut für \`NTF plausibel\`, \`NTF fraglich\`, \`Kein reiner NTF\`,
   \`Nicht bewertbar\`, \`Nicht bewertet\` sowie ggf. \`Mehrere Bewertungen\`;
