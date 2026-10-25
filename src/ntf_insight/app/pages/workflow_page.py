@@ -1582,6 +1582,15 @@ class WorkflowPage(QWidget):
                     self.context_source_dates[key].setText(
                         "Noch kein Abruf / Import"
                     )
+                if key in self._context_operation_started:
+                    # refresh_context_files() wird auch waehrend des Parsings
+                    # aufgerufen. Den neuen Zeitstempel fuer danach merken,
+                    # ihn aber nicht hinter dem laufenden Balken zeichnen.
+                    date_label = self.context_source_dates[key]
+                    date_label.setProperty(
+                        "inactiveSourceDate", date_label.text(),
+                    )
+                    date_label.clear()
                 imported_event = log.get("Einlesen")
                 local_parsed = bool(
                     imported_event and imported_event[1] in {"Eingelesen", "Archiviert"}
