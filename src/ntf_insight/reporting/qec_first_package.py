@@ -133,7 +133,6 @@ def export_qec_first_package(
     report_rows: list[dict] = []
     ready = 0
     for case in chosen:
-        alias = case_alias[case.case_id]
         fin = case.vin.strip().upper()
         ref = str(case.qec_reference or "").strip()
         candidates = by_key.get((fin, ref), [])
