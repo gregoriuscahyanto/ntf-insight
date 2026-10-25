@@ -27,11 +27,11 @@ noch CPC3 voraus. Diagnosen und Ursachen werden nur bei vorhandenen
 Nachweisen als Hypothesen ausgewertet. Fehlt eine Quelle, ist das eine
 Datenlücke – kein Grund, ihre Inhalte zu erfinden.
 
-### Workflow 05: vollständiger technischer Kontext (zweiter ChatGPT-Export)
+### Workflow 05: vollständiger technischer Kontext (zweiter LLM-Export)
 
 Der zweite ZIP-Export übernimmt in `basis/` die **gesamte erste QEC-ZIP**
 und in `voranalyse/erstes_chatgpt_ergebnis.json` die validierte erste
-ChatGPT-Auswertung. Alle Fälle und Pseudonyme bleiben erhalten.
+LLM-Auswertung. Alle Fälle und Pseudonyme bleiben erhalten.
 
 Zusätzlich befinden sich im Ordner `diagnose/` automatisch,
 aber **nur für FINs der gewählten Profil-/Sachnummern-Fallkohorte**:
@@ -96,11 +96,11 @@ absichtlich **enger** als der bisherige allgemeine Quellenexport:
   Unternehmensfreigabe; auch Pseudonyme sind keine sichere Anonymisierung.
 
 Das erste ZIP enthält in diesem Modus unter anderem
-`faelle.csv`, `fahrzeuge.csv`, `cluster_input.csv`,
-`fallmerkmale.csv`, `qec_berichte.csv`, `qec_felder.csv`,
+`faelle.csv`, `fahrzeuge.csv`, `fallmerkmale.csv`,
+`qec_berichte.csv`, `qec_felder.csv`,
 `qec_datenluecken.csv`, `bewertungen_NICHT_CLUSTER.csv`,
 `methodik.csv`, `Auswertung.xlsx`, das Manifest und den bestehenden
-ChatGPT-Rückgabevertrag. Die Datensätze in `qec_felder.csv` verweisen auf
+LLM-Rückgabevertrag. Die Datensätze in `qec_felder.csv` verweisen auf
 die pseudonymisierten QEC-Berichte und ihre konkrete Fundstelle.
 Ein veralteter, widersprüchlicher oder fehlender QEC-Teilbericht wird nicht
 als verlässlicher Originalbefund ausgegeben. **Fehlende Dokumente sind
@@ -109,9 +109,19 @@ ausdrücklich zulässig:** Auch ohne einen einzigen QEC-Bericht erzeugt Schritt
 `qec_datenluecken.csv`. Für unbelegte Fälle ist `Nicht bewertbar`
 die richtige Ausgangskategorie, nicht eine behauptete Fehlerfreiheit.
 
+**Getrennte LLM-Runden:** Der erste Workflow-Export dient **nur** der
+vorläufigen NTF-Einzelfallentscheidung. Zulässige Einstufungen sind
+`NTF plausibel`, `NTF fraglich`, `Kein reiner NTF` und
+`Nicht bewertbar`/`Nicht zuordenbar` bei unzureichender Datenlage.
+Ein möglicher Verursachungsbereich ist eine getrennte Hypothese, keine
+Schuldzuschreibung. Runde 1 liefert `cluster=[]`, keine Cluster-IDs und
+auch keine `cluster_input.csv`. Die tiefgehende technische Ursachenanalyse
+und Clusterung erfolgen erst mit dem zweiten LLM-Export aus Schritt 05.
+Der **allgemeine** Datenquellen-Export besitzt weiterhin seine eigene
+`cluster_input.csv`, unabhängig vom QEC-Erstworkflow.
 **Neuauswertung:** Ein erneuter Export erzeugt eine neue `paket_id`
 mit eigener lokaler `_NICHT_HOCHLADEN_ZUORDNUNG.csv`. Frühere Pakete
-und die zugehörigen ChatGPT-Ergebnisse bleiben bestehen. Die erste
+und die zugehörigen LLM-Ergebnisse bleiben bestehen. Die erste
 Auswertung des neuen Pakets erscheint erst nach Import ihrer neuen
 Ergebnis-JSON; manuelle QEC-Entscheidungen bleiben unverändert.
 
