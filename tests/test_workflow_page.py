@@ -450,7 +450,9 @@ def test_context_scrapers_use_only_current_qec_part_with_single_fetch_action(
     assert page.context_scraper_buttons["tips_writer"]["parse"].text() == "Alle neu parsen"
     window._context_scrape("tips_writer", "all")
     assert calls[-1] == ("tips", ["WDD12345678901234"], True)
-    assert "Abruf" in page.context_source_dates["tips_writer"].text()
+    tips_date = page.context_source_dates["tips_writer"]
+    assert tips_date.text() == ""
+    assert "Abruf" in tips_date.property("inactiveSourceDate")
     tips.worker = None
     tips_worker.finished.emit()
     window.close()
@@ -620,9 +622,18 @@ def test_source_row_colors_and_live_document_progress(tmp_path, monkeypatch):
     page._update_coverage_labels()
     assert page.context_source_rows["tp_dashboard"].property("coverageState") == "done"
 
+    # Der fruehere Zeitstempel unter FINs darf nicht hinter dem
+    # aktiven Fortschrittsbalken hervorragen. Nach Ende wieder sichtbar.
+    timestamp = page.context_source_dates["diagnosis_viewer"]
+    timestamp.setText("Import: 20.10.2026 14:08")
     page.set_context_operation(
         "diagnosis_viewer", True, "FIN-Fortschritt: 12/171 bearbeitet",
     )
+    assert timestamp.text() == ""
+    page.refresh_context_files()
+    assert timestamp.text() == ""
+    restored_date = timestamp.property("inactiveSourceDate")
+    assert restored_date
     bar = page.context_operation_bars["diagnosis_viewer"]
     assert bar.maximum() == 171 and bar.value() == 12
     assert page.context_operation_labels["diagnosis_viewer"].isHidden() is False
@@ -632,6 +643,7 @@ def test_source_row_colors_and_live_document_progress(tmp_path, monkeypatch):
     assert page.context_coverage_bars["diagnosis_viewer"].isHidden()
     assert page.context_source_dates["diagnosis_viewer"].isHidden()
     page.set_context_operation("diagnosis_viewer", False)
+    assert timestamp.text() == restored_date
     assert bar.isHidden()
     assert not page.context_coverage_bars["diagnosis_viewer"].isHidden()
     assert not page.context_source_dates["diagnosis_viewer"].isHidden()
@@ -1013,5 +1025,63 @@ def test_window_cannot_close_mid_zip_or_project_transfer(tmp_path, monkeypatch):
     window.closeEvent(event)
     assert not event.isAccepted()
     window.pages["sources"]._diagnostics_worker = None
+    window.close()
+    app.processEvents()
+
+
+def test_workflow_background_import_keeps_only_source_row_progress(tmp_path, monkeypatch):
+    """Workflow-Parser erzeugt weder modale Karte noch zweite Statusleisten-UI."""
+    app, window = _window(tmp_path, monkeypatch)
+    source = window.pages["sources"]
+    calls = []
+    monkeypatch.setattr(
+        window, "_show_operation_progress",
+        lambda *_a, **_kw: calls.append("modal"),
+    )
+    window._workflow_background_source_import = "diagnosis_viewer"
+    window._source_import_started("24 Dateien einlesen")
+    window._source_import_progress("Datei 2 von 24")
+    window._source_import_completed("Import abgeschlossen: 24 Dateien")
+    assert calls == []
+    assert not hasattr(window, "_background_task_panel")
+    assert not hasattr(window, "_background_task_stop")
+    assert window.stack.isEnabled()
+    assert window.navigation.isEnabled()
+
+    # Quellenzeile bleibt die einzige Stelle fuer Fortschritt und Abbruch.
+    workflow = window.pages["workflow"]
+    workflow.set_context_parser_busy("diagnosis_viewer", True, "resume")
+    assert (
+        workflow.context_scraper_buttons["diagnosis_viewer"]["resume_parse"].text()
+        == "Parsing stoppen"
+    )
+    workflow.set_context_parser_busy("diagnosis_viewer", False)
+
+    # Simuliert SourcesPage.import_ended nach QThread-Ende.
+    source.import_ended.emit()
+    assert window._workflow_background_source_import is None
+    window.close()
+    app.processEvents()
+
+
+def test_workflow_fetch_has_no_secondary_progress_or_stop_button(
+    tmp_path, monkeypatch,
+):
+    """Abruf-Bedienung ist ausschliesslich in der aktiven Quellenzeile."""
+    app, window = _window(tmp_path, monkeypatch)
+    page = window.pages["workflow"]
+    assert not hasattr(window, "_background_task_panel")
+    assert not hasattr(window, "_background_task_stop")
+
+    calls = []
+    page.action_requested.connect(calls.append)
+    page.set_context_scraper_busy("diagnosis_viewer", True, "missing")
+    button = page.context_scraper_buttons["diagnosis_viewer"]["missing"]
+    assert button.text() == "Abruf stoppen"
+    assert button.isEnabled()
+    page._trigger_context_fetch("diagnosis_viewer", "missing")
+    assert calls[-1] == "context_scrape:diagnosis_viewer:cancel"
+    assert not button.isEnabled()
+    page.set_context_scraper_busy("diagnosis_viewer", False)
     window.close()
     app.processEvents()

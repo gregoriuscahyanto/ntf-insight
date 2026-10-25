@@ -72,6 +72,10 @@ class MainWindow(QMainWindow):
         self._workflow_quicktest_download_pending = False
         self._context_scraper_failed: set[str] = set()
         self._context_worker = None
+        # Workflow-Abrufe und Parser laufen ohne modale Importkarte.
+        # Den aktiven Quellenimport nur kennzeichnen, damit er keinen
+        # allgemeinen Fortschrittsdialog oeffnet.
+        self._workflow_background_source_import: str | None = None
         # Importauswahl darf während des Parsings vorgemerkt werden; keine
         # zweite DuckDB-Schreiboperation vor Abschluss des aktiven Workers.
         self._pending_context_imports: list[
@@ -127,8 +131,29 @@ class MainWindow(QMainWindow):
         self.navigation.select_page("workflow")
 
     def closeEvent(self, event) -> None:  # noqa: N802
+        # Keine QThreads durch Schliessen der App waehrend des Parsings oder
+        # Portalabrufs zerstoeren; zum Abbruch dient die jeweilige Quellzeile.
         sources = self.pages["sources"]
         cases = self.pages["cases"]
+        if (
+            self._workflow_background_source_import is not None
+            or sources._worker is not None
+            or cases._quicktest_worker is not None
+            or (
+                cases.qec_download is not None
+                and cases.qec_download.worker is not None
+            )
+            or (
+                cases.tips_download is not None
+                and cases.tips_download.worker is not None
+            )
+        ):
+            event.ignore()
+            self.statusBar().showMessage(
+                "Vorgang läuft noch · zuerst in der Quellenzeile stoppen.",
+                12000,
+            )
+            return
         if (
             self._project_transfer_worker is not None
             or sources._diagnostics_worker is not None
@@ -222,6 +247,7 @@ class MainWindow(QMainWindow):
         pages["workflow"].mount_local_cluster(pages["cases"].cluster_workspace)
         sources = pages["sources"]
         sources.import_started.connect(self._source_import_started)
+        sources.import_ended.connect(self._background_source_import_finished)
         sources.import_progress.connect(self._source_import_progress)
         sources.import_completed.connect(self._source_import_completed)
         sources.import_failed.connect(self._source_import_failed)
@@ -501,7 +527,15 @@ class MainWindow(QMainWindow):
                 card.accept()
                 setattr(self, name, None)
 
+    def _background_source_import_finished(self) -> None:
+        """Worker ist beendet; die Workflow-Zeile verwaltet ihren Fortschritt."""
+        self._workflow_background_source_import = None
+
     def _source_import_started(self, message: str) -> None:
+        if self._workflow_background_source_import is not None:
+            # Quellzeile zeigt Fortschritt und Abbruch bereits an.
+            # Kein zweites Popup und kein Statusleisten-Widget starten.
+            return
         self._close_old_import_cards()
         dialog = self._show_operation_progress(
             "Quelldateien importieren", message,
@@ -511,10 +545,14 @@ class MainWindow(QMainWindow):
         dialog.cancel_requested.connect(self.pages["sources"]._cancel_import)
 
     def _source_import_progress(self, message: str) -> None:
+        if self._workflow_background_source_import is not None:
+            return
         if self._source_import_dialog is not None:
             self._source_import_dialog.update_message(message)
 
     def _source_import_completed(self, summary: str) -> None:
+        if self._workflow_background_source_import is not None:
+            return
         dialog = self._source_import_dialog
         if dialog is None:
             return
@@ -527,6 +565,11 @@ class MainWindow(QMainWindow):
             )
 
     def _source_import_failed(self, message: str) -> None:
+        if self._workflow_background_source_import is not None:
+            self.pages["workflow"].set_notice(
+                "Quellenimport fehlgeschlagen: " + message, error=True,
+            )
+            return
         if self._source_import_dialog is not None:
             self._source_import_dialog.fail(
                 message + "\nBereits archivierte Originaldateien bleiben erhalten."
@@ -1122,7 +1165,14 @@ class MainWindow(QMainWindow):
             )
             return
         self._case_quicktest_import_pending = True
+        # Automatischer Import nach Workflow-Portalabruf ebenfalls ohne Popup.
+        if self._workflow_quicktest_download_pending:
+            self._workflow_background_source_import = "diagnosis_viewer"
+        elif self._workflow_qec_download_pending:
+            self._workflow_background_source_import = "qec"
         source_page._archive_paths(paths)
+        if source_page._worker is None:
+            self._workflow_background_source_import = None
 
     def _portable_transfer_ready(
         self, *, allow_source_parser: bool = False,
@@ -1183,7 +1233,14 @@ class MainWindow(QMainWindow):
         )
 
     def _reload_after_source_import(self, summary: str, quicktests_saved: int = 0) -> None:
-        """Quellen neu laden, Workflow-Kontext bei workflowgestarteten Imports behalten."""
+        """Quellen neu laden, ohne den Nutzer aus seiner aktiven Ansicht zu holen."""
+        active_page = next(
+            (
+                name for name, page in self.pages.items()
+                if page is self.stack.currentWidget()
+            ),
+            "workflow",
+        )
         if (
             self._workflow_source_import_pending
             or self._workflow_qec_download_pending
@@ -1194,22 +1251,13 @@ class MainWindow(QMainWindow):
             self._workflow_quicktest_download_pending = False
             self._case_quicktest_import_pending = False
             self._reload_data()
-            self.navigation.select_page("workflow")
+            self.navigation.select_page(active_page)
             self.pages["workflow"].set_import_state(
                 False, can_resume=bool(self._workflow_last_qec_files)
             )
             self.pages["workflow"].set_notice(summary)
             return
-        # Ein Parser-Ergebnis darf die aktive Seite nicht wechseln.
-        # _reload_data() ersetzt sämtliche Widgets, daher die vorherige
-        # Auswahl merken und anschließend die neue Seite wieder anzeigen.
-        active_page = next(
-            (
-                name for name, page in self.pages.items()
-                if page is self.stack.currentWidget()
-            ),
-            "workflow",
-        )
+        # Auch normale Quellenimporte erhalten nach dem Refresh die Ansicht.
         from_case_download = self._case_quicktest_import_pending
         current_case = (
             self.pages["cases"].selector.currentData() if from_case_download else None
@@ -1464,6 +1512,7 @@ class MainWindow(QMainWindow):
             return
         index = source.source_type.findData(kind)
         before = source.source_type.currentIndex()
+        self._workflow_background_source_import = category
         try:
             source.source_type.setCurrentIndex(index if index >= 0 else 0)
             source._archive_paths(paths)
@@ -1471,6 +1520,7 @@ class MainWindow(QMainWindow):
             source.source_type.setCurrentIndex(before)
         worker = source._worker
         if worker is None:
+            self._workflow_background_source_import = None
             workflow.set_notice("Neuparsen konnte nicht gestartet werden.", error=True)
             return
         context = (workflow.profile_id, workflow._context_part)
@@ -1549,6 +1599,7 @@ class MainWindow(QMainWindow):
             return
         before = source.source_type.currentIndex()
         index = source.source_type.findData(kind)
+        self._workflow_background_source_import = category
         try:
             source.source_type.setCurrentIndex(index if index >= 0 else 0)
             source._archive_paths(paths)  # Nicht erneut bereits geparste Quellen.
@@ -1556,6 +1607,7 @@ class MainWindow(QMainWindow):
             source.source_type.setCurrentIndex(before)
         worker = source._worker
         if worker is None:
+            self._workflow_background_source_import = None
             workflow.set_notice(
                 "Parser konnte nicht gestartet werden.", error=True,
             )
