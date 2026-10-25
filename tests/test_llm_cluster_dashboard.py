@@ -54,6 +54,27 @@ def _examples():
                 "fehlerwiederkehr": "Hinweise auf Wiederkehr",
                 "begruendung_fehlerwiederkehr": "DTC nach dem Tausch",
                 "belege": [],
+                "fehlerbilder": (
+                    [
+                        {"kategorie": "Kurzschluss / Sicherung",
+                         "nachweisstatus": "Werkstattangabe"},
+                        {"kategorie": "Bus / Kommunikation",
+                         "nachweisstatus": "Diagnostisch belegt"},
+                    ] if case == "FALL-001" else
+                    [{"kategorie": "Kurzschluss / Sicherung",
+                      "nachweisstatus": "Werkstattangabe"}]
+                    if case == "FALL-002" else
+                    [{"kategorie": "Mechanik / Geraeusch / Beschaedigung",
+                      "nachweisstatus": "Laborbefund"}]
+                    if case == "FALL-003" else []
+                ),
+                "nachweisprofil": (
+                    ["Werkstattangabe vorhanden", "Diagnose vor Tausch (Datum)"]
+                    if case == "FALL-001" else
+                    ["Werkstattangabe vorhanden"] if case == "FALL-002"
+                    else ["Laborbefund optisch auffaellig"] if case == "FALL-003"
+                    else []
+                ),
                 "themen": (
                     ["Gleicher DTC nach Tausch: letzter Ereignis-km über Tauschstand"]
                     if case == "FALL-001" else []
@@ -88,10 +109,13 @@ def test_overview_uses_only_current_project_and_does_not_infer_causality():
     assert overview.ungrouped == 1
     assert overview.supplier_hypotheses == 1
     assert overview.unknown_causes == 2
-    assert overview.recurrence_signals == 1
-    assert overview.cases[0].recurrence == "Gleicher DTC nach Tausch · LLM-Hinweis"
+    assert overview.recurrence_signals == 4
     assert "FREMD-005" not in {case.case_id for case in overview.cases}
     assert overview.cases[0].recurrence == "Hinweise auf Wiederkehr"
+    assert overview.structurally_classified == 3
+    assert overview.legacy_without_symptom_fields == 1
+    assert dict(overview.symptoms)["Kurzschluss / Sicherung"] == 2
+    assert dict(overview.proof_profiles)["Werkstattangabe vorhanden"] == 2
     assert overview.causes[0][0] in {
         "Bauteil / Lieferant", "Bordnetz / Versorgung",
         "Montage", "Nicht zuordenbar",
@@ -173,10 +197,20 @@ def test_workflow_llm_dashboard_is_interactive_and_project_scoped(
         assert page.llm_metric_labels["clusters"].text() == "2"
         assert page.llm_metric_labels["ungrouped"].text() == "1"
         assert page.llm_metric_labels["supplier"].text() == "1"
-        assert page.llm_metric_labels["recurrence"].text() == "1"
+        assert page.llm_metric_labels["recurrence"].text() == "4"
         assert page.chatgpt_cluster_model.rowCount() == 2
         assert page.chatgpt_case_model.rowCount() == 4
         assert len(page.llm_cluster_chart.items) == 3
+        assert len(page.llm_symptom_chart.items) >= 3
+        assert len(page.llm_proof_chart.items) >= 3
+
+        page.llm_symptom_chart.selected.emit("Kurzschluss / Sicherung")
+        assert page.llm_symptom_filter.currentData() == "Kurzschluss / Sicherung"
+        assert page.chatgpt_case_proxy.rowCount() == 2
+        page.llm_proof_chart.selected.emit("Diagnose vor Tausch (Datum)")
+        assert page.chatgpt_case_proxy.rowCount() == 1
+        page.llm_clear_filters.click()
+        assert page.chatgpt_case_proxy.rowCount() == 4
 
         page.llm_cluster_chart.selected.emit("C01")
         assert page.llm_cluster_filter.currentData() == "C01"
@@ -206,6 +240,8 @@ def test_workflow_llm_dashboard_is_interactive_and_project_scoped(
         assert page.chatgpt_case_model.rowCount() == 0
         assert page.llm_metric_labels["cases"].text() == "0"
         assert not page.llm_cluster_chart.items
+        assert not page.llm_symptom_chart.items
+        assert not page.llm_proof_chart.items
     finally:
         window.close()
         app.processEvents()
