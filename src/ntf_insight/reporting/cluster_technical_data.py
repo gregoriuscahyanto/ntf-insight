@@ -52,13 +52,17 @@ def _normal_fin(raw: object) -> str:
     return fin if _FIN.fullmatch(fin) else ""
 
 
-def _redact(value: object, vins: set[str], *, max_chars: int = 12000) -> str:
-    """Schutz gegen einfache FIN-Leaks, keine garantierte Anonymisierung."""
+def _redact(value: object, vins: set[str]) -> str:
+    """Schutz gegen einfache FIN-Leaks, keine garantierte Anonymisierung.
+
+    Kein stilles Kuerzen geparster QuickTest-Seitentexte: wenn der Export
+    zu gross wird, meldet der Dateigroessen-Guard einen expliziten Fehler.
+    """
     if value is None:
         return ""
     if isinstance(value, datetime):
         return value.isoformat(sep=" ")
-    text = str(value)[:max_chars]
+    text = str(value)
     # Die allgemeinen FIN-Muster vermeiden >100 Regex-Laeufe pro
     # Diagnosezeile in grossen 2.000+-QuickTest-Projekten.
     text = re.sub(
