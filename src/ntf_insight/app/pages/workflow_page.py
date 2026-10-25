@@ -2592,13 +2592,15 @@ class WorkflowPage(QWidget):
             for item in overview.cases
         ])
 
-        top_groups = list(overview.groups[:10])
+        # ALLE T- und S-Cluster anzeigen. Die Balkenhöhe wächst pro
+        # Eintrag; der umgebende QScrollArea macht lange Listen scrollbar.
+        # Eine Top-10-Begrenzung würde vorhandene Cluster verstecken.
         cluster_bars = [
             (
                 group.cluster_id,
                 f"{group.cluster_id} · {group.title}", group.count,
             )
-            for group in top_groups
+            for group in overview.groups
         ]
         if overview.ungrouped:
             cluster_bars.append((
