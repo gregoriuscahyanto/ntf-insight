@@ -37,6 +37,25 @@ belastbare Gemeinsamkeiten bleiben `cluster_id=null` und dürfen
 nicht künstlich zugeordnet werden. Cluster sind Hypothesen, keine
 Beweise einer technischen oder rechtlichen Verursachung.
 
+**Verbesserte Clusterung auf zwei unabhängigen Ebenen:** Das zweite
+LLM muss für **jeden einzelnen Fall** `fehlerbilder[]` und
+`nachweisprofil[]` nach dem JSON-Schema ausgeben. Zur
+**Fehlerbild-Ebene** gehören ausdrücklich auch Werkstatt- und QEC-
+Beanstandungsangaben zu Stromaufnahme, Kurzschluss, Sicherung,
+Buskommunikation, thermischem Verhalten, Mechanik, Korrosion,
+Versorgung oder sonstigen Symptomen. Ein Fall kann mehrere Fehlerbilder
+haben, und jedes besitzt seinen eigenen Nachweisstatus und Belege.
+Eine nicht bestätigte Werkstattmeldung bleibt als Meldung sichtbar.
+
+Die **Nachweis-Ebene** unterscheidet Laborbefund, nicht
+reproduzierten Laborbefund, objektive Diagnose, Werkstattangabe und
+unzureichende Datenlage – auch gleichzeitig. Die übergeordnete
+technische `cluster_id` bleibt eine **separate, vorsichtige
+Mechanismus-Hypothese**. `cluster_id=null` darf deshalb nicht mit
+»Fall hat kein erkennbares Fehlerbild« verwechselt werden. Fehlt
+jegliches beschreibbares Symptom, wird `Fehlerbild unbekannt`
+vergeben, nicht eine fiktive Clusterursache.
+
 Die mögliche Ursache wird **pro Fall** mit Verursachungsbereich,
 Zuordnungssicherheit, Begründung, Gegenindizien, Quelle und
 empfohlener Prüfung dokumentiert. Eine Aussage über Lieferanten-
@@ -73,8 +92,17 @@ aber **nur für FINs der gewählten Profil-/Sachnummern-Fallkohorte**:
   Fehlerstatus, Häufigkeit, Kilometerständen und Parameterwerten.
 - `quicktest_fallbezug.csv`: zeitlicher Vergleich je ausgewähltem
   QEC-Fall; bei fehlendem **QEC-belegtem** Tauschdatum ausdrücklich
-  `tauschdatum_nicht_belegt`, bei identischem Tag `zeitlich_unklar`.
-  Keine automatische Zuschreibung zum Bauteil oder Lieferanten.
+  `tauschdatum_nicht_belegt`. Jeder vorhandene QuickTest am
+  **Tauschtag** behält `zeitlich_unklar_gleicher_tag`, bekommt aber
+  zusätzlich QT-Datum/-Uhrzeit, QT-km, QEC-Tauschdatum/-km,
+  `km_relativ_zum_tausch` und `zeitindiz`.
+  Beispiel: QT 15.808 km, Tausch 15.890 km, beide am 05.01.2024:
+  **82 km niedriger = plausibles Vortausch-Indiz**, nicht
+  automatisch ein bewiesener Vortauschtest. Ein am Tauschtag vorhandener
+  QT wird nie als »kein QuickTest vorhanden« gewertet. Bei
+  widersprüchlichen Datum-/Kilometerangaben werden die Quellen
+  zur manuellen Prüfung markiert. Keine automatische Zuschreibung
+  zum Bauteil oder Lieferanten.
 - `tp_dashboard_dtc.csv`, `tp_dashboard_reparaturen.csv`,
   `tp_dashboard_tips.csv`: geparste TP-Dashboard-Zeilen der ausgewählten
   FINs. Multi-FIN-Sammeldateien werden nie ungefiltert kopiert.
