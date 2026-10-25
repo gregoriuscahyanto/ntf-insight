@@ -57,6 +57,50 @@ class ChatGPTBeleg(BaseModel):
     ] = "Nicht verifiziert"
 
 
+FehlerbildKategorie = Literal[
+    "Stromaufnahme zu hoch / Ueberstrom",
+    "Stromaufnahme zu niedrig / fehlender Strom",
+    "Kurzschluss / Sicherung",
+    "Bus / Kommunikation",
+    "Versorgung / Spannung / Masse",
+    "Ansteuerung / Software / Regelung",
+    "Leistung / Funktion / Temperatur",
+    "Mechanik / Geraeusch / Beschaedigung",
+    "Feuchte / Korrosion / Abdichtung",
+    "Sensorik / Signal",
+    "Sonstige Symptome",
+    "Unbekannt",
+]
+FehlerbildNachweis = Literal[
+    "Werkstattangabe", "Diagnostisch belegt",
+    "Laborbefund", "Mehrfach belegt", "Hypothese / unbestaetigt",
+]
+NachweisProfil = Literal[
+    "Werkstattangabe vorhanden",
+    "Diagnose vor Tausch (Datum)",
+    "Diagnose am Tauschtag (km-Indiz vor)",
+    "Diagnose am Tauschtag (km-Indiz nach)",
+    "Diagnose am Tauschtag (Reihenfolge offen)",
+    "Diagnose nach Tausch (Datum)",
+    "Zeitrelation widerspruechlich",
+    "Laborfehler reproduziert",
+    "Laborfehler nicht reproduziert",
+    "Laborbefund optisch auffaellig",
+    "Datenlage unzureichend",
+]
+
+
+class LLMFehlerbild(BaseModel):
+    """Mehrfachnennung eines SYMPTOMS; kein automatischer Verursachernachweis."""
+
+    model_config = ConfigDict(extra="forbid")
+    kategorie: FehlerbildKategorie
+    nachweisstatus: FehlerbildNachweis = "Hypothese / unbestaetigt"
+    sicherheit: Sicherheit = "Offen"
+    begruendung: str = Field(default="", max_length=1800)
+    belege: list[ChatGPTBeleg] = Field(default_factory=list, max_length=15)
+
+
 class ChatGPTFall(BaseModel):
     """Spalten aus der gelieferten QEC-Auswertung; IDs sind pseudonymisiert."""
 
@@ -77,6 +121,12 @@ class ChatGPTFall(BaseModel):
     weitere_auffaelligkeiten: str = Field(default="", max_length=2500)
     sicherheit_bewertung: Sicherheit = "Offen"
     themen: list[str] = Field(default_factory=list, max_length=30)
+    # Ebene 1: alle Faelle haben ein oder mehrere, auch nur gemeldete,
+    # Fehlerbilder; Multi-Label, unabhaengig von exklusiver cluster_id.
+    # Ebene 2: Herkunft/Abdeckung ist getrennt von der Ursache bewertet.
+    # Optional fuer alte erste/zweite LLM-JSONs.
+    fehlerbilder: list[LLMFehlerbild] = Field(default_factory=list, max_length=15)
+    nachweisprofil: list[NachweisProfil] = Field(default_factory=list, max_length=12)
     belege: list[ChatGPTBeleg] = Field(default_factory=list, max_length=40)
 
 
@@ -595,20 +645,33 @@ class ChatGPTAnalyseStore:
         if not case_by_alias:
             raise ValueError("Die lokale Zuordnung enthält keine gültigen Fälle.")
 
+        # Belegprüfung gilt fuer die neuen mehrdimensionalen
+        # Fehlerbild-Zuordnungen genauso wie fuer Cluster und Einzelfaelle.
+        # Eine Quelle darf nicht durch Verschachtelung ungeprueft werden.
+        all_evidence = [
+            evidence
+            for item in (*data.cluster, *data.faelle)
+            for evidence in item.belege
+        ]
+        all_evidence.extend(
+            evidence
+            for finding in data.faelle
+            for symptom in finding.fehlerbilder
+            for evidence in symptom.belege
+        )
+
         # AE-/LB-IDs sind Zeilennummern im originalen Export, keine Einträge
         # der privaten Pseudonymzuordnung. Nur durch ZIP-Prüfung akzeptieren.
         requested_rows: dict[str, set[str]] = defaultdict(set)
-        for item in (*data.cluster, *data.faelle):
-            for evidence in item.belege:
-                spec = self._ROW_EVIDENCE.get(evidence.quelle)
-                if spec and re.fullmatch(spec[2], evidence.quelle_id):
-                    requested_rows[evidence.quelle].add(evidence.quelle_id)
+        for evidence in all_evidence:
+            spec = self._ROW_EVIDENCE.get(evidence.quelle)
+            if spec and re.fullmatch(spec[2], evidence.quelle_id):
+                requested_rows[evidence.quelle].add(evidence.quelle_id)
         report("Zeilenbelege gegen das archivierte Analysepaket prüfen …")
         verified_rows = self._validate_export_rows(data.paket_id, requested_rows)
         qec_fields = {
             (evidence.quelle_id, evidence.fundstelle)
-            for item in (*data.cluster, *data.faelle)
-            for evidence in item.belege
+            for evidence in all_evidence
             if evidence.quelle == "qec_felder"
         }
         self._verify_qec_field_locations(data.paket_id, qec_fields)
@@ -643,6 +706,14 @@ class ChatGPTAnalyseStore:
             elif pseudo in members:
                 raise ValueError("Clusterzuordnung fehlt bei einem aufgeführten Mitglied.")
             self._validate_belege(finding.belege, mapping, verified_rows)
+            categories = [symptom.kategorie for symptom in finding.fehlerbilder]
+            if len(categories) != len(set(categories)):
+                raise ValueError(
+                    "Fehlerbild mehrfach angegeben: pro Kategorie nur eine "
+                    "Zuordnung mit zusammengefassten Belegen verwenden."
+                )
+            for symptom in finding.fehlerbilder:
+                self._validate_belege(symptom.belege, mapping, verified_rows)
 
         report("Analyse und Cluster in einer Transaktion speichern …")
         with self.store.connect() as con:
