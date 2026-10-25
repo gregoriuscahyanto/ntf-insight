@@ -417,3 +417,34 @@ def test_unknown_qec_component_cannot_cross_ambiguous_project_boundaries(tmp_pat
         project_part_number="A ONE",
         projects=[pump, battery],
     )
+
+
+def test_existing_qec_report_with_inconsistent_tab_counts_is_only_partial(tmp_path):
+    """Vorhandene Dokumente pruefen, aber bei Inkonsistenz nicht abbrechen."""
+    source = _set_up(tmp_path)
+    with source.store.connect() as con:
+        old = con.execute(
+            "SELECT metadata_json FROM source_knowledge_documents "
+            "WHERE source_sha256=?",
+            ["a" * 64],
+        ).fetchone()
+        meta = json.loads(old[0])
+        meta.update({
+            "fresh_complete": True,
+            "sections": 5,
+            "fresh_sections": 3,
+            "missing_sections": ["Historie", "Ergebnis + Nachanalyse"],
+        })
+        con.execute(
+            "UPDATE source_knowledge_documents SET metadata_json=? "
+            "WHERE source_sha256=?",
+            [json.dumps(meta), "a" * 64],
+        )
+    out = _export(source, tmp_path / "nicht-alle-reiter.zip")
+    assert out.faelle == 1 and out.qec_berichte == 1
+    with ZipFile(out.pfad) as archive:
+        row = _rows(archive, "faelle.csv")[0]
+        assert row["qec_bericht_status"] == "Teilweise"
+        gap = _rows(archive, "qec_datenluecken.csv")[0]
+        assert "Historie" in gap["fehlende_reiter"]
+        assert "Abruf ist unvollstaendig" in gap["datenluecke"]
