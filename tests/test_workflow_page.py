@@ -620,9 +620,14 @@ def test_source_row_colors_and_live_document_progress(tmp_path, monkeypatch):
     page._update_coverage_labels()
     assert page.context_source_rows["tp_dashboard"].property("coverageState") == "done"
 
+    # Der fruehere Zeitstempel unter FINs darf nicht hinter dem
+    # aktiven Fortschrittsbalken hervorragen. Nach Ende wieder sichtbar.
+    timestamp = page.context_source_dates["diagnosis_viewer"]
+    timestamp.setText("Import: 20.10.2026 14:08")
     page.set_context_operation(
         "diagnosis_viewer", True, "FIN-Fortschritt: 12/171 bearbeitet",
     )
+    assert timestamp.text() == ""
     bar = page.context_operation_bars["diagnosis_viewer"]
     assert bar.maximum() == 171 and bar.value() == 12
     assert page.context_operation_labels["diagnosis_viewer"].isHidden() is False
@@ -632,6 +637,7 @@ def test_source_row_colors_and_live_document_progress(tmp_path, monkeypatch):
     assert page.context_coverage_bars["diagnosis_viewer"].isHidden()
     assert page.context_source_dates["diagnosis_viewer"].isHidden()
     page.set_context_operation("diagnosis_viewer", False)
+    assert timestamp.text() == "Import: 20.10.2026 14:08"
     assert bar.isHidden()
     assert not page.context_coverage_bars["diagnosis_viewer"].isHidden()
     assert not page.context_source_dates["diagnosis_viewer"].isHidden()
@@ -1017,59 +1023,59 @@ def test_window_cannot_close_mid_zip_or_project_transfer(tmp_path, monkeypatch):
     app.processEvents()
 
 
-def test_workflow_background_import_does_not_open_modal_progress(tmp_path, monkeypatch):
-    """Ein Workflow-Parser hält die App nicht durch ein Import-Popup an."""
-    from PySide6.QtWidgets import QMessageBox
-
+def test_workflow_background_import_keeps_only_source_row_progress(tmp_path, monkeypatch):
+    """Workflow-Parser erzeugt weder modale Karte noch zweite Statusleisten-UI."""
     app, window = _window(tmp_path, monkeypatch)
     source = window.pages["sources"]
-    workflow = window.pages["workflow"]
     calls = []
     monkeypatch.setattr(
         window, "_show_operation_progress",
         lambda *_a, **_kw: calls.append("modal"),
     )
-    window._workflow_background_source_import = "qec"
-    window._source_import_started("3 Dateien einlesen")
+    window._workflow_background_source_import = "diagnosis_viewer"
+    window._source_import_started("24 Dateien einlesen")
+    window._source_import_progress("Datei 2 von 24")
+    window._source_import_completed("Import abgeschlossen: 24 Dateien")
     assert calls == []
-    assert window._background_task_panel.isVisibleTo(window)
-    assert window._background_task_kind == "parsing"
+    assert not hasattr(window, "_background_task_panel")
+    assert not hasattr(window, "_background_task_stop")
     assert window.stack.isEnabled()
     assert window.navigation.isEnabled()
-    assert window._background_task_stop.isEnabled()
 
-    window._source_import_progress("Datei 2 von 3")
-    assert "Datei 2 von 3" in window._background_task_label.toolTip()
-    window._source_import_completed("Import abgeschlossen: 3 Dateien")
-    assert calls == []
+    # Quellenzeile bleibt die einzige Stelle fuer Fortschritt und Abbruch.
+    workflow = window.pages["workflow"]
+    workflow.set_context_parser_busy("diagnosis_viewer", True, "resume")
+    assert (
+        workflow.context_scraper_buttons["diagnosis_viewer"]["resume_parse"].text()
+        == "Parsing stoppen"
+    )
+    workflow.set_context_parser_busy("diagnosis_viewer", False)
 
-    # Simuliert SourcesPage.import_ended nach dem tatsächlichen QThread-Ende.
+    # Simuliert SourcesPage.import_ended nach QThread-Ende.
     source.import_ended.emit()
     assert window._workflow_background_source_import is None
-    assert window._background_task_kind is None
-    assert not window._background_task_panel.isVisibleTo(window)
     window.close()
     app.processEvents()
 
 
-def test_workflow_background_fetch_can_be_stopped_without_modal(tmp_path, monkeypatch):
-    """Statusleiste und Stop reagieren auch während des Seitenwechsels."""
+def test_workflow_fetch_has_no_secondary_progress_or_stop_button(
+    tmp_path, monkeypatch,
+):
+    """Abruf-Bedienung ist ausschliesslich in der aktiven Quellenzeile."""
     app, window = _window(tmp_path, monkeypatch)
+    page = window.pages["workflow"]
+    assert not hasattr(window, "_background_task_panel")
+    assert not hasattr(window, "_background_task_stop")
+
     calls = []
-    monkeypatch.setattr(
-        window, "_context_scrape",
-        lambda category, scope: calls.append((category, scope)),
-    )
-    window._background_operation_started(
-        "abruf", "diagnosis_viewer", "10 FINs werden abgerufen",
-    )
-    window.navigation.select_page("dashboard")
-    assert window.navigation.buttons["dashboard"].isChecked()
-    assert window._background_task_kind == "abruf"
-    window._background_task_stop.click()
-    assert calls == [("diagnosis_viewer", "cancel")]
-    assert not window._background_task_stop.isEnabled()
-    window._background_operation_finished("Abruf beendet")
-    assert not window._background_task_panel.isVisibleTo(window)
+    page.action_requested.connect(calls.append)
+    page.set_context_scraper_busy("diagnosis_viewer", True, "missing")
+    button = page.context_scraper_buttons["diagnosis_viewer"]["missing"]
+    assert button.text() == "Abruf stoppen"
+    assert button.isEnabled()
+    page._trigger_context_fetch("diagnosis_viewer", "missing")
+    assert calls[-1] == "context_scrape:diagnosis_viewer:cancel"
+    assert not button.isEnabled()
+    page.set_context_scraper_busy("diagnosis_viewer", False)
     window.close()
     app.processEvents()
