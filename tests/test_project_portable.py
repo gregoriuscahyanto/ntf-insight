@@ -3,15 +3,17 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from zipfile import ZipFile
+from zipfile import BadZipFile, ZipFile
 
 import duckdb
 import pytest
 
 from ntf_insight.ingestion.artifacts import RawArchive, SourceType
 from ntf_insight.ingestion.project_portable import (
-    PROJECT_EXTENSION, export_project, import_project,
+    PROJECT_EXTENSION, export_project, import_project, inspect_project_identity,
 )
+from ntf_insight.ingestion.project_replacement import replace_existing_project
+from ntf_insight.ingestion.portable_backup import restore_portable_backup
 from ntf_insight.storage.duckdb_store import DuckDBStore
 from ntf_insight.storage.workflow_progress import WorkflowProgressStore
 from ntf_insight.storage.workflow_projects import NTFProject, WorkflowProjectStore
@@ -45,6 +47,7 @@ def _case(store, part, fin, number):
                 f"CASE-{number}", fin, "coolant_pump",
                 json.dumps({
                     "case_id": f"CASE-{number}", "qec_part_number": part,
+                    "component_profile_id": "coolant_pump",
                     "vehicle": {"vin": fin},
                 }),
             ],
@@ -202,3 +205,152 @@ def test_two_independent_qec_excel_projects_survive_transfer_on_one_pc(tmp_path)
     assert WorkflowProjectStore(right_store).get(
         "coolant_pump", "SYNTH-PART-B"
     ) is not None
+
+
+def _replacement_fixture(tmp_path):
+    """Zwei synthetische Laptops mit gleicher Pumpensachnummer."""
+    incoming_root = tmp_path / "sender"
+    old_root = tmp_path / "laptop"
+    sender, sender_projects = _setup(incoming_root)
+    old, old_projects = _setup(old_root)
+    for projects in (sender_projects, old_projects):
+        projects.save(NTFProject(
+            "coolant_pump", "A 100 200", "Kühlmittelpumpe", ("CPC3",),
+        ))
+    old_projects.save(NTFProject(
+        "coolant_pump", "B 900 800", "Anderes Projekt", ("MCM",),
+    ))
+    _case(sender, "A100200", FIN_A, "NEU")
+    _case(old, "A100200", FIN_A, "ALT")
+    _case(old, "B900800", FIN_B, "FREMD")
+    old_artifact = _raw(old, old_root, "alt.txt", b"alter Pumpenbericht", FIN_A)
+    foreign_artifact = _raw(old, old_root, "fremd.txt", b"Fremdprojekt", FIN_B)
+    new_artifact = _raw(
+        sender, incoming_root, "neu.txt", b"neuer Pumpenbericht", FIN_A,
+    )
+    package = tmp_path / "pumpe.ntfproject"
+    export_project(incoming_root, package, "coolant_pump", "A 100 200")
+    return old_root, package, old_artifact, foreign_artifact, new_artifact
+
+
+def test_project_replacement_keeps_other_project_and_permanent_backup(tmp_path):
+    old_root, package, old_artifact, foreign_artifact, new_artifact = (
+        _replacement_fixture(tmp_path)
+    )
+    identity = inspect_project_identity(package)
+    assert identity.profile_id == "coolant_pump"
+    assert identity.part_number == "A 100 200"
+    backup = tmp_path / "Laptop-vor-Import.ntfbackup"
+    progress = []
+    result = replace_existing_project(
+        package, old_root, backup,
+        progress=lambda percent, msg: progress.append((percent, msg)),
+    )
+    assert result.replaced is True
+    assert result.backup_path == backup
+    assert result.part_number == "A 100 200"
+    assert result.case_count == 1
+    assert backup.is_file()
+    assert progress[-1][0] == 100
+    assert progress[-1][1].startswith("Projekt ersetzt")
+
+    db = DuckDBStore(old_root / "ntf-insight.duckdb")
+    projects = WorkflowProjectStore(db)
+    assert {
+        p.part_number for p in projects.list_projects()
+    } == {"A 100 200", "B 900 800"}
+    with db.connect() as con:
+        assert con.execute(
+            "SELECT case_id FROM case_snapshots ORDER BY case_id"
+        ).fetchall() == [("CASE-FREMD",), ("CASE-NEU",)]
+        raw_shas = {
+            sha for (sha,) in con.execute(
+                "SELECT sha256 FROM source_artifacts"
+            ).fetchall()
+        }
+    assert foreign_artifact.sha256 in raw_shas
+    assert new_artifact.sha256 in raw_shas
+    assert old_artifact.sha256 not in raw_shas
+    assert Path(foreign_artifact.archived_path).is_file()
+    assert not Path(old_artifact.archived_path).exists()
+
+    # Die dauerhafte Sicherung enthaelt den VORHERIGEN Arbeitsstand,
+    # nicht den bereits ersetzten Zustand.
+    verified = tmp_path / "wiederherstellbare-altsicherung"
+    restore_portable_backup(backup, verified)
+    with DuckDBStore(verified / "ntf-insight.duckdb").connect() as con:
+        assert con.execute(
+            "SELECT case_id FROM case_snapshots ORDER BY case_id"
+        ).fetchall() == [("CASE-ALT",), ("CASE-FREMD",)]
+
+
+def test_project_replacement_refuses_shared_fin_and_does_not_touch_laptop(tmp_path):
+    old_root, package, old_artifact, _foreign, _new = (
+        _replacement_fixture(tmp_path)
+    )
+    with DuckDBStore(old_root / "ntf-insight.duckdb").connect() as con:
+        con.execute(
+            "UPDATE case_snapshots SET vin=? WHERE case_id='CASE-FREMD'",
+            [FIN_A],
+        )
+    backup = tmp_path / "vor-geteilten-fins.ntfbackup"
+    with pytest.raises(RuntimeError, match="FIN"):
+        replace_existing_project(package, old_root, backup)
+    assert backup.is_file()
+    assert Path(old_artifact.archived_path).is_file()
+    with DuckDBStore(old_root / "ntf-insight.duckdb").connect() as con:
+        assert con.execute(
+            "SELECT case_id FROM case_snapshots ORDER BY case_id"
+        ).fetchall() == [("CASE-ALT",), ("CASE-FREMD",)]
+
+
+def test_project_replacement_failure_is_staged_and_original_untouched(
+    tmp_path, monkeypatch,
+):
+    from ntf_insight.ingestion import project_replacement
+
+    old_root, package, old_artifact, _foreign, _new = (
+        _replacement_fixture(tmp_path)
+    )
+    backup = tmp_path / "vor-projektfehler.ntfbackup"
+
+    def fail_after_deletion(*_args, **_kwargs):
+        raise RuntimeError("Synthetischer Importfehler nach Staging-Löschung")
+
+    monkeypatch.setattr(project_replacement, "import_project", fail_after_deletion)
+    with pytest.raises(RuntimeError, match="Synthetischer Importfehler"):
+        replace_existing_project(package, old_root, backup)
+    assert backup.exists()
+    assert Path(old_artifact.archived_path).is_file()
+    with DuckDBStore(old_root / "ntf-insight.duckdb").connect() as con:
+        assert con.execute(
+            "SELECT case_id FROM case_snapshots ORDER BY case_id"
+        ).fetchall() == [("CASE-ALT",), ("CASE-FREMD",)]
+
+
+def test_project_replacement_never_overwrites_existing_backup_or_wrong_part(
+    tmp_path,
+):
+    old_root, package, old_artifact, _foreign, _new = (
+        _replacement_fixture(tmp_path)
+    )
+    backup = tmp_path / "bereits-vorhanden.ntfbackup"
+    backup.write_bytes(b"nicht ueberschreiben")
+    with pytest.raises(ValueError, match="Sicherung"):
+        replace_existing_project(package, old_root, backup)
+    assert backup.read_bytes() == b"nicht ueberschreiben"
+    assert Path(old_artifact.archived_path).exists()
+
+    other_root = tmp_path / "anderer-laptop"
+    _setup(other_root)
+    new_backup = tmp_path / "nicht-erzeugt.ntfbackup"
+    with pytest.raises(ValueError, match="kein Projekt"):
+        replace_existing_project(package, other_root, new_backup)
+    assert not new_backup.exists()
+
+
+def test_project_identity_preview_rejects_corrupted_archive(tmp_path):
+    package = tmp_path / "bewaert.ntfproject"
+    package.write_bytes(b"kein ZIP")
+    with pytest.raises((ValueError, BadZipFile)):
+        inspect_project_identity(package)

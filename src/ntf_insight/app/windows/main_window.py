@@ -7,6 +7,7 @@ import re
 import time
 from datetime import datetime
 from pathlib import Path
+from zipfile import BadZipFile
 
 from PySide6.QtCore import Qt, QEventLoop, QTimer, QUrl
 from PySide6.QtGui import QDesktopServices
@@ -24,7 +25,9 @@ from ntf_insight.app.workers.cluster_context_workers import (
 )
 from ntf_insight.app.workers.project_transfer_worker import ProjectTransferWorker
 from ntf_insight.app.workers.project_delete_worker import ProjectDeleteWorker
-from ntf_insight.ingestion.project_portable import PROJECT_EXTENSION
+from ntf_insight.ingestion.project_portable import (
+    PROJECT_EXTENSION, inspect_project_identity,
+)
 from ntf_insight.ingestion.artifacts import SourceType
 from ntf_insight.app.bootstrap import load_application_data
 from ntf_insight.app.pages.case_page import CasePage
@@ -748,37 +751,96 @@ class MainWindow(QMainWindow):
         )
         if not filename:
             return
+        try:
+            # Nur Manifest lesen. Die vollstaendige Paket- und SHA-Pruefung
+            # erfolgt anschliessend im Hintergrundthread vor jeder Mutation.
+            identity = inspect_project_identity(Path(filename))
+        except (OSError, ValueError, BadZipFile) as exc:
+            QMessageBox.warning(
+                self, "Projektpaket nicht lesbar", str(exc),
+            )
+            return
+        existing = workflow.project_store.get(
+            identity.profile_id, identity.part_number,
+        )
+        if existing is not None:
+            # Erscheint ausschliesslich fuer dasselbe Bauteilprofil UND
+            # dieselbe normalisierte Sachnummer, niemals fuer Fremdprojekte.
+            dialog = QMessageBox(self)
+            dialog.setIcon(QMessageBox.Icon.Warning)
+            dialog.setWindowTitle("Vorhandenes Projekt erkannt")
+            dialog.setText(
+                f"Das Projekt {existing.title} existiert auf diesem Laptop bereits."
+            )
+            dialog.setInformativeText(
+                "Das importierte Projekt kann den bisherigen Projektstand "
+                "dieser Sachnummer vollständig ersetzen. Es wird NICHT "
+                "zusammengeführt. Andere Projekte sollen erhalten bleiben.\n\n"
+                "Vorher wird eine vollständige .ntfbackup-Sicherung des "
+                "aktuellen Laptop-Stands erstellt. Der Ersatz erfolgt "
+                "zunächst in einer geprüften Arbeitskopie. Bei gemeinsam "
+                "genutzten FINs oder nicht eindeutig zuordenbaren Quellen "
+                "wird der Vorgang aus Sicherheitsgründen verweigert.\n\n"
+                "Das Projektpaket kann vertrauliche Fahrzeugdaten enthalten."
+            )
+            replace_button = dialog.addButton(
+                "Vorhandenes Projekt ersetzen",
+                QMessageBox.ButtonRole.DestructiveRole,
+            )
+            cancel_button = dialog.addButton(QMessageBox.StandardButton.Cancel)
+            dialog.setDefaultButton(cancel_button)
+            dialog.exec()
+            if dialog.clickedButton() is not replace_button:
+                return
+            safe = "".join(c for c in existing.part_number if c.isalnum())[:35]
+            suggested = (
+                f"NTF-Sicherung-vor-Projektersatz-{safe}-"
+                f"{datetime.now().strftime('%Y%m%d-%H%M%S')}.ntfbackup"
+            )
+            backup_name, _ = QFileDialog.getSaveFileName(
+                self, "Gesamtsicherung des bisherigen Laptop-Stands ablegen",
+                str(Path.home() / suggested),
+                "NTF-Gesamtsicherung (*.ntfbackup)",
+            )
+            if not backup_name:
+                return
+            backup_path = Path(backup_name)
+            if backup_path.suffix.lower() != ".ntfbackup":
+                backup_path = backup_path.with_suffix(".ntfbackup")
+            self._start_project_transfer(
+                "replace", Path(filename), backup_path=backup_path,
+            )
+            return
+
         answer = QMessageBox.question(
-            self, "Projekt importieren (andere Projekte behalten)",
-            "Ein .ntfproject enthält die Daten und Dokumente eines Projekts.\n\n"
-            "Ein NEUES Projekt wird der lokalen App hinzugefügt. "
-            "Bereits vorhandene andere Projekte werden nicht ersetzt.\n\n"
-            "Falls die gleiche Sachnummer hier bereits als Projekt existiert, "
-            "wird der Import aus Sicherheitsgründen abgelehnt. "
-            "Ein Zusammenführen wird ausdrücklich NICHT vorgenommen.\n\n"
-            "Das Paket kann vertrauliche oder nicht anonymisierte Rohdaten "
-            "enthalten. Nur vertrauenswürdige Dateien verwenden. Fortfahren?",
+            self, "Neues Projekt importieren",
+            "Ein neues Projekt wird hinzugefügt. Bereits vorhandene "
+            "andere Projekte bleiben erhalten.\n\n"
+            "Das Paket kann vertrauliche QEC-/FIN-/Werkstattdaten enthalten. "
+            "Nur vertrauenswürdige Dateien importieren. Fortfahren?",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             QMessageBox.StandardButton.No,
         )
-        if answer != QMessageBox.StandardButton.Yes:
-            return
-        self._start_project_transfer("import", Path(filename))
+        if answer == QMessageBox.StandardButton.Yes:
+            self._start_project_transfer("import", Path(filename))
 
     def _start_project_transfer(
         self, action: str, package: Path, *,
         profile: str = "", part: str = "",
+        backup_path: Path | None = None,
     ) -> None:
         self._project_import_result = None
         self._project_transfer_worker = ProjectTransferWorker(
             action, self.application_data.paths.data_dir,
-            package, profile=profile, part_number=part,
+            package, profile=profile, part_number=part, backup_path=backup_path,
         )
         worker = self._project_transfer_worker
         worker.completed.connect(self._project_transfer_completed)
         self._project_transfer_failure = None
         dialog = self._show_operation_progress(
-            "Projekt exportieren" if action == "export" else "Projekt importieren",
+            "Projekt exportieren" if action == "export"
+            else "Vorhandenes Projekt ersetzen" if action == "replace"
+            else "Projekt importieren",
             "Projektpaket wird verarbeitet …",
         )
         self._project_transfer_dialog = dialog
@@ -789,6 +851,7 @@ class MainWindow(QMainWindow):
         worker.finished.connect(self._project_transfer_finished)
         self.pages["workflow"].set_notice(
             "Projektpaket erstellen …" if action == "export"
+            else "Projekt ersetzen und Sicherung erstellen …" if action == "replace"
             else "Projektpaket prüfen und lokal hinzufügen …"
         )
         self._portable_transfer_busy(True)
@@ -827,13 +890,25 @@ class MainWindow(QMainWindow):
         else:
             if self._project_transfer_dialog is not None:
                 self._project_transfer_dialog.complete(
-                    None, details="Projekt wurde lokal importiert.",
+                    result.backup_path if result.replaced else None,
+                    details=(
+                        "Projekt ersetzt. Die vollständige Sicherung "
+                        "des vorherigen Laptop-Stands bleibt erhalten."
+                        if result.replaced else "Projekt wurde lokal importiert."
+                    ),
                 )
             self._project_import_result = result
-            workflow.set_notice(
-                f"Projekt importiert: {result.part_number} · "
-                f"{result.case_count} Fälle. Andere Projekte bleiben erhalten."
-            )
+            if result.replaced:
+                workflow.set_notice(
+                    f"Projekt ersetzt: {result.part_number} · "
+                    f"{result.case_count} Fälle. Andere Projekte bleiben erhalten. "
+                    f"Sicherung: {result.backup_path}"
+                )
+            else:
+                workflow.set_notice(
+                    f"Projekt importiert: {result.part_number} · "
+                    f"{result.case_count} Fälle. Andere Projekte bleiben erhalten."
+                )
 
     def _project_transfer_failed(self, message: str) -> None:
         self._project_transfer_failure = message

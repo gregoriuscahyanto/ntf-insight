@@ -77,6 +77,63 @@ class ProjectImportResult:
     part_number: str
     case_count: int
     file_count: int
+    replaced: bool = False
+    backup_path: Path | None = None
+
+
+@dataclass(frozen=True)
+class ProjectPackageIdentity:
+    """Unverbindliche Vorschau; der eigentliche Import prueft alle SHA-256."""
+
+    profile_id: str
+    part_number: str
+    component_name: str
+
+
+def inspect_project_identity(source: Path) -> ProjectPackageIdentity:
+    """Sichere, schnelle Identitaetsvorschau ohne GiB-Daten im GUI-Thread.
+
+    Alle hier angezeigten Metadaten stammen aus einer untrusted ZIP; vor
+    dem Import validiert _unpack_project den kompletten Inhalt erneut.
+    """
+    path = Path(source).absolute()
+    if (path.suffix.lower() != PROJECT_EXTENSION or not path.is_file()
+            or path.is_symlink()):
+        raise ValueError("Bitte ein reguläres .ntfproject-Paket auswählen.")
+    with ZipFile(path) as archive:
+        names = archive.namelist()
+        if len(names) != 2 or set(names) != {INNER, MANIFEST}:
+            raise ValueError("Projektpaket enthält fehlende oder unerwartete Einträge.")
+        for info in archive.infolist():
+            _relative(info.filename)
+            if info.is_dir() or info.file_size > MAX_PROJECT_BYTES:
+                raise ValueError("Projektpaket enthält einen unzulässigen Eintrag.")
+        if archive.getinfo(MANIFEST).file_size > 16 * 1024:
+            raise ValueError("Projektmanifest zu groß.")
+        manifest = json.loads(archive.read(MANIFEST))
+    if not isinstance(manifest, dict) or (
+        manifest.get("format") != FORMAT or manifest.get("version") != VERSION
+    ):
+        raise ValueError("Inkompatibles Projektpaket.")
+    entry = manifest.get("projektdatei")
+    if (not isinstance(entry, dict) or entry.get("name") != INNER
+            or type(entry.get("bytes")) is not int
+            or not 0 < entry["bytes"] <= MAX_PROJECT_BYTES
+            or not isinstance(entry.get("sha256"), str)
+            or not re.fullmatch(r"[a-f0-9]{64}", entry["sha256"])):
+        raise ValueError("Projektmanifest enthält eine ungültige Dateiidentität.")
+    profile = manifest.get("profil")
+    part = manifest.get("sachnummer")
+    name = manifest.get("bauteil")
+    if (not isinstance(profile, str) or not profile
+            or len(profile) > 80
+            or not all(c.isalnum() or c in "_-" for c in profile)
+            or not isinstance(part, str) or not part.strip()
+            or len(part) > 120 or any(ord(c) < 32 for c in part)
+            or not isinstance(name, str) or not name.strip()
+            or len(name) > 100 or any(ord(c) < 32 for c in name)):
+        raise ValueError("Projektidentität im Paket ist ungültig.")
+    return ProjectPackageIdentity(profile, part, name)
 
 
 def _tables(con) -> set[str]:
