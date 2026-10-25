@@ -23,8 +23,11 @@ from ntf_insight.storage.duckdb_store import DuckDBStore
 from ntf_insight.storage.qec_project_scope import qec_case_matches_project
 from ntf_insight.storage.workflow_projects import WorkflowProjectStore
 
-MAX_TECH_ROWS = 1_000_000
+# Grenzen je CSV-TEILDATEI, nicht je Sachnummernprojekt: ein Export darf
+# mehr als eine Million DTC-/Parameterbeobachtungen enthalten.
+MAX_ROWS_PER_CSV_PART = 250_000
 MAX_STRUCTURED_FILE_BYTES = 200 * 1024**2
+MAX_ZIP_PARTS_PER_TABLE = 10_000
 _FIN = re.compile(r"(?<![A-Z0-9])[A-HJ-NPR-Z0-9]{17}(?![A-Z0-9])", re.I)
 
 
@@ -146,50 +149,131 @@ def load_technical_scope(
     return TechnicalScope(vins, cases, tuple(found))
 
 
+class _PartitionedCsvWriter:
+    """Schreibt ohne Speicherstau in mehrere vollstaendige CSVs des ZIP.
+
+    Der erste Teil behaelt den bisherigen Dateinamen; ab Teil 2 folgt
+    "_teil_0002.csv". Jede Datei enthaelt Header und UTF-8-BOM.
+    """
+
+    def __init__(
+        self, archive: ZipFile, output: str, headers: tuple[str, ...],
+        progress: Callable[[str], None] | None = None,
+    ) -> None:
+        self.archive = archive
+        self.output = output
+        self.headers = headers
+        self.progress = progress
+        self.total_rows = 0
+        self.total_size = 0
+        self.parts: list[dict[str, object]] = []
+        self._stream: io.TextIOWrapper | None = None
+        self._writer = csv.DictWriter(
+            self, fieldnames=headers, extrasaction="ignore",
+            lineterminator="\n",
+        )
+        header_buf = io.StringIO(newline="")
+        csv.writer(header_buf, lineterminator="\n").writerow(headers)
+        self._header = "\ufeff" + header_buf.getvalue()
+        self._header_size = len(self._header.encode("utf-8"))
+
+    def __enter__(self) -> "_PartitionedCsvWriter":
+        self._open_part()
+        return self
+
+    def __exit__(self, *_exc: object) -> None:
+        self._close_part()
+
+    def _open_part(self) -> None:
+        number = len(self.parts) + 1
+        if number > MAX_ZIP_PARTS_PER_TABLE:
+            raise ValueError(
+                f"Diagnosetabelle {self.output} hat mehr als "
+                f"{MAX_ZIP_PARTS_PER_TABLE} Teile; Export sicher abbrechen."
+            )
+        name = (
+            self.output if number == 1
+            else self.output[:-4] + f"_teil_{number:04d}.csv"
+        )
+        binary = self.archive.open(name, "w", force_zip64=True)
+        self._stream = io.TextIOWrapper(binary, encoding="utf-8", newline="")
+        self._stream.write(self._header)
+        self.parts.append({
+            "datei": name, "zeilen": 0, "bytes": self._header_size,
+        })
+        self.total_size += self._header_size
+        if self.progress and number > 1:
+            self.progress(
+                f"Diagnosetabelle {self.output}: Teil {number}, "
+                f"{self.total_rows:,} Zeilen vollstaendig gesichert ..."
+            )
+
+    def _close_part(self) -> None:
+        if self._stream is not None:
+            self._stream.close()
+            self._stream = None
+
+    def write(self, line: str) -> int:
+        """csv.DictWriter ruft diese Methode fuer jede DATENzeile auf."""
+        size = len(line.encode("utf-8"))
+        if size + self._header_size > MAX_STRUCTURED_FILE_BYTES:
+            raise ValueError(
+                f"Eine einzelne Diagnosezeile in {self.output} ist groesser "
+                "als die maximale CSV-Teilgroesse von 200 MiB. "
+                "Der Inhalt wird nicht gekuerzt."
+            )
+        part = self.parts[-1]
+        if (
+            part["zeilen"] >= MAX_ROWS_PER_CSV_PART
+            or part["bytes"] + size > MAX_STRUCTURED_FILE_BYTES
+        ):
+            self._close_part()
+            self._open_part()
+            part = self.parts[-1]
+        assert self._stream is not None
+        self._stream.write(line)
+        part["zeilen"] += 1
+        part["bytes"] += size
+        self.total_rows += 1
+        self.total_size += size
+        if self.progress and self.total_rows % 20_000 == 0:
+            self.progress(
+                f"Diagnosetabelle {self.output}: "
+                f"{self.total_rows:,} Zeilen exportiert ..."
+            )
+        return len(line)
+
+    def writerow(self, row: dict[str, object]) -> None:
+        self._writer.writerow(row)
+
+
 def _iter_query(
     store: DuckDBStore, table: str, query: str, arguments: list[str],
     transform: Callable[[tuple], dict], headers: tuple[str, ...],
     archive: ZipFile, output: str,
     fins: set[str], progress: Callable[[str], None] | None = None,
+    table_files: dict[str, list[dict]] | None = None,
 ) -> tuple[int, int]:
-    """Streamt Zeilen in einen ZIP-CSV-Member statt Millionen Zeilen zu laden."""
-    count = 0
-    size = 0
-    with archive.open(output, "w", force_zip64=True) as target:
-        with io.TextIOWrapper(target, encoding="utf-8-sig", newline="") as stream:
-            writer = csv.DictWriter(stream, fieldnames=headers, extrasaction="ignore",
-                                    lineterminator="\n")
-            writer.writeheader()
-            with store.connect() as con:
-                if _has_table(con, table):
-                    cursor = con.execute(query, arguments)
-                    while True:
-                        batch = cursor.fetchmany(1000)
-                        if not batch:
-                            break
-                        for raw in batch:
-                            data = transform(raw)
-                            if not data:
-                                continue
-                            count += 1
-                            if count > MAX_TECH_ROWS:
-                                raise ValueError(
-                                    "Mehr als 1.000.000 Diagnosezeilen in einer Tabelle. "
-                                    "Bitte Projekt/Unterlagen aufteilen."
-                                )
-                            safe = {
-                                key: _csv_safe(_redact(data.get(key), fins))
-                                for key in headers
-                            }
-                            size += sum(len(item.encode("utf-8")) for item in safe.values()) + 64
-                            if size > MAX_STRUCTURED_FILE_BYTES:
-                                raise ValueError(
-                                    "Eine strukturierte Diagnosetabelle ist groesser als 200 MiB."
-                                )
-                            writer.writerow(safe)
-                        if progress and count and count % 10000 < 1000:
-                            progress(f"Diagnosezeilen {output}: {count:,} ...")
-    return count, size
+    """FIN-gefilterte CSV-Zeilen streamen; nicht still abschneiden."""
+    with _PartitionedCsvWriter(archive, output, headers, progress) as writer:
+        with store.connect() as con:
+            if _has_table(con, table):
+                cursor = con.execute(query, arguments)
+                while True:
+                    batch = cursor.fetchmany(1000)
+                    if not batch:
+                        break
+                    for raw in batch:
+                        data = transform(raw)
+                        if not data:
+                            continue
+                        writer.writerow({
+                            key: _csv_safe(_redact(data.get(key), fins))
+                            for key in headers
+                        })
+    if table_files is not None:
+        table_files[output] = writer.parts
+    return writer.total_rows, writer.total_size
 
 
 def export_parsed_diagnostics(
@@ -199,6 +283,7 @@ def export_parsed_diagnostics(
     *,
     include_fulltext: bool,
     progress: Callable[[str], None] | None = None,
+    table_files: dict[str, list[dict]] | None = None,
 ) -> tuple[dict[str, int], set[str]]:
     """Fahrzeugdiagnosen nur fuer FINs der ersten Analyse exportieren."""
     fins = set(scope.fins)
@@ -236,6 +321,7 @@ def export_parsed_diagnostics(
         n, _size = _iter_query(
             store, required, query, eligible, convert, headers, archive,
             "diagnose/" + table + ".csv", fins, progress,
+            table_files=table_files,
         )
         return n
 
