@@ -582,10 +582,10 @@ class CasePage(QWidget):
         )
         layout.addWidget(self.qec_structured_panel)
         layout.addWidget(QLabel(
-            "Externes ChatGPT-Analyseergebnis (keine automatische Fallentscheidung)",
+            "Externes LLM-Analyseergebnis (keine automatische Fallentscheidung)",
             objectName="CardTitle",
         ))
-        self.chatgpt_result_text = QLabel("Keine ChatGPT-Analyse importiert.")
+        self.chatgpt_result_text = QLabel("Keine LLM-Analyse importiert.")
         self.chatgpt_result_text.setObjectName("PageSubtitle")
         self.chatgpt_result_text.setTextFormat(Qt.TextFormat.PlainText)
         self.chatgpt_result_text.setWordWrap(True)
@@ -1179,7 +1179,7 @@ class CasePage(QWidget):
         self.version_change_summary.setText("Keine FIN / kein Fall ausgewählt.")
         self.cpc3_panel.clear()
         self.qec_structured_panel.clear()
-        self.chatgpt_result_text.setText("Keine ChatGPT-Analyse importiert.")
+        self.chatgpt_result_text.setText("Keine LLM-Analyse importiert.")
         self.autoexport_history_model.set_rows([])
         self.autoexport_history_note.setText("Keine FIN ausgewählt.")
         self.autoexport_history_count.setText("—")
@@ -1397,10 +1397,10 @@ class CasePage(QWidget):
                     "Externer Vorschlag, nicht als QEC-/Lieferantenentscheidung übernommen."
                 )
             else:
-                self.chatgpt_result_text.setText("Noch keine zugeordnete ChatGPT-Analyse.")
+                self.chatgpt_result_text.setText("Noch keine zugeordnete LLM-Analyse.")
         else:
             self.chatgpt_result_text.setText(
-                "Kein bestätigter Schadteilfall – keine ChatGPT-Fallzuordnung."
+                "Kein bestätigter Schadteilfall – keine LLM-Fallzuordnung."
             )
         # Case change refreshes the corresponding VIN-wide history; an
         # independent direct FIN lookup remains possible without a case.
