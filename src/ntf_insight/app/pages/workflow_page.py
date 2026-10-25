@@ -1730,12 +1730,38 @@ class WorkflowPage(QWidget):
         return "".join(char for char in normalize_part_number(value) if char.isalnum())
 
     def _rows_for_context(self) -> list[dict]:
-        if self.profile_id != "coolant_pump":
-            return []
+        """QEC-Fallkohoerte nach Sachnummer und eindeutigem Projektprofil.
+
+        Ist die Benennung eines QEC-Falls unbekannt, erfolgt keine stille
+        Vermischung: eine Sachnummer muss genau EIN Projektprofil besitzen.
+        """
+        from ntf_insight.storage.qec_project_scope import (
+            qec_case_matches_project,
+        )
+
         part = self._part_key(self._context_part)
+        if not part:
+            # Nur fuer die bisherige ungebundene Pumpen-Startansicht.
+            # Ohne Projekt darf keine generische FIN-Kohoerte entstehen.
+            return [
+                row for row in self._all_rows
+                if self.profile_id == "coolant_pump"
+                and row.get("component_profile_id", "coolant_pump")
+                == "coolant_pump"
+            ]
+        projects = self.project_store.list_projects()
         return [
             row for row in self._all_rows
-            if not part or self._part_key(row.get("part_number", "")) == part
+            if qec_case_matches_project(
+                case_part_number=str(row.get("part_number") or ""),
+                source_profile_id=row.get(
+                    "component_profile_id",
+                    "coolant_pump",  # Legacy-Testdaten ohne Quellprofil.
+                ),
+                project_profile_id=self.profile_id,
+                project_part_number=self._context_part,
+                projects=projects,
+            )
         ]
 
     def refresh_data(self) -> None:
@@ -2210,9 +2236,7 @@ class WorkflowPage(QWidget):
         self._show_chatgpt_cluster_details()
 
     def qec_targets(self, *, selected_only: bool = False) -> list[QecTarget]:
-        """Niemals außerhalb der Sachnummern-Kohorte oder Referenz herunterladen."""
-        if self.profile_id != "coolant_pump":
-            return []
+        """Nur QEC-Ziele der ausgewaehlten Profil-/Sachnummern-Kohoerte."""
         if selected_only:
             selected_rows = {
                 index.row() for index in self.qec_table.selectionModel().selectedRows()
@@ -2462,7 +2486,7 @@ class WorkflowPage(QWidget):
         self.resume_import_button.setEnabled(
             not paused and not self._import_busy and self._import_can_resume
         )
-        self.qec_portal_button.setEnabled(not paused and self.profile_id == "coolant_pump")
+        self.qec_portal_button.setEnabled(not paused and bool(self._scoped_rows))
         self.qec_export_button.setEnabled(not paused and has_rows)
         qec_coverage = self._source_coverage.get("qec")
         choices = {
@@ -2583,7 +2607,9 @@ class WorkflowPage(QWidget):
             statuses[0] = "error"
         elif self._error_step is not None:
             statuses[self._error_step] = "error"
-        self._ai_export_ready = statuses[0] == "done" and statuses[1] == "done"
+        # Fehlt bei einigen Faellen ein QEC-Bericht, ist das eine legitime
+        # Datenluecke und blockiert die erste QEC-Neuauswertung NICHT.
+        self._ai_export_ready = statuses[0] == "done"
         self.progress.setValue(round(fraction / STEP_COUNT * 100))
         self.progress_label.setText(
             f"{stats['cases']} QEC-Fälle · {total} FINs · "
