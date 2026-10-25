@@ -988,18 +988,39 @@ class MainWindow(QMainWindow):
                 "Zuerst laufende Abrufe, Parser und Transfers abschließen.",
             )
             return
+        panel = self.pages["sources"].ki_analyse_panel
+        first_qec = (
+            panel is not None and panel._next_workflow_project is not None
+        )
         dialog = self._show_export_prompt(
-            "ChatGPT-Analysepaket exportieren",
-            "Vor dem Erstellen den Datenumfang wählen. Beide vertraulichen "
-            "Optionen sind standardmäßig AUS. Es erfolgt kein Upload. "
-            "Die getrennte FIN-Zuordnung niemals weitergeben.",
+            "03 · QEC-Neuauswertung exportieren"
+            if first_qec else "ChatGPT-Analysepaket exportieren",
+            (
+                "Nur Schritt 01 (FIN-/Pumpentausch-Faelle) und Schritt 02 "
+                "(fuenf QEC-Befundungsreiter). Keine QuickTests, AutoExport "
+                "oder separaten TIPS. Fehlende QEC-Befunde werden markiert. "
+                "Die Lieferantenstellungnahme und die QEC-Fachtexte sind "
+                "ohne Freitextfreigabe nicht vollstaendig analysierbar. "
+                "Kein Upload. Die private FIN-Zuordnung niemals weitergeben."
+                if first_qec else
+                "Allgemeiner Quellenexport mit vorhandenem Zusatzbestand. "
+                "Kein Upload. Die private FIN-Zuordnung niemals weitergeben."
+            ),
             options=(
-                ("text",
-                 "QEC-/TIPS-/Werkstatt-/Lieferanten-Freitexte beifügen (vertraulich)",
-                 False),
-                ("originals",
-                 "Vollständige QEC-Befundungsdokumente und Anhänge beifügen "
-                 "(Originale, vertraulich)", False),
+                (
+                    "text",
+                    "QEC-Reitertexte, Feldbeschriftungen, Lieferantenstellungnahme "
+                    "und Nachanalyse beifuegen (vertraulich)"
+                    if first_qec else
+                    "QEC-/TIPS-/Werkstatt-/Lieferanten-Freitexte beifuegen (vertraulich)",
+                    False,
+                ),
+                (
+                    "originals",
+                    "QEC-Originalberichte und zugehoerige Anhaenge beifuegen "
+                    "(vertraulich)",
+                    False,
+                ),
             ),
         )
         self._first_export_dialog = dialog
@@ -1017,8 +1038,10 @@ class MainWindow(QMainWindow):
         }.get(kind)
         if attr is not None and getattr(self, attr) is dialog:
             setattr(self, attr, None)
-        if kind == "first" and self.pages["sources"].ki_analyse_panel.worker is None:
-            self.pages["sources"].ki_analyse_panel._next_workflow_fins = None
+        if kind == "first":
+            panel = self.pages["sources"].ki_analyse_panel
+            if panel is not None and panel.worker is None:
+                panel.clear_prepared_workflow_cohort()
 
     def _first_export_start(self, options: dict) -> None:
         dialog = self._first_export_dialog
@@ -2399,12 +2422,17 @@ class MainWindow(QMainWindow):
                 }
                 if not fins:
                     workflow.set_notice(
-                        "Keine FINs für den ersten ChatGPT-Export gewählt. "
+                        "Keine FINs für die QEC-Neuauswertung gewählt. "
                         "In Schritt 01 SSL-Endbefunde auswählen.",
                         error=True,
                     )
                     return
-                panel.prepare_workflow_cohort(fins)
+                panel.prepare_workflow_cohort(
+                    fins,
+                    profile_id=workflow.profile_id,
+                    part_number=workflow._context_part,
+                    case_ids={str(row["case_id"]) for row in workflow._scoped_rows},
+                )
             if action == "ai_import":
                 self._workflow_ai_import()
             else:
