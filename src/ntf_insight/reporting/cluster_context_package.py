@@ -341,7 +341,7 @@ def export_cluster_context(
         "Diagnose am Tauschtag, km niedriger (Indiz), "
         "Diagnose am Tauschtag, zeitlich offen, Diagnose nach Tausch, "
         "Laborbefund optisch auffällig, "
-        "Laborbefund funktionell bestaetigt, Labor nicht reproduziert, "
+        "Laborbefund funktionell bestätigt, Labor nicht reproduziert, "
         "Datenlage unzureichend. Das sind NACHWEISKLASSEN, keine "
         "Fehlerursachen. Nicht reproduziert heisst weder fehlerfrei "
         "noch fehlende Werkstattbeanstandung. Mehrfachnennung zulaessig; "
