@@ -22,8 +22,9 @@ from ntf_insight.reporting.chatgpt_exchange import (
     ChatGPTRueckgabe, ergebnis_vorlage,
 )
 from ntf_insight.storage.cluster_evidence_store import (
-    CATEGORY_LABELS, ClusterEvidenceStore, MAX_EVIDENCE_BYTES,
+    CATEGORY_LABELS, ClusterEvidenceStore, MAX_EVIDENCE_BYTES, part_key,
 )
+from ntf_insight.storage.workflow_projects import WorkflowProjectStore
 
 FORMAT = "ntf-cluster-kontext"
 VERSION = 1
@@ -150,6 +151,31 @@ def export_cluster_context(
     if progress:
         progress("Erste ChatGPT-Analyse und Quelldateien prüfen …")
     package_id = validate_first_package(first_package)
+    with ZipFile(first_package) as base:
+        base_manifest = json.loads(base.read("manifest.json"))
+    project_scoped = base_manifest.get("analyseumfang") == "workflow_01_02_qec"
+    if project_scoped:
+        # Erste und zweite Runde sind mit derselben registrierten
+        # Profil-/Sachnummernzuordnung verbunden. Gleiche FIN genuegt nie.
+        if base_manifest.get("projektprofil") != profile_id:
+            raise ValueError(
+                "Die erste QEC-Analysebasis gehoert einem anderen Bauteilprofil."
+            )
+        with store.store.connect() as con:
+            stored = con.execute(
+                "SELECT sha256 FROM workflow_first_ai_packages "
+                "WHERE profile_id=? AND part_key=? AND paket_id=?",
+                [profile_id, part_key(part_number), package_id],
+            ).fetchone()
+        digest = hashlib.sha256()
+        with first_package.open("rb") as handle:
+            for chunk in iter(lambda: handle.read(_CHUNK), b""):
+                digest.update(chunk)
+        if stored is None or stored[0] != digest.hexdigest():
+            raise ValueError(
+                "Erste Analysebasis ist nicht zu diesem Sachnummernprojekt "
+                "registriert oder die ZIP-Pruefsumme weicht ab."
+            )
     verified_result = (
         ChatGPTRueckgabe.model_validate(first_result)
         if first_result is not None else None
@@ -158,6 +184,7 @@ def export_cluster_context(
         raise ValueError("Erstes ChatGPT-Ergebnis gehört nicht zur gewählten KI-Basis.")
     evidence = store.list_files(profile_id, part_number)
     counts = store.counts(profile_id, part_number)
+    project = WorkflowProjectStore(store.store).get(profile_id, part_number)
     analysis_id = (
         "Cluster-" + package_id[:12] + "-" + secrets.token_hex(4)
     )
@@ -176,46 +203,56 @@ def export_cluster_context(
         })
     if include_originals and sum(x.size_bytes for x in evidence) > MAX_PACKAGE_BYTES:
         raise ValueError("Fachunterlagen überschreiten zusammen 1 GiB.")
-    instructions = (
-        "NTF Insight · Zweiter ChatGPT-Durchlauf / Cluster-Kontext\n\n"
-        "1. Die unveränderte KI-Ausgangsmatrix liegt unter basis/. "
-        "Die geprüfte Antwort des ersten ChatGPT-Durchlaufs liegt (sofern "
-        "vorhanden) unter voranalyse/erstes_chatgpt_ergebnis.json. "
-        "DTC-Clusterbildung nutzt nur nachweislich geeignete Diagnosemerkmale "
-        "VOR dem Bauteiltausch, keine SSL-/Lieferantenbewertung und keine "
-        "Nach-Tausch-Ergebnisse als Clusterfeatures.\n"
-        "2. Technische Dateien unter unterlagen/ zur ERKLÄRUNG und "
-        "VALIDIERUNG der Cluster verwenden: CPC3-Diagnoselogik, "
-        "CDD/SMR-D-Setzbedingungen, ECU-Nachrichten, Vehicle Network "
-        "Topology, Hardware-/Softwareänderungen, Schalt-/Kühlpläne.\n"
-        "3. Nur wirklich vorhandene Belege verwenden und jede These mit "
-        "Beleg-ID, Dokumentkategorie und überprüfbarer Aussage kennzeichnen. "
-        "Fehlende Dateien sind ausdrücklich als Lücke zu markieren.\n"
-        "4. Technische Möglichkeit, Fehlerverursachung und Lieferanten-"
-        "verantwortung sind verschiedene Aussagen. Kein Lieferantenverdacht "
-        "ohne einen direkten, fachlich validierbaren Beleg.\n"
-        "5. Antwort ausschließlich im Format chatgpt_ergebnis_schema.json "
-        "erzeugen. Die paket_id aus chatgpt_ergebnis_vorlage.json muss "
-        "UNVERÄNDERT bleiben. Die Vorlage enthält bereits eine frische "
-        "analyse_id für die zweite Runde. Nicht die analyse_id der "
-        "voranalyse übernehmen. "
-        "Zusätzliche Dokumentbelege dürfen nur dort aufgenommen werden, "
-        "wo das Schema sie erlaubt; sonst in Freitext mit Beleg-ID aus dem "
-        "Kontextmanifest referenzieren.\n\n"
-        "WICHTIG: Auch strukturierte/pseudonymisierte Daten können "
-        "reidentifizierend sein. Originale sind nicht automatisch anonymisiert. "
-        "Externe Weitergabe ausschließlich nach Unternehmensfreigabe.\n"
+    component_name = (
+        project.component_name if project is not None
+        else profile_id.replace("_", " ")
     )
+    instruction_lines = [
+        "NTF Insight · Zweiter ChatGPT-Durchlauf / vertiefter Analysekontext",
+        "",
+        f"Bauteil: {component_name}. Technische Interpretation immer nur anhand "
+        "der tatsaechlich vorliegenden Quellen; keine pauschalen ECU-/DTC-Annahmen.",
+        "1. Die erste QEC-Analysebasis liegt unter basis/. Die zugehoerige erste "
+        "ChatGPT-Auswertung liegt in voranalyse/erstes_chatgpt_ergebnis.json "
+        "(soweit vorhanden). Fehlende QEC-Berichte sind eine legitime Datenluecke.",
+        "2. Nutze Unterlagen aus dem aktuell ausgewaehlten Profil- und "
+        "Sachnummernprojekt fuer neue Hypothesen: Diagnoseprotokolle, "
+        "Fehlersetzbedingungen, Steuergeraetekommunikation, "
+        "Fahrzeugnetzwerk, HW-/SW-Aenderungen und Bauteildaten.",
+        "3. Nur dort Vor-/Nach-Tausch-Aussagen treffen, wo Tauschzeitpunkt, "
+        "Diagnosezeitpunkt und Fallzuordnung belegt sind. Fehlende QuickTests, "
+        "AutoExport-, TIPS- oder QEC-Daten niemals erfinden. "
+        "Andere Bauteile und andere Sachnummern nicht vermischen.",
+        "4. Eine Lieferantenverursachung ist niemals aus NTF-, SSL-, "
+        "Diagnose- oder Lieferantenlabels allein bewiesen. Differenziere "
+        "technische Moeglichkeit, Hypothese, Verifikation und Verantwortung.",
+        "5. Gib ausschliesslich das JSON nach chatgpt_ergebnis_schema.json aus. "
+        "Die paket_id aus chatgpt_ergebnis_vorlage.json bleibt identisch; "
+        "die neue analyse_id muss der Vorlage entsprechen. "
+        "Belegreferenzen nur fuer wirklich vorhandene Quellen verwenden.",
+        "6. Die private Pseudonymzuordnung gehoert niemals in den Upload. "
+        "Pseudonymisierte technische Daten sind nicht garantiert anonymisiert. "
+        "Externe Verarbeitung nur mit Unternehmensfreigabe.",
+    ]
+    if project is not None and project.ecu_names:
+        instruction_lines.insert(
+            3, "Projektseitig konfigurierte moeglich relevante ECUs "
+            "(kein Nachweis fuer DTC oder Ursache): "
+            + ", ".join(project.ecu_names) + "."
+        )
+    instructions = "\n".join(instruction_lines) + "\n"
     manifest = {
         "format": FORMAT,
         "schema_version": VERSION,
         "basis_paket_id": package_id,
         "profil": profile_id,
-        # Die technische Unterlagenauswahl ist nach Sachnummer gruppiert,
-        # die vorhandene KI-Basis enthält weiterhin sämtliche exportierten Fälle.
-        "sachnummer_wurde_lokal_gefiltert": False,
+        "bauteilbezeichnung": component_name,
+        "relevante_ecus_konfiguriert": (
+            list(project.ecu_names) if project is not None else []
+        ),
+        "sachnummer_wurde_lokal_gefiltert": project_scoped,
         "unterlagen_nach_sachnummer_zugeordnet": bool(part_number.strip()),
-        "basis_nicht_nach_sachnummer_gefiltert": True,
+        "basis_nicht_nach_sachnummer_gefiltert": not project_scoped,
         "erster_chatgpt_durchlauf": {
             "enthalten": verified_result is not None,
             "analyse_id": verified_result.analyse_id if verified_result else None,
