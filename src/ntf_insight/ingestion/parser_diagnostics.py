@@ -266,7 +266,7 @@ def export_parser_diagnostics(
                 "Bei enthaltenen 'originale/'-Dateien sind die Dateiinhalte "
                 "UNVERÄNDERT und können FINs, Personendaten oder vertrauliche "
                 "Mercedes-Benz-Informationen enthalten.\n"
-                "Nicht ungeprüft an ChatGPT, GitHub oder externe Dienste hochladen.\n"
+                "Nicht ungeprüft an LLM, GitHub oder externe Dienste hochladen.\n"
                 "Vor Weitergabe Originale anonymisieren und interne Freigabe einholen.\n"
                 "Die ZIP-Datei ist NICHT verschlüsselt.\n"
             ))
