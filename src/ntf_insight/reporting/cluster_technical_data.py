@@ -539,10 +539,11 @@ def export_tp_filtered(
                     _has_table(con, "source_knowledge_rows")
                     and _has_table(con, "source_knowledge_documents")
                 ):
-                    continue
-                cursor = con.execute(query, [category, *allowed])
+                    cursor = None
+                else:
+                    cursor = con.execute(query, [category, *allowed])
                 while True:
-                    batch = cursor.fetchmany(1000)
+                    batch = cursor.fetchmany(1000) if cursor is not None else []
                     if not batch:
                         break
                     for fin, raw in batch:
