@@ -156,7 +156,8 @@ def test_step03_never_uses_other_component_or_part_on_same_fin(tmp_path):
         )
 
 
-def test_step03_requires_at_least_one_matching_parsed_qec_report(tmp_path):
+def test_step03_keeps_all_cases_when_no_qec_documents_exist(tmp_path):
+    """QEC-Berichte duerfen vollständig fehlen; die Fallliste bleibt exportierbar."""
     source = _set_up(tmp_path)
     with source.store.connect() as con:
         con.execute(
@@ -167,9 +168,23 @@ def test_step03_requires_at_least_one_matching_parsed_qec_report(tmp_path):
             "DELETE FROM source_knowledge_documents WHERE source_sha256=?",
             ["a" * 64],
         )
-    with pytest.raises(ValueError, match="Schritt 02"):
-        _export(source, tmp_path / "missing-qec.zip")
-    assert not (tmp_path / "missing-qec.zip").exists()
+    result = _export(source, tmp_path / "missing-qec.zip")
+    assert result.pfad.exists()
+    assert result.faelle == 1
+    assert result.qec_berichte == 0
+    with ZipFile(result.pfad) as archive:
+        gaps = _rows(archive, "qec_datenluecken.csv")
+        cases = _rows(archive, "faelle.csv")
+        assert len(cases) == len(gaps) == 1
+        assert cases[0]["qec_bericht_status"] == "Nicht vorhanden"
+        assert cases[0]["qec_bericht_id"] == ""
+        assert gaps[0]["qec_bericht_status"] == "Nicht vorhanden"
+        assert _rows(archive, "qec_felder.csv") == []
+        manifest = json.loads(archive.read("manifest.json"))
+        assert manifest["datenreihen"]["qec_berichte_nicht_vorhanden"] == 1
+        assert "Nicht bewertbar" in archive.read(
+            "CHATGPT_ANWEISUNG.txt"
+        ).decode("utf-8")
 
 
 def test_step03_new_package_keeps_prior_analysis_and_round_two_works(tmp_path):
