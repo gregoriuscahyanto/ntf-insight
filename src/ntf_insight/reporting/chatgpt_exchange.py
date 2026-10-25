@@ -374,6 +374,66 @@ class ChatGPTAnalyseStore:
                 )
         return found
 
+    def _verify_qec_field_locations(
+        self, paket_id: str, references: set[tuple[str, str]],
+    ) -> None:
+        """Feldbelege aus einem QEC-Erstpaket nur fuer echte ZIP-Fundstellen.
+
+        Das neue QEC-Paket erzwingt feldgenaue Belege. Fuer alte, breiter
+        angelegte Analysepakete bleibt die bestehende Legacy-Validierung.
+        """
+        if not references:
+            return
+        with self.store.connect() as con:
+            indexed = con.execute(
+                "SELECT a.payload_json,f.sha256 FROM workflow_first_ai_packages f "
+                "JOIN source_artifacts a ON a.sha256=f.sha256 "
+                "WHERE f.paket_id=? LIMIT 1",
+                [paket_id],
+            ).fetchone()
+        if indexed is None:
+            raise ValueError(
+                "Zur Validierung der QEC-Fundstellen fehlt die originale, "
+                "registrierte erste Analyse-ZIP."
+            )
+        artifact = json.loads(indexed[0])
+        path = Path(artifact["archived_path"])
+        if not path.is_file() or path.is_symlink():
+            raise ValueError("Erstes Analyse-ZIP ist lokal nicht mehr verfuegbar.")
+        with path.open("rb") as source:
+            digest = hashlib.sha256()
+            for chunk in iter(lambda: source.read(1024 * 1024), b""):
+                digest.update(chunk)
+        if digest.hexdigest() != indexed[1]:
+            raise ValueError("Die SHA-256 der ersten QEC-Basis stimmt nicht.")
+        try:
+            with ZipFile(path) as archive:
+                manifest = json.loads(archive.read("manifest.json"))
+                if manifest.get("analyseumfang") != "workflow_01_02_qec":
+                    return
+                with archive.open("qec_felder.csv") as source:
+                    rows = csv.DictReader(
+                        io.TextIOWrapper(
+                            source, encoding="utf-8-sig", newline=""
+                        )
+                    )
+                    existing = {
+                        (str(item.get("qec_bericht_id") or ""),
+                         str(item.get("fundstelle") or ""))
+                        for item in rows
+                    }
+        except (BadZipFile, KeyError, UnicodeError, ValueError) as exc:
+            raise ValueError(
+                "QEC-Belegindex im registrierten Erstpaket nicht lesbar."
+            ) from exc
+        unknown = references - existing
+        if unknown:
+            alias, position = sorted(unknown)[0]
+            raise ValueError(
+                f"QEC-Feldbeleg nicht im exportierten Original vorhanden: "
+                f"{alias}/{position or '[Fundstelle fehlt]'}"
+            )
+
     @staticmethod
     def _validate_belege(
         belege: list[ChatGPTBeleg], mapping: dict[tuple[str, str], dict],
@@ -493,6 +553,13 @@ class ChatGPTAnalyseStore:
                     requested_rows[evidence.quelle].add(evidence.quelle_id)
         report("Zeilenbelege gegen das archivierte Analysepaket prüfen …")
         verified_rows = self._validate_export_rows(data.paket_id, requested_rows)
+        qec_fields = {
+            (evidence.quelle_id, evidence.fundstelle)
+            for item in (*data.cluster, *data.faelle)
+            for evidence in item.belege
+            if evidence.quelle == "qec_felder"
+        }
+        self._verify_qec_field_locations(data.paket_id, qec_fields)
 
         cluster_ids: set[str] = set()
         members: dict[str, str] = {}
