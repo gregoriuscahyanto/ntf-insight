@@ -100,6 +100,8 @@ def test_bars_render_and_emit_selection_with_keyboard(tmp_path):
     app = QApplication.instance() or QApplication([])
     chart = LlmClusterBarChart("Clustergrößen")
     try:
+        chart.show()
+        app.processEvents()
         chart.set_items([
             ("C01", "Versorgung", 10),
             ("C02", "Mechanik", 4),
@@ -200,3 +202,46 @@ def test_workflow_llm_dashboard_is_interactive_and_project_scoped(
     finally:
         window.close()
         app.processEvents()
+
+
+
+def test_unclustered_and_legacy_answers_are_readable_without_fabricated_causes():
+    from ntf_insight.reporting.chatgpt_exchange import ChatGPTRueckgabe
+
+    clusters, findings, scoped = _examples()
+    no_clusters = [
+        (case_id, None, json.dumps({
+            **json.loads(payload), "cluster_id": None,
+            "verursachungsbereich": "Nicht zuordenbar",
+        }), review)
+        for case_id, _cluster_id, payload, review in findings
+    ]
+    overview = build_llm_cluster_overview([], no_clusters, scoped)
+    assert not overview.groups
+    assert overview.ungrouped == 4
+    assert overview.supplier_hypotheses == 0
+    assert overview.unknown_causes == 4
+
+    # Neue Angaben zur Fehlerwiederkehr sind optional, damit die bisherige
+    # Runde-1-/Runde-2-JSON nach einem App-Update lesbar bleibt.
+    data = ChatGPTRueckgabe.model_validate({
+        "format": "ntf-insight-chatgpt-rueckgabe",
+        "schema_version": 1,
+        "paket_id": "a" * 32,
+        "analyse_id": "Analyse-Old",
+        "faelle": [{"fall_id": "F0001", "ntf_bewertung": "NTF fraglich"}],
+    })
+    assert data.faelle[0].fehlerwiederkehr == "Nicht beurteilbar"
+    assert data.faelle[0].begruendung_fehlerwiederkehr == ""
+    data = ChatGPTRueckgabe.model_validate({
+        "format": "ntf-insight-chatgpt-rueckgabe",
+        "schema_version": 1,
+        "paket_id": "a" * 32,
+        "analyse_id": "Analyse-Second",
+        "faelle": [{
+            "fall_id": "F0001",
+            "fehlerwiederkehr": "Nach Tausch erneut nachgewiesen",
+            "begruendung_fehlerwiederkehr": "QT vor und nach dem Tausch",
+        }],
+    })
+    assert data.faelle[0].fehlerwiederkehr == "Nach Tausch erneut nachgewiesen"
