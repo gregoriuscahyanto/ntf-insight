@@ -304,7 +304,14 @@ def export_cluster_context(
         "Nur wirklich vorhandene Anhaenge und Fundstellen zitieren.",
         "13. Die Original-TP-Dashboard-Sammel-CSV wird wegen "
         "Fahrzeuguebergreifung NICHT ungefiltert in die ZIP kopiert: "
-        "die zulassigen FIN-bezogenen Befundzeilen liegen unter diagnose/."
+        "die zulassigen FIN-bezogenen Befundzeilen liegen unter diagnose/.",
+        "14. Grosse Diagnosetabellen liegen in mehreren CSV-Teilen: "
+        "die erste Datei heisst z.B. diagnose/dtc_parameter.csv, "
+        "weitere heissen diagnose/dtc_parameter_teil_0002.csv usw. "
+        "Das Manifest listet ALLE Teile und ihre Zeilenzahlen unter "
+        "diagnose_tabellen auf. Fuer eine vollstaendige Analyse muessen "
+        "saemtliche Teile mitgezahlt und ausgewertet werden. "
+        "Die Wiederholung des CSV-Headers ist KEINE Diagnosezeile."
     ]
     if project is not None and project.ecu_names:
         instruction_lines.insert(
@@ -407,6 +414,7 @@ def export_cluster_context(
                     verified_result.model_dump_json(indent=2, exclude_none=True),
                 )
             if scope is not None:
+                table_files: dict[str, list[dict]] = {}
                 if progress:
                     progress(
                         "Diagnosis-Viewer-QuickTests, ECUs und DTCs "
@@ -415,6 +423,7 @@ def export_cluster_context(
                 diagnosis_stats, _source_shas = export_parsed_diagnostics(
                     archive, store.store, scope,
                     include_fulltext=include_originals, progress=progress,
+                    table_files=table_files,
                 )
                 if progress:
                     progress(
@@ -422,11 +431,14 @@ def export_cluster_context(
                     )
                 tp_stats = export_tp_filtered(
                     archive, store.store, scope, progress=progress,
+                    table_files=table_files,
                 )
                 tips_stats = export_tips_filtered(
                     archive, store.store, scope,
                     include_fulltext=include_originals,
+                    progress=progress, table_files=table_files,
                 )
+                manifest["diagnose_tabellen"] = table_files
                 manifest["diagnose_auszug"] = {
                     **diagnosis_stats, **tp_stats, **tips_stats,
                     "originale_projektdateien": len(planned_originals),
@@ -456,6 +468,12 @@ def export_cluster_context(
                     "Die VIN-gefilterten TP-Dashboard-Tabellen liegen "
                     "unter diagnose/tp_dashboard_*.csv. TIPS-Writer-Auswertung "
                     "liegt unter diagnose/tips_writer.csv.\n"
+                    "Grosse Tabellen werden NICHT abgeschnitten, sondern "
+                    "in CSV-Teile aufgeteilt: nach dem ersten Dateinamen "
+                    "folgen gleichnamige Dateien mit _teil_0002.csv, "
+                    "_teil_0003.csv usw. Der Index diagnose_tabellen "
+                    "in cluster_kontext_manifest.json enthaelt alle "
+                    "Dateinamen und Zeilenzahlen. ALLE Teile auswerten.\n"
                     "Originale aus Schritt 04 und ungeparste QT-PDFs liegen "
                     "nach Freigabe unter unterlagen/. Sie sind nicht "
                     "automatisch anonymisiert. Das Manifest dokumentiert "

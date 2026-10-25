@@ -23,8 +23,11 @@ from ntf_insight.storage.duckdb_store import DuckDBStore
 from ntf_insight.storage.qec_project_scope import qec_case_matches_project
 from ntf_insight.storage.workflow_projects import WorkflowProjectStore
 
-MAX_TECH_ROWS = 1_000_000
+# Grenzen je CSV-TEILDATEI, nicht je Sachnummernprojekt: ein Export darf
+# mehr als eine Million DTC-/Parameterbeobachtungen enthalten.
+MAX_ROWS_PER_CSV_PART = 250_000
 MAX_STRUCTURED_FILE_BYTES = 200 * 1024**2
+MAX_ZIP_PARTS_PER_TABLE = 10_000
 _FIN = re.compile(r"(?<![A-Z0-9])[A-HJ-NPR-Z0-9]{17}(?![A-Z0-9])", re.I)
 
 
@@ -146,50 +149,131 @@ def load_technical_scope(
     return TechnicalScope(vins, cases, tuple(found))
 
 
+class _PartitionedCsvWriter:
+    """Schreibt ohne Speicherstau in mehrere vollstaendige CSVs des ZIP.
+
+    Der erste Teil behaelt den bisherigen Dateinamen; ab Teil 2 folgt
+    "_teil_0002.csv". Jede Datei enthaelt Header und UTF-8-BOM.
+    """
+
+    def __init__(
+        self, archive: ZipFile, output: str, headers: tuple[str, ...],
+        progress: Callable[[str], None] | None = None,
+    ) -> None:
+        self.archive = archive
+        self.output = output
+        self.headers = headers
+        self.progress = progress
+        self.total_rows = 0
+        self.total_size = 0
+        self.parts: list[dict[str, object]] = []
+        self._stream: io.TextIOWrapper | None = None
+        self._writer = csv.DictWriter(
+            self, fieldnames=headers, extrasaction="ignore",
+            lineterminator="\n",
+        )
+        header_buf = io.StringIO(newline="")
+        csv.writer(header_buf, lineterminator="\n").writerow(headers)
+        self._header = "\ufeff" + header_buf.getvalue()
+        self._header_size = len(self._header.encode("utf-8"))
+
+    def __enter__(self) -> "_PartitionedCsvWriter":
+        self._open_part()
+        return self
+
+    def __exit__(self, *_exc: object) -> None:
+        self._close_part()
+
+    def _open_part(self) -> None:
+        number = len(self.parts) + 1
+        if number > MAX_ZIP_PARTS_PER_TABLE:
+            raise ValueError(
+                f"Diagnosetabelle {self.output} hat mehr als "
+                f"{MAX_ZIP_PARTS_PER_TABLE} Teile; Export sicher abbrechen."
+            )
+        name = (
+            self.output if number == 1
+            else self.output[:-4] + f"_teil_{number:04d}.csv"
+        )
+        binary = self.archive.open(name, "w", force_zip64=True)
+        self._stream = io.TextIOWrapper(binary, encoding="utf-8", newline="")
+        self._stream.write(self._header)
+        self.parts.append({
+            "datei": name, "zeilen": 0, "bytes": self._header_size,
+        })
+        self.total_size += self._header_size
+        if self.progress and number > 1:
+            self.progress(
+                f"Diagnosetabelle {self.output}: Teil {number}, "
+                f"{self.total_rows:,} Zeilen vollstaendig gesichert ..."
+            )
+
+    def _close_part(self) -> None:
+        if self._stream is not None:
+            self._stream.close()
+            self._stream = None
+
+    def write(self, line: str) -> int:
+        """csv.DictWriter ruft diese Methode fuer jede DATENzeile auf."""
+        size = len(line.encode("utf-8"))
+        if size + self._header_size > MAX_STRUCTURED_FILE_BYTES:
+            raise ValueError(
+                f"Eine einzelne Diagnosezeile in {self.output} ist groesser "
+                "als die maximale CSV-Teilgroesse von 200 MiB. "
+                "Der Inhalt wird nicht gekuerzt."
+            )
+        part = self.parts[-1]
+        if (
+            part["zeilen"] >= MAX_ROWS_PER_CSV_PART
+            or part["bytes"] + size > MAX_STRUCTURED_FILE_BYTES
+        ):
+            self._close_part()
+            self._open_part()
+            part = self.parts[-1]
+        assert self._stream is not None
+        self._stream.write(line)
+        part["zeilen"] += 1
+        part["bytes"] += size
+        self.total_rows += 1
+        self.total_size += size
+        if self.progress and self.total_rows % 20_000 == 0:
+            self.progress(
+                f"Diagnosetabelle {self.output}: "
+                f"{self.total_rows:,} Zeilen exportiert ..."
+            )
+        return len(line)
+
+    def writerow(self, row: dict[str, object]) -> None:
+        self._writer.writerow(row)
+
+
 def _iter_query(
     store: DuckDBStore, table: str, query: str, arguments: list[str],
     transform: Callable[[tuple], dict], headers: tuple[str, ...],
     archive: ZipFile, output: str,
     fins: set[str], progress: Callable[[str], None] | None = None,
+    table_files: dict[str, list[dict]] | None = None,
 ) -> tuple[int, int]:
-    """Streamt Zeilen in einen ZIP-CSV-Member statt Millionen Zeilen zu laden."""
-    count = 0
-    size = 0
-    with archive.open(output, "w", force_zip64=True) as target:
-        with io.TextIOWrapper(target, encoding="utf-8-sig", newline="") as stream:
-            writer = csv.DictWriter(stream, fieldnames=headers, extrasaction="ignore",
-                                    lineterminator="\n")
-            writer.writeheader()
-            with store.connect() as con:
-                if _has_table(con, table):
-                    cursor = con.execute(query, arguments)
-                    while True:
-                        batch = cursor.fetchmany(1000)
-                        if not batch:
-                            break
-                        for raw in batch:
-                            data = transform(raw)
-                            if not data:
-                                continue
-                            count += 1
-                            if count > MAX_TECH_ROWS:
-                                raise ValueError(
-                                    "Mehr als 1.000.000 Diagnosezeilen in einer Tabelle. "
-                                    "Bitte Projekt/Unterlagen aufteilen."
-                                )
-                            safe = {
-                                key: _csv_safe(_redact(data.get(key), fins))
-                                for key in headers
-                            }
-                            size += sum(len(item.encode("utf-8")) for item in safe.values()) + 64
-                            if size > MAX_STRUCTURED_FILE_BYTES:
-                                raise ValueError(
-                                    "Eine strukturierte Diagnosetabelle ist groesser als 200 MiB."
-                                )
-                            writer.writerow(safe)
-                        if progress and count and count % 10000 < 1000:
-                            progress(f"Diagnosezeilen {output}: {count:,} ...")
-    return count, size
+    """FIN-gefilterte CSV-Zeilen streamen; nicht still abschneiden."""
+    with _PartitionedCsvWriter(archive, output, headers, progress) as writer:
+        with store.connect() as con:
+            if _has_table(con, table):
+                cursor = con.execute(query, arguments)
+                while True:
+                    batch = cursor.fetchmany(1000)
+                    if not batch:
+                        break
+                    for raw in batch:
+                        data = transform(raw)
+                        if not data:
+                            continue
+                        writer.writerow({
+                            key: _csv_safe(_redact(data.get(key), fins))
+                            for key in headers
+                        })
+    if table_files is not None:
+        table_files[output] = writer.parts
+    return writer.total_rows, writer.total_size
 
 
 def export_parsed_diagnostics(
@@ -199,6 +283,7 @@ def export_parsed_diagnostics(
     *,
     include_fulltext: bool,
     progress: Callable[[str], None] | None = None,
+    table_files: dict[str, list[dict]] | None = None,
 ) -> tuple[dict[str, int], set[str]]:
     """Fahrzeugdiagnosen nur fuer FINs der ersten Analyse exportieren."""
     fins = set(scope.fins)
@@ -236,6 +321,7 @@ def export_parsed_diagnostics(
         n, _size = _iter_query(
             store, required, query, eligible, convert, headers, archive,
             "diagnose/" + table + ".csv", fins, progress,
+            table_files=table_files,
         )
         return n
 
@@ -353,40 +439,40 @@ def export_parsed_diagnostics(
     by_fin = {}
     for case in scope.selected_cases:
         by_fin.setdefault(case.vin, []).append(case)
-    rel_rows = []
-    for report_id, fin, diagnosed, _km, _ecu, _dtc in reports:
-        for case in by_fin.get(fin, ()):
-            anchor = case.investigated_replacement()
-            source_ref = str(case.source_ref or "")
-            if (
-                anchor is None or not source_ref.startswith("raw:")
-                or anchor.source_ref != source_ref
-            ):
-                phase = "tauschdatum_nicht_belegt"
-                days = ""
-            else:
-                delta = (diagnosed.date() - anchor.occurred_at.date()).days
-                if delta == 0:
-                    phase = "zeitlich_unklar_gleicher_tag"
+    relation_name = "diagnose/quicktest_fallbezug.csv"
+    with _PartitionedCsvWriter(
+        archive, relation_name,
+        ("fall_id", "quicktest_id", "lage_zum_tausch",
+         "tage_relativ_zum_tausch", "belegregel"),
+        progress,
+    ) as writer:
+        for report_id, fin, diagnosed, _km, _ecu, _dtc in reports:
+            for case in by_fin.get(fin, ()):
+                anchor = case.investigated_replacement()
+                source_ref = str(case.source_ref or "")
+                if (
+                    anchor is None or not source_ref.startswith("raw:")
+                    or anchor.source_ref != source_ref
+                ):
+                    phase = "tauschdatum_nicht_belegt"
+                    days = ""
                 else:
-                    phase = "vor_tausch" if delta < 0 else "nach_tausch"
-                days = delta
-            rel_rows.append({
-                "fall_id": scope.cases[case.case_id],
-                "quicktest_id": aliases[str(report_id)],
-                "lage_zum_tausch": phase, "tage_relativ_zum_tausch": days,
-                "belegregel": "Nur Zeitvergleich; keine bewiesene Fehlerursache",
-            })
-    # Relationen kommen aus den bereits validierten Faellen und Berichten.
-    with archive.open("diagnose/quicktest_fallbezug.csv", "w") as target:
-        with io.TextIOWrapper(target, encoding="utf-8-sig", newline="") as stream:
-            writer = csv.DictWriter(stream, fieldnames=(
-                "fall_id", "quicktest_id", "lage_zum_tausch",
-                "tage_relativ_zum_tausch", "belegregel",
-            ), lineterminator="\n")
-            writer.writeheader()
-            writer.writerows(rel_rows)
-    count_rel = len(rel_rows)
+                    delta = (diagnosed.date() - anchor.occurred_at.date()).days
+                    if delta == 0:
+                        phase = "zeitlich_unklar_gleicher_tag"
+                    else:
+                        phase = "vor_tausch" if delta < 0 else "nach_tausch"
+                    days = delta
+                writer.writerow({
+                    "fall_id": scope.cases[case.case_id],
+                    "quicktest_id": aliases[str(report_id)],
+                    "lage_zum_tausch": phase,
+                    "tage_relativ_zum_tausch": days,
+                    "belegregel": "Nur Zeitvergleich; keine bewiesene Fehlerursache",
+                })
+    count_rel = writer.total_rows
+    if table_files is not None:
+        table_files[relation_name] = writer.parts
 
     stats = {
         "quicktests_geparst": count_report, "ecu_eintraege": count_ecu,
@@ -400,8 +486,9 @@ def export_parsed_diagnostics(
 def export_tp_filtered(
     archive: ZipFile, store: DuckDBStore, scope: TechnicalScope,
     progress: Callable[[str], None] | None = None,
+    table_files: dict[str, list[dict]] | None = None,
 ) -> dict[str, int]:
-    """TP-Dashboard-Sammel-CSV nur nach FIN im Parserbestand exportieren."""
+    """TP-Sammelbestand NUR fuer FINs der Projektkohorte exportieren."""
     categories = {
         "autoexport_dtc": (
             "tp_dashboard_dtc.csv",
@@ -428,58 +515,64 @@ def export_tp_filtered(
              "InitialWorkshopMessagePerformedActions"),
         ),
     }
-    counts = {}
-    # JOIN erzwingt echte TP-Dashboard-Provenienz, nicht beliebigen AutoExport.
+    counts: dict[str, int] = {}
+    fins = set(scope.fins)
+    allowed = sorted(fins | {"MBC" + fin for fin in fins})
+    placeholders = ",".join("?" for _ in allowed)
+    # Bereits die SQL-Abfrage filtert auf Projekt-FINs. So wird nicht mehr
+    # ein globales Multi-FIN-CSV vollstaendig durch Python iteriert.
+    query = (
+        "SELECT r.fin,r.payload_json FROM source_knowledge_rows r "
+        "JOIN source_knowledge_documents d ON d.source_sha256=r.source_sha256 "
+        "WHERE r.category=? AND d.source_kind='autoexport_rows' "
+        "AND json_extract_string(d.metadata_json,'$.source_type')='tp_dashboard' "
+        "AND UPPER(TRIM(r.fin)) IN (" + placeholders + ") "
+        "ORDER BY r.source_sha256,r.record_number"
+    )
     for category, (name, headers, fields) in categories.items():
-        counter = 0
-        query = (
-            "SELECT r.fin,r.payload_json FROM source_knowledge_rows r "
-            "JOIN source_knowledge_documents d ON d.source_sha256=r.source_sha256 "
-            "WHERE r.category=? AND d.source_kind='autoexport_rows' "
-            "AND json_extract_string(d.metadata_json,'$.source_type')='tp_dashboard' "
-            "ORDER BY r.source_sha256,r.record_number"
-        )
-        with archive.open("diagnose/" + name, "w") as target:
-            with io.TextIOWrapper(target, encoding="utf-8-sig", newline="") as stream:
-                writer = csv.DictWriter(stream, fieldnames=headers, lineterminator="\n")
-                writer.writeheader()
-                with store.connect() as con:
-                    if _has_table(con, "source_knowledge_rows") and _has_table(
-                        con, "source_knowledge_documents"
-                    ):
-                        cursor = con.execute(query, [category])
-                        while True:
-                            batch = cursor.fetchmany(1000)
-                            if not batch:
-                                break
-                            for fin, raw in batch:
-                                ident = _normal_fin(fin)
-                                if ident not in scope.fins:
-                                    continue
-                                try:
-                                    row = json.loads(raw)
-                                except (ValueError, TypeError):
-                                    continue
-                                if not isinstance(row, dict):
-                                    continue
-                                counter += 1
-                                if counter > MAX_TECH_ROWS:
-                                    raise ValueError(
-                                        "TP-Dashboard hat zu viele projektbezogene Zeilen."
-                                    )
-                                values = [_redact(row.get(f), set(scope.fins)) for f in fields]
-                                if category == "autoexport_dtc":
-                                    out = dict(zip(headers, (
-                                        f"TP{counter:07d}", scope.fins[ident], *values,
-                                    )))
-                                else:
-                                    out = dict(zip(headers, (
-                                        f"TP{counter:07d}", scope.fins[ident], *values,
-                                    )))
-                                writer.writerow({k: _csv_safe(v) for k, v in out.items()})
-                if progress:
-                    progress(f"TP-Dashboard {category}: {counter} Projektzeilen")
-        counts[category] = counter
+        output = "diagnose/" + name
+        with _PartitionedCsvWriter(
+            archive, output, headers, progress,
+        ) as writer:
+            with store.connect() as con:
+                if not (
+                    _has_table(con, "source_knowledge_rows")
+                    and _has_table(con, "source_knowledge_documents")
+                ):
+                    cursor = None
+                else:
+                    cursor = con.execute(query, [category, *allowed])
+                while True:
+                    batch = cursor.fetchmany(1000) if cursor is not None else []
+                    if not batch:
+                        break
+                    for fin, raw in batch:
+                        ident = _normal_fin(fin)
+                        if ident not in scope.fins:
+                            continue
+                        try:
+                            row = json.loads(raw)
+                        except (ValueError, TypeError):
+                            continue
+                        if not isinstance(row, dict):
+                            continue
+                        counter = writer.total_rows + 1
+                        data = {
+                            key: _csv_safe(_redact(value, fins))
+                            for key, value in zip(headers, (
+                                f"TP{counter:07d}", scope.fins[ident],
+                                *(row.get(field) for field in fields),
+                            ))
+                        }
+                        writer.writerow(data)
+        counts[category] = writer.total_rows
+        if table_files is not None:
+            table_files[output] = writer.parts
+        if progress:
+            progress(
+                f"TP-Dashboard {category}: {writer.total_rows:,} "
+                f"projektbezogene Zeilen in {len(writer.parts)} CSV-Teilen"
+            )
     return counts
 
 
@@ -654,29 +747,29 @@ def plan_original_context(
 def export_tips_filtered(
     archive: ZipFile, store: DuckDBStore, scope: TechnicalScope,
     *, include_fulltext: bool,
+    progress: Callable[[str], None] | None = None,
+    table_files: dict[str, list[dict]] | None = None,
 ) -> dict[str, int]:
-    """Nur strukturierte TIPS-Eintraege fuer FINs der Projektkohorte."""
+    """TIPS-Reiter projektbezogen und ohne Zeilenlimit streamen."""
     counters = {"tips_berichte": 0, "tips_eintraege": 0}
     seen_reports: set[str] = set()
     fins = set(scope.fins)
-    allowed = {
+    allowed_vins = sorted(fins | {"MBC" + fin for fin in fins})
+    placeholders = ",".join("?" for _ in allowed_vins)
+    allowed_categories = {
         "tips_case", "tips_section", "tips_field",
         "tips_table_row", "tips_attachment_reference",
     }
-    with archive.open("diagnose/tips_writer.csv", "w") as binary:
-        with io.TextIOWrapper(binary, encoding="utf-8-sig", newline="") as stream:
-            writer = csv.DictWriter(
-                stream, fieldnames=(
-                    "beleg_id", "fahrzeug_id", "kategorie", "reiter_fundstelle",
-                    "beschriftung", "wert_oder_befund", "textfreigabe",
-                ), lineterminator="\n",
-            )
-            writer.writeheader()
-            with store.connect() as con:
-                if not (_has_table(con, "source_knowledge_rows") and _has_table(
-                    con, "source_knowledge_documents"
-                )):
-                    return counters
+    output = "diagnose/tips_writer.csv"
+    headers = (
+        "beleg_id", "fahrzeug_id", "kategorie", "reiter_fundstelle",
+        "beschriftung", "wert_oder_befund", "textfreigabe",
+    )
+    with _PartitionedCsvWriter(archive, output, headers, progress) as writer:
+        with store.connect() as con:
+            if _has_table(con, "source_knowledge_rows") and _has_table(
+                con, "source_knowledge_documents"
+            ):
                 query = (
                     "SELECT r.fin,r.category,r.source_location,r.label,"
                     "r.payload_json,r.source_sha256 "
@@ -684,36 +777,40 @@ def export_tips_filtered(
                     "JOIN source_knowledge_documents d "
                     "ON d.source_sha256=r.source_sha256 "
                     "WHERE d.source_kind='tips_live_case' "
+                    "AND UPPER(TRIM(r.fin)) IN (" + placeholders + ") "
                     "ORDER BY r.source_sha256,r.record_number"
                 )
-                cursor = con.execute(query)
+                cursor = con.execute(query, allowed_vins)
                 while True:
                     batch = cursor.fetchmany(1000)
                     if not batch:
                         break
                     for fin, category, location, label, data, sha in batch:
-                        if _normal_fin(fin) not in fins or category not in allowed:
+                        ident = _normal_fin(fin)
+                        if ident not in fins or category not in allowed_categories:
                             continue
                         seen_reports.add(str(sha))
-                        counters["tips_eintraege"] += 1
-                        if counters["tips_eintraege"] > MAX_TECH_ROWS:
-                            raise ValueError("Zu viele TIPS-Eintraege.")
                         try:
                             payload = json.loads(data)
                         except (ValueError, TypeError):
                             payload = {}
-                        # Ohne Freitextfreigabe nur Inventar/Fundstelle.
-                        readable = json.dumps(payload, ensure_ascii=False) if (
-                            include_fulltext and isinstance(payload, dict)
-                        ) else ""
+                        readable = json.dumps(
+                            payload, ensure_ascii=False,
+                        ) if include_fulltext and isinstance(payload, dict) else ""
+                        counter = writer.total_rows + 1
                         writer.writerow({
-                            "beleg_id": f"TI{counters['tips_eintraege']:07d}",
-                            "fahrzeug_id": scope.fins[_normal_fin(fin)],
+                            "beleg_id": f"TI{counter:07d}",
+                            "fahrzeug_id": scope.fins[ident],
                             "kategorie": category,
                             "reiter_fundstelle": _redact(location, fins),
-                            "beschriftung": _redact(label if include_fulltext else "", fins),
+                            "beschriftung": _redact(
+                                label if include_fulltext else "", fins,
+                            ),
                             "wert_oder_befund": _redact(readable, fins),
                             "textfreigabe": int(include_fulltext),
                         })
     counters["tips_berichte"] = len(seen_reports)
+    counters["tips_eintraege"] = writer.total_rows
+    if table_files is not None:
+        table_files[output] = writer.parts
     return counters

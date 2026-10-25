@@ -54,6 +54,37 @@ aber **nur für FINs der gewählten Profil-/Sachnummern-Fallkohorte**:
 - `LESEHINWEISE.txt`: genaue Tabellenbezüge, Quellenstatus und
   Trennung von Fahrzeugbeobachtung und Schadteilbefund.
 
+### Sehr große Diagnosebestände: vollständige CSV-Teildateien
+
+Eine große Diagnose-/DTC-/Parameter-/TP-/TIPS-Tabelle wird im zweiten
+LLM-ZIP automatisch aufgeteilt. Die bisherige **globale Grenze von
+1.000.000 Diagnosezeilen** entfällt. Der Export schreibt pro CSV-Teil
+maximal **250.000 Datenzeilen oder 200 MiB** (je nachdem, was zuerst
+erreicht wird). Es werden keine Belegzeilen wegen einer vollen
+Teildatei ausgelassen.
+
+Die erste Datei behält ihren bisherigen Namen, z. B.
+`diagnose/dtc_parameter.csv`. Weitere Dateien heißen
+`diagnose/dtc_parameter_teil_0002.csv`,
+`diagnose/dtc_parameter_teil_0003.csv` usw.
+Jede Datei hat einen eigenen Tabellenkopf und kann separat gelesen
+werden. Die komplette Liste steht unter `diagnose_tabellen` im
+`cluster_kontext_manifest.json`, mit **Zeilenanzahl und Bytegröße je
+Teil**. Eine LLM-Auswertung muss **alle Teildateien** derselben Tabelle
+gemeinsam auswerten und darf nur die jeweils erste Kopfzeile als
+Spaltenbeschreibung betrachten.
+
+Die exportierten TP-Dashboard- und TIPS-Daten werden bereits in der
+SQL-Abfrage auf die FINs des **aktuellen Sachnummernprojekts** begrenzt.
+Die Original-Sammeldatei mit weiteren FINs wird nicht ungefiltert
+übernommen. Geparste QuickTests bleiben tabellarisch; PDF-Originale
+sind nur bei fehlender Parserfassung als Fallback vorgesehen.
+
+Das ZIP bleibt auf **1 GiB unkomprimierte Gesamtdaten** begrenzt.
+Wenn dieser Gesamtumfang oder eine einzelne 200-MiB-Datenzeile
+überschritten wird, erscheint ein konkreter Fehler. Es wird weder
+unbemerkt abgeschnitten noch ein unvollständiges ZIP freigegeben.
+
 Mit **getrennter Freigabe** umfasst `unterlagen/` zusätzlich alle
 diesem Projekt explizit zugeordneten Originalunterlagen aus Schritt 04,
 nicht geparste QuickTest-PDFs als Fallback sowie abrufbare TIPS-Writer-
