@@ -197,7 +197,17 @@ def export_qec_first_package(
         status, reason, sha = report_details[case.case_id]
         report = chosen_docs.get(sha)
         meta = report["metadata"] if report else {}
-        swap = case.investigated_replacement()
+        # Ein anderer Import kann Tauschereignisse zu einem QEC-Fall
+        # hinzufuegen. In Runde 1 gilt ausschliesslich der QEC-Excel-Anker
+        # aus GENAU derselben Originalzeile wie der ausgewählte QEC-Fall.
+        candidate_swap = case.investigated_replacement()
+        case_source = str(case.source_ref or "")
+        swap = (
+            candidate_swap if candidate_swap is not None
+            and case_source.startswith("raw:")
+            and str(candidate_swap.source_ref or "") == case_source
+            else None
+        )
         swap_month = swap.occurred_at.strftime("%Y-%m") if swap else ""
         row = {
             "fall_id": fid, "fahrzeug_id": vid,
@@ -226,6 +236,7 @@ def export_qec_first_package(
         gaps.append({
             "fall_id": fid, "qec_bericht_status": status,
             "datenluecke": reason,
+            "qec_tauschanker_fehlend": int(swap is None),
             "fehlende_reiter": ";".join(
                 str(value) for value in (meta.get("missing_sections") or [])
             ) if report else ";".join(QEC_SECTIONS),
