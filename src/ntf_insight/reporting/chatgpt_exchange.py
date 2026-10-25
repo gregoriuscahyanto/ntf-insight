@@ -156,6 +156,9 @@ class ChatGPTRueckgabe(BaseModel):
     schema_version: Literal[1] = SCHEMA_VERSION
     paket_id: str = Field(pattern=r"^[0-9a-f]{32}$")
     analyse_id: str = Field(max_length=90)
+    # Nur der NEUE LLM2-Export setzt diese optionale Markierung. Alte
+    # JSONs und LLM1 bleiben unveraendert kompatibel.
+    fehlerbild_methodik: Literal["multilabel_symptom_nachweis_v2"] | None = None
     clustermethode: str = Field(default="", max_length=800)
     verwendete_merkmale: list[str] = Field(default_factory=list, max_length=70)
     unsicherheiten: list[str] = Field(default_factory=list, max_length=50)
@@ -724,6 +727,34 @@ class ChatGPTAnalyseStore:
                 )
             for symptom in finding.fehlerbilder:
                 self._validate_belege(symptom.belege, mapping, verified_rows)
+
+        if data.fehlerbild_methodik == "multilabel_symptom_nachweis_v2":
+            missing = set(case_by_alias) - input_cases
+            if missing:
+                raise ValueError(
+                    "LLM-Durchlauf 2 unvollstaendig: "
+                    f"{len(missing)} QEC-Faelle ohne Bewertung. "
+                    "Auch Faelle ohne DTC oder Werkstatttext muessen "
+                    "'Unbekannt' als Fehlerbild erhalten."
+                )
+            empty_symptom = [
+                item.fall_id for item in data.faelle if not item.fehlerbilder
+            ]
+            if empty_symptom:
+                raise ValueError(
+                    "LLM-Durchlauf 2 enthaelt einen Fall ohne "
+                    f"Fehlerbild-Zuordnung: {empty_symptom[0]}. "
+                    "Auch bei Datenluecken Kategorie 'Unbekannt' angeben."
+                )
+            empty_proof = [
+                item.fall_id for item in data.faelle if not item.nachweisprofil
+            ]
+            if empty_proof:
+                raise ValueError(
+                    "LLM-Durchlauf 2 enthaelt einen Fall ohne "
+                    f"Nachweisprofil: {empty_proof[0]}. "
+                    "'Datenlage unzureichend' ist zulaessig."
+                )
 
         report("Analyse und Cluster in einer Transaktion speichern …")
         with self.store.connect() as con:
