@@ -35,6 +35,13 @@ from ntf_insight.storage.qec_project_scope import qec_case_matches_project
 from ntf_insight.storage.workflow_projects import WorkflowProjectStore
 
 
+def _safe_count(value: object) -> int:
+    try:
+        return max(0, int(value or 0))
+    except (TypeError, ValueError):
+        return 0
+
+
 def _captured_at(doc: dict) -> datetime:
     raw = str(doc["metadata"].get("downloaded_at_utc") or "")
     try:
@@ -151,15 +158,17 @@ def export_qec_first_package(
                     status, reason = "Pruefbedarf", "Widerspruechliche QEC-Sachnummer"
                 else:
                     doc = candidate
-                    has_errors = bool(
-                        int(candidate["metadata"].get("download_errors") or 0)
-                    )
-                    status = (
-                        "Vollstaendig"
-                        if candidate["metadata"].get("fresh_complete") is True
+                    meta = candidate["metadata"]
+                    has_errors = bool(_safe_count(meta.get("download_errors")))
+                    complete = (
+                        meta.get("fresh_complete") is True
+                        and _safe_count(meta.get("sections")) >= len(QEC_SECTIONS)
+                        and _safe_count(meta.get("fresh_sections")) >= len(QEC_SECTIONS)
+                        and not meta.get("missing_sections")
+                        and not meta.get("stale_sections")
                         and not has_errors
-                        else "Teilweise"
                     )
+                    status = "Vollstaendig" if complete else "Teilweise"
                     reason = (
                         "" if status == "Vollstaendig"
                         else "QEC-Reiter fehlen, sind alt oder Abruf ist unvollstaendig"
@@ -222,7 +231,7 @@ def export_qec_first_package(
             "tausch_km": swap.mileage_km if swap else None,
             "qec_bericht_id": report_alias.get(sha, ""),
             "qec_bericht_status": status,
-            "qec_reiter_frisch": int(meta.get("fresh_sections") or 0),
+            "qec_reiter_frisch": _safe_count(meta.get("fresh_sections")),
         }
         cases_rows.append(row)
         features.append(dict(row))
@@ -256,11 +265,11 @@ def export_qec_first_package(
             "qec_bericht_id": report_alias.get(sha, ""),
             "fall_id": fid, "fahrzeug_id": vid,
             "erfassungsstand": status, "pruefhinweis": reason,
-            "reiter_gesamt": int(meta.get("sections") or 0),
-            "reiter_frisch": int(meta.get("fresh_sections") or 0),
-            "formularfelder": int(meta.get("fields") or 0),
-            "tabellenzeilen": int(meta.get("table_rows") or 0),
-            "anhaenge_anzahl": int(meta.get("attachments") or 0),
+            "reiter_gesamt": _safe_count(meta.get("sections")),
+            "reiter_frisch": _safe_count(meta.get("fresh_sections")),
+            "formularfelder": _safe_count(meta.get("fields")),
+            "tabellenzeilen": _safe_count(meta.get("table_rows")),
+            "anhaenge_anzahl": _safe_count(meta.get("attachments")),
         })
 
     # Nur die ausgewaehlten, genau zugeordneten QEC-Dokumente lesen.
