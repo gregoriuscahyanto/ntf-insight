@@ -68,12 +68,10 @@ def _timestamp(text: str | None) -> datetime:
 
 def _ecu_header(lines: list[tuple[str, int]], index: int) -> dict[str, str] | None:
     line = lines[index][0]
-    # EV-DEV / FC-DEV error codes can occur immediately before a following
-    # ECU's "General information" section.  In that case the older
-    # three-line look-ahead mistook the *fault* for an additional ECU header
-    # (e.g. "EV-DEV Pxxxxxx - ...").  Test the DTC grammar before applying
-    # the intentionally permissive ECU-name heuristic: genuine XENTRY ECU
-    # names may contain spaces, parentheses and comma-separated locations.
+    # Ein EV-DEV-/FC-DEV-Fehler kann direkt vor "General information" der
+    # folgenden ECU stehen. Der bisherige Drei-Zeilen-Rueckblick verwechselte
+    # einen solchen DTC mit einem weiteren ECU-Kopf. Zuerst die DTC-Grammatik
+    # pruefen; echte ECU-Namen duerfen Leerzeichen, Klammern und Kommas haben.
     if DTC_START.fullmatch(line):
         return None
     if " - " not in line:
