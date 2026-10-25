@@ -225,16 +225,19 @@ def test_workflow_llm_dashboard_is_interactive_and_project_scoped(
         )
         assert page.chatgpt_case_proxy.rowCount() == 1
 
-        # Zweites Projekt darf dieselben global gespeicherten
-        # Ergebniszeilen nicht durchreichen.
+        # Projektwechsel MUSS das neue Paket verwenden. Globale
+        # Ergebniszeilen der ersten Sachnummer duerfen nicht erscheinen.
         page._scoped_rows = [{
             "case_id": "FREMD-005", "fin": "WDD12345678909999",
             "part_number": "B 222",
         }]
+        page.first_package = SimpleNamespace(
+            paket_id="c" * 32, analysis_id=None,
+        )
         page._refresh_chatgpt_cluster_view()
-        assert page.chatgpt_case_model.rowCount() == 1
-        assert [g.cluster_id for g in page._llm_overview.groups] == ["C-FREMD"]
-        # Bei realem Projektwechsel ist first_package=None: Altwerte weg.
+        assert page.chatgpt_case_model.rowCount() == 0
+        assert not page.llm_symptom_chart.items
+        # Ohne erstes Paket bleiben alle Altwerte ebenfalls leer.
         page.first_package = None
         page._refresh_chatgpt_cluster_view()
         assert page.chatgpt_case_model.rowCount() == 0
