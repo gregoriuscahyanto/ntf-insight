@@ -313,6 +313,39 @@ def export_cluster_context(
         "saemtliche Teile mitgezahlt und ausgewertet werden. "
         "Die Wiederholung des CSV-Headers ist KEINE Diagnosezeile."
     ]
+    # Diese neutralen Zusatzanforderungen bleiben unabhaengig vom
+    # CSV-Groesstdaten-Fix im separaten PR #60.
+    instruction_lines.extend([
+        "ZUSATZAUFTRAG CLUSTER: Untersuche ALLE Faelle auf gemeinsame "
+        "TECHNISCHE Fehlerbilder. Bilde in cluster[] nur dann Cluster, "
+        "wenn mehrere Faelle durch vergleichbare DTCs, ECUs, "
+        "Fehlerbedingungen, Zeitverlaeufe, HW-/SW-Staende oder "
+        "Originalbefunde plausibel verbunden sind. Nenne cluster_id, "
+        "titel, fall_ids, technische_hypothese, sicherheit und konkrete "
+        "Belegstellen. clustermethode und verwendete_merkmale muessen "
+        "die Aehnlichkeit nachvollziehbar erklaeren. Reine NTF-/SSL-/"
+        "Lieferantenlabels oder gleiche FIN reichen NICHT. Unverbundene "
+        "Faelle behalten cluster_id=null; KEINE erfundenen Cluster.",
+        "ZUSATZAUFTRAG VERURSACHUNG: Fuer jeden Fall verursachungsbereich "
+        "(Bauteil/Lieferant, Ansteuerung/ECU, Kommunikation, Bordnetz, "
+        "Leitung/Stecker, Einbau/Montage/Werkstatt oder Nicht zuordenbar), "
+        "sicherheit_zuordnung, begruendung_zuordnung, ursachenhypothese, "
+        "klaerung_durch, naechster_schritt und belege ausfuellen. "
+        "Gegenbeweise und Alternativhypothesen auffuehren. Eine "
+        "Lieferantenverantwortung niemals aus QEC-/NTF-/SSL-Labels, "
+        "Clusterhaeufigkeit oder einem DTC allein behaupten.",
+        "ZUSATZAUFTRAG WIEDERKEHR: fehlerwiederkehr exakt einer von "
+        "'Nach Tausch erneut nachgewiesen', 'Hinweise auf Wiederkehr', "
+        "'Kein erneuter Fehler im dokumentierten Nachtest' oder "
+        "'Nicht beurteilbar'. begruendung_fehlerwiederkehr mit belegtem "
+        "Tauschanker, Diagnosezeitpunkt, DTC-Code und Fundstelle "
+        "befuellen. Ohne echten Nachtest niemals Fehlerfreiheit behaupten.",
+        "ZUSATZAUFTRAG GESAMTAUSWERTUNG: Zweite Runde ist die umfassende "
+        "technische NTF-Neubewertung. Pro Fall beweise und Gegenindizien, "
+        "Verursachungssicherheit, Grenzen und priorisierte Pruefungen "
+        "angeben; Abweichungen zur ersten Runde begruenden. "
+        "Alle Fallpseudonyme genau einmal auswerten.",
+    ])
     if project is not None and project.ecu_names:
         instruction_lines.insert(
             3, "Projektseitig konfigurierte moeglich relevante ECUs "

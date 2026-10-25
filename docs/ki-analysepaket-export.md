@@ -29,6 +29,36 @@ Datenlücke – kein Grund, ihre Inhalte zu erfinden.
 
 ### Workflow 05: vollständiger technischer Kontext (zweiter LLM-Export)
 
+**Ziel des zweiten LLM-Durchlaufs:** Belegorientierte technische Neubewertung
+aller ausgewählten QEC-Fälle. Gemeinsamkeiten in DTCs, ECU-Daten, Betriebs-
+bedingungen, Zeitverläufen und tatsächlich vorhandenen Dokumenten
+dürfen zu nachvollziehbaren Clustern zusammengeführt werden. Fälle ohne
+belastbare Gemeinsamkeiten bleiben `cluster_id=null` und dürfen
+nicht künstlich zugeordnet werden. Cluster sind Hypothesen, keine
+Beweise einer technischen oder rechtlichen Verursachung.
+
+Die mögliche Ursache wird **pro Fall** mit Verursachungsbereich,
+Zuordnungssicherheit, Begründung, Gegenindizien, Quelle und
+empfohlener Prüfung dokumentiert. Eine Aussage über Lieferanten-
+verantwortung braucht unabhängige technische Nachweise; eine
+Häufung gleicher Fehler oder ein SSL-/NTF-Endbefund reicht nicht.
+
+Das rückwärtskompatibel erweiterte Rückgabeformat unterscheidet
+`fehlerwiederkehr` und `begruendung_fehlerwiederkehr` mit den
+Werten „Nach Tausch erneut nachgewiesen“, „Hinweise auf Wiederkehr“,
+„Kein erneuter Fehler im dokumentierten Nachtest“ und
+„Nicht beurteilbar“. Ohne gesicherte Zeitanker und Nachtests ist
+keine Aussage über ausbleibende Fehler möglich.
+
+**Visualisierung in Schritt 05:** Nach erfolgreichem Rückimport
+zeigt `LLM · Cluster & Verursachung` interaktive Balkendiagramme,
+Clustergrößen und Verursacher-Hypothesen sowie eine filterbare
+Falltabelle. Die Belegfundstellen, technische Clusterhypothese und
+Vor-/Nach-Tausch-Aussagen sind im Detailbereich lesbar. Die Anzeige
+übernimmt nur validierte Daten des aktuellen Sachnummernprojekts.
+
+
+
 Der zweite ZIP-Export übernimmt in `basis/` die **gesamte erste QEC-ZIP**
 und in `voranalyse/erstes_chatgpt_ergebnis.json` die validierte erste
 LLM-Auswertung. Alle Fälle und Pseudonyme bleiben erhalten.

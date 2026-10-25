@@ -44,6 +44,12 @@ Bewertung = Literal[
 Sicherheit = Literal["Hoch", "Mittel", "Niedrig", "Offen"]
 Zuordnung = Literal["Belegt", "Plausibel", "Offen"]
 Prioritaet = Literal["P1", "P2", "P3", "Offen"]
+Wiederkehr = Literal[
+    "Nach Tausch erneut nachgewiesen",
+    "Hinweise auf Wiederkehr",
+    "Kein erneuter Fehler im dokumentierten Nachtest",
+    "Nicht beurteilbar",
+]
 
 
 class ChatGPTBeleg(BaseModel):
@@ -75,6 +81,10 @@ class ChatGPTFall(BaseModel):
     naechster_schritt: str = Field(default="", max_length=2400)
     pruefungen_grenzen: str = Field(default="", max_length=3000)
     weitere_auffaelligkeiten: str = Field(default="", max_length=2500)
+    # Optional fuer alte Runde-1-/Legacy-JSON: vollstaendige Vor-/Nach-
+    # Tausch-Pruefung erfolgt erst in Runde 2 mit gesicherten Zeitankern.
+    fehlerwiederkehr: Wiederkehr = "Nicht beurteilbar"
+    begruendung_fehlerwiederkehr: str = Field(default="", max_length=2400)
     sicherheit_bewertung: Sicherheit = "Offen"
     themen: list[str] = Field(default_factory=list, max_length=30)
     belege: list[ChatGPTBeleg] = Field(default_factory=list, max_length=40)
