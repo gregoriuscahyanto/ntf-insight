@@ -198,13 +198,14 @@ def test_v4_unterstuetzt_umfangreiche_aber_begrenzte_pdf_berichte(
                 "FAULT CODES (0)", "No fault codes",
             ]
             self.pages = [FakePage("\n".join(lines))]
-            self.pages.extend(FakePage() for _ in range(306))
+            self.pages.extend(FakePage() for _ in range(631))
 
     monkeypatch.setattr(quicktest_detailed, "PdfReader", FakeReader)
     pdf = tmp_path / "synthetischer_quicktest.pdf"
     pdf.write_bytes(b"FAKE PDF reader monkeypatched")
     parsed = QuickTestPdfParser("f" * 64).parse(pdf)
-    assert QuickTestPdfParser.version == "4.0.0"
+    assert QuickTestPdfParser.version == "4.1.0"
+    assert len(parsed.quicktest_report["page_texts"]) == 632
     assert parsed.quicktest_report is not None
     assert parsed.quicktest_report["reported_ecu_count"] == 1
 
@@ -223,3 +224,79 @@ def test_v4_erkennt_zwei_lange_umbruchzeilen_zwischen_ecu_kopf_und_metadaten():
     assert result["reported_ecu_count"] == 1
     assert result["ecus"][0]["ecu_code"] == "CPC3"
     assert result["observed_dtc_count"] == 0
+
+
+def test_v41_ev_dev_fault_before_next_ecu_is_not_a_phantom_control_unit():
+    """A DTC near 'General information' belongs to the preceding ECU."""
+    text = _header() + [
+        "QuickTest 1", "ECU Count 2", "ECUS (2)",
+        "CPC3-N127 - Steuergeraet Antriebsstrang",
+        "General information",
+        "ECU variant CPC3_TEST",
+        "FAULT CODES (1)",
+        "EV-DEV P26F100 - Diagnoseereignis an der Pumpe. _ S",
+        "No environment data",
+        "AVAS301-N110 - Akustisches Warnsteuergeraet",
+        "General information",
+        "ECU variant AVAS_TEST",
+        "FAULT CODES (0)",
+        "No fault codes",
+    ]
+    parsed = parse_quicktest_structure(["\\n".join(text)])
+    assert parsed["reported_ecu_count"] == 2
+    assert parsed["observed_dtc_count"] == 1
+    assert [ecu["ecu_code"] for ecu in parsed["ecus"]] == [
+        "CPC3", "AVAS301",
+    ]
+    assert parsed["ecus"][0]["faults"][0]["kind"] == "EV-DEV"
+    assert parsed["ecus"][0]["faults"][0]["code"] == "P26F100"
+    assert parsed["ecus"][1]["faults"] == []
+
+
+def test_v41_ecu_location_may_contain_spaces_and_comma():
+    """Real ECU names may have long locations: do not tighten the grammar."""
+    lines = _header() + [
+        "QuickTest 1", "ECU Count 1", "ECUS (1)",
+        "BC_R213_LINs-R112/x, M112/x - Synthetisches Steuergeraet",
+        "General information",
+        "ECU variant BC_R213_TEST",
+        "FAULT CODES (0)", "No fault codes",
+    ]
+    result = parse_quicktest_structure(["\\n".join(lines)])
+    assert result["reported_ecu_count"] == 1
+    assert result["ecus"][0]["ecu_code"] == "BC_R213_LINs"
+    assert result["observed_dtc_count"] == 0
+
+
+def test_v41_large_quicktest_keeps_explicit_page_and_text_safety_limits(
+    tmp_path, monkeypatch,
+):
+    from ntf_insight.ingestion import quicktest_detailed
+    from ntf_insight.ingestion.real_source_parsers import QuickTestPdfParser
+
+    class FakePage:
+        def __init__(self, content=""):
+            self.content = content
+
+        def extract_text(self):
+            return self.content
+
+    class FakeReader:
+        is_encrypted = False
+        def __init__(self, _path, strict=False):
+            self.pages = [FakePage() for _ in range(1001)]
+
+    monkeypatch.setattr(quicktest_detailed, "PdfReader", FakeReader)
+    path = tmp_path / "synthetic.pdf"
+    path.write_bytes(b"FAKE PDF")
+    with pytest.raises(ValueError, match="Seitenanzahl"):
+        QuickTestPdfParser("f" * 64).parse(path)
+
+    class TooMuchTextReader:
+        is_encrypted = False
+        def __init__(self, _path, strict=False):
+            self.pages = [FakePage("x" * 8_000_001)]
+
+    monkeypatch.setattr(quicktest_detailed, "PdfReader", TooMuchTextReader)
+    with pytest.raises(ValueError, match="Textmenge"):
+        QuickTestPdfParser("f" * 64).parse(path)
