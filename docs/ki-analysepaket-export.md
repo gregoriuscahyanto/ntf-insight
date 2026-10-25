@@ -14,6 +14,19 @@ Bereits extrahierte Daten sind zur fallbezogenen Analyse als Tabellen verfügbar
 
 ## Workflow 03: QEC-basierte Erst-/Neuauswertung
 
+**Für jedes registrierte Bauteilprofil nutzbar:** Neben Kühlmittelpumpe auch
+HV-Batterie, DC/DC-Wandler und das frei benennbare Profil „Weiteres Bauteil“.
+Die Eingangs-QEC-Excel muss eine Sachnummer und eine eindeutige Fallreferenz
+haben. Bei unbekannter Bauteilbenennung darf eine Sachnummer nur einem
+Profilprojekt zugeordnet sein, ansonsten bleibt der Fall getrennt.
+
+**Auch Runde 2 ist bauteilneutral:** Ihr Kontext-ZIP verwendet die
+registrierte erste Analysebasis und Unterlagen aus demselben
+Bauteilprofil-/Sachnummernprojekt. Die Hinweise setzen weder eine Pumpe
+noch CPC3 voraus. Diagnosen und Ursachen werden nur bei vorhandenen
+Nachweisen als Hypothesen ausgewertet. Fehlt eine Quelle, ist das eine
+Datenlücke – kein Grund, ihre Inhalte zu erfinden.
+
 Die Schaltfläche **QEC-Neuauswertung exportieren (ZIP)** in Schritt 03 ist
 absichtlich **enger** als der bisherige allgemeine Quellenexport:
 
@@ -41,8 +54,11 @@ Das erste ZIP enthält in diesem Modus unter anderem
 ChatGPT-Rückgabevertrag. Die Datensätze in `qec_felder.csv` verweisen auf
 die pseudonymisierten QEC-Berichte und ihre konkrete Fundstelle.
 Ein veralteter, widersprüchlicher oder fehlender QEC-Teilbericht wird nicht
-als verlässlicher Originalbefund ausgegeben. Ohne einen einzigen
-passenden, geparsten QEC-Bericht bricht der Export begründet ab.
+als verlässlicher Originalbefund ausgegeben. **Fehlende Dokumente sind
+ausdrücklich zulässig:** Auch ohne einen einzigen QEC-Bericht erzeugt Schritt
+03 ein vollständiges Fallpaket mit leeren QEC-Belegtabellen und
+`qec_datenluecken.csv`. Für unbelegte Fälle ist `Nicht bewertbar`
+die richtige Ausgangskategorie, nicht eine behauptete Fehlerfreiheit.
 
 **Neuauswertung:** Ein erneuter Export erzeugt eine neue `paket_id`
 mit eigener lokaler `_NICHT_HOCHLADEN_ZUORDNUNG.csv`. Frühere Pakete
