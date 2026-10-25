@@ -23,6 +23,8 @@ class LlmClusterCase:
     confidence: str
     review_status: str
     recurrence: str
+    recurrence_source: str
+    recurrence_signal: bool
     payload: dict
 
 
@@ -45,6 +47,7 @@ class LlmClusterOverview:
     ungrouped: int
     supplier_hypotheses: int
     unknown_causes: int
+    recurrence_signals: int
 
     @property
     def total_cases(self) -> int:
@@ -68,6 +71,57 @@ def _supplier_hypothesis(cause: str) -> bool:
     )
 
 
+def _recurrence_for_display(payload: dict) -> tuple[str, str, bool]:
+    """Alte Ergebnis-JSONs zeigen historische Aussagen, ohne sie zu beweisen.
+
+    Der LLM-Freitext ist weder DTC-Löschhistorie noch eine neue
+    fachliche Verifikation. Keine automatischen Kausalbehauptungen.
+    """
+    structured = payload.get("fehlerwiederkehr")
+    if structured:
+        return (
+            str(structured),
+            str(payload.get("begruendung_fehlerwiederkehr") or
+                "Als strukturiertes LLM-Ergebnis gemeldet; fachlich zu prüfen."),
+            structured in {
+                "Nach Tausch erneut nachgewiesen", "Hinweise auf Wiederkehr",
+            },
+        )
+    topics = " | ".join(str(x).casefold() for x in payload.get("themen") or [])
+    if ("gleicher dtc nach tausch" in topics and
+            "ereignis-km über tauschstand" in topics):
+        return (
+            "Gleicher DTC nach Tausch · LLM-Hinweis",
+            "Aus Themenliste der gelieferten alten JSON übernommen. "
+            "Fahrzeug-DTC nach dem Tausch gemeldet, Quelle nicht hier "
+            "nachverifiziert; neue Pumpe / Schadteilursache unbewiesen.",
+            True,
+        )
+    if ("gleicher code nach tausch gespeichert" in topics and
+            "wiederauftreten unbewiesen" in topics):
+        return (
+            "DTC-Historie · Wiederkehr nicht belegt",
+            "Die alte LLM-Ergebnis-JSON bewertet den nach Tausch "
+            "gespeicherten DTC als möglicherweise historisch. "
+            "Ohne neuen Ereignisnachweis keine Wiederkehr annehmen.",
+            False,
+        )
+    if "neuer auftretens-km" in topics and "dtc nach tausch" in topics:
+        return (
+            "Neuer DTC nach Tausch · Vergleich offen",
+            "Die alte JSON beschreibt einen neuen DTC-Ereigniskilometerstand "
+            "nach Tausch, aber nicht zwingend denselben ursprünglichen "
+            "Fehler. Keine belegte Wiederkehr derselben Störung.",
+            False,
+        )
+    return (
+        "Nicht strukturiert ausgewertet",
+        "Die gelieferte JSON enthält kein separates Feld fehlerwiederkehr. "
+        "Nicht gleichzusetzen mit belegter Fehlerfreiheit nach Tausch.",
+        False,
+    )
+
+
 def build_llm_cluster_overview(
     cluster_payloads: Sequence[dict],
     finding_rows: Sequence[tuple[str, str | None, str, str]],
@@ -83,6 +137,9 @@ def build_llm_cluster_overview(
         if not isinstance(payload, dict):
             continue
         source = current_cases[case_id]
+        recurrence, recurrence_source, recurrence_signal = (
+            _recurrence_for_display(payload)
+        )
         cases.append(LlmClusterCase(
             case_id=case_id,
             pseudonym=str(payload.get("fall_id") or ""),
@@ -92,7 +149,9 @@ def build_llm_cluster_overview(
             cause=_cause(payload.get("verursachungsbereich")),
             confidence=str(payload.get("sicherheit_zuordnung") or "Offen"),
             review_status=str(review or "Offen"),
-            recurrence=str(payload.get("fehlerwiederkehr") or "Nicht beurteilbar"),
+            recurrence=recurrence,
+            recurrence_source=recurrence_source,
+            recurrence_signal=recurrence_signal,
             payload=payload,
         ))
         seen.add(case_id)
@@ -136,6 +195,7 @@ def build_llm_cluster_overview(
             item.cause.casefold() in {"nicht zuordenbar", "unbekannt", "offen"}
             or item.confidence == "Offen" for item in cases
         ),
+        recurrence_signals=sum(item.recurrence_signal for item in cases),
     )
 
 
