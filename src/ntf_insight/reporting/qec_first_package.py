@@ -1,4 +1,4 @@
-"""Erste ChatGPT-Runde: ausschliesslich QEC-FIN-Liste (01) und QEC-Berichte (02).
+"""Erste LLM-Runde: ausschliesslich QEC-FIN-Liste (01) und QEC-Berichte (02).
 
 Der Export greift bewusst NICHT auf QuickTests, AutoExport, TIPS, SMR-D oder
 spaetere Lieferanten-/Clusteranalysen zu. Fachtexte/Originale sind Opt-in.
@@ -410,7 +410,7 @@ def export_qec_first_package(
         ),
         "analyseumfang": "workflow_01_02_qec",
     }
-    tell("QEC-Analyse-Tabellen und vorlaeufige ChatGPT-Vorlage erzeugen ...")
+    tell("QEC-Analyse-Tabellen und vorlaeufige LLM-Vorlage erzeugen ...")
     files = {
         f"{name}.csv": _csv_file(headers, rows)
         for name, (headers, rows) in table_items.items()
