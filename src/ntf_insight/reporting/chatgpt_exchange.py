@@ -141,6 +141,9 @@ class ChatGPTFall(BaseModel):
     nachweisprofil: list[NachweisProfil] = Field(default_factory=list, max_length=12)
     belege: list[ChatGPTBeleg] = Field(default_factory=list, max_length=40)
     symptomcluster_begruendung: str = Field(default="", max_length=3500)
+    # Bei einer H-Zuordnung: Urheber und ausdruecklich offener Nachweis.
+    hypothese_von: Literal["ChatGPT"] | None = None
+    hypothese_bestaetigt: bool | None = None
 
 
 class ChatGPTCluster(BaseModel):
@@ -151,11 +154,13 @@ class ChatGPTCluster(BaseModel):
     technische_hypothese: str = Field(default="", max_length=4000)
     sicherheit: Sicherheit = "Offen"
     belege: list[ChatGPTBeleg] = Field(default_factory=list, max_length=40)
-    ebene: Literal["T", "S"] | None = None
+    ebene: Literal["T", "S", "H"] | None = None
     cluster_typ: str = Field(default="", max_length=180)
     evidenzklasse: str = Field(default="", max_length=1000)
     abgrenzung: str = Field(default="", max_length=2000)
     empfohlene_pruefung: str = Field(default="", max_length=2000)
+    hypothese_von: Literal["ChatGPT"] | None = None
+    hypothese_bestaetigt: bool | None = None
 
 
 class ChatGPTRueckgabe(BaseModel):
@@ -165,7 +170,7 @@ class ChatGPTRueckgabe(BaseModel):
     paket_id: str = Field(pattern=r"^[0-9a-f]{32}$")
     analyse_id: str = Field(max_length=90)
     analyse_id_vorher: str | None = Field(default=None, max_length=90)
-    cluster_abdeckung: Literal["T_S_v1"] | None = None
+    cluster_abdeckung: Literal["T_S_v1", "T_S_H_v1"] | None = None
     # Nur der NEUE LLM2-Export setzt diese optionale Markierung. Alte
     # JSONs und LLM1 bleiben unveraendert kompatibel.
     fehlerbild_methodik: Literal["multilabel_symptom_nachweis_v2"] | None = None
@@ -709,6 +714,148 @@ class ChatGPTAnalyseStore:
                         f"NTF-/Verursacher-/Wiederkehrwert verändert: {pseudo}/{field}"
                     )
 
+
+    def _validate_tsh_revision(self, data: ChatGPTRueckgabe) -> None:
+        """Revisionssicherer Wechsel T->S->H derselben zweiten Analyse.
+
+        Alle bestehenden technischen T-Zuordnungen bleiben erhalten.
+        Nur mit zusätzlichen originalzuordenbaren Diagnose-/Laborindizien
+        darf ein Fall aus S/H zu T aufsteigen; die neuen Belege und
+        Vorbehalte bleiben im Importarchiv nachvollziehbar. NTF-,
+        Verursacher- und Wiederkehrbewertungen bleiben unverändert.
+        """
+        parent = data.analyse_id_vorher
+        if parent is None:
+            return
+        if (data.cluster_abdeckung != "T_S_H_v1"
+                or not _IDENT.fullmatch(parent)
+                or parent == data.analyse_id):
+            raise ValueError(
+                "T/S/H-Neuverteilung benötigt eine gültige andere Vorgänger-ID."
+            )
+        with self.store.connect() as con:
+            valid = con.execute(
+                "SELECT 1 FROM workflow_ai_rounds r "
+                "JOIN chatgpt_imports i ON i.analyse_id=r.analyse_id "
+                "AND i.paket_id=r.paket_id "
+                "WHERE r.paket_id=? AND r.analyse_id=? AND r.round_number=2",
+                [data.paket_id, parent],
+            ).fetchone()
+            if valid is None:
+                raise ValueError(
+                    "Die zugehörige zweite Vorgängeranalyse wurde "
+                    "nicht in diesem Paket importiert."
+                )
+            previous_cases = con.execute(
+                "SELECT fall_pseudonym,cluster_id,payload_json "
+                "FROM chatgpt_fallanalysen WHERE analyse_id=?",
+                [parent],
+            ).fetchall()
+            previous_groups = con.execute(
+                "SELECT cluster_id,payload_json FROM chatgpt_cluster "
+                "WHERE analyse_id=?",
+                [parent],
+            ).fetchall()
+
+        old_cases = {
+            pseudonym: (cluster_id, json.loads(payload))
+            for pseudonym, cluster_id, payload in previous_cases
+        }
+        new_cases = {item.fall_id: item for item in data.faelle}
+        if not old_cases or set(old_cases) != set(new_cases):
+            raise ValueError(
+                "T/S/H-Revision muss dieselben QEC-Fälle wie "
+                "die bereits importierte zweite Analyse enthalten."
+            )
+        old_technical = {
+            ident: json.loads(payload)
+            for ident, payload in previous_groups
+            if ident.startswith("T")
+        }
+        new_technical = {
+            group.cluster_id: group for group in data.cluster
+            if group.ebene == "T"
+        }
+        if set(old_technical) != set(new_technical):
+            raise ValueError(
+                "Eine T/S/H-Revision darf technische T-Gruppen "
+                "nicht löschen, umbenennen oder neu erfinden."
+            )
+
+        for code, old in old_technical.items():
+            new = new_technical[code].model_dump(mode="json")
+            for key in ("titel", "technische_hypothese", "sicherheit"):
+                if new[key] != old.get(key):
+                    raise ValueError(
+                        f"Technischer Cluster {code} wurde inhaltlich verändert: {key}."
+                    )
+            old_members = set(old.get("fall_ids", []))
+            if not old_members.issubset(set(new["fall_ids"])):
+                raise ValueError(
+                    f"Ein bisher technisch zugeordneter Fall fehlt in {code}."
+                )
+            for evidence in old.get("belege", []):
+                if evidence not in new["belege"]:
+                    raise ValueError(
+                        f"Originalnachweis in technischem Cluster {code} fehlt."
+                    )
+
+        stable = (
+            "ntf_bewertung", "prioritaet", "befund", "verursachungsbereich",
+            "sicherheit_zuordnung", "begruendung_zuordnung",
+            "begruendung_ntf", "klaerung_durch", "naechster_schritt",
+            "pruefungen_grenzen", "sicherheit_bewertung",
+            "fehlerwiederkehr", "begruendung_fehlerwiederkehr",
+        )
+        for pseudo, case in new_cases.items():
+            old_cluster, original = old_cases[pseudo]
+            new_cluster = case.cluster_id or ""
+            promoted = (
+                new_cluster.startswith("T")
+                and not (old_cluster or "").startswith("T")
+            )
+            if (old_cluster or "").startswith("T") and new_cluster != old_cluster:
+                raise ValueError(
+                    f"Bestehender technischer Nachweis darf nicht "
+                    f"zurückgestuft werden: {pseudo}."
+                )
+            if promoted:
+                if not (
+                    any(
+                        e.quelle == "technische_referenz"
+                        and "diagnose/dtc_beobachtungen.csv" in e.fundstelle
+                        for e in case.belege
+                    )
+                    and any(
+                        e.quelle == "technische_referenz"
+                        and "diagnose/quicktest_fallbezug.csv" in e.fundstelle
+                        for e in case.belege
+                    )
+                ):
+                    raise ValueError(
+                        "Neue technische T-Zuordnung braucht sowohl "
+                        f"DTC- als auch QT-Originalfundstellen: {pseudo}."
+                    )
+                if case.sicherheit_bewertung == "Hoch":
+                    raise ValueError(
+                        f"Neue technische Indizien sind noch kein "
+                        f"hoch sicherer Kausalnachweis: {pseudo}."
+                    )
+            elif case.ursachenhypothese != original.get("ursachenhypothese", ""):
+                raise ValueError(
+                    f"Ursachenhypothese außerhalb eines belegten "
+                    f"T-Aufstiegs verändert: {pseudo}."
+                )
+            for field in stable:
+                before = original.get(
+                    field, ChatGPTFall.model_fields[field].default
+                )
+                if getattr(case, field) != before:
+                    raise ValueError(
+                        f"NTF-, Verursacher- oder Wiederkehrbewertung "
+                        f"verändert: {pseudo}/{field}."
+                    )
+
     def import_file(
         self, path: Path, *, private_csv: Path | None = None,
         progress: Callable[[str], None] | None = None,
@@ -778,6 +925,12 @@ class ChatGPTAnalyseStore:
             raise ValueError(
                 "Das zweite LLM-Paket verlangt T/S-Abdeckung aller Fälle; "
                 "cluster_abdeckung=T_S_v1 fehlt."
+            )
+        if (data.analyse_id.startswith("ClusterTSH-")
+                and data.cluster_abdeckung != "T_S_H_v1"):
+            raise ValueError(
+                "Das zweite LLM-Paket verlangt vollständige T/S/H-Clusterung; "
+                "cluster_abdeckung=T_S_H_v1 fehlt."
             )
         report("Lokale Paket- und FIN-Zuordnung prüfen …")
         mapping = self._mapping(data.paket_id, private_csv)
@@ -904,6 +1057,80 @@ class ChatGPTAnalyseStore:
                 if case.cluster_id is None:
                     raise ValueError("Fall ohne Cluster: " + case.fall_id)
             self._validate_ts_revision(data)
+
+
+        if data.cluster_abdeckung == "T_S_H_v1":
+            if set(input_cases) != set(members):
+                raise ValueError(
+                    "T/S/H-Abdeckung unvollständig: Jeder QEC-Fall "
+                    "muss genau einem Cluster zugeordnet sein."
+                )
+            order = {"T": 0, "S": 1, "H": 2}
+            sequence = []
+            for group in data.cluster:
+                prefix = group.cluster_id[:1]
+                if (prefix not in order
+                        or not re.fullmatch(r"[TSH][0-9]{2,4}", group.cluster_id)
+                        or group.ebene != prefix):
+                    raise ValueError(
+                        "Cluster brauchen Txx/Sxx/Hxx und dieselbe ebene."
+                    )
+                sequence.append(order[prefix])
+                if prefix == "T":
+                    if not group.belege:
+                        raise ValueError(
+                            f"T-Cluster ohne konkreten technischen Nachweis: "
+                            f"{group.cluster_id}."
+                        )
+                if prefix == "S" and (
+                    group.sicherheit == "Hoch" or not group.belege
+                ):
+                    raise ValueError(
+                        f"S-Cluster benötigt dokumentierte Werkstatt-/"
+                        f"Kundensymptome, keine hoch sichere Ursache: "
+                        f"{group.cluster_id}."
+                    )
+                if prefix == "H" and (
+                    group.hypothese_von != "ChatGPT"
+                    or group.hypothese_bestaetigt is not False
+                    or group.sicherheit == "Hoch"
+                    or not group.technische_hypothese.strip()
+                    or not group.abgrenzung.strip()
+                    or not group.empfohlene_pruefung.strip()
+                    or not group.belege
+                ):
+                    raise ValueError(
+                        f"H-Cluster muss unbestätigte ChatGPT-Hypothese "
+                        f"mit Quellen, Gegenindiz und Folgeprüfung sein: "
+                        f"{group.cluster_id}."
+                    )
+            if sequence != sorted(sequence):
+                raise ValueError(
+                    "Die Reihenfolge des zweiten ZIP-Ergebnisses muss "
+                    "T -> S -> H sein."
+                )
+            for case in data.faelle:
+                ident = case.cluster_id or ""
+                if not ident or ident not in cluster_ids:
+                    raise ValueError(
+                        f"Fall ohne gültige T/S/H-Zuordnung: {case.fall_id}."
+                    )
+                if ident.startswith("H"):
+                    if (case.hypothese_von != "ChatGPT"
+                            or case.hypothese_bestaetigt is not False):
+                        raise ValueError(
+                            f"H-Fall ohne explizite unbestätigte "
+                            f"ChatGPT-Hypothese: {case.fall_id}."
+                        )
+                if ident.startswith("S") and not any(
+                    item.kategorie != "Unbekannt"
+                    for item in case.fehlerbilder
+                ):
+                    raise ValueError(
+                        f"S-Fall ohne dokumentiertes Symptom: {case.fall_id}. "
+                        "Nur rein abgeleitete Muster der H-Ebene zuordnen."
+                    )
+            self._validate_tsh_revision(data)
 
         if data.fehlerbild_methodik == "multilabel_symptom_nachweis_v2":
             missing = set(case_by_alias) - input_cases

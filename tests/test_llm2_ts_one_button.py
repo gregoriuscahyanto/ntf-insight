@@ -42,19 +42,24 @@ def _prepared(tmp_path):
     return source, first, second, chain, template, prompt, manifest, schema
 
 
-def test_second_zip_requires_exact_one_T_or_S_per_case(tmp_path):
+def test_second_zip_requires_exact_one_T_S_or_H_per_case(tmp_path):
     _source, _first, _second, _chain, template, prompt, manifest, schema = (
         _prepared(tmp_path)
     )
-    assert template["cluster_abdeckung"] == "T_S_v1"
-    assert template["analyse_id"].startswith("ClusterTS-")
-    assert manifest["cluster_abdeckung"] == "T_S_v1"
+    assert template["cluster_abdeckung"] == "T_S_H_v1"
+    assert template["analyse_id"].startswith("ClusterTSH-")
+    assert manifest["cluster_abdeckung"] == "T_S_H_v1"
     assert "JEDER" in prompt
-    assert "Txx" in prompt and "Sxx" in prompt
+    assert "Txx" in prompt and "Sxx" in prompt and "Hxx" in prompt
+    assert "T -> S -> H" in prompt
+    assert "hypothese_von='ChatGPT'" in prompt
+    assert "hypothese_bestaetigt=false" in prompt
     assert "cluster_id=null" not in prompt
     assert "ebene" in schema["$defs"]["ChatGPTCluster"]["properties"]
     assert "cluster_abdeckung" in schema["properties"]
     assert "analyse_id_vorher" in schema["properties"]
+    assert "hypothese_von" in schema["$defs"]["ChatGPTCluster"]["properties"]
+    assert "hypothese_bestaetigt" in schema["$defs"]["ChatGPTFall"]["properties"]
 
 
 def test_ts_schema_keeps_ambiguous_current_as_noncausal_symptom():
@@ -89,6 +94,14 @@ def test_import_same_button_revisions_parent_while_preserving_old(tmp_path):
     # Die zweite Basisanalyse ist bereits importiert, aber technisch
     # ungeclustert. Die neue Datei ordnet diesen Fall als S ein.
     parent = dict(template)
+    # Regression zum historischen, tatsaechlich noch importierbaren
+    # T/S-Vorgaengerformat; der heutige ZIP-Export verlangt T/S/H.
+    # Test-Legacy-ID wird nur in der synthetischen DB als zweiter
+    # Export registriert, niemals als reales Benutzerpaket ausgegeben.
+    parent["analyse_id"] = "ClusterLegacy-synthetic-second"
+    chain.register_second_export(
+        "coolant_pump", PART, first.paket_id, parent["analyse_id"],
+    )
     parent["cluster"] = []
     parent["faelle"] = [{
         "fall_id": "F0001", "cluster_id": None,

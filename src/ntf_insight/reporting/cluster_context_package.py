@@ -201,7 +201,7 @@ def export_cluster_context(
     counts = store.counts(profile_id, part_number)
     project = WorkflowProjectStore(store.store).get(profile_id, part_number)
     analysis_id = (
-        "ClusterTS-" + package_id[:12] + "-" + secrets.token_hex(4)
+        "ClusterTSH-" + package_id[:12] + "-" + secrets.token_hex(4)
     )
     planned_originals = []
     if scope is not None:
@@ -330,15 +330,24 @@ def export_cluster_context(
         "QEC-/SSL-/NTF-Endlabels und behauptete Lieferantenschuld NIE "
         "als Clustermerkmal oder Kausalnachweis einsetzen. "
         "Nachweisprofil separat aus den vorhandenen Quellen ableiten.",
-        "17. KEINE FORCIERTE TECHNISCHE URSACHENCLUSTERUNG: Txx "
-        "nur bei positiven fallbezogenen technischen Indizien; "
-        "andere Faelle IMMER Sxx nach gemeldetem Symptom oder "
-        "expliziter Datenlage/Prozessart zuordnen. Jeder Fall hat "
-        "genau EINE T- oder S-cluster_id, keine null-Zuordnungen. "
-        "Mehrere fehlerbilder[] sind zulaessig. S ist niemals "
-        "gleichbedeutend mit einem belegten Defekt oder Verursacher. "
-        "Alle vier Dimensionen (T/S-Aehnlichkeit, Fehlerbild, "
-        "Nachweisbasis, Ursachenbereich) getrennt bewerten.",
+        "17. PRIORISIERTE CLUSTERUNG T -> S -> H: Pruefe fuer JEDEN "
+        "Fall zuerst T: gemeinsame konkrete technische Labor-/ECU-/DTC-"
+        "Indizien mit dokumentierten Originalbelegen. Ein DTC beweist "
+        "noch keinen Defekt des reklamierten Pumpenbauteils. "
+        "Ohne belastbares T-Muster pruefe S: NUR dokumentierte, "
+        "vergleichbare Kunden- oder Werkstattsymptome (z.B. LIN-Ausfall, "
+        "Warnmeldung, Ueberstrommeldung); kein als Symptom verkleideter "
+        "Reparaturauftrag oder KDM-Text ohne Beanstandung. "
+        "Erst wenn weder T noch S ausreichend zugeordnet werden kann, "
+        "bilde H: eigenstaendig aus ALLEN verfuegbaren Fall- und "
+        "Kontextinformationen abgeleitete, UNBESTAETIGTE moegliche "
+        "Zusammenhaenge, z.B. Prozess-, Datenlage-, Diagnose- oder "
+        "technische Pruefhypothesen. H verlangt nachvollziehbare Quellen, "
+        "Alternativerklaerungen und eine konkrete bestaetigende "
+        "Folgepruefung. Keine erfundenen Symptome, Ursachen, KDM-Inhalte "
+        "oder Lieferantenschuld. Pro Fall EXAKT eine Haupt-cluster_id "
+        "Txx/Sxx/Hxx, niemals null. Die anderen Analyseachsen "
+        "Fehlerbilder, Nachweisbasis und Verursacher getrennt halten.",
         "18. QUICKTESTS AM TAUSCHTAG NICHT IGNORIEREN: "
         "diagnose/quicktest_fallbezug.csv enthaelt km_quicktest, "
         "km_tausch, km_differenz_zum_tausch und zeitliche_sicherheit. "
@@ -370,41 +379,51 @@ def export_cluster_context(
         "nachtraegliche [Feldnamen]-Ergaenzungen. "
         "Die Felder fehlerbild_methodik und cluster_abdeckung aus "
         "der Ergebnisvorlage unveraendert beibehalten.",
-        "21. VOLLSTAENDIGE T/S-ABDECKUNG: JEDER exportierte QEC-Fall "
-        "muss genau einer cluster_id zugeordnet sein; null ist in "
-        "Runde 2 nicht mehr erlaubt. Txx bezeichnet technische "
-        "Aehnlichkeitscluster mit konkreten Belegen (DTC, ECU, "
-        "Originalbefund). Wenn das nicht begruendbar ist, den Fall "
-        "einem Sxx-Cluster fuer ein vergleichbares GEMELDETES "
-        "Symptom oder eine explizite Datenlage-/Prozessgruppe zuordnen. "
-        "Nicht belegte Symptome niemals erfinden. Alle cluster[] "
-        "haben ebene='T' oder ebene='S' entsprechend ihrer ID. "
-        "S-Cluster sind KEIN Ursachenbeweis und begruenden niemals "
-        "automatisch Lieferantenverantwortung. In S-Gruppen "
-        "cluster_typ, evidenzklasse, abgrenzung und Original-Fundstellen "
-        "dokumentieren. In faelle[] muss cluster_id auf genau eine "
-        "existierende T- oder S-Gruppe verweisen. Ergebnis: "
-        "Anzahl aller T- und S-Mitglieder == Anzahl QEC-Faelle."
+        "21. VERBINDLICHES T/S/H-JSON: Nur EINE JSON-Rueckgabe, "
+        "EIN gemeinsames cluster[] und EIN faelle[]. Reihenfolge "
+        "der Cluster im Array: zuerst alle T, danach alle S, "
+        "zuletzt die selbst erarbeiteten H. T: Technischer Cluster "
+        "mit Labor-/ECU-/DTC-Konstellation und belegtem Bezug; "
+        "S: Symptomcluster mit dokumentierten Kunden-/Werkstattangaben "
+        "OHNE bestaetigte Ursache; H: von ChatGPT abgeleiteter "
+        "Hypothesencluster, nur wenn T und S fuer den Fall nicht "
+        "ausreichen. H als hypothetische Pruefgruppe und NICHT "
+        "als bestaetigte technische Ursache benennen. Bei H "
+        "hypothese_von='ChatGPT', hypothese_bestaetigt=false "
+        "in cluster[] UND faelle[]. Alle 173 bzw. alle exportierten "
+        "QEC-Fallpseudonyme genau einmal, weder fehlende noch doppelte "
+        "Mitglieder; cluster_abdeckung='T_S_H_v1' unveraendert. "
+        "Pro Cluster ebene='T'/'S'/'H', passende Kennung, "
+        "Originalfundstellen, Gegenindizien/Abgrenzung und "
+        "empfohlene_pruefung. H-Cluster erst NACH T- und "
+        "S-Pruefung aus den vorliegenden Quellen und ihren "
+        "Widerspruechen nachvollziehbar unterteilen. "
+        "Weder S noch H beweisen Pumpendefekt/Lieferantenverantwortung.",
     ]
     # Diese neutralen Zusatzanforderungen bleiben unabhaengig vom
     # CSV-Groesstdaten-Fix im separaten PR #60.
     instruction_lines.extend([
-        "ZUSATZAUFTRAG T/S-CLUSTER: Untersuche ALLE Faelle auf technische "
-        "und symptomatische Aehnlichkeit. Txx nur fuer belegbasierte "
-        "technische Muster aus DTC/ECU/Fehlerbedingungen/Originalbefunden. "
-        "Wenn das nicht vorliegt: Sxx nach Werkstatt-Meldebild, "
-        "Leistungs-/Temperaturhinweis oder explizit unzureichender "
-        "Datenlage; gleiche Reparaturanweisung ist kein technischer "
-        "Fehlermechanismus. JEDER Fall muss in genau einer T- oder "
-        "S-Gruppe sein. Auch Unbekannt/Datenlage unzureichend darf "
-        "in eine S-Gruppe. Nie kuenstlich T, nur um 100 Prozent "
-        "zu erreichen. Weder QEC-/NTF-/SSL-Labels noch gemeinsame "
-        "FIN beweisen eine Ursache. Je Cluster ebene, cluster_id, "
-        "titel, fall_ids, technische_hypothese (bei S nur als "
-        "vorsichtige Arbeitshypothese), sicherheit, belege, "
-        "cluster_typ, evidenzklasse, abgrenzung und empfohlene_pruefung "
-        "ausfuellen. Die Ergebnisdatei hat nur EIN gemeinsames "
-        "cluster[] und faelle[] ohne getrennte Zusatzdatei.",
+        "ZUSATZAUFTRAG T/S/H IN DREI DURCHGAENGEN: "
+        "(1) T: erst alle Faelle nach wirklich belegten technischen "
+        "Mustergruppen clustern. "
+        "(2) S: von den uebrigen Faellen nur diejenigen nach "
+        "vergleichbaren tatsaechlich dokumentierten Symptomen "
+        "(Kunden- oder Werkstattbericht) clustern. "
+        "(3) H: ERST JETZT die Restfaelle mit eigener, als "
+        "UNBESTAETIGT gekennzeichneter Hypothesenbildung aus "
+        "Diagnose, Fehlerspeicherchronologie, Reparatur-/KDM-"
+        "Hinweisen, Baureihe, Laufleistung, Datenluecken und "
+        "Gegenindizien in sachlich passende H-Untergruppen "
+        "aufteilen. Gegebenenfalls eine explizite H-Datenlage-"
+        "Hypothese mit offenen Pruefschritten verwenden, "
+        "niemals ungepruefte Fakten erfinden. "
+        "Ein Fall darf nicht allein wegen gleicher Sachnummer, "
+        "QEC-Endurteil oder Standard-Reparaturtext als technischer "
+        "Cluster gelten. Uebergreifende Moeglichkeiten in "
+        "ursachenhypothese und Nachweisprofil benennen, "
+        "H keinesfalls als Lieferantenursache deklarieren. "
+        "JEDER Fall genau EINE T-, S- oder H-ID, "
+        "alle in EINER importierbaren JSON.",
         "ZUSATZAUFTRAG VERURSACHUNG: Fuer jeden Fall verursachungsbereich "
         "(Bauteil/Lieferant, Ansteuerung/ECU, Kommunikation, Bordnetz, "
         "Leitung/Stecker, Einbau/Montage/Werkstatt oder Nicht zuordenbar), "
@@ -445,10 +464,14 @@ def export_cluster_context(
         ),
         "sachnummer_wurde_lokal_gefiltert": project_scoped,
         "fehlerbild_methodik": "multilabel_symptom_nachweis_v2",
-        "cluster_abdeckung": "T_S_v1",
+        "cluster_abdeckung": "T_S_H_v1",
         "cluster_semantik": (
-            "T = technische Aehnlichkeit; S = Symptom/Prozess/Datenlage; "
-            "alle Faelle genau einmal, keine Ursache aus S ableiten"
+            "Prioritaet T -> S -> H. T: konkrete technische Indizien; "
+            "S: dokumentiertes Kunden-/Werkstattsymptom; "
+            "H: von ChatGPT nach T/S selbst abgeleitete, "
+            "unbestaetigte Hypothese mit Gegenpruefung. "
+            "Alle Faelle genau einmal, keine Ursachenschuld aus "
+            "Clusterzuordnung ableiten."
         ),
         "quicktest_zeitrelation": "datum_plus_km_indiz_ohne_tausch_uhrzeit",
         "unterlagen_nach_sachnummer_zugeordnet": bool(part_number.strip()),
@@ -519,7 +542,7 @@ def export_cluster_context(
             # aber eine neue eindeutige ID statt einer Kopie der 1.-Runde-Vorlage.
             followup_template = ergebnis_vorlage(package_id)
             followup_template["analyse_id"] = analysis_id
-            followup_template["cluster_abdeckung"] = "T_S_v1"
+            followup_template["cluster_abdeckung"] = "T_S_H_v1"
             # Kennzeichnet das NEUE zweite Ergebnis; beim Import werden
             # damit Fehlerbild und Nachweisgrad je QEC-Fall verlangt.
             followup_template["fehlerbild_methodik"] = (
