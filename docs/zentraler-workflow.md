@@ -536,3 +536,34 @@ und den SSL-Endbefundfilter aus Schritt 01. *Geparst* ist keine
 fachlich bestätigte NTF-Bewertung und kein Nachweis, dass der Portaldatenstand
 aktuell oder vollständig ist. Die großen ZIP-/JSON-Aktionen aus
 03 und 05 bleiben davon unabhängig.
+
+### T/S-Gesamtclusterung im zweiten ChatGPT-Paket
+
+Der zweite ZIP-Export enthält **eine** verpflichtende Ergebnisvorlage
+(`chatgpt_ergebnis_vorlage.json`) und **ein** verbindliches Schema
+(`chatgpt_ergebnis_schema.json`) mit `cluster_abdeckung=T_S_v1`.
+Für die zugehörigen QEC-Fälle gilt eine vollständige, exklusive
+Gruppenzuordnung: `cluster_id` darf in der zweiten Runde **nicht null**
+sein. **Txx** bezeichnet eine durch technische Indizien begründete
+Ähnlichkeitsgruppe, beispielsweise DTC-/ECU-/Laborbefundmuster.
+**Sxx** bezeichnet eine vorsichtig benannte Ähnlichkeit des gemeldeten
+Fehlerbilds oder eine explizite Datenlage-/Prozessgruppe bei fehlendem
+technischem Nachweis. S bedeutet ausdrücklich **keinen** nachgewiesenen
+Pumpendefekt und keine Lieferantenverantwortung.
+
+Beim Klick auf **„Cluster-Ergebnis importieren“** wird **immer derselbe
+Importweg** verwendet. Die App validiert die T/S-Abdeckung, Fall- und
+Clusteridentitäten sowie Originalbelegstellen. Eine Neuverteilung der S-Fälle
+aus einer bereits importierten zweiten Analyse ist über
+`analyse_id_vorher` an genau dieses Projekt und die frühere zweite
+Auswertung gebunden. Es gibt keinen zweiten Button oder zusätzlichen
+Folgeanalyse-Importdialog. Die frühere Analyse bleibt revisionssicher
+gespeichert. Technische T-Cluster, NTF-Urteile, Verursacherhypothesen und
+Wiederkehrbewertungen dürfen dabei **nicht stillschweigend geändert** werden.
+Beim Projekt-Export werden beide importierten Versionen mitgenommen.
+
+Die GUI zeigt T und S gemeinsam in `cluster[]`, weist aber beide Ebenen
+separat aus. **100 % gruppiert bedeutet nicht 100 % technische Ursachen
+aufgeklärt.** Die unverändert getrennten Gruppierungen nach Fehlerbild,
+Nachweisbasis und Verursachungsbereich behalten ihre Bedeutung.
+
