@@ -348,6 +348,29 @@ und nicht durch die Projektlöschung betroffen, wenn es außerhalb der lokalen
 App-Datenablage gespeichert ist.
 
 
+### Hintergrundverarbeitung ohne dauerhaftes Popup
+
+Die Aktionen **„Parsing fortsetzen“**, **„Alle neu parsen“**,
+**„FINs neu abrufen“** und **„Fehlende abrufen“** verwenden vorhandene
+QThread-Worker. Während des laufenden Abrufs oder Parsings zeigt die
+Statusleiste im Hauptfenster eine kompakte laufende Aktivität mit
+Quellenname, Fortschrittstext und **„Stoppen“**. Es gibt dafür weder eine
+modal geöffnete Importkarte noch ein ausgegrautes Hauptfenster. Wechsel
+zwischen Workflow und anderen Seiten bleiben möglich. Ein Stoppsignal
+beendet einen Parser am sicheren Dateirand beziehungsweise fordert
+den Portal-Downloader zum Abbruch auf; bereits gespeicherte Daten bleiben
+erhalten. Ein App-Schließen wird während einer aktiven Hintergrundaufgabe
+abgefangen, damit kein QThread vorzeitig zerstört wird.
+
+Vor einem expliziten Neuparsen/Neuabruf bleiben einmalige
+Sicherheitsbestätigungen bestehen; auch eine nötige Mercedes-SSO-
+Interaktion ist davon nicht betroffen. Automatisch anschließende
+Quellenimporte aus Workflow-Downloads werden ebenfalls ohne
+Fortschrittspopup ausgeführt. Nach Abschluss erscheint eine
+Statusleistenmeldung, ausführliche Daten stehen weiter im Workflow
+und unter „Datenquellen“. Andere, explizit exklusive
+Transfer-/Exportvorgänge behalten ihre bestehenden Sicherheitsdialoge.
+
 ### Fortschritt je Datenquelle: Download und Parsing separat
 
 Die Oberfläche zeigt zwei **belegte, unterschiedliche** Verarbeitungszustände:
