@@ -2360,7 +2360,8 @@ class WorkflowPage(QWidget):
         self._show_llm_case_details()
 
     def _show_chatgpt_cluster_details(self) -> None:
-        index = self.chatgpt_cluster_table.currentIndex().row()
+        selected = self.chatgpt_cluster_table.selectionModel().selectedRows()
+        index = selected[0].row() if selected else -1
         overview = getattr(self, "_llm_overview", None)
         groups = overview.groups if overview is not None else ()
         if not 0 <= index < len(groups):
