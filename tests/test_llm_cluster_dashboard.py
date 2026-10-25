@@ -208,7 +208,7 @@ def test_workflow_llm_dashboard_is_interactive_and_project_scoped(
 def test_unclustered_and_legacy_answers_are_readable_without_fabricated_causes():
     from ntf_insight.reporting.chatgpt_exchange import ChatGPTRueckgabe
 
-    clusters, findings, scoped = _examples()
+    _clusters, findings, scoped = _examples()
     no_clusters = [
         (case_id, None, json.dumps({
             **json.loads(payload), "cluster_id": None,
