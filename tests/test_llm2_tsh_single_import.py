@@ -63,7 +63,7 @@ def _file(path, data):
 
 
 def test_hypothesis_cluster_is_validated_and_imported_with_one_button(tmp_path):
-    source, first, second, chain, template, *_ = _prepared(tmp_path)
+    source, first, _second, chain, template, *_ = _prepared(tmp_path)
     importer = ChatGPTAnalyseStore(source.store)
     reply = dict(template)
     reply["cluster"] = [_hypothesis()]
