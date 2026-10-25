@@ -358,6 +358,16 @@ Neustart in den neuen Workflow migriert und nicht als Sperre weitergeführt.
 - Pro Cluster: technische Hypothese, Sicherheit, Ursachenhäufigkeiten
   und Belegfundstellen. Pro Fall: NTF-Neubewertung, mögliche Ursache,
   Vor-/Nach-Tausch-Wiederkehr, Gegenindizien und Folgeprüfung.
+- **Zwei getrennte Cluster-Ebenen:** Der zweite Export fordert
+  `fehlerbilder[]` (Mehrfachlabels mit Werkstatt-/Diagnose-/Labor-Belegen)
+  und `nachweisprofil[]` verbindlich im neuen LLM-Ergebnis an. Die
+  technische `cluster_id` ist weiterhin eine separate Hypothese.
+  Die App zeigt beides bereits als Balken mit Filtern; alte JSON-Dateien
+  ohne diese Felder werden als `Alt-LLM` gekennzeichnet.
+- **Taggleiche QuickTests:** In `quicktest_fallbezug.csv` stehen
+  QT-/Tausch-Kilometerstand und der Abstand; niedrigerer QT-km am
+  Tauschtag ist nur ein Vortausch-Indiz, keine bewiesene Reihenfolge.
+  Taggleiche Berichte werden nicht pauschal als »fehlend« gewertet.
 - **Zwei getrennte Cluster-Ebenen:** Im selben Dashboard erscheinen
   zusaetzlich Balkendiagramme fuer `Fehlerbilder (Mehrfachnennungen)` und
   `Nachweisbasis` mit eigenen Suchfiltern. Auch nicht technisch
