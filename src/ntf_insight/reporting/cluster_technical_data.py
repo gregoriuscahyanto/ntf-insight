@@ -7,7 +7,6 @@ nur nicht geparste PDFs duerfen nach gesonderter Freigabe als Fallback rein.
 from __future__ import annotations
 
 import csv
-import hashlib
 import io
 import json
 import re
@@ -20,7 +19,6 @@ from zipfile import ZipFile
 from ntf_insight.acquisition.tips_archive import local_tips_cases
 from ntf_insight.domain.case import NTFCase
 from ntf_insight.ingestion.artifacts import SourceType, sha256_file
-from ntf_insight.storage.cluster_evidence_store import part_key
 from ntf_insight.storage.duckdb_store import DuckDBStore
 from ntf_insight.storage.qec_project_scope import qec_case_matches_project
 from ntf_insight.storage.workflow_projects import WorkflowProjectStore
