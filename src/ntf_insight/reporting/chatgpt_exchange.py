@@ -63,6 +63,38 @@ class ChatGPTBeleg(BaseModel):
     ] = "Nicht verifiziert"
 
 
+FehlerbildKategorie = Literal[
+    "Stromaufnahme zu hoch", "Stromaufnahme zu niedrig",
+    "Kurzschluss / Sicherung", "Bus / Kommunikation",
+    "Kühl-/Temperaturverhalten", "Mechanik / Geräusch / Beschädigung",
+    "Feuchte / Korrosion", "Stecker / Leitung / Versorgung",
+    "Software / Regelung", "Sonstiges Fehlerbild", "Fehlerbild unbekannt",
+]
+FehlerbildNachweis = Literal[
+    "Werkstattangabe", "Diagnostisch belegt", "Laborbefund",
+    "Mehrere Quellen", "Nicht verifiziert",
+]
+Nachweisprofil = Literal[
+    "Werkstattangabe vorhanden", "Diagnose vor Tausch (Datum)",
+    "Diagnose am Tauschtag, km niedriger (Indiz)",
+    "Diagnose am Tauschtag, zeitlich offen",
+    "Diagnose nach Tausch", "Laborbefund optisch auffällig",
+    "Laborbefund funktionell bestätigt", "Labor nicht reproduziert",
+    "Datenlage unzureichend",
+]
+
+
+class LLMFehlerbild(BaseModel):
+    """Mehrfachlabel fuer ein *gemeldetes* Symptom, keine Ursache."""
+
+    model_config = ConfigDict(extra="forbid")
+    kategorie: FehlerbildKategorie
+    nachweisstatus: FehlerbildNachweis = "Nicht verifiziert"
+    sicherheit: Sicherheit = "Offen"
+    begruendung: str = Field(default="", max_length=1300)
+    belege: list[ChatGPTBeleg] = Field(default_factory=list, max_length=8)
+
+
 class ChatGPTFall(BaseModel):
     """Spalten aus der gelieferten QEC-Auswertung; IDs sind pseudonymisiert."""
 
@@ -87,6 +119,15 @@ class ChatGPTFall(BaseModel):
     begruendung_fehlerwiederkehr: str = Field(default="", max_length=2400)
     sicherheit_bewertung: Sicherheit = "Offen"
     themen: list[str] = Field(default_factory=list, max_length=30)
+    # Runde 2: Fehlerbild (mehrfach) und Nachweislage (mehrfach) sind
+    # fachlich getrennt von primaerem technischen Cluster und Ursache.
+    # Bei alten JSON-Dateien und der QEC-Erstrunde bleiben beide leer.
+    fehlerbilder: list[LLMFehlerbild] = Field(
+        default_factory=list, max_length=16,
+    )
+    nachweisprofil: list[Nachweisprofil] = Field(
+        default_factory=list, max_length=12,
+    )
     belege: list[ChatGPTBeleg] = Field(default_factory=list, max_length=40)
 
 
