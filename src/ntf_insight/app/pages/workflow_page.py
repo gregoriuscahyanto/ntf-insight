@@ -1124,7 +1124,7 @@ class WorkflowPage(QWidget):
         for key, caption in (
             ("cases", "LLM-Fallbewertungen"),
             ("clusters", "Technische Cluster"),
-            ("ungrouped", "Nicht gruppierte Fälle"),
+            ("ungrouped", "Ohne technischen Cluster"),
             ("supplier", "Lieferant als Hypothese"),
             ("recurrence", "Wiederkehr-Hinweise · LLM"),
         ):
@@ -1185,9 +1185,10 @@ class WorkflowPage(QWidget):
         self.llm_symptom_chart.selected.connect(self._filter_llm_symptom)
         self.llm_proof_chart.selected.connect(self._filter_llm_proof)
         self.llm_symptom_note = QLabel(
-            "Mehrfachzuordnung: Die Balken summieren sich nicht zu einer "
-            "Fallgesamtzahl. 'Alt-LLM' bezeichnet aus bestehenden Themen "
-            "übernommene Hinweise, keine neu bestätigten Befunde.",
+            "Auch Fälle ohne technischen Cluster können Fehlerbilder "
+            "(z. B. Werkstattmeldungen) besitzen. Mehrfachzuordnungen "
+            "summieren sich nicht zur Fallgesamtzahl. 'Alt-LLM' bedeutet "
+            "ältere Themenhinweise, keine bestätigten Befunde.",
             objectName="PageSubtitle",
         )
         self.llm_symptom_note.setWordWrap(True)
@@ -2597,7 +2598,7 @@ class WorkflowPage(QWidget):
         ]
         if overview.ungrouped:
             cluster_bars.append((
-                "__nicht_gruppiert__", "Nicht gruppiert", overview.ungrouped,
+                "__nicht_gruppiert__", "Ohne technischen Cluster", overview.ungrouped,
             ))
         self.llm_cluster_chart.set_items(cluster_bars)
         self.llm_cause_chart.set_items([
