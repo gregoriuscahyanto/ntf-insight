@@ -60,10 +60,11 @@ und keine Wahrscheinlichkeit einer Lieferantenverursachung.
   und Nachanalyse-Texte sind standardmäßig ausgeschlossen; sie dürfen nur mit
   ausdrücklichem Freitext-Opt-in ins ZIP. Unveränderte QEC-Berichte und Anhänge
   benötigen zusätzlich eine eigenständige Original-Opt-in-Freigabe.
-- Die Datei qec_datenluecken.csv dokumentiert fehlende oder ältere Reiter,
-  unsichere Zuordnungen und nicht ausgewertete Anhänge. Ohne wenigstens
-  einen eindeutig zugeordneten, geparsten QEC-Bericht ist die erste
-  Neuauswertung nicht ausführbar.
+- Die Datei qec_datenluecken.csv dokumentiert nicht vorhandene QEC-Berichte,
+  fehlende oder ältere Reiter, unsichere Zuordnungen und nicht ausgewertete
+  Anhänge. **Auch wenn kein einziger QEC-Bericht vorhanden ist, ist der
+  Export zulässig.** Alle ausgewählten QEC-Fälle bleiben erhalten. Fehlende
+  Dokumente dürfen weder als NTF-Nachweis noch als Fehlerfreiheit gelten.
 - Eine neue ZIP erhält eine **neue Paket-ID**. Ältere Ergebnisse bleiben
   lokal archiviert und werden nicht überschrieben; die neue Auswertung
   wird erst nach dem zugehörigen, validierten JSON-Rückimport sichtbar.
@@ -91,11 +92,19 @@ und keine Wahrscheinlichkeit einer Lieferantenverursachung.
   Tabellenzeilen wird separat angezeigt; Filter verändern **weder**
   die QEC-Kohorte **noch** Auswertungen, Entscheidungsstatus oder Exporte.
   Beim Wechsel des Sachnummernprojekts werden die Filter zurückgesetzt.
-- **Projektschutz:** Der Workflow-Erstexport nimmt ausschließlich die in
-  Schritt 01 aktuell ausgewählten QEC-Fall-IDs, die korrekte Sachnummer
-  und dieses Bauteilprofil auf. Eine gemeinsame FIN reicht nicht aus,
-  um fremde Schadteilfälle aufzunehmen. Der allgemeine Quellenexport unter
-  Datenquellen bleibt eine separate Funktion.
+- **Projektschutz:** Beide ChatGPT-Runden nutzen das ausgewählte Profil
+  plus Sachnummer. Der Erstexport nimmt nur die QEC-Fall-IDs aus Schritt 01;
+  gleiche FIN allein reicht nicht zur Übernahme fremder Schadteile.
+  Der zweite Export verifiziert die zu diesem Projekt registrierte erste
+  KI-Basis und liest nur die eigenen Kontextunterlagen aus Schritt 04.
+- **Bauteilneutral:** Batterie, DC/DC-Wandler und weitere Bauteile können die
+  QEC-Erstrunde sowie die vertiefte zweite ChatGPT-Runde verwenden. QEC-Fälle
+  mit unbekannter Benennung brauchen eine eindeutige Projekt-Sachnummer.
+  Bei mehrdeutiger Zuordnung wird nicht geraten. Die **lokale**
+  Clustering-Implementierung kann unabhängig davon weiterhin eigene
+  bauteilspezifische Grenzen haben.
+- Der allgemeine Quellenexport unter **Datenquellen** ist eine separate
+  Funktion mit anderem Datenumfang.
 
 
 ## 04 – Unterlagen für die zweite ChatGPT-Clusteranalyse
