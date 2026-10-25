@@ -49,6 +49,48 @@ def _file_hash(path: Path) -> str | None:
 
 
 @dataclass(frozen=True)
+class ProjectDocumentCounts:
+    """Eindeutige Dokumente in Schritt 04, auch technische Originalbelege."""
+    total: int
+    automatic: int
+    manual: int
+    overlap: int
+
+
+def count_project_documents(
+    coverage: dict[str, "SourceCoverage"],
+    context_files: list[EvidenceFile] | tuple[EvidenceFile, ...],
+) -> ProjectDocumentCounts:
+    """Fuer Schritt 04 ausschliesslich nachweisbar lokale SHA-256 zaehlen.
+
+    Eine z.B. per Portal heruntergeladene und anschliessend mit +Beleg
+    verknuepfte PDF ist EIN Dokument, nicht zwei. QEC-Berichte aus 02
+    gehoeren bewusst nicht in den Zaehler fuer Schritt 04.
+    """
+    automatic: set[str] = set()
+    for category in ("tp_dashboard", "diagnosis_viewer", "tips_writer"):
+        status = coverage.get(category)
+        if status is None:
+            continue
+        for path in status.local_paths:
+            sha = _file_hash(Path(path))
+            if sha:
+                automatic.add(sha)
+    manual = {
+        file.sha256
+        for file in context_files
+        if file.source_path.is_file()
+        and not file.source_path.is_symlink()
+    }
+    return ProjectDocumentCounts(
+        total=len(automatic | manual),
+        automatic=len(automatic),
+        manual=len(manual),
+        overlap=len(automatic & manual),
+    )
+
+
+@dataclass(frozen=True)
 class SourceCoverage:
     category: str
     total_cases: int | None
