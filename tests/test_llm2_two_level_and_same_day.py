@@ -9,7 +9,9 @@ import pytest
 from pydantic import ValidationError
 
 from ntf_insight.analysis.quicktest_swap_relation import compare_quicktest_to_swap
-from ntf_insight.reporting.chatgpt_exchange import ChatGPTRueckgabe
+from ntf_insight.reporting.chatgpt_exchange import (
+    ChatGPTAnalyseStore, ChatGPTRueckgabe, ergebnis_schema,
+)
 from ntf_insight.reporting.cluster_context_package import export_cluster_context
 from test_cluster_technical_export import CASE_ID, PART, _create_test_data, _csv, _first
 
@@ -93,7 +95,12 @@ def test_second_package_preserves_same_day_qt_and_km_detail(tmp_path):
         assert "mehrere Fehlerbild-Kategorien" in prompt
         assert "fehlerbilder[]" in prompt
         schema = json.loads(archive.read("chatgpt_ergebnis_schema.json"))
+        assert schema == ergebnis_schema()
         assert "fehlerbilder" in schema["$defs"]["ChatGPTFall"]["properties"]
+        assert "nachweisprofil" in schema["$defs"]["ChatGPTFall"]["properties"]
+        assert "fehlerwiederkehr" in schema["$defs"]["ChatGPTFall"]["properties"]
+        assert "fehlerbild_methodik" in schema["properties"]
+        assert schema["$defs"]["LLMFehlerbild"]["additionalProperties"] is False
         template = json.loads(archive.read("chatgpt_ergebnis_vorlage.json"))
         assert template["fehlerbild_methodik"] == "multilabel_symptom_nachweis_v2"
         manifest = json.loads(archive.read("cluster_kontext_manifest.json"))
@@ -147,3 +154,39 @@ def test_csv_injection_protection_preserves_real_negative_measurements():
     assert _csv_safe("-A1") == "'-A1"
     assert _csv_safe("=HYPERLINK(1,2)") == "'=HYPERLINK(1,2)"
     assert _csv_safe("+A1") == "'+A1"
+
+
+def test_qec_field_display_label_must_match_original_zip(tmp_path):
+    """Beschriftete Belege sind nur bei exaktem Original-Label zulaessig."""
+    source, evidence, *_ = _create_test_data(tmp_path)
+    first, result = _first(
+        source, tmp_path / "first-labeled.zip", mit_freitext=True,
+    )
+    with ZipFile(first.path) as archive:
+        fields = _csv(archive, "qec_felder.csv")
+    row = next(
+        item for item in fields
+        if item["original_beschriftung_opt_in"]
+        and item["fundstelle"].startswith("QEC/")
+    )
+    alias = row["qec_bericht_id"]
+    location = row["fundstelle"]
+    label = row["original_beschriftung_opt_in"]
+    importer = ChatGPTAnalyseStore(source.store)
+
+    importer._verify_qec_field_locations(
+        first.paket_id,
+        {(alias, location), (alias, f"{location} [{label}]")},
+    )
+    with pytest.raises(ValueError, match="nicht im exportierten Original"):
+        importer._verify_qec_field_locations(
+            first.paket_id, {(alias, f"{location} [frei erfunden]")},
+        )
+    with pytest.raises(ValueError, match="nicht im exportierten Original"):
+        importer._verify_qec_field_locations(
+            first.paket_id, {("Q99999", f"{location} [{label}]")},
+        )
+    with pytest.raises(ValueError, match="nicht im exportierten Original"):
+        importer._verify_qec_field_locations(
+            first.paket_id, {(alias, f"{location}/feld:999 [{label}]")},
+        )

@@ -485,16 +485,34 @@ class ChatGPTAnalyseStore:
                             source, encoding="utf-8-sig", newline=""
                         )
                     )
+                    # Der Feldpfad im CSV ist die verbindliche Identitaet.
+                    # Zusatzbezeichnungen (z.B. "[monteurBefund]") sind
+                    # nur dann zulaessig, wenn sie EXAKT mit dem im
+                    # archivierten Erstpaket enthaltenen Label uebereinstimmen.
                     existing = {
                         (str(item.get("qec_bericht_id") or ""),
-                         str(item.get("fundstelle") or ""))
+                         str(item.get("fundstelle") or "")):
+                        str(item.get("original_beschriftung_opt_in") or "")
                         for item in rows
                     }
         except (BadZipFile, KeyError, UnicodeError, ValueError) as exc:
             raise ValueError(
                 "QEC-Belegindex im registrierten Erstpaket nicht lesbar."
             ) from exc
-        unknown = references - existing
+        unknown = set()
+        for alias, position in references:
+            if (alias, position) in existing:
+                continue
+            # Lesbare QEC-Beleganzeige: exportierter Pfad + [Original-Label].
+            # Ohne exakte, nichtleere Beschriftung im archivierten ZIP
+            # wird der Beleg weiterhin konsequent zurueckgewiesen.
+            labeled = re.fullmatch(r"(.+?) \[([^\[\]\r\n]+)\]", position)
+            if labeled:
+                origin = (alias, labeled.group(1))
+                original_label = existing.get(origin, "")
+                if original_label and original_label == labeled.group(2):
+                    continue
+            unknown.add((alias, position))
         if unknown:
             alias, position = sorted(unknown)[0]
             raise ValueError(
