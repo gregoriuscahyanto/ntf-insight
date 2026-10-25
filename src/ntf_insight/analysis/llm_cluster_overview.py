@@ -25,6 +25,8 @@ class LlmClusterCase:
     recurrence: str
     recurrence_source: str
     recurrence_signal: bool
+    symptoms: tuple[str, ...]
+    proof_profiles: tuple[str, ...]
     payload: dict
 
 
@@ -44,6 +46,10 @@ class LlmClusterOverview:
     cases: tuple[LlmClusterCase, ...]
     groups: tuple[LlmClusterGroup, ...]
     causes: tuple[tuple[str, int], ...]
+    symptoms: tuple[tuple[str, int], ...]
+    proof_profiles: tuple[tuple[str, int], ...]
+    structurally_classified: int
+    legacy_without_symptom_fields: int
     ungrouped: int
     supplier_hypotheses: int
     unknown_causes: int
@@ -122,6 +128,59 @@ def _recurrence_for_display(payload: dict) -> tuple[str, str, bool]:
     )
 
 
+def _symptom_groups(payload: dict) -> tuple[str, ...]:
+    """Neue Multi-Labels oder wortgetreue Legacy-Themen, keine neue Ursache.
+
+    Alte LLM-Dateien enthalten bereits konkrete Werkstatt-/DTC-Themen.
+    Diese werden als LEGACY-TEXT sichtbar, nicht als extern verifizierter
+    oder auf neue Taxonomie umgebuchter Fehlernachweis.
+    """
+    structured = payload.get("fehlerbilder") or []
+    if structured:
+        labels = {
+            str(row.get("kategorie") or "").strip()
+            for row in structured if isinstance(row, dict)
+        }
+        return tuple(sorted(label for label in labels if label)) or ("Unbekannt",)
+    topics = payload.get("themen") or []
+    meaningful = set()
+    for raw in topics:
+        item = str(raw or "").strip()
+        text = item.casefold()
+        if not item or text in {
+            "kein reproduzierbarer laborfehler",
+            "zuordnungs-/datenqualitätsprüfung",
+            "nicht als hauptschadteil markiert",
+            "ars unvollständig",
+        }:
+            continue
+        # Direkt den im alten Ergebnis dokumentierten Originalbegriff
+        # anzeigen, keine automatische Hersteller-/Lieferantenschuld.
+        meaningful.add(item + " (Alt-LLM)")
+    return tuple(sorted(meaningful)) if meaningful else (
+        "Nicht spezifiziert (Alt-LLM)",
+    )
+
+
+def _proof_groups(payload: dict) -> tuple[str, ...]:
+    structured = payload.get("nachweisprofil") or []
+    if structured:
+        return tuple(sorted({str(value) for value in structured if value}))
+    topics = [str(t).casefold() for t in payload.get("themen") or []]
+    groups = set()
+    if any("werkstatttext" in text for text in topics):
+        groups.add("Werkstattangabe (Alt-LLM)")
+    if any("objektiver dtc vor tausch" in text for text in topics):
+        groups.add("Diagnosehinweis vor Tausch (Alt-LLM)")
+    if any("kein reproduzierbarer laborfehler" in text for text in topics):
+        groups.add("Labor nicht reproduziert (Alt-LLM)")
+    if any("dtc nach tausch" in text for text in topics):
+        groups.add("DTC nach Tausch (Alt-LLM)")
+    return tuple(sorted(groups)) if groups else (
+        "Keine strukturierte Nachweiszuordnung (Alt-LLM)",
+    )
+
+
 def build_llm_cluster_overview(
     cluster_payloads: Sequence[dict],
     finding_rows: Sequence[tuple[str, str | None, str, str]],
@@ -140,6 +199,8 @@ def build_llm_cluster_overview(
         recurrence, recurrence_source, recurrence_signal = (
             _recurrence_for_display(payload)
         )
+        symptoms = _symptom_groups(payload)
+        proofs = _proof_groups(payload)
         cases.append(LlmClusterCase(
             case_id=case_id,
             pseudonym=str(payload.get("fall_id") or ""),
@@ -152,6 +213,8 @@ def build_llm_cluster_overview(
             recurrence=recurrence,
             recurrence_source=recurrence_source,
             recurrence_signal=recurrence_signal,
+            symptoms=symptoms,
+            proof_profiles=proofs,
             payload=payload,
         ))
         seen.add(case_id)
@@ -183,10 +246,27 @@ def build_llm_cluster_overview(
         ))
     groups.sort(key=lambda item: (-item.count, item.cluster_id))
     causes = Counter(item.cause for item in cases)
+    symptoms = Counter(
+        label for item in cases for label in item.symptoms
+    )
+    proof_profiles = Counter(
+        label for item in cases for label in item.proof_profiles
+    )
+    counts = lambda values: tuple(sorted(
+        values.items(), key=lambda item: (-item[1], item[0]),
+    ))
     return LlmClusterOverview(
         cases=tuple(cases),
         groups=tuple(groups),
-        causes=tuple(sorted(causes.items(), key=lambda item: (-item[1], item[0]))),
+        causes=counts(causes),
+        symptoms=counts(symptoms),
+        proof_profiles=counts(proof_profiles),
+        structurally_classified=sum(
+            bool(item.payload.get("fehlerbilder")) for item in cases
+        ),
+        legacy_without_symptom_fields=sum(
+            not item.payload.get("fehlerbilder") for item in cases
+        ),
         ungrouped=sum(not item.cluster_id for item in cases),
         supplier_hypotheses=sum(
             _supplier_hypothesis(item.cause) for item in cases
