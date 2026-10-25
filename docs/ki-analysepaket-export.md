@@ -12,6 +12,52 @@ Die KI-Analyse-ZIP ist **kein** vollständiges Backup. Sie enthält **keine**
 QuickTest-PDFs, QEC-/TIPS-Rohdateien, Anhänge, SMR-D-XML/JSON oder Originalpfade.
 Bereits extrahierte Daten sind zur fallbezogenen Analyse als Tabellen verfügbar.
 
+## Workflow 03: QEC-basierte Erst-/Neuauswertung
+
+Die Schaltfläche **QEC-Neuauswertung exportieren (ZIP)** in Schritt 03 ist
+absichtlich **enger** als der bisherige allgemeine Quellenexport:
+
+- **Schritt 01:** Nur explizit ausgewählte QEC-Fälle des aktuellen
+  Kühlmittelpumpen-Profils und der aktuellen Sachnummer, Fahrzeugpseudonym,
+  Teilegruppe und Pumpentauschanker. Auch eine gemeinsame FIN mit einem
+  anderen Schadteilfall führt **nicht** zu einer Übernahme des Fremdfalls.
+- **Schritt 02:** Alle gespeicherten, eindeutig passenden QEC-Befundungsreiter
+  (WE-Daten, Voranalysen, Stellungnahme Lieferant, Ergebnis/Nachanalyse,
+  Historie), strukturierte Feld- und Tabellenbelege und QEC-Datenlücken.
+- **Nicht enthalten:** QuickTests, DTCs aus Diagnosis Viewer, AutoExport,
+  separate TIPS-Quellen, SMR-D oder technische Unterlagen aus Schritt 04.
+  Die vertiefte Untersuchung dieser Zusatzquellen folgt erst in Schritt 05.
+- **Standardmäßig ohne Freitext:** Originale Feldtexte, Lieferantenstellungnahme,
+  Nachanalyse und ganze QEC-Reitertexte werden nur bei aktivierter
+  **vertraulicher Freitext-Option** aufgenommen. Eine getrennte Option
+  erlaubt unveränderte QEC-Originale und Anhänge. Beide Optionen erfordern
+  Unternehmensfreigabe; auch Pseudonyme sind keine sichere Anonymisierung.
+
+Das erste ZIP enthält in diesem Modus unter anderem
+`faelle.csv`, `fahrzeuge.csv`, `cluster_input.csv`,
+`fallmerkmale.csv`, `qec_berichte.csv`, `qec_felder.csv`,
+`qec_datenluecken.csv`, `bewertungen_NICHT_CLUSTER.csv`,
+`methodik.csv`, `Auswertung.xlsx`, das Manifest und den bestehenden
+ChatGPT-Rückgabevertrag. Die Datensätze in `qec_felder.csv` verweisen auf
+die pseudonymisierten QEC-Berichte und ihre konkrete Fundstelle.
+Ein veralteter, widersprüchlicher oder fehlender QEC-Teilbericht wird nicht
+als verlässlicher Originalbefund ausgegeben. Ohne einen einzigen
+passenden, geparsten QEC-Bericht bricht der Export begründet ab.
+
+**Neuauswertung:** Ein erneuter Export erzeugt eine neue `paket_id`
+mit eigener lokaler `_NICHT_HOCHLADEN_ZUORDNUNG.csv`. Frühere Pakete
+und die zugehörigen ChatGPT-Ergebnisse bleiben bestehen. Die erste
+Auswertung des neuen Pakets erscheint erst nach Import ihrer neuen
+Ergebnis-JSON; manuelle QEC-Entscheidungen bleiben unverändert.
+
+### Separater allgemeiner Quellenexport
+
+Der nachfolgend dokumentierte **allgemeine Quellenexport unter
+Datenquellen** behält für bestehende Arbeitsweisen den größeren
+Datenumfang mit QuickTests, AutoExport, TIPS und Lieferantenkontext.
+Die Tabellenliste im nächsten Abschnitt beschreibt **diesen allgemeinen
+Export**, nicht das QEC-ZIP von Workflow 03.
+
 ## Bedienung
 
 Unter **Datenquellen**:
