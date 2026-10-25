@@ -482,3 +482,37 @@ def test_qec_original_field_location_must_exist_in_registered_first_zip(tmp_path
     template["faelle"][0]["belege"][0]["fundstelle"] = correct
     answer.write_text(json.dumps(template), encoding="utf-8")
     assert ChatGPTAnalyseStore(source.store).import_file(answer)["faelle"] == 1
+
+
+def test_qec_report_without_part_is_not_reused_across_projects(tmp_path):
+    """Eine gleiche FIN/Referenz bei zwei Sachnummern ist nicht eindeutig."""
+    source = _set_up(tmp_path)
+    foreign = NTFCase(
+        case_id="QEC-FREMD-PROFIL",
+        vehicle=Vehicle(vin=FIN, model_series="214"),
+        component_type="HV-Batterie",
+        component_profile_id="hv_battery",
+        qec_reference="123456",  # Dieselbe QEC-Referenz, andere Sachnummer.
+        qec_part_number="B-OTHER-123",
+    )
+    source.store.save_case(foreign)
+    with source.store.connect() as con:
+        raw = con.execute(
+            "SELECT metadata_json FROM source_knowledge_documents "
+            "WHERE source_sha256=?", ["a" * 64],
+        ).fetchone()[0]
+        meta = json.loads(raw)
+        meta.pop("part_number", None)
+        con.execute(
+            "UPDATE source_knowledge_documents SET metadata_json=? "
+            "WHERE source_sha256=?",
+            [json.dumps(meta), "a" * 64],
+        )
+    output = _export(source, tmp_path / "ref-mehrdeutig.zip")
+    assert output.faelle == 1
+    assert output.qec_berichte == 0
+    with ZipFile(output.pfad) as archive:
+        item = _rows(archive, "qec_datenluecken.csv")[0]
+        assert item["qec_bericht_status"] == "Pruefbedarf"
+        assert "nicht eindeutig" in item["datenluecke"]
+        assert _rows(archive, "qec_felder.csv") == []
