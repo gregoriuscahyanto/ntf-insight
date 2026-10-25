@@ -754,6 +754,15 @@ class ChatGPTAnalyseStore:
             raise ValueError("LLM-Ergebnis enthält ungültiges JSON.") from exc
         if not _IDENT.fullmatch(data.analyse_id) or not _PAKET_ID.fullmatch(data.paket_id):
             raise ValueError("Ungültige Paket- oder Analysekennung.")
+        # Jedes in künftigen zweiten ZIPs generierte ClusterTS-Ergebnis
+        # muss den vollständigen T/S-Vertrag mitführen. Ohne Marker
+        # darf ein LLM nicht still 104 Fälle wieder null zuordnen.
+        if (data.analyse_id.startswith("ClusterTS-")
+                and data.cluster_abdeckung != "T_S_v1"):
+            raise ValueError(
+                "Das zweite LLM-Paket verlangt T/S-Abdeckung aller Fälle; "
+                "cluster_abdeckung=T_S_v1 fehlt."
+            )
         report("Lokale Paket- und FIN-Zuordnung prüfen …")
         mapping = self._mapping(data.paket_id, private_csv)
         source_sha = hashlib.sha256(content).hexdigest()

@@ -47,6 +47,7 @@ def test_second_zip_requires_exact_one_T_or_S_per_case(tmp_path):
         _prepared(tmp_path)
     )
     assert template["cluster_abdeckung"] == "T_S_v1"
+    assert template["analyse_id"].startswith("ClusterTS-")
     assert manifest["cluster_abdeckung"] == "T_S_v1"
     assert "JEDER" in prompt
     assert "Txx" in prompt and "Sxx" in prompt
