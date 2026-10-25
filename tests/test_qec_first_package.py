@@ -60,13 +60,20 @@ def test_step03_exports_only_qec_01_02_and_preserves_privacy(tmp_path):
     with ZipFile(result.pfad) as archive:
         files = set(archive.namelist())
         assert {
-            "faelle.csv", "fahrzeuge.csv", "cluster_input.csv",
+            "faelle.csv", "fahrzeuge.csv",
             "fallmerkmale.csv", "qec_felder.csv", "qec_berichte.csv",
             "qec_datenluecken.csv", "bewertungen_NICHT_CLUSTER.csv",
             "manifest.json", "methodik.csv", "README.txt",
             "Auswertung.xlsx", "chatgpt_ergebnis_vorlage.json",
             "chatgpt_ergebnis_schema.json",
         } <= files
+        assert "cluster_input.csv" not in files
+        prompt = archive.read("CHATGPT_ANWEISUNG.txt").decode("utf-8")
+        assert "RUNDE 1 ENTHAELT KEINE CLUSTERUNG" in prompt
+        assert "NTF plausibel" in prompt and "NTF fraglich" in prompt
+        assert "Kein reiner NTF" in prompt
+        assert "Nicht zuordenbar" in prompt
+        assert "verursachungsbereich" in prompt
         assert not any(name.startswith("qec_originale/") for name in files)
         assert not any(name in files for name in (
             "quicktests.csv", "quicktest_fallbezug.csv",
@@ -79,6 +86,7 @@ def test_step03_exports_only_qec_01_02_and_preserves_privacy(tmp_path):
         manifest = json.loads(archive.read("manifest.json"))
         assert manifest["schema_version"] == 3
         assert manifest["analyseumfang"] == "workflow_01_02_qec"
+        assert manifest["analysezweck"] == "ntf_erstentscheidung_ohne_cluster"
         assert manifest["pseudonymisiert"]
         assert manifest["datenreihen"]["quicktests"] == 0
         faelle = _rows(archive, "faelle.csv")
@@ -516,3 +524,39 @@ def test_qec_report_without_part_is_not_reused_across_projects(tmp_path):
         assert item["qec_bericht_status"] == "Pruefbedarf"
         assert "nicht eindeutig" in item["datenluecke"]
         assert _rows(archive, "qec_felder.csv") == []
+
+
+
+def test_first_llm_result_rejects_clustering_but_accepts_unassigned_case(tmp_path):
+    """Runde 1 ist nur vorlaeufige NTF-Entscheidung, keine Clusteranalyse."""
+    source = _set_up(tmp_path)
+    export = _export(source, tmp_path / "qec-llm-runde-1.zip")
+    WorkflowAIChainStore(source.store).register_first_export(
+        "coolant_pump", PART, export.pfad,
+    )
+    with ZipFile(export.pfad) as archive:
+        template = json.loads(archive.read("chatgpt_ergebnis_vorlage.json"))
+        pseudo = _rows(archive, "faelle.csv")[0]["fall_id"]
+    template["faelle"] = [{
+        "fall_id": pseudo,
+        "ntf_bewertung": "Nicht zuordenbar",
+        "verursachungsbereich": "Nicht zuordenbar",
+        "sicherheit_zuordnung": "Offen",
+        "pruefungen_grenzen": "QEC-Nachweise fehlen.",
+        "belege": [],
+    }]
+    template["cluster"] = [{
+        "cluster_id": "C1", "fall_ids": [pseudo],
+    }]
+    template["faelle"][0]["cluster_id"] = "C1"
+    out = tmp_path / "first-llm-answer.json"
+    out.write_text(json.dumps(template), encoding="utf-8")
+    with pytest.raises(ValueError, match="keine Cluster"):
+        ChatGPTAnalyseStore(source.store).import_file(out)
+
+    template["cluster"] = []
+    template["clustermethode"] = ""
+    template["faelle"][0]["cluster_id"] = None
+    out.write_text(json.dumps(template), encoding="utf-8")
+    result = ChatGPTAnalyseStore(source.store).import_file(out)
+    assert result["faelle"] == 1 and result["cluster"] == 0
