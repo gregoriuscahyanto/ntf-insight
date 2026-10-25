@@ -996,7 +996,7 @@ class MainWindow(QMainWindow):
             "03 · QEC-Neuauswertung exportieren"
             if first_qec else "ChatGPT-Analysepaket exportieren",
             (
-                "Nur Schritt 01 (FIN-/Pumpentausch-Faelle) und Schritt 02 "
+                "Nur Schritt 01 (FIN-/Bauteiltausch-Faelle) und Schritt 02 "
                 "(fünf QEC-Befundungsreiter). Keine QuickTests, AutoExport "
                 "oder separaten TIPS. Fehlende QEC-Berichte sind erlaubt "
                 "und werden als Datenluecke markiert. "
