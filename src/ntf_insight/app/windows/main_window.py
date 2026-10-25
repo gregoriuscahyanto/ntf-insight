@@ -997,7 +997,7 @@ class MainWindow(QMainWindow):
             if first_qec else "ChatGPT-Analysepaket exportieren",
             (
                 "Nur Schritt 01 (FIN-/Pumpentausch-Faelle) und Schritt 02 "
-                "(fuenf QEC-Befundungsreiter). Keine QuickTests, AutoExport "
+                "(fünf QEC-Befundungsreiter). Keine QuickTests, AutoExport "
                 "oder separaten TIPS. Fehlende QEC-Befunde werden markiert. "
                 "Die Lieferantenstellungnahme und die QEC-Fachtexte sind "
                 "ohne Freitextfreigabe nicht vollstaendig analysierbar. "
@@ -1010,9 +1010,9 @@ class MainWindow(QMainWindow):
                 (
                     "text",
                     "QEC-Reitertexte, Feldbeschriftungen, Lieferantenstellungnahme "
-                    "und Nachanalyse beifuegen (vertraulich)"
+                    "und Nachanalyse beifügen (vertraulich)"
                     if first_qec else
-                    "QEC-/TIPS-/Werkstatt-/Lieferanten-Freitexte beifuegen (vertraulich)",
+                    "QEC-/TIPS-/Werkstatt-/Lieferanten-Freitexte beifügen (vertraulich)",
                     False,
                 ),
                 (
