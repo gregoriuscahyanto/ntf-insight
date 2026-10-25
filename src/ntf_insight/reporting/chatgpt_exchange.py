@@ -19,6 +19,7 @@ from zipfile import BadZipFile, ZipFile
 import duckdb
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
+from ntf_insight.reporting.llm2_legacy_detail import normalize_legacy_llm2_detail
 from ntf_insight.storage.duckdb_store import DuckDBStore
 
 FORMAT = "ntf-insight-chatgpt-rueckgabe"
@@ -485,16 +486,34 @@ class ChatGPTAnalyseStore:
                             source, encoding="utf-8-sig", newline=""
                         )
                     )
+                    # Der Feldpfad im CSV ist die verbindliche Identitaet.
+                    # Zusatzbezeichnungen (z.B. "[monteurBefund]") sind
+                    # nur dann zulaessig, wenn sie EXAKT mit dem im
+                    # archivierten Erstpaket enthaltenen Label uebereinstimmen.
                     existing = {
                         (str(item.get("qec_bericht_id") or ""),
-                         str(item.get("fundstelle") or ""))
+                         str(item.get("fundstelle") or "")):
+                        str(item.get("original_beschriftung_opt_in") or "")
                         for item in rows
                     }
         except (BadZipFile, KeyError, UnicodeError, ValueError) as exc:
             raise ValueError(
                 "QEC-Belegindex im registrierten Erstpaket nicht lesbar."
             ) from exc
-        unknown = references - existing
+        unknown = set()
+        for alias, position in references:
+            if (alias, position) in existing:
+                continue
+            # Lesbare QEC-Beleganzeige: exportierter Pfad + [Original-Label].
+            # Ohne exakte, nichtleere Beschriftung im archivierten ZIP
+            # wird der Beleg weiterhin konsequent zurueckgewiesen.
+            labeled = re.fullmatch(r"(.+?) \[([^\[\]\r\n]+)\]", position)
+            if labeled:
+                origin = (alias, labeled.group(1))
+                original_label = existing.get(origin, "")
+                if original_label and original_label == labeled.group(2):
+                    continue
+            unknown.add((alias, position))
         if unknown:
             alias, position = sorted(unknown)[0]
             raise ValueError(
@@ -610,17 +629,43 @@ class ChatGPTAnalyseStore:
         if path.stat().st_size > MAX_JSON_SIZE:
             raise ValueError("LLM-Ergebnisdatei ist zu groß.")
         content = path.read_bytes()
-        try:
-            data = ChatGPTRueckgabe.model_validate_json(content)
-        except ValidationError as exc:
+        def model_error(exc: ValidationError) -> ValueError:
             details = "; ".join(
                 f"{'.'.join(str(x) for x in item['loc'])}: {item['msg']}"
                 for item in exc.errors()[:3]
             )
-            raise ValueError(
+            return ValueError(
                 "LLM-Ergebnis entspricht nicht der gültigen Analysevorlage: "
                 + details
-            ) from exc
+            )
+
+        try:
+            data = ChatGPTRueckgabe.model_validate_json(content)
+        except ValidationError as exc:
+            # Das zweite ZIP enthielt frueher irrtuemlich das Schema der
+            # Erstrunde. Nur das bekannte erweiterte Altdetailformat
+            # wird fuer den Import kanonisiert; keine beliebigen Extras.
+            try:
+                original = json.loads(content)
+            except (ValueError, UnicodeDecodeError) as json_exc:
+                raise ValueError("LLM-Ergebnis enthält ungültiges JSON.") from json_exc
+            try:
+                compatible = normalize_legacy_llm2_detail(
+                    original,
+                    root_fields=set(ChatGPTRueckgabe.model_fields),
+                    case_fields=set(ChatGPTFall.model_fields),
+                )
+            except ValueError as compat_exc:
+                raise ValueError(
+                    "Altes LLM2-Detailformat nicht importierbar: "
+                    + str(compat_exc)
+                ) from compat_exc
+            if compatible is None:
+                raise model_error(exc) from exc
+            try:
+                data = ChatGPTRueckgabe.model_validate(compatible)
+            except ValidationError as compat_exc:
+                raise model_error(compat_exc) from compat_exc
         except ValueError as exc:
             raise ValueError("LLM-Ergebnis enthält ungültiges JSON.") from exc
         if not _IDENT.fullmatch(data.analyse_id) or not _PAKET_ID.fullmatch(data.paket_id):

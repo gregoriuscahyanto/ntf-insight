@@ -19,7 +19,7 @@ from pathlib import Path, PurePosixPath
 from zipfile import ZIP_DEFLATED, ZipFile, ZipInfo
 
 from ntf_insight.reporting.chatgpt_exchange import (
-    ChatGPTRueckgabe, ergebnis_vorlage,
+    ChatGPTRueckgabe, ergebnis_schema, ergebnis_vorlage,
 )
 from ntf_insight.storage.cluster_evidence_store import (
     CATEGORY_LABELS, ClusterEvidenceStore, MAX_EVIDENCE_BYTES, part_key,
@@ -356,7 +356,19 @@ def export_cluster_context(
         "DTCs koennen andere Pumpen/ECUs/Baugruppen betreffen. Ein "
         "historisch gespeicherter DTC nach Tausch ist ohne neuen "
         "Ereignis-km/Loeschhistorie KEIN Wiederkehrbeweis. "
-        "Datenluecken getrennt ausweisen, statt Faelle auszuschliessen."
+        "Datenluecken getrennt ausweisen, statt Faelle auszuschliessen.",
+        "20. VERBINDLICHER RUECKGABEVERTRAG: Nur das JSON-Schema "
+        "chatgpt_ergebnis_schema.json im WURZELVERZEICHNIS dieser "
+        "zweiten ZIP verwenden, niemals das historisch beigefuegte "
+        "basis/chatgpt_ergebnis_schema.json. Die erlaubten "
+        "Feldnamen, Fehlerbild-Kategorien und Nachweisprofil-Werte "
+        "wortgetreu aus den JSON-Schema-Enums uebernehmen. "
+        "Keine zusaetzlichen Fallattribute erfinden. Bei Belegen "
+        "quelle=qec_felder die fundstelle EXAKT aus der Spalte "
+        "fundstelle in basis/qec_felder.csv verwenden, ohne "
+        "nachtraegliche [Feldnamen]-Ergaenzungen. "
+        "Das Feld fehlerbild_methodik aus der Ergebnisvorlage "
+        "unveraendert beibehalten."
     ]
     # Diese neutralen Zusatzanforderungen bleiben unabhaengig vom
     # CSV-Groesstdaten-Fix im separaten PR #60.
@@ -489,9 +501,14 @@ def export_cluster_context(
                 archive, "chatgpt_ergebnis_vorlage.json",
                 json.dumps(followup_template, ensure_ascii=False, indent=2),
             )
+            # Runde 2 hat einen eigenen, streng typisierten Vertrag.
+            # Das Schema der archivierten QEC-Erstrunde kann aelter sein
+            # und darf nicht im Widerspruch zur neuen Vorlage stehen.
             _zip_text(
                 archive, "chatgpt_ergebnis_schema.json",
-                base.read("chatgpt_ergebnis_schema.json").decode("utf-8-sig"),
+                json.dumps(
+                    ergebnis_schema(), ensure_ascii=False, indent=2,
+                ),
             )
             if verified_result is not None:
                 _zip_text(

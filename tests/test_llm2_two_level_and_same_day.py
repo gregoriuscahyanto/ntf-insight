@@ -9,7 +9,9 @@ import pytest
 from pydantic import ValidationError
 
 from ntf_insight.analysis.quicktest_swap_relation import compare_quicktest_to_swap
-from ntf_insight.reporting.chatgpt_exchange import ChatGPTRueckgabe
+from ntf_insight.reporting.chatgpt_exchange import (
+    ChatGPTAnalyseStore, ChatGPTRueckgabe, ergebnis_schema,
+)
 from ntf_insight.reporting.cluster_context_package import export_cluster_context
 from test_cluster_technical_export import CASE_ID, PART, _create_test_data, _csv, _first
 
@@ -93,7 +95,12 @@ def test_second_package_preserves_same_day_qt_and_km_detail(tmp_path):
         assert "mehrere Fehlerbild-Kategorien" in prompt
         assert "fehlerbilder[]" in prompt
         schema = json.loads(archive.read("chatgpt_ergebnis_schema.json"))
+        assert schema == ergebnis_schema()
         assert "fehlerbilder" in schema["$defs"]["ChatGPTFall"]["properties"]
+        assert "nachweisprofil" in schema["$defs"]["ChatGPTFall"]["properties"]
+        assert "fehlerwiederkehr" in schema["$defs"]["ChatGPTFall"]["properties"]
+        assert "fehlerbild_methodik" in schema["properties"]
+        assert schema["$defs"]["LLMFehlerbild"]["additionalProperties"] is False
         template = json.loads(archive.read("chatgpt_ergebnis_vorlage.json"))
         assert template["fehlerbild_methodik"] == "multilabel_symptom_nachweis_v2"
         manifest = json.loads(archive.read("cluster_kontext_manifest.json"))
@@ -147,3 +154,153 @@ def test_csv_injection_protection_preserves_real_negative_measurements():
     assert _csv_safe("-A1") == "'-A1"
     assert _csv_safe("=HYPERLINK(1,2)") == "'=HYPERLINK(1,2)"
     assert _csv_safe("+A1") == "'+A1"
+
+
+def test_qec_field_display_label_must_match_original_zip(tmp_path):
+    """Beschriftete Belege sind nur bei exaktem Original-Label zulaessig."""
+    source, evidence, *_ = _create_test_data(tmp_path)
+    first, result = _first(
+        source, tmp_path / "first-labeled.zip", mit_freitext=True,
+    )
+    with ZipFile(first.path) as archive:
+        fields = _csv(archive, "qec_felder.csv")
+    row = next(
+        item for item in fields
+        if item["original_beschriftung_opt_in"]
+        and item["fundstelle"].startswith("QEC/")
+    )
+    alias = row["qec_bericht_id"]
+    location = row["fundstelle"]
+    label = row["original_beschriftung_opt_in"]
+    importer = ChatGPTAnalyseStore(source.store)
+
+    importer._verify_qec_field_locations(
+        first.paket_id,
+        {(alias, location), (alias, f"{location} [{label}]")},
+    )
+    with pytest.raises(ValueError, match="nicht im exportierten Original"):
+        importer._verify_qec_field_locations(
+            first.paket_id, {(alias, f"{location} [frei erfunden]")},
+        )
+    with pytest.raises(ValueError, match="nicht im exportierten Original"):
+        importer._verify_qec_field_locations(
+            first.paket_id, {("Q99999", f"{location} [{label}]")},
+        )
+    with pytest.raises(ValueError, match="nicht im exportierten Original"):
+        importer._verify_qec_field_locations(
+            first.paket_id, {(alias, f"{location}/feld:999 [{label}]")},
+        )
+
+
+
+def test_legacy_detail_json_imports_without_editing_file(tmp_path):
+    """Die bisherige Detail-JSON wird nur appintern kanonisiert.
+
+    Originaltext bleibt gespeichert; auch Nachweisprofil-Belege werden geprueft.
+    Keine echten Kunden- oder Produktionsdaten in den Testdaten.
+    """
+    source, evidence, *_ = _create_test_data(tmp_path)
+    first, first_result = _first(
+        source, tmp_path / "first-legacy.zip", mit_freitext=True,
+    )
+    with ZipFile(first.path) as archive:
+        row = next(
+            item for item in _csv(archive, "qec_felder.csv")
+            if item["original_beschriftung_opt_in"]
+        )
+        case_info = _csv(archive, "faelle.csv")[0]
+    proof = {
+        "quelle": "qec_felder",
+        "quelle_id": row["qec_bericht_id"],
+        "fundstelle": (
+            f"{row['fundstelle']} [{row['original_beschriftung_opt_in']}]"
+        ),
+        "aussage": "Synthetische QEC-Fundstelle.",
+        "belegstatus": "Originalbefund",
+    }
+    answer = dict(first_result)
+    answer["analyse_id"] = "Cluster-Synthetic-Legacy-Detail"
+    answer["fehlerbild_methodik"] = "multilabel_symptom_nachweis_v2"
+    answer["erklaerung_zusatzfelder"] = "Altes Detailformat."
+    answer["faelle"][0].update({
+        "fahrzeug_id": case_info["fahrzeug_id"],
+        "qec_bericht_id": row["qec_bericht_id"],
+        "baureihe": "214",
+        "sachnummer_pseudonym": "A-EXAMPLE-001",
+        "tausch_monat": "2026-01",
+        "tausch_km": 12000,
+        "cluster_alt": None,
+        "ntf_bewertung_alt": "NTF fraglich",
+        "aenderung_gegenueber_erstlauf": "Neue Diagnosequelle",
+        "fehlerbilder": [
+            {
+                "kategorie": "Bus/Kommunikation",
+                "nachweisstatus": "Werkstattangabe",
+                "sicherheit": "Niedrig",
+                "begruendung": "Nur Werkstattbehauptung.",
+                "belege": [proof],
+            },
+            {
+                "kategorie": "Bus/Kommunikation",
+                "nachweisstatus": "Diagnosehinweis",
+                "sicherheit": "Mittel",
+                "begruendung": "Diagnoseereignis, kein Kausalbeweis.",
+                "belege": [proof],
+            },
+        ],
+        "nachweisprofil": [{
+            "quelle": "QEC-Lieferantenbericht (Erstrunde)",
+            "nachweisstatus": "Optischer Sichtbefund NOK",
+            "sicherheit": "Mittel",
+            "begruendung": "Synthetischer Befund.",
+            "belege": [proof],
+        }],
+        "fehlerwiederkehr": "Nicht beurteilbar",
+        "begruendung_fehlerwiederkehr": "Kein echter Nachtest.",
+        "qt_anzahl": 2,
+        "qt_zeitkategorien": {"vor_tausch": 1, "nach_tausch": 1},
+        "vortausch_dtc_codes": "P26F100/CPC3",
+        "vortausch_ecu_versionen": [],
+        "datumsbezogen_vor_tausch_qt": 1,
+        "gleicher_tag_km_vor_tausch_indiz_qt": 0,
+        "dato_km_widerspruch_qt": 0,
+        "nach_tausch_neuer_ereigniskm_dtc": 0,
+        "fall_duplikat_pruefen": [],
+    })
+    path = tmp_path / "legacy-llm2.json"
+    importer = ChatGPTAnalyseStore(source.store)
+    answer["faelle"][0]["nicht_erlaubt"] = "keine unkontrollierten Extras"
+    path.write_text(json.dumps(answer), encoding="utf-8")
+    with pytest.raises(ValueError, match="Unbekannte LLM2-Zusatzfelder"):
+        importer.import_file(path)
+    del answer["faelle"][0]["nicht_erlaubt"]
+
+    answer["faelle"][0]["nachweisprofil"][0]["belege"][0] = {
+        **proof, "fundstelle": f"{row['fundstelle']} [erfundene Beschriftung]",
+    }
+    path.write_text(json.dumps(answer), encoding="utf-8")
+    with pytest.raises(ValueError, match="nicht im exportierten Original"):
+        importer.import_file(path)
+    answer["faelle"][0]["nachweisprofil"][0]["belege"][0] = proof
+    path.write_text(json.dumps(answer), encoding="utf-8")
+    original = path.read_bytes()
+
+    result = importer.import_file(path)
+    assert result["faelle"] == 1
+    assert path.read_bytes() == original
+    finding = importer.latest_for_case(CASE_ID)["bewertung"]
+    assert len(finding["fehlerbilder"]) == 1
+    assert finding["fehlerbilder"][0]["kategorie"] == "Bus / Kommunikation"
+    # Zwei Statusbehauptungen mit derselben Fundstelle sind noch keine
+    # voneinander unabhaengigen Mehrfachbelege.
+    assert finding["fehlerbilder"][0]["nachweisstatus"] == (
+        "Hypothese / unbestätigt"
+    )
+    assert finding["nachweisprofil"] == ["Laborbefund optisch auffällig"]
+    assert any(e["fundstelle"] == proof["fundstelle"] for e in finding["belege"])
+    with source.store.connect() as con:
+        archived = con.execute(
+            "SELECT payload_json FROM chatgpt_imports WHERE analyse_id=?",
+            [answer["analyse_id"]],
+        ).fetchone()[0]
+    assert archived == original.decode("utf-8")
