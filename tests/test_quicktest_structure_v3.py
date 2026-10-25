@@ -242,7 +242,7 @@ def test_v41_ev_dev_fault_before_next_ecu_is_not_a_phantom_control_unit():
         "FAULT CODES (0)",
         "No fault codes",
     ]
-    parsed = parse_quicktest_structure(["\\n".join(text)])
+    parsed = parse_quicktest_structure(["\n".join(text)])
     assert parsed["reported_ecu_count"] == 2
     assert parsed["observed_dtc_count"] == 1
     assert [ecu["ecu_code"] for ecu in parsed["ecus"]] == [
@@ -262,7 +262,7 @@ def test_v41_ecu_location_may_contain_spaces_and_comma():
         "ECU variant BC_R213_TEST",
         "FAULT CODES (0)", "No fault codes",
     ]
-    result = parse_quicktest_structure(["\\n".join(lines)])
+    result = parse_quicktest_structure(["\n".join(lines)])
     assert result["reported_ecu_count"] == 1
     assert result["ecus"][0]["ecu_code"] == "BC_R213_LINs"
     assert result["observed_dtc_count"] == 0
