@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import Callable
 from zipfile import ZipFile
 
+from ntf_insight.acquisition.tips_archive import local_tips_cases
 from ntf_insight.domain.case import NTFCase
 from ntf_insight.ingestion.artifacts import SourceType, sha256_file
 from ntf_insight.storage.cluster_evidence_store import part_key
@@ -625,6 +626,26 @@ def plan_original_context(
             "diagnosis_viewer_fallback", pdf.sha256, pdf.path,
             "FIN-bezogen: " + pdf.reason,
         )
+    # TIPS-Writer kann per FIN aus dem Portal heruntergeladen worden sein,
+    # ohne dass alle Fallberichte zusaetzlich per +Beleg einsortiert wurden.
+    # Alle Originale bleiben nur nach expliziter Zustimmung sichtbar.
+    for fin in sorted(scope.fins):
+        for case_file in local_tips_cases(store.path.parent, fin):
+            if not case_file.is_file() or case_file.is_symlink():
+                continue
+            add(
+                "tips_writer_fall", sha256_file(case_file), case_file,
+                "FIN-bezogener TIPS-Portalpfad; Bauteilbezug nicht verifiziert",
+            )
+            attach_dir = case_file.parent / "anhaenge"
+            if attach_dir.is_dir() and not attach_dir.is_symlink():
+                for attached in sorted(attach_dir.iterdir()):
+                    if attached.is_file() and not attached.is_symlink():
+                        add(
+                            "tips_writer_anhang",
+                            sha256_file(attached), attached,
+                            "TIPS-Anhang zur FIN; Bauteilbezug nicht verifiziert",
+                        )
     return entries, originals
 
 
