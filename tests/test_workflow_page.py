@@ -1138,3 +1138,84 @@ def test_workflow_fetch_has_no_secondary_progress_or_stop_button(
     page.set_context_scraper_busy("diagnosis_viewer", False)
     window.close()
     app.processEvents()
+
+
+
+def test_step_three_card_turns_green_only_after_first_llm_result(tmp_path, monkeypatch):
+    """Manuelle QEC-Entscheidungen sind kein LLM-Ergebnis."""
+    from types import SimpleNamespace
+
+    app, window = _window(tmp_path, monkeypatch)
+    try:
+        page = window.pages["workflow"]
+        monkeypatch.setattr(page.qec_store, "rows", lambda _root: _qec_rows())
+        monkeypatch.setattr(page.qec_store, "active_sources", lambda: [])
+        page.activate_project("coolant_pump", "A 123 456")
+        assert page.ai_export_button.text() == "LLM-Analysepaket erstellen (ZIP)"
+        assert page.ai_import_button.text() == "LLM-Ergebnis importieren (JSON)"
+        assert page.cards[2].property("workflowState") == "pending"
+        assert "LLM-Analyse offen" in page.cards[2].text()
+        assert "QEC-entschieden" not in page.cards[2].text()
+        assert not page.ntf_status.text()
+
+        page.first_package = SimpleNamespace(
+            paket_id="a" * 32, analysis_id=None
+        )
+        page.refresh()
+        assert page.cards[2].property("workflowState") == "partial"
+        assert "LLM-Paket erstellt" in page.cards[2].text()
+
+        page.first_package = SimpleNamespace(
+            paket_id="a" * 32, analysis_id="Analyse-aaa-01"
+        )
+        page.refresh()
+        assert page.cards[2].property("workflowState") == "done"
+        assert "LLM-Analyse vorhanden" in page.cards[2].text()
+    finally:
+        window.close()
+        app.processEvents()
+
+
+def test_step_four_counts_unique_auto_and_selected_technical_documents(tmp_path):
+    """Portal-PDF und manuelles +Beleg derselben SHA werden einmal gezaehlt."""
+    from hashlib import sha256
+    from types import SimpleNamespace
+
+    from ntf_insight.storage.workflow_source_coverage import (
+        SourceCoverage, count_project_documents,
+    )
+
+    quicktest = tmp_path / "quicktest.pdf"
+    quicktest.write_bytes(b"%PDF-1.0\nquicktest")
+    tp = tmp_path / "tp.csv"
+    tp.write_text("fin,dtc\nWDD12345678901234,P001", encoding="utf-8")
+    network = tmp_path / "netzwerk.cdd"
+    network.write_bytes(b"<cdd>Netzwerk</cdd>")
+
+    def evidence(path, category):
+        return SimpleNamespace(
+            source_path=path,
+            category=category,
+            sha256=sha256(path.read_bytes()).hexdigest(),
+        )
+
+    coverage = {
+        "diagnosis_viewer": SourceCoverage(
+            "diagnosis_viewer", 1, 1, 1, 1, 1,
+            local_paths=(quicktest,),
+        ),
+        "tp_dashboard": SourceCoverage(
+            "tp_dashboard", 1, 1, 1, 1, 1,
+            local_paths=(tp,),
+        ),
+    }
+    attached = [
+        evidence(quicktest, "diagnosis_viewer"),
+        evidence(network, "cdd_smrd"),
+        evidence(network, "additional"),  # Gleiche Bytes trotz zwei Kategorien.
+    ]
+    counts = count_project_documents(coverage, attached)
+    assert counts.total == 3
+    assert counts.automatic == 2
+    assert counts.manual == 2
+    assert counts.overlap == 1
