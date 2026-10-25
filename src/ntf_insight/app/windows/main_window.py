@@ -578,7 +578,7 @@ class MainWindow(QMainWindow):
     def _ai_import_started(self, filename: str) -> None:
         self._close_old_import_cards()
         dialog = self._show_operation_progress(
-            "ChatGPT-Ergebnis importieren",
+            "LLM-Ergebnis importieren",
             f"Ergebnisdatei {filename} wird geprüft und lokal zugeordnet …",
         )
         self._track_import_card("_ai_import_dialog", dialog)
@@ -592,12 +592,12 @@ class MainWindow(QMainWindow):
         self._close_old_import_cards()
         if self._ai_import_dialog is None:
             dialog = self._show_operation_progress(
-                "ChatGPT-Ergebnis importieren", "Rückimport prüfen …",
+                "LLM-Ergebnis importieren", "Rückimport prüfen …",
             )
             self._track_import_card("_ai_import_dialog", dialog)
         self._ai_import_dialog.fail(message)
         self.pages["workflow"].set_notice(
-            "ChatGPT-Rückimport abgebrochen: " + message, error=True,
+            "LLM-Rückimport abgebrochen: " + message, error=True,
         )
 
     def _workflow_ai_import(self) -> None:
@@ -605,14 +605,14 @@ class MainWindow(QMainWindow):
         workflow = self.pages["workflow"]
         panel = self.pages["sources"].ki_analyse_panel
         if panel is None:
-            workflow.set_notice("ChatGPT-Rückimport nicht verfügbar.", error=True)
+            workflow.set_notice("LLM-Rückimport nicht verfügbar.", error=True)
             return
         if not self._portable_transfer_ready():
             workflow.set_notice("Ein Import oder Download läuft bereits.", error=True)
             return
         name, _ = QFileDialog.getOpenFileName(
-            self, "Erstes ChatGPT-Analyseergebnis auswählen",
-            str(Path.home()), "NTF ChatGPT-Auswertung (*.json)",
+            self, "Erstes LLM-Analyseergebnis auswählen",
+            str(Path.home()), "NTF LLM-Auswertung (*.json)",
         )
         if not name:
             self._pending_ai_round = None
@@ -705,7 +705,7 @@ class MainWindow(QMainWindow):
             f"Projekt: {project.title}\n\n"
             "Es werden projektbezogene Einstellungen, Fall-/QEC-Daten, "
             "QuickTests, technische Unterlagen, manuelle Bewertungen und "
-            "lokal gespeicherte ChatGPT-Pakete gesammelt.\n\n"
+            "lokal gespeicherte LLM-Pakete gesammelt.\n\n"
             "ACHTUNG: Gemeinsame Quelldateien (etwa eine QEC-Excel mit mehreren "
             "Sachnummern) werden als unveränderte Originale mitgenommen. "
             "Diese können auch Fälle anderer Projekte enthalten.\n\n"
@@ -984,7 +984,7 @@ class MainWindow(QMainWindow):
         """Auch direkt in Datenquellen gilt dieselbe sichere Exportkarte."""
         if not self._portable_transfer_ready():
             QMessageBox.warning(
-                self, "ChatGPT-Export gesperrt",
+                self, "LLM-Export gesperrt",
                 "Zuerst laufende Abrufe, Parser und Transfers abschließen.",
             )
             return
@@ -994,7 +994,7 @@ class MainWindow(QMainWindow):
         )
         dialog = self._show_export_prompt(
             "03 · QEC-Neuauswertung exportieren"
-            if first_qec else "ChatGPT-Analysepaket exportieren",
+            if first_qec else "LLM-Analysepaket exportieren",
             (
                 "Nur Schritt 01 (FIN-/Bauteiltausch-Faelle) und Schritt 02 "
                 "(fünf QEC-Befundungsreiter). Keine QuickTests, AutoExport "
@@ -1050,13 +1050,13 @@ class MainWindow(QMainWindow):
         if dialog is None or panel is None:
             return
         filename, _ = QFileDialog.getSaveFileName(
-            dialog, "ChatGPT-Analyse-ZIP speichern",
+            dialog, "LLM-Analyse-ZIP speichern",
             str(Path.home() / (
                 "NTF-Insight-KI-Analyse-"
                 + datetime.now().strftime("%Y%m%d-%H%M")
                 + ".zip"
             )),
-            "ChatGPT-Analysepaket (*.zip)",
+            "LLM-Analysepaket (*.zip)",
         )
         if not filename:
             return
@@ -1086,7 +1086,7 @@ class MainWindow(QMainWindow):
         workflow = self.pages["workflow"]
         self._pending_first_context = (workflow.profile_id, workflow._context_part)
         if self._first_export_dialog is not None:
-            self._first_export_dialog.begin("ChatGPT-Analysepaket wird erstellt …")
+            self._first_export_dialog.begin("LLM-Analysepaket wird erstellt …")
 
     def _first_export_completed(self, result: object) -> None:
         workflow = self.pages["workflow"]
@@ -1148,7 +1148,7 @@ class MainWindow(QMainWindow):
                 if linked:
                     details += f" Als {round_number}. Durchlauf im Projekt verknüpft."
                     workflow.set_notice(
-                        f"{round_number}. ChatGPT-Ergebnis im Projekt verknüpft."
+                        f"{round_number}. LLM-Ergebnis im Projekt verknüpft."
                     )
                 else:
                     details += (
@@ -1935,13 +1935,13 @@ class MainWindow(QMainWindow):
         QTimer.singleShot(0, self._drain_pending_context_imports)
 
     def _context_export(self) -> None:
-        """Die zweite ChatGPT-Runde verwendet dieselbe Exportkarte."""
+        """Die zweite LLM-Runde verwendet dieselbe Exportkarte."""
         workflow = self.pages["workflow"]
         workflow.refresh_ai_chain()
         package = workflow.first_package
         if package is None or package.analysis_id is None:
             workflow.set_notice(
-                "Zuerst erstes KI-Paket und ChatGPT-Rückimport abschließen.",
+                "Zuerst erstes KI-Paket und LLM-Rückimport abschließen.",
                 error=True,
             )
             return
@@ -1951,7 +1951,7 @@ class MainWindow(QMainWindow):
         try:
             workflow.ai_chain.validate_cached_zip(package)
             if workflow.ai_chain.first_result(package.paket_id) is None:
-                raise ValueError("Zugehörige erste ChatGPT-Auswertung fehlt.")
+                raise ValueError("Zugehörige erste LLM-Auswertung fehlt.")
         except (OSError, ValueError) as exc:
             workflow.set_notice(
                 "Erste KI-Analyse nicht verwendbar: " + str(exc),
@@ -1959,9 +1959,9 @@ class MainWindow(QMainWindow):
             )
             return
         dialog = self._show_export_prompt(
-            "05 · ChatGPT-Vertiefungsanalyse exportieren",
+            "05 · LLM-Vertiefungsanalyse exportieren",
             "Projektbezug: aktuell ausgewähltes Bauteilprofil und Sachnummer. "
-            "Die gesamte QEC-Basis aus Schritt 03 und die erste ChatGPT-Antwort "
+            "Die gesamte QEC-Basis aus Schritt 03 und die erste LLM-Antwort "
             "werden übernommen. Diagnosis-Viewer-QuickTests und TP-Dashboard "
             "werden nach FIN strukturiert exportiert. Bei ungeparsten "
             "QuickTests werden passende PDFs als Ersatz aufgenommen. "
@@ -1972,7 +1972,7 @@ class MainWindow(QMainWindow):
                 (
                     "confidential_basis",
                     "Vertrauliche QEC-Freitexte/Originale aus der ersten "
-                    "ChatGPT-Basis erneut beifügen (falls vorhanden)",
+                    "LLM-Basis erneut beifügen (falls vorhanden)",
                     True,
                 ),
                 (
@@ -2000,7 +2000,7 @@ class MainWindow(QMainWindow):
         if originals or confidential_basis:
             reply = QMessageBox.warning(
                 dialog, "Vertrauliche Analyseunterlagen freigeben?",
-                "Das umfassende ChatGPT-Paket kann bereits in der ersten "
+                "Das umfassende LLM-Paket kann bereits in der ersten "
                 "QEC-Basis sowie in technischen Originalen und geparsten "
                 "Diagnosetexten echte FINs, Namen oder vertrauliche "
                 "Entwicklungsinformationen enthalten. "
@@ -2016,7 +2016,7 @@ class MainWindow(QMainWindow):
             if reply != QMessageBox.StandardButton.Yes:
                 return
         dest, _ = QFileDialog.getSaveFileName(
-            dialog, "Zweiter ChatGPT-Durchlauf · Clusterkontext",
+            dialog, "Zweiter LLM-Durchlauf · Clusterkontext",
             str(Path.home() / "NTF_Clusterkontext_Durchlauf2.zip"),
             "Clusterpaket (*.zip)",
         )
@@ -2029,14 +2029,14 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(
                 dialog, "Zieldatei bereits vorhanden",
                 "Bitte einen neuen Dateinamen wählen. Vorhandene "
-                "ChatGPT-Pakete werden nicht überschrieben.",
+                "LLM-Pakete werden nicht überschrieben.",
             )
             return
         try:
             workflow.ai_chain.validate_cached_zip(package)
             first_result = workflow.ai_chain.first_result(package.paket_id)
             if first_result is None:
-                raise ValueError("Erste ChatGPT-Auswertung fehlt.")
+                raise ValueError("Erste LLM-Auswertung fehlt.")
         except (OSError, ValueError) as exc:
             dialog.fail(str(exc))
             return
@@ -2064,8 +2064,8 @@ class MainWindow(QMainWindow):
         context = self._pending_cluster_context
         self._pending_cluster_context = None
         detail = (
-            "Zweites ChatGPT-Paket gespeichert: erste QEC-Basis, erste "
-            "ChatGPT-Auswertung, projektbezogene geparste Diagnose-/TP-Daten "
+            "Zweites LLM-Paket gespeichert: erste QEC-Basis, erste "
+            "LLM-Auswertung, projektbezogene geparste Diagnose-/TP-Daten "
             "und freigegebene Technikunterlagen. Inhalt vor Upload "
             "auf FINs, vertrauliche Texte und Sachnummernbezug prüfen."
         )
@@ -2100,8 +2100,8 @@ class MainWindow(QMainWindow):
             workflow.set_notice("Import/Export läuft noch.", error=True)
             return
         filename, _ = QFileDialog.getOpenFileName(
-            self, "Zweites ChatGPT-Clusterergebnis auswählen",
-            str(Path.home()), "ChatGPT Ergebnis (*.json)",
+            self, "Zweites LLM-Clusterergebnis auswählen",
+            str(Path.home()), "LLM Ergebnis (*.json)",
         )
         if not filename:
             return
@@ -2127,13 +2127,13 @@ class MainWindow(QMainWindow):
                 )
         except (OSError, ValueError, KeyError, TypeError) as exc:
             workflow.set_notice(
-                "Zweites ChatGPT-Ergebnis nicht zuordenbar: " + str(exc),
+                "Zweites LLM-Ergebnis nicht zuordenbar: " + str(exc),
                 error=True,
             )
             return
         panel = self.pages["sources"].ki_analyse_panel
         if panel is None:
-            workflow.set_notice("ChatGPT-Rückimport nicht verfügbar.", error=True)
+            workflow.set_notice("LLM-Rückimport nicht verfügbar.", error=True)
             return
         self._pending_ai_round = 2
         if not panel.import_from_path(path):
@@ -2440,7 +2440,7 @@ class MainWindow(QMainWindow):
         elif action in {"ai_export", "ai_import"}:
             panel = source.ki_analyse_panel
             if panel is None:
-                workflow.set_notice("ChatGPT-Austausch ist nicht verfügbar.", error=True)
+                workflow.set_notice("LLM-Austausch ist nicht verfügbar.", error=True)
                 return
             if action == "ai_export":
                 fins = {
