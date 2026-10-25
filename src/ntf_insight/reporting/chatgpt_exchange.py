@@ -39,7 +39,7 @@ BelegQuelle = Literal[
 ]
 Bewertung = Literal[
     "NTF plausibel", "NTF fraglich", "Kein reiner NTF",
-    "Nicht bewertbar", "Nicht bewertet",
+    "Nicht bewertbar", "Nicht zuordenbar", "Nicht bewertet",
 ]
 Sicherheit = Literal["Hoch", "Mittel", "Niedrig", "Offen"]
 Zuordnung = Literal["Belegt", "Plausibel", "Offen"]
@@ -439,6 +439,48 @@ class ChatGPTAnalyseStore:
                 f"{alias}/{position or '[Fundstelle fehlt]'}"
             )
 
+    def _validate_first_round_focus(self, data: ChatGPTRueckgabe) -> None:
+        """Neue QEC-Erstrunde darf KEINE Clusteranalyse vorwegnehmen.
+
+        Legacy- und allgemeine Quellenpakete sowie die zweite Runde
+        behalten ihre bisherigen kompatiblen Rueckgabeformate.
+        """
+        if (
+            not data.cluster
+            and not data.clustermethode.strip()
+            and all(case.cluster_id is None for case in data.faelle)
+        ):
+            return
+        if data.analyse_id != ergebnis_vorlage(data.paket_id)["analyse_id"]:
+            return
+        try:
+            with self.store.connect() as con:
+                archived = con.execute(
+                    "SELECT a.payload_json FROM workflow_first_ai_packages f "
+                    "JOIN source_artifacts a ON a.sha256=f.sha256 "
+                    "WHERE f.paket_id=? LIMIT 1",
+                    [data.paket_id],
+                ).fetchone()
+        except duckdb.CatalogException:
+            return
+        if archived is None:
+            return
+        source_path = Path(json.loads(archived[0])["archived_path"])
+        try:
+            with ZipFile(source_path) as archive:
+                manifest = json.loads(archive.read("manifest.json"))
+        except (OSError, BadZipFile, ValueError, KeyError) as exc:
+            raise ValueError(
+                "Erste QEC-Analyse-ZIP fuer die Rundenzuordnung "
+                "nicht lesbar."
+            ) from exc
+        if manifest.get("analysezweck") == "ntf_erstentscheidung_ohne_cluster":
+            raise ValueError(
+                "LLM-Durchlauf 1 darf keine Cluster enthalten. "
+                "Bitte cluster=[], clustermethode='' und "
+                "cluster_id=null je Fall liefern. Clusterung erst in Runde 2."
+            )
+
     @staticmethod
     def _validate_belege(
         belege: list[ChatGPTBeleg], mapping: dict[tuple[str, str], dict],
@@ -531,6 +573,7 @@ class ChatGPTAnalyseStore:
                 "Analyse-ID ist bereits mit anderem Inhalt gespeichert. "
                 "Für eine neue Version bitte eine neue analyse_id vergeben."
             )
+        self._validate_first_round_focus(data)
 
         case_by_alias: dict[str, str] = {}
         for (art, pseudo), row in mapping.items():
