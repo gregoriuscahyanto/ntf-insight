@@ -251,6 +251,103 @@ def test_workflow_llm_dashboard_is_interactive_and_project_scoped(
 
 
 
+def test_cluster_chart_displays_all_22_t_and_s_groups_and_last_is_filterable(
+    tmp_path, monkeypatch,
+):
+    """Keine stille Top-10-Begrenzung bei vollstaendiger T/S-Clusterung."""
+    app, window = _window(tmp_path, monkeypatch)
+    try:
+        page = window.pages["workflow"]
+        package_id = "d" * 32
+        analysis_id = "ClusterTS-Test-All-22"
+        clusters = []
+        findings = []
+        scoped = []
+
+        # Acht technische T-Gruppen und 14 symptom-/datenbasierte S-Gruppen.
+        ids = [
+            *(f"T{n:02d}" for n in range(1, 9)),
+            *(f"S{n:02d}" for n in range(11, 25)),
+        ]
+        for index, cluster_id in enumerate(ids, 1):
+            case_id = f"QEC-TEST-{index:03d}"
+            alias = f"F{index:04d}"
+            clusters.append({
+                "cluster_id": cluster_id,
+                "titel": f"Synthetisches Muster {cluster_id}",
+                "fall_ids": [alias],
+                "sicherheit": "Niedrig",
+                "technische_hypothese": "",
+                "belege": [],
+                "ebene": cluster_id[0],
+            })
+            findings.append((
+                case_id, cluster_id, json.dumps({
+                    "fall_id": alias,
+                    "cluster_id": cluster_id,
+                    "ntf_bewertung": "NTF fraglich",
+                    "verursachungsbereich": "Nicht zuordenbar",
+                    "sicherheit_zuordnung": "Offen",
+                    "fehlerbilder": [{"kategorie": "Unbekannt",
+                                      "nachweisstatus": "Werkstattangabe"}],
+                    "nachweisprofil": ["Datenlage unzureichend"],
+                }), "Offen",
+            ))
+            scoped.append({
+                "case_id": case_id,
+                "fin": f"WDD1234567890{index:04d}",
+                "part_number": "A 111",
+            })
+
+        with page.progress_store.store.connect() as con:
+            con.execute(
+                "INSERT INTO workflow_ai_rounds "
+                "(paket_id,analyse_id,round_number) VALUES (?,?,2)",
+                [package_id, analysis_id],
+            )
+            con.execute(
+                "INSERT INTO chatgpt_imports VALUES (?,?,?,now(),?)",
+                [analysis_id, package_id, "e" * 64, "{}"],
+            )
+            con.executemany(
+                "INSERT INTO chatgpt_cluster VALUES (?,?,?)",
+                [(analysis_id, group["cluster_id"], json.dumps(group))
+                 for group in clusters],
+            )
+            con.executemany(
+                "INSERT INTO chatgpt_fallanalysen "
+                "(analyse_id,case_id,fall_pseudonym,cluster_id,"
+                "payload_json,review_status) VALUES (?,?,?,?,?,?)",
+                [(analysis_id, case_id, json.loads(payload)["fall_id"],
+                  cluster_id, payload, review)
+                 for case_id, cluster_id, payload, review in findings],
+            )
+
+        page.first_package = SimpleNamespace(
+            paket_id=package_id, analysis_id="Analyse-Runde-1",
+        )
+        page._scoped_rows = scoped
+        page._refresh_chatgpt_cluster_view()
+
+        items = page.llm_cluster_chart.items
+        assert len(items) == 22
+        assert {code for code, _title, _count in items} == set(ids)
+        assert page.chatgpt_cluster_model.rowCount() == 22
+        assert page.llm_cluster_chart.height() == (
+            page.llm_cluster_chart.sizeHint().height()
+        )
+        assert page.chatgpt_cluster_scroll.isWidgetResizable()
+
+        # Auch ein Cluster jenseits der frueheren Top 10 bleibt anwaehlbar.
+        assert "T08" in [code for code, _title, _count in items[10:]]
+        page.llm_cluster_chart.selected.emit("T08")
+        assert page.llm_cluster_filter.currentData() == "T08"
+        assert page.chatgpt_case_proxy.rowCount() == 1
+    finally:
+        window.close()
+        app.processEvents()
+
+
 def test_unclustered_and_legacy_answers_are_readable_without_fabricated_causes():
     from ntf_insight.reporting.chatgpt_exchange import ChatGPTRueckgabe
 
