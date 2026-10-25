@@ -1959,15 +1959,27 @@ class MainWindow(QMainWindow):
             )
             return
         dialog = self._show_export_prompt(
-            "ChatGPT-Clusterkontext exportieren · Durchlauf 2",
-            "Die erste ChatGPT-Auswertung und die vorhandene pseudonymisierte "
-            "Basis werden übernommen. Unveränderte technische Unterlagen "
-            "nur mit ausdrücklicher Freigabe beifügen. Kein Upload.",
+            "05 · ChatGPT-Vertiefungsanalyse exportieren",
+            "Projektbezug: aktuell ausgewähltes Bauteilprofil und Sachnummer. "
+            "Die gesamte QEC-Basis aus Schritt 03 und die erste ChatGPT-Antwort "
+            "werden übernommen. Diagnosis-Viewer-QuickTests und TP-Dashboard "
+            "werden nach FIN strukturiert exportiert. Bei ungeparsten "
+            "QuickTests werden passende PDFs als Ersatz aufgenommen. "
+            "Hinzu kommen alle freigegebenen, dem Projekt zugeordneten "
+            "technischen Unterlagen aus Schritt 04. "
+            "Die zweite ZIP wird lokal erstellt, NICHT hochgeladen.",
             options=(
                 (
+                    "confidential_basis",
+                    "Vertrauliche QEC-Freitexte/Originale aus der ersten "
+                    "ChatGPT-Basis erneut beifügen (falls vorhanden)",
+                    True,
+                ),
+                (
                     "technical_originals",
-                    "Technische Originalunterlagen beifügen (vertraulich)",
-                    False,
+                    "Umfassend: geparste Diagnosetexte, alle zugeordneten "
+                    "Originalunterlagen und ungeparste QuickTest-PDFs beifügen",
+                    True,
                 ),
             ),
         )
@@ -1984,13 +1996,20 @@ class MainWindow(QMainWindow):
         if dialog is None or package is None:
             return
         originals = bool(options.get("technical_originals"))
-        if originals:
+        confidential_basis = bool(options.get("confidential_basis"))
+        if originals or confidential_basis:
             reply = QMessageBox.warning(
-                dialog, "Vertrauliche technische Originale beifügen?",
-                "Unveränderte technische Belege können echte FINs, Namen und "
-                "vertrauliche Entwicklungsinformationen enthalten. "
-                "Keine automatische Anonymisierung oder Verschlüsselung. "
-                "Nur intern freigegeben teilen. Originale wirklich einfügen?",
+                dialog, "Vertrauliche Analyseunterlagen freigeben?",
+                "Das umfassende ChatGPT-Paket kann bereits in der ersten "
+                "QEC-Basis sowie in technischen Originalen und geparsten "
+                "Diagnosetexten echte FINs, Namen oder vertrauliche "
+                "Entwicklungsinformationen enthalten. "
+                "Sammel-CSV werden projektbezogen gefiltert; manuell "
+                "zugeordnete technische Dokumente können jedoch weitere "
+                "Fahrzeugbezüge enthalten. Es erfolgt KEINE garantierte "
+                "Anonymisierung und KEIN automatischer Upload. "
+                "Nur mit Unternehmensfreigabe weitergeben. "
+                "Diese Daten in die lokale ZIP aufnehmen?",
                 QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
                 QMessageBox.StandardButton.No,
             )
@@ -2027,6 +2046,7 @@ class MainWindow(QMainWindow):
         worker = ClusterContextExportWorker(
             workflow.context_store, workflow.profile_id, workflow._context_part,
             package.path, path, include_originals=originals,
+            include_confidential_basis=confidential_basis,
             first_result=first_result,
         )
         self._context_worker = worker
@@ -2043,7 +2063,12 @@ class MainWindow(QMainWindow):
         workflow = self.pages["workflow"]
         context = self._pending_cluster_context
         self._pending_cluster_context = None
-        detail = "Zweites ChatGPT-Paket vollständig gespeichert."
+        detail = (
+            "Zweites ChatGPT-Paket gespeichert: erste QEC-Basis, erste "
+            "ChatGPT-Auswertung, projektbezogene geparste Diagnose-/TP-Daten "
+            "und freigegebene Technikunterlagen. Inhalt vor Upload "
+            "auf FINs, vertrauliche Texte und Sachnummernbezug prüfen."
+        )
         if context is not None:
             try:
                 workflow.ai_chain.register_second_export(
