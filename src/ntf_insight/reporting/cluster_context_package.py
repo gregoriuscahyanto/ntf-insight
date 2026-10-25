@@ -1,8 +1,8 @@
-"""Zweiter ChatGPT-Durchlauf: vorhandene KI-Basis plus technische Fachunterlagen.
+"""Zweiter LLM-Durchlauf: vorhandene KI-Basis plus technische Fachunterlagen.
 
 Kein Upload, keine Neu-Pseudonymisierung und keine automatische Schuldzuweisung.
 Das bestehende JSON-Rückgabeformat wird unverändert übernommen, damit die
-Ergebnisse wieder über den vorhandenen ChatGPT-Import validiert werden können.
+Ergebnisse wieder über den vorhandenen LLM-Import validiert werden können.
 """
 from __future__ import annotations
 
@@ -98,7 +98,7 @@ def validate_first_package(archive_path: Path) -> str:
         }
         if not required <= members:
             raise ValueError(
-                "KI-Analysepaket fehlt die Manifest-/ChatGPT-Rückgabevorlage."
+                "KI-Analysepaket fehlt die Manifest-/LLM-Rückgabevorlage."
             )
         manifest = json.loads(archive.read("manifest.json"))
         package_id = manifest.get("paket_id")
@@ -158,7 +158,7 @@ def export_cluster_context(
         raise ValueError("Analyse-ZIP außerhalb des NTF-Datenverzeichnisses speichern.")
 
     if progress:
-        progress("Erste ChatGPT-Analyse und Quelldateien prüfen …")
+        progress("Erste LLM-Analyse und Quelldateien prüfen …")
     package_id = validate_first_package(first_package)
     with ZipFile(first_package) as base:
         base_manifest = json.loads(base.read("manifest.json"))
@@ -196,7 +196,7 @@ def export_cluster_context(
         if first_result is not None else None
     )
     if verified_result is not None and verified_result.paket_id != package_id:
-        raise ValueError("Erstes ChatGPT-Ergebnis gehört nicht zur gewählten KI-Basis.")
+        raise ValueError("Erstes LLM-Ergebnis gehört nicht zur gewählten KI-Basis.")
     evidence = store.list_files(profile_id, part_number)
     counts = store.counts(profile_id, part_number)
     project = WorkflowProjectStore(store.store).get(profile_id, part_number)
@@ -246,12 +246,12 @@ def export_cluster_context(
         else profile_id.replace("_", " ")
     )
     instruction_lines = [
-        "NTF Insight · Zweiter ChatGPT-Durchlauf / vertiefter Analysekontext",
+        "NTF Insight · Zweiter LLM-Durchlauf / vertiefter Analysekontext",
         "",
         f"Bauteil: {component_name}. Technische Interpretation immer nur anhand "
         "der tatsaechlich vorliegenden Quellen; keine pauschalen ECU-/DTC-Annahmen.",
         "1. Die erste QEC-Analysebasis liegt unter basis/. Die zugehoerige erste "
-        "ChatGPT-Auswertung liegt in voranalyse/erstes_chatgpt_ergebnis.json "
+        "LLM-Auswertung liegt in voranalyse/erstes_chatgpt_ergebnis.json "
         "(soweit vorhanden). Fehlende QEC-Berichte sind eine legitime Datenluecke.",
         "2. Nutze Unterlagen aus dem aktuell ausgewaehlten Profil- und "
         "Sachnummernprojekt fuer neue Hypothesen: Diagnoseprotokolle, "
@@ -366,7 +366,7 @@ def export_cluster_context(
                 and not include_confidential_basis
             ):
                 raise ValueError(
-                    "Die erste ChatGPT-Basis enthält vertrauliche QEC-Texte "
+                    "Die erste LLM-Basis enthält vertrauliche QEC-Texte "
                     "oder QEC-Originale. Bitte die getrennte Freigabe "
                     "'Vertrauliche erste QEC-Basis übernehmen' aktivieren."
                 )
@@ -545,7 +545,7 @@ def export_cluster_context(
                         if total_bytes > MAX_PACKAGE_BYTES:
                             raise ValueError("Export ueberschreitet 1 GiB.")
             if sum(item.file_size for item in archive.infolist()) > MAX_PACKAGE_BYTES:
-                raise ValueError("Zweiter ChatGPT-Export ueberschreitet 1 GiB.")
+                raise ValueError("Zweiter LLM-Export ueberschreitet 1 GiB.")
             _zip_text(
                 archive, "cluster_kontext_manifest.json",
                 json.dumps(manifest, ensure_ascii=False, indent=2),
@@ -555,7 +555,7 @@ def export_cluster_context(
             raise FileExistsError("Zieldatei wurde inzwischen angelegt.")
         os.replace(temp, destination)
         if progress:
-            progress("Zweites ChatGPT-Paket vollständig gespeichert.")
+            progress("Zweites LLM-Paket vollständig gespeichert.")
     finally:
         temp.unlink(missing_ok=True)
     return ClusterContextExport(
