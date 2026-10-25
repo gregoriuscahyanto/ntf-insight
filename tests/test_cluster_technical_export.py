@@ -20,7 +20,7 @@ from ntf_insight.storage.cluster_evidence_store import ClusterEvidenceStore
 from ntf_insight.storage.source_knowledge_store import SourceKnowledgeStore
 from ntf_insight.storage.workflow_ai_chain import WorkflowAIChainStore
 from ntf_insight.storage.workflow_projects import NTFProject, WorkflowProjectStore
-from test_ki_analysepaket import FIN, PRIVATE_TEXT, _set_up
+from test_ki_analysepaket import FIN, _set_up
 
 OTHER_FIN = "WDD12345678901245"
 PART = "A-EXAMPLE-001"
