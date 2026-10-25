@@ -480,6 +480,11 @@ def export_cluster_context(
             # aber eine neue eindeutige ID statt einer Kopie der 1.-Runde-Vorlage.
             followup_template = ergebnis_vorlage(package_id)
             followup_template["analyse_id"] = analysis_id
+            # Kennzeichnet das NEUE zweite Ergebnis; beim Import werden
+            # damit Fehlerbild und Nachweisgrad je QEC-Fall verlangt.
+            followup_template["fehlerbild_methodik"] = (
+                "multilabel_symptom_nachweis_v2"
+            )
             _zip_text(
                 archive, "chatgpt_ergebnis_vorlage.json",
                 json.dumps(followup_template, ensure_ascii=False, indent=2),
