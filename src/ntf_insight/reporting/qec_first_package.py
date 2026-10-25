@@ -107,8 +107,6 @@ def export_qec_first_package(
             sorted(chosen, key=lambda c: _key_order(secret, "fall", c.case_id)), 1
         )
     }
-    part_alias = {part_key(part_number): "T0001"}
-
     tell("Schritt 02: QEC-Berichte nach FIN, Referenz und Sachnummer pruefen ...")
     documents = [
         doc for doc in SourceKnowledgeStore(service.store).documents()
@@ -146,15 +144,21 @@ def export_qec_first_package(
                     status, reason = "Pruefbedarf", "Widerspruechliche QEC-Sachnummer"
                 else:
                     doc = candidate
+                    has_errors = bool(
+                        int(candidate["metadata"].get("download_errors") or 0)
+                    )
                     status = (
                         "Vollstaendig"
                         if candidate["metadata"].get("fresh_complete") is True
+                        and not has_errors
                         else "Teilweise"
                     )
                     reason = (
                         "" if status == "Vollstaendig"
                         else "QEC-Reiter fehlen, sind alt oder Abruf ist unvollstaendig"
                     )
+                    if has_errors:
+                        reason += "; QEC-Abruf meldet Fehler"
                     if not doc_part:
                         reason = (
                             (reason + "; " if reason else "")
