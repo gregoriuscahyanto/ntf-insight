@@ -998,7 +998,8 @@ class MainWindow(QMainWindow):
             (
                 "Nur Schritt 01 (FIN-/Pumpentausch-Faelle) und Schritt 02 "
                 "(fünf QEC-Befundungsreiter). Keine QuickTests, AutoExport "
-                "oder separaten TIPS. Fehlende QEC-Befunde werden markiert. "
+                "oder separaten TIPS. Fehlende QEC-Berichte sind erlaubt "
+                "und werden als Datenluecke markiert. "
                 "Die Lieferantenstellungnahme und die QEC-Fachtexte sind "
                 "ohne Freitextfreigabe nicht vollstaendig analysierbar. "
                 "Kein Upload. Die private FIN-Zuordnung niemals weitergeben."
