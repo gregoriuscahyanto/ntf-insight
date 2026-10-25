@@ -373,3 +373,38 @@ def test_nested_multilabel_belege_require_local_alias_validation(tmp_path):
     assert stored["bewertung"]["nachweisprofil"] == [
         "Werkstattangabe vorhanden"
     ]
+
+
+
+def test_new_llm2_requires_evidence_aware_symptom_and_proof_per_case(tmp_path):
+    """Neuer LLM2-Durchlauf darf unclusterbare Faelle nicht mehr auslassen."""
+    source = make_data(tmp_path)
+    exported = export_ki_analysepaket(source, tmp_path / "base.zip")
+    template, _manifest, cases, _qecs, _names = read_package(exported.pfad)
+    template["fehlerbild_methodik"] = "multilabel_symptom_nachweis_v2"
+    template["analyse_id"] = "Cluster-Synthetic-Multilabel"
+    template["faelle"] = [{
+        "fall_id": cases[0]["fall_id"],
+        "ntf_bewertung": "Nicht bewertbar",
+    }]
+    path = tmp_path / "multilabel-llm2.json"
+    source_store = ChatGPTAnalyseStore(source.store)
+    path.write_text(json.dumps(template), encoding="utf-8")
+    with pytest.raises(ValueError, match="ohne Fehlerbild"):
+        source_store.import_file(path)
+
+    template["faelle"][0]["fehlerbilder"] = [{
+        "kategorie": "Unbekannt",
+        "nachweisstatus": "Hypothese / unbestätigt",
+        "sicherheit": "Offen",
+        "begruendung": "Trotz gepruefter QEC-Angaben keine Richtung belegbar.",
+    }]
+    path.write_text(json.dumps(template), encoding="utf-8")
+    with pytest.raises(ValueError, match="ohne Nachweisprofil"):
+        source_store.import_file(path)
+
+    template["faelle"][0]["nachweisprofil"] = ["Datenlage unzureichend"]
+    path.write_text(json.dumps(template), encoding="utf-8")
+    result = source_store.import_file(path)
+    assert result["faelle"] == 1
+    assert result["cluster"] == 0
