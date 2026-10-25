@@ -20,8 +20,9 @@ from PySide6.QtGui import QAction
 from PySide6.QtGui import QCursor
 from PySide6.QtWidgets import (
     QAbstractItemView, QCheckBox, QComboBox, QGridLayout, QHBoxLayout,
-    QFrame, QHeaderView, QLabel, QLayout, QLineEdit, QMenu, QProgressBar,
-    QPushButton, QScrollArea, QSizePolicy, QStackedWidget, QTabWidget, QTableView,
+    QFrame, QHeaderView, QLabel, QLayout, QLineEdit, QMenu, QPlainTextEdit,
+    QProgressBar, QPushButton, QScrollArea, QSizePolicy, QStackedWidget,
+    QTabWidget, QTableView,
     QToolButton, QVBoxLayout, QWidget,
 )
 
@@ -30,6 +31,12 @@ from ntf_insight.acquisition.qec_tool import QecTarget, parse_qec_targets
 from ntf_insight.ingestion.artifacts import SourceType
 from ntf_insight.app.models.simple_table_model import SimpleTableModel
 from ntf_insight.app.widgets.workflow_donut import WorkflowDonut
+from ntf_insight.app.widgets.llm_cluster_charts import (
+    LlmCaseFilterProxy, LlmClusterBarChart,
+)
+from ntf_insight.analysis.llm_cluster_overview import (
+    build_llm_cluster_overview, evidence_lines,
+)
 from ntf_insight.components.registry import list_component_profiles
 from ntf_insight.reporting.chatgpt_exchange import ChatGPTAnalyseStore
 from ntf_insight.storage.cluster_evidence_store import (
@@ -1093,32 +1100,163 @@ class WorkflowPage(QWidget):
         self.cluster_tabs.addTab(
             self.local_cluster_scroll, "Lokal · HDBSCAN / Cosinus"
         )
+        # Zweiter LLM-Durchlauf: vertikale, scrollbar-sichere Visualisierung
+        # statt zweier schmuckloser Tabellen. Keine neue KI-Berechnung.
+        self.chatgpt_cluster_scroll = QScrollArea()
+        self.chatgpt_cluster_scroll.setObjectName("LLMClusterResultScroll")
+        self.chatgpt_cluster_scroll.setWidgetResizable(True)
+        self.chatgpt_cluster_scroll.setVerticalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAsNeeded
+        )
+        self.chatgpt_cluster_scroll.setHorizontalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAlwaysOff
+        )
         self.chatgpt_cluster_page = QWidget()
         review_layout = QVBoxLayout(self.chatgpt_cluster_page)
-        review_layout.setContentsMargins(5, 5, 5, 5)
+        review_layout.setContentsMargins(8, 8, 8, 12)
+        review_layout.setSpacing(10)
         self.chatgpt_cluster_summary = QLabel(objectName="PageSubtitle")
         self.chatgpt_cluster_summary.setWordWrap(True)
-        self.chatgpt_cluster_summary.hide()
         review_layout.addWidget(self.chatgpt_cluster_summary)
+
+        metrics = QHBoxLayout()
+        self.llm_metric_labels: dict[str, QLabel] = {}
+        for key, caption in (
+            ("cases", "LLM-Fallbewertungen"),
+            ("clusters", "Technische Cluster"),
+            ("ungrouped", "Nicht gruppierte Fälle"),
+            ("supplier", "Lieferant als Hypothese"),
+        ):
+            frame = QFrame(objectName="LLMClusterMetricCard")
+            frame.setFrameShape(QFrame.Shape.StyledPanel)
+            frame_layout = QVBoxLayout(frame)
+            frame_layout.setContentsMargins(9, 7, 9, 7)
+            frame_layout.setSpacing(2)
+            value = QLabel("0")
+            value.setStyleSheet("font-size: 21px; font-weight: 700;")
+            value.setAccessibleName(caption)
+            description = QLabel(caption, objectName="PageSubtitle")
+            description.setWordWrap(True)
+            frame_layout.addWidget(value)
+            frame_layout.addWidget(description)
+            self.llm_metric_labels[key] = value
+            metrics.addWidget(frame, 1)
+        review_layout.addLayout(metrics)
+
+        self.llm_causality_warning = QLabel(
+            "Verursachungsbereiche und Cluster sind validiert importierte "
+            "LLM-Hypothesen, keine automatisch nachgewiesenen Verantwortlichkeiten. "
+            "Lieferantenverursachung bedarf technischer Gegenprüfung.",
+            objectName="PageSubtitle",
+        )
+        self.llm_causality_warning.setWordWrap(True)
+        review_layout.addWidget(self.llm_causality_warning)
+
+        charts = QHBoxLayout()
+        charts.setSpacing(10)
+        self.llm_cluster_chart = LlmClusterBarChart(
+            "Clustergrößen · QEC-Fälle"
+        )
+        self.llm_cause_chart = LlmClusterBarChart(
+            "Mögliche Verursachungsbereiche · Fallhypothesen"
+        )
+        charts.addWidget(self.llm_cluster_chart, 1)
+        charts.addWidget(self.llm_cause_chart, 1)
+        review_layout.addLayout(charts)
+        self.llm_cluster_chart.selected.connect(self._filter_llm_cluster)
+        self.llm_cause_chart.selected.connect(self._filter_llm_cause)
+
+        review_layout.addWidget(
+            QLabel("Technische Cluster · auswählen für Details und Fallfilter")
+        )
         self.chatgpt_cluster_table, self.chatgpt_cluster_model = _create_table((
-            "Cluster", "Titel", "Fälle", "Sicherheit",
+            "Cluster", "Technisches Muster", "Fälle", "Sicherheit",
+            "Häufigster Verursachungsbereich",
         ))
-        self.chatgpt_cluster_table.setMinimumHeight(110)
+        self.chatgpt_cluster_table.setMinimumHeight(170)
+        self.chatgpt_cluster_table.setMaximumHeight(260)
+        self.chatgpt_cluster_table.setSelectionMode(
+            QAbstractItemView.SelectionMode.SingleSelection
+        )
         self.chatgpt_cluster_table.selectionModel().selectionChanged.connect(
             lambda *_: self._show_chatgpt_cluster_details()
         )
-        review_layout.addWidget(self.chatgpt_cluster_table, 1)
-        self.chatgpt_cluster_details = QLabel(objectName="PageSubtitle")
-        self.chatgpt_cluster_details.setWordWrap(True)
-        self.chatgpt_cluster_details.setMaximumHeight(80)
+        review_layout.addWidget(self.chatgpt_cluster_table)
+        self.chatgpt_cluster_details = QPlainTextEdit()
+        self.chatgpt_cluster_details.setObjectName("LLMClusterDetails")
+        self.chatgpt_cluster_details.setReadOnly(True)
+        self.chatgpt_cluster_details.setMinimumHeight(145)
+        self.chatgpt_cluster_details.setMaximumHeight(205)
+        self.chatgpt_cluster_details.setPlaceholderText(
+            "Cluster auswählen: technische Hypothese, mögliche Ursache "
+            "und tatsächliche Belegfundstellen werden hier angezeigt."
+        )
         review_layout.addWidget(self.chatgpt_cluster_details)
+
+        filters = QHBoxLayout()
+        self.llm_case_search = QLineEdit()
+        self.llm_case_search.setPlaceholderText(
+            "Fall, FIN, Cluster, DTC-Hinweis oder Ursache suchen ..."
+        )
+        self.llm_case_search.setAccessibleName("LLM-Fallresultate durchsuchen")
+        self.llm_cluster_filter = QComboBox()
+        self.llm_cluster_filter.setAccessibleName("LLM-Cluster filtern")
+        self.llm_cause_filter = QComboBox()
+        self.llm_cause_filter.setAccessibleName("Verursachungsbereich filtern")
+        self.llm_clear_filters = QPushButton("Alle Fälle anzeigen")
+        self.llm_clear_filters.clicked.connect(self._reset_llm_filters)
+        filters.addWidget(self.llm_case_search, 2)
+        filters.addWidget(self.llm_cluster_filter, 1)
+        filters.addWidget(self.llm_cause_filter, 1)
+        filters.addWidget(self.llm_clear_filters)
+        review_layout.addLayout(filters)
+        self.llm_case_filter_info = QLabel(objectName="PageSubtitle")
+        self.llm_case_filter_info.setWordWrap(True)
+        review_layout.addWidget(self.llm_case_filter_info)
+
         self.chatgpt_case_table, self.chatgpt_case_model = _create_table((
             "FIN", "QEC-Fall", "Cluster", "NTF-Einschätzung",
-            "Verursachungsbereich", "Fachstatus",
+            "Verursachungsbereich", "Wiederkehr", "Sicherheit", "Fachstatus",
         ))
-        self.chatgpt_case_table.setMinimumHeight(110)
-        review_layout.addWidget(self.chatgpt_case_table, 1)
-        self.cluster_tabs.addTab(self.chatgpt_cluster_page, "LLM · Ergebnis anzeigen")
+        self.chatgpt_case_proxy = LlmCaseFilterProxy(self)
+        self.chatgpt_case_proxy.setSourceModel(self.chatgpt_case_model)
+        self.chatgpt_case_table.setModel(self.chatgpt_case_proxy)
+        self.chatgpt_case_table.setSortingEnabled(True)
+        self.chatgpt_case_table.setMinimumHeight(220)
+        self.chatgpt_case_table.setMaximumHeight(375)
+        self.chatgpt_case_table.horizontalHeader().setSectionResizeMode(
+            QHeaderView.ResizeMode.ResizeToContents
+        )
+        self.chatgpt_case_table.horizontalHeader().setStretchLastSection(True)
+        self.chatgpt_case_table.setHorizontalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAsNeeded
+        )
+        self.chatgpt_case_table.selectionModel().selectionChanged.connect(
+            lambda *_: self._show_llm_case_details()
+        )
+        review_layout.addWidget(self.chatgpt_case_table)
+        self.chatgpt_case_details = QPlainTextEdit()
+        self.chatgpt_case_details.setObjectName("LLMCaseDetails")
+        self.chatgpt_case_details.setReadOnly(True)
+        self.chatgpt_case_details.setMinimumHeight(175)
+        self.chatgpt_case_details.setMaximumHeight(230)
+        self.chatgpt_case_details.setPlaceholderText(
+            "Fall auswählen: NTF-Bewertung, Ursachenbegründung, "
+            "Vorher-/Nachher-Bewertung, offene Nachweise und nächste Prüfung."
+        )
+        review_layout.addWidget(self.chatgpt_case_details)
+
+        self.llm_case_search.textChanged.connect(self._apply_llm_case_filters)
+        self.llm_cluster_filter.currentIndexChanged.connect(
+            self._apply_llm_case_filters
+        )
+        self.llm_cause_filter.currentIndexChanged.connect(
+            self._apply_llm_case_filters
+        )
+        self.chatgpt_cluster_scroll.setWidget(self.chatgpt_cluster_page)
+        self.cluster_tabs.addTab(
+            self.chatgpt_cluster_scroll, "LLM · Cluster & Verursachung"
+        )
         body.addWidget(self.cluster_tabs, 1)
         for button in (self.cluster_export_button, self.cluster_import_button):
             button.setMinimumHeight(52)
