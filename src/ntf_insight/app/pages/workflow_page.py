@@ -1167,6 +1167,32 @@ class WorkflowPage(QWidget):
         self.llm_cluster_chart.selected.connect(self._filter_llm_cluster)
         self.llm_cause_chart.selected.connect(self._filter_llm_cause)
 
+        review_layout.addWidget(QLabel(
+            "Fehlerbild-Ebene (Mehrfachnennungen) und Nachweis-Ebene · "
+            "unabhängig von Ursache und technischem Cluster"
+        ))
+        dimension_charts = QHBoxLayout()
+        dimension_charts.setSpacing(10)
+        self.llm_symptom_chart = LlmClusterBarChart(
+            "Gemeldete Fehlerbilder · mehrere je Fall möglich"
+        )
+        self.llm_proof_chart = LlmClusterBarChart(
+            "Nachweisbasis · Werkstatt / Diagnose / Labor"
+        )
+        dimension_charts.addWidget(self.llm_symptom_chart, 1)
+        dimension_charts.addWidget(self.llm_proof_chart, 1)
+        review_layout.addLayout(dimension_charts)
+        self.llm_symptom_chart.selected.connect(self._filter_llm_symptom)
+        self.llm_proof_chart.selected.connect(self._filter_llm_proof)
+        self.llm_symptom_note = QLabel(
+            "Mehrfachzuordnung: Die Balken summieren sich nicht zu einer "
+            "Fallgesamtzahl. 'Alt-LLM' bezeichnet aus bestehenden Themen "
+            "übernommene Hinweise, keine neu bestätigten Befunde.",
+            objectName="PageSubtitle",
+        )
+        self.llm_symptom_note.setWordWrap(True)
+        review_layout.addWidget(self.llm_symptom_note)
+
         review_layout.addWidget(
             QLabel("Technische Cluster · auswählen für Details und Fallfilter")
         )
@@ -1211,6 +1237,16 @@ class WorkflowPage(QWidget):
         filters.addWidget(self.llm_cause_filter, 1)
         filters.addWidget(self.llm_clear_filters)
         review_layout.addLayout(filters)
+        dimension_filters = QHBoxLayout()
+        self.llm_symptom_filter = QComboBox()
+        self.llm_symptom_filter.setAccessibleName("Fehlerbild filtern")
+        self.llm_proof_filter = QComboBox()
+        self.llm_proof_filter.setAccessibleName("Nachweisprofil filtern")
+        dimension_filters.addWidget(QLabel("Fehlerbild:"))
+        dimension_filters.addWidget(self.llm_symptom_filter, 2)
+        dimension_filters.addWidget(QLabel("Nachweisbasis:"))
+        dimension_filters.addWidget(self.llm_proof_filter, 2)
+        review_layout.addLayout(dimension_filters)
         self.llm_case_filter_info = QLabel(objectName="PageSubtitle")
         self.llm_case_filter_info.setWordWrap(True)
         review_layout.addWidget(self.llm_case_filter_info)
@@ -1252,6 +1288,12 @@ class WorkflowPage(QWidget):
             self._apply_llm_case_filters
         )
         self.llm_cause_filter.currentIndexChanged.connect(
+            self._apply_llm_case_filters
+        )
+        self.llm_symptom_filter.currentIndexChanged.connect(
+            self._apply_llm_case_filters
+        )
+        self.llm_proof_filter.currentIndexChanged.connect(
             self._apply_llm_case_filters
         )
         self.chatgpt_cluster_scroll.setWidget(self.chatgpt_cluster_page)
