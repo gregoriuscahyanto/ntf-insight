@@ -352,24 +352,27 @@ App-Datenablage gespeichert ist.
 
 Die Aktionen **„Parsing fortsetzen“**, **„Alle neu parsen“**,
 **„FINs neu abrufen“** und **„Fehlende abrufen“** verwenden vorhandene
-QThread-Worker. Während des laufenden Abrufs oder Parsings zeigt die
-Statusleiste im Hauptfenster eine kompakte laufende Aktivität mit
-Quellenname, Fortschrittstext und **„Stoppen“**. Es gibt dafür weder eine
-modal geöffnete Importkarte noch ein ausgegrautes Hauptfenster. Wechsel
-zwischen Workflow und anderen Seiten bleiben möglich. Ein Stoppsignal
-beendet einen Parser am sicheren Dateirand beziehungsweise fordert
-den Portal-Downloader zum Abbruch auf; bereits gespeicherte Daten bleiben
-erhalten. Ein App-Schließen wird während einer aktiven Hintergrundaufgabe
-abgefangen, damit kein QThread vorzeitig zerstört wird.
+QThread-Worker. Der Fortschritt erscheint **ausschließlich in der
+jeweiligen Quellenzeile im Workflow**; eine zusätzliche Statusleisten-
+Fortschrittsanzeige mit eigenem Stoppen-Button gibt es nicht.
+Während der Verarbeitung wird die entsprechende Schaltfläche in der Zeile
+zu **„Parsing stoppen“** beziehungsweise **„Abruf stoppen“**.
+Es gibt dafür weder eine modale Importkarte noch ein ausgegrautes
+Hauptfenster. Andere App-Seiten bleiben bedienbar.
 
-Vor einem expliziten Neuparsen/Neuabruf bleiben einmalige
-Sicherheitsbestätigungen bestehen; auch eine nötige Mercedes-SSO-
-Interaktion ist davon nicht betroffen. Automatisch anschließende
-Quellenimporte aus Workflow-Downloads werden ebenfalls ohne
-Fortschrittspopup ausgeführt. Nach Abschluss erscheint eine
-Statusleistenmeldung, ausführliche Daten stehen weiter im Workflow
-und unter „Datenquellen“. Andere, explizit exklusive
-Transfer-/Exportvorgänge behalten ihre bestehenden Sicherheitsdialoge.
+Ein Stoppsignal beendet den Parser am sicheren Dateirand bzw. fordert
+den Portal-Downloader zum Abbruch auf; gespeicherte Daten bleiben erhalten.
+Ein App-Schließen während aktiver Worker wird zur Vermeidung zerstörter
+QThreads verhindert, ohne einen weiteren modalen Dialog zu zeigen.
+Im laufenden Vorgang wird der nicht nutzbare Zeitstempel der Quellenzeile
+auch textlich geleert, damit er nicht vom Progressbalken überdeckt wird;
+nach Ende des Vorgangs steht der Zeitstempel wieder zur Verfügung.
+
+Einmalige Sicherheitsbestätigungen vor einem Neuparsen/Neuabruf
+und erforderliche Mercedes-SSO-Interaktionen bleiben erhalten.
+Automatisch anschließende Quellenimporte aus Workflow-Downloads laufen
+ebenfalls ohne Fortschrittspopup. Andere, ausdrücklich exklusive
+Transfer-/Exportvorgänge behalten ihre Sicherheitsdialoge.
 
 ### Fortschritt je Datenquelle: Download und Parsing separat
 
