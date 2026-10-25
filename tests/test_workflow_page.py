@@ -450,7 +450,9 @@ def test_context_scrapers_use_only_current_qec_part_with_single_fetch_action(
     assert page.context_scraper_buttons["tips_writer"]["parse"].text() == "Alle neu parsen"
     window._context_scrape("tips_writer", "all")
     assert calls[-1] == ("tips", ["WDD12345678901234"], True)
-    assert "Abruf" in page.context_source_dates["tips_writer"].text()
+    tips_date = page.context_source_dates["tips_writer"]
+    assert tips_date.text() == ""
+    assert "Abruf" in tips_date.property("inactiveSourceDate")
     tips.worker = None
     tips_worker.finished.emit()
     window.close()
@@ -628,6 +630,10 @@ def test_source_row_colors_and_live_document_progress(tmp_path, monkeypatch):
         "diagnosis_viewer", True, "FIN-Fortschritt: 12/171 bearbeitet",
     )
     assert timestamp.text() == ""
+    page.refresh_context_files()
+    assert timestamp.text() == ""
+    restored_date = timestamp.property("inactiveSourceDate")
+    assert restored_date
     bar = page.context_operation_bars["diagnosis_viewer"]
     assert bar.maximum() == 171 and bar.value() == 12
     assert page.context_operation_labels["diagnosis_viewer"].isHidden() is False
@@ -637,7 +643,7 @@ def test_source_row_colors_and_live_document_progress(tmp_path, monkeypatch):
     assert page.context_coverage_bars["diagnosis_viewer"].isHidden()
     assert page.context_source_dates["diagnosis_viewer"].isHidden()
     page.set_context_operation("diagnosis_viewer", False)
-    assert timestamp.text() == "Import: 20.10.2026 14:08"
+    assert timestamp.text() == restored_date
     assert bar.isHidden()
     assert not page.context_coverage_bars["diagnosis_viewer"].isHidden()
     assert not page.context_source_dates["diagnosis_viewer"].isHidden()
