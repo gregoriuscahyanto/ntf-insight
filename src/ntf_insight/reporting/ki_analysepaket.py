@@ -812,7 +812,7 @@ def export_ki_analysepaket(
         "Für jeden Fall Belege mit Quelle, Quelle-ID und genauer Fundstelle angeben.\n"
         "Falls ein QEC-Dokument fehlt, ausdrücklich als Datenlücke kennzeichnen.\n"
         "JSON niemals mit echten FINs, QEC-Referenzen oder internen Dateipfaden füllen.\n"
-        "Die private NICHT_HOCHLADEN-Zuordnung wird niemals an ChatGPT gegeben.\n"
+        "Die private NICHT_HOCHLADEN-Zuordnung wird niemals an LLM gegeben.\n"
         "Weder QEC-Originale noch die KI-Antwort sind automatisch anonymisiert.\n"
     ).encode("utf-8")
     qec_plan = None
