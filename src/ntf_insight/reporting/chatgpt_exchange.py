@@ -445,12 +445,6 @@ class ChatGPTAnalyseStore:
         Legacy- und allgemeine Quellenpakete sowie die zweite Runde
         behalten ihre bisherigen kompatiblen Rueckgabeformate.
         """
-        if (
-            not data.cluster
-            and not data.clustermethode.strip()
-            and all(case.cluster_id is None for case in data.faelle)
-        ):
-            return
         if data.analyse_id != ergebnis_vorlage(data.paket_id)["analyse_id"]:
             return
         try:
@@ -475,11 +469,21 @@ class ChatGPTAnalyseStore:
                 "nicht lesbar."
             ) from exc
         if manifest.get("analysezweck") == "ntf_erstentscheidung_ohne_cluster":
-            raise ValueError(
-                "LLM-Durchlauf 1 darf keine Cluster enthalten. "
-                "Bitte cluster=[], clustermethode='' und "
-                "cluster_id=null je Fall liefern. Clusterung erst in Runde 2."
-            )
+            if (
+                data.cluster or data.clustermethode.strip()
+                or any(case.cluster_id is not None for case in data.faelle)
+            ):
+                raise ValueError(
+                    "LLM-Durchlauf 1 darf keine Cluster enthalten. "
+                    "Bitte cluster=[], clustermethode='' und "
+                    "cluster_id=null je Fall liefern. Clusterung erst in Runde 2."
+                )
+            if any(case.ntf_bewertung == "Nicht bewertet" for case in data.faelle):
+                raise ValueError(
+                    "Jeder Fall im LLM-Durchlauf 1 benoetigt eine "
+                    "NTF-Einstufung. Bei Datenluecken 'Nicht bewertbar' "
+                    "oder 'Nicht zuordenbar' verwenden."
+                )
 
     @staticmethod
     def _validate_belege(
