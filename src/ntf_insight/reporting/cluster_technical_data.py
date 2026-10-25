@@ -80,7 +80,7 @@ def _csv_safe(value: object) -> str:
     result = "" if value is None else str(value)
     # Echte positive/negative Zahlen sind keine Formeln. Insbesondere
     # der QT-Kilometerabstand von -82 muss numerisch erhalten bleiben.
-    if re.fullmatch(r"[+-]?\\d+(?:[.,]\\d+)?", result):
+    if re.fullmatch(r"[+-]?\d+(?:[.,]\d+)?", result):
         return result
     return "'" + result if result.lstrip().startswith(("=", "+", "-", "@")) else result
 
