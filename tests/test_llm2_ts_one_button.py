@@ -94,6 +94,14 @@ def test_import_same_button_revisions_parent_while_preserving_old(tmp_path):
     # Die zweite Basisanalyse ist bereits importiert, aber technisch
     # ungeclustert. Die neue Datei ordnet diesen Fall als S ein.
     parent = dict(template)
+    # Regression zum historischen, tatsaechlich noch importierbaren
+    # T/S-Vorgaengerformat; der heutige ZIP-Export verlangt T/S/H.
+    # Test-Legacy-ID wird nur in der synthetischen DB als zweiter
+    # Export registriert, niemals als reales Benutzerpaket ausgegeben.
+    parent["analyse_id"] = "ClusterLegacy-synthetic-second"
+    chain.register_second_export(
+        "coolant_pump", PART, first.paket_id, parent["analyse_id"],
+    )
     parent["cluster"] = []
     parent["faelle"] = [{
         "fall_id": "F0001", "cluster_id": None,
