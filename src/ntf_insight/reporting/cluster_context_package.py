@@ -304,45 +304,41 @@ def export_cluster_context(
         "Nur wirklich vorhandene Anhaenge und Fundstellen zitieren.",
         "13. Die Original-TP-Dashboard-Sammel-CSV wird wegen "
         "Fahrzeuguebergreifung NICHT ungefiltert in die ZIP kopiert: "
-        "die zulassigen FIN-bezogenen Befundzeilen liegen unter diagnose/.",
-        "14. ZWINGENDE ZWEITE ANALYSEPHASE: Untersuche alle Faelle "
-        "auf gemeinsame TECHNISCHE Fehlerbilder. Bilde in cluster[] "
-        "Cluster, wenn mehrere Faelle durch vergleichbare DTCs, ECUs, "
-        "Fehlerbedingungen, Zeitverlaeufe, HW-/SW-Staende oder "
-        "durch Originalbefunde plausibel verbunden sind. Nenne "
-        "cluster_id, titel, fall_ids, technische_hypothese, sicherheit "
-        "und passende Belegstellen. Die clustermethode und verwendete_merkmale "
-        "muessen die technische Aehnlichkeit nachvollziehbar erklaeren. "
-        "Reine NTF-/SSL-/Lieferantenlabels oder gleiche FIN reichen NICHT. "
-        "Faelle ohne belegte Aehnlichkeit bleiben mit cluster_id=null "
-        "nicht gruppiert; KEINE erfundenen Cluster.",
-        "15. Verursachung je Fall getrennt und konkret: "
-        "verursachungsbereich (Bauteil/Lieferant, Ansteuerung/ECU, "
-        "Kommunikation, Bordnetz/Versorgung, Leitung/Stecker, "
-        "Einbau/Montage/Werkstatt oder Nicht zuordenbar), "
-        "sicherheit_zuordnung (Belegt/Plausibel/Offen), "
-        "begruendung_zuordnung, ursachenhypothese, "
-        "klaerung_durch, naechster_schritt und belege fuellen. "
-        "Nur technisch belegte Ursachen als solche darstellen. "
-        "Insbesondere Lieferantenverantwortung nicht aus einer "
-        "QEC-Klassifikation, aus Clusterhaeufigkeit oder allein "
-        "aus dem DTC behaupten. Gegenbeweise und Alternativhypothesen nennen.",
-        "16. Fehlerwiederkehr pro Fall separat bewerten: "
-        "fehlerwiederkehr exakt einer von "
-        "'Nach Tausch erneut nachgewiesen', "
-        "'Hinweise auf Wiederkehr', "
-        "'Kein erneuter Fehler im dokumentierten Nachtest', "
-        "'Nicht beurteilbar'. "
-        "begruendung_fehlerwiederkehr mit Diagnosezeitpunkt, "
-        "QEC-belegtem Tauschanker, DTC-Code und Originalfundstelle fuellen. "
-        "Ohne belegten Nachtest niemals 'kein Fehler mehr' behaupten.",
-        "17. Die zweite Analyse ist eine UMFASSENDE technische Neuauswertung "
-        "der vorlaeufigen NTF-Einstufung aus Runde 1. Fuer jeden Fall "
-        "begruendete NTF-Neubewertung, belastbare und widerlegende Indizien, "
-        "Quellenluecken und priorisierte Pruefungen angeben. "
-        "Ergebnisse duerfen von Runde 1 abweichen, aber nur mit Belegen. "
-        "In der neuen Ergebnis-JSON jedes Fallpseudonym genau einmal erfassen."
+        "die zulassigen FIN-bezogenen Befundzeilen liegen unter diagnose/."
     ]
+    # Diese neutralen Zusatzanforderungen bleiben unabhaengig vom
+    # CSV-Groesstdaten-Fix im separaten PR #60.
+    instruction_lines.extend([
+        "ZUSATZAUFTRAG CLUSTER: Untersuche ALLE Faelle auf gemeinsame "
+        "TECHNISCHE Fehlerbilder. Bilde in cluster[] nur dann Cluster, "
+        "wenn mehrere Faelle durch vergleichbare DTCs, ECUs, "
+        "Fehlerbedingungen, Zeitverlaeufe, HW-/SW-Staende oder "
+        "Originalbefunde plausibel verbunden sind. Nenne cluster_id, "
+        "titel, fall_ids, technische_hypothese, sicherheit und konkrete "
+        "Belegstellen. clustermethode und verwendete_merkmale muessen "
+        "die Aehnlichkeit nachvollziehbar erklaeren. Reine NTF-/SSL-/"
+        "Lieferantenlabels oder gleiche FIN reichen NICHT. Unverbundene "
+        "Faelle behalten cluster_id=null; KEINE erfundenen Cluster.",
+        "ZUSATZAUFTRAG VERURSACHUNG: Fuer jeden Fall verursachungsbereich "
+        "(Bauteil/Lieferant, Ansteuerung/ECU, Kommunikation, Bordnetz, "
+        "Leitung/Stecker, Einbau/Montage/Werkstatt oder Nicht zuordenbar), "
+        "sicherheit_zuordnung, begruendung_zuordnung, ursachenhypothese, "
+        "klaerung_durch, naechster_schritt und belege ausfuellen. "
+        "Gegenbeweise und Alternativhypothesen auffuehren. Eine "
+        "Lieferantenverantwortung niemals aus QEC-/NTF-/SSL-Labels, "
+        "Clusterhaeufigkeit oder einem DTC allein behaupten.",
+        "ZUSATZAUFTRAG WIEDERKEHR: fehlerwiederkehr exakt einer von "
+        "'Nach Tausch erneut nachgewiesen', 'Hinweise auf Wiederkehr', "
+        "'Kein erneuter Fehler im dokumentierten Nachtest' oder "
+        "'Nicht beurteilbar'. begruendung_fehlerwiederkehr mit belegtem "
+        "Tauschanker, Diagnosezeitpunkt, DTC-Code und Fundstelle "
+        "befuellen. Ohne echten Nachtest niemals Fehlerfreiheit behaupten.",
+        "ZUSATZAUFTRAG GESAMTAUSWERTUNG: Zweite Runde ist die umfassende "
+        "technische NTF-Neubewertung. Pro Fall beweise und Gegenindizien, "
+        "Verursachungssicherheit, Grenzen und priorisierte Pruefungen "
+        "angeben; Abweichungen zur ersten Runde begruenden. "
+        "Alle Fallpseudonyme genau einmal auswerten.",
+    ])
     if project is not None and project.ecu_names:
         instruction_lines.insert(
             3, "Projektseitig konfigurierte moeglich relevante ECUs "
