@@ -517,3 +517,183 @@ def collect_unparsed_quicktest_pdfs(
                     path, artifact.sha256, fin, "Archivierter FIN-Hinweis",
                 ))
     return list(found.values())
+
+
+
+@dataclass(frozen=True)
+class OriginalInContext:
+    path: Path
+    sha256: str
+    zip_path: str
+    category: str
+    assignment: str
+
+
+def parsed_source_hashes(store: DuckDBStore, scope: TechnicalScope) -> set[str]:
+    with store.connect() as con:
+        if not _has_table(con, "quicktest_sources") or not _has_table(
+            con, "quicktest_reports"
+        ):
+            return set()
+        eligible = sorted(scope.fins)
+        marks = ",".join("?" for _ in eligible)
+        rows = con.execute(
+            "SELECT s.artifact_sha256 FROM quicktest_sources s "
+            "JOIN quicktest_reports r ON r.report_id=s.report_id "
+            "WHERE r.fin IN (" + marks + ")", eligible,
+        ).fetchall()
+    return {str(row[0]) for row in rows}
+
+
+def plan_original_context(
+    store: DuckDBStore, scope: TechnicalScope,
+    evidence: list, parsed_shas: set[str], *,
+    include_originals: bool,
+) -> tuple[list[dict], list[OriginalInContext]]:
+    """Projekt-Archivdateien plus nur ungeparste DV-Fallbacks.
+
+    TP-Sammeldateien niemals roh kopieren, da sie weitere FINs enthalten
+    koennen. Die ausgewerteten FIN-Zeilen stehen separat in diagnose/.
+    """
+    artifacts = {a.sha256: a for a in store.load_artifacts()}
+    entries: list[dict] = []
+    originals: list[OriginalInContext] = []
+    included: set[str] = set()
+
+    def add(
+        category: str, sha: str, source: Path,
+        assigned: str, reason: str = "",
+    ) -> None:
+        index = len(entries) + 1
+        name = ""
+        present = False
+        if sha in included:
+            reason = "Doppelte Quelldatei bereits aufgenommen"
+        elif not include_originals:
+            reason = "Technische Originale nicht freigegeben"
+        elif category == "tp_dashboard":
+            reason = "TP-Sammeldatei enthaelt potentiell fremde FINs; nur FIN-Zeilen"
+        elif category == "diagnosis_viewer" and sha in parsed_shas:
+            reason = "Geparste Diagnosis-Viewer-Version ist in diagnose/ enthalten"
+        elif not source.is_file() or source.is_symlink():
+            reason = "Original nicht mehr vorhanden oder Symlink"
+        elif source.stat().st_size > MAX_STRUCTURED_FILE_BYTES:
+            raise ValueError("Eine technische Quelldatei ueberschreitet 200 MiB.")
+        elif sha256_file(source) != sha:
+            reason = "Pruefsumme stimmt nicht mit dem archivierten Original ueberein"
+        else:
+            suffix = source.suffix.lower() or ".bin"
+            name = f"unterlagen/{category}/D{index:05d}{suffix}"
+            originals.append(OriginalInContext(source, sha, name, category, assigned))
+            included.add(sha)
+            present = True
+        entries.append({
+            "beleg_id": f"D{index:05d}",
+            "kategorie": category,
+            "datei_im_paket": name or None,
+            "original_aufgenommen": present,
+            "zuordnung": assigned,
+            "auslassungsgrund": reason,
+        })
+
+    for file in evidence:
+        artifact = artifacts.get(file.sha256)
+        mismatch = ""
+        if artifact is not None:
+            vin = _normal_fin(artifact.vin_hint)
+            if vin and vin not in scope.fins:
+                mismatch = "Dokument ist einem anderen Fahrzeug zugeordnet"
+            elif artifact.case_id_hint and artifact.case_id_hint not in scope.cases:
+                mismatch = "Dokument ist einem anderen QEC-Fall zugeordnet"
+        if mismatch:
+            entries.append({
+                "beleg_id": f"D{len(entries) + 1:05d}",
+                "kategorie": file.category, "datei_im_paket": None,
+                "original_aufgenommen": False, "zuordnung": "Nicht passend",
+                "auslassungsgrund": mismatch,
+            })
+        else:
+            assigned = "Explizit dem Projekt zugeordnet"
+            if artifact is not None and (
+                artifact.vin_hint or artifact.case_id_hint
+            ):
+                assigned += ", Referenzhinweis geprueft"
+            else:
+                assigned += ", Inhalt nicht automatisch auf Sachnummer geprueft"
+            add(file.category, file.sha256, file.source_path, assigned)
+
+    # Original-PDF nur wenn der Parser keine persistierte Version dieses
+    # PDFs besitzt. Niemals alle 2345 Originale zusaetzlich duplizieren.
+    for pdf in collect_unparsed_quicktest_pdfs(store, scope, parsed_shas):
+        if pdf.sha256 in included:
+            continue
+        add(
+            "diagnosis_viewer_fallback", pdf.sha256, pdf.path,
+            "FIN-bezogen: " + pdf.reason,
+        )
+    return entries, originals
+
+
+def export_tips_filtered(
+    archive: ZipFile, store: DuckDBStore, scope: TechnicalScope,
+    *, include_fulltext: bool,
+) -> dict[str, int]:
+    """Nur strukturierte TIPS-Eintraege fuer FINs der Projektkohorte."""
+    counters = {"tips_berichte": 0, "tips_eintraege": 0}
+    fins = set(scope.fins)
+    allowed = {
+        "tips_case", "tips_section", "tips_field",
+        "tips_table_row", "tips_attachment_reference",
+    }
+    with archive.open("diagnose/tips_writer.csv", "w") as binary:
+        with io.TextIOWrapper(binary, encoding="utf-8-sig", newline="") as stream:
+            writer = csv.DictWriter(
+                stream, fieldnames=(
+                    "beleg_id", "fahrzeug_id", "kategorie", "reiter_fundstelle",
+                    "beschriftung", "wert_oder_befund", "textfreigabe",
+                ), lineterminator="\n",
+            )
+            writer.writeheader()
+            with store.connect() as con:
+                if not (_has_table(con, "source_knowledge_rows") and _has_table(
+                    con, "source_knowledge_documents"
+                )):
+                    return counters
+                query = (
+                    "SELECT r.fin,r.category,r.source_location,r.label,r.payload_json "
+                    "FROM source_knowledge_rows r "
+                    "JOIN source_knowledge_documents d "
+                    "ON d.source_sha256=r.source_sha256 "
+                    "WHERE d.source_kind='tips_live_case' "
+                    "ORDER BY r.source_sha256,r.record_number"
+                )
+                cursor = con.execute(query)
+                while True:
+                    batch = cursor.fetchmany(1000)
+                    if not batch:
+                        break
+                    for fin, category, location, label, data in batch:
+                        if _normal_fin(fin) not in fins or category not in allowed:
+                            continue
+                        counters["tips_eintraege"] += 1
+                        if counters["tips_eintraege"] > MAX_TECH_ROWS:
+                            raise ValueError("Zu viele TIPS-Eintraege.")
+                        try:
+                            payload = json.loads(data)
+                        except (ValueError, TypeError):
+                            payload = {}
+                        # Ohne Freitextfreigabe nur Inventar/Fundstelle.
+                        readable = json.dumps(payload, ensure_ascii=False) if (
+                            include_fulltext and isinstance(payload, dict)
+                        ) else ""
+                        writer.writerow({
+                            "beleg_id": f"TI{counters['tips_eintraege']:07d}",
+                            "fahrzeug_id": scope.fins[_normal_fin(fin)],
+                            "kategorie": category,
+                            "reiter_fundstelle": _redact(location, fins),
+                            "beschriftung": _redact(label if include_fulltext else "", fins),
+                            "wert_oder_befund": _redact(readable, fins),
+                            "textfreigabe": int(include_fulltext),
+                        })
+    counters["tips_berichte"] = counters["tips_eintraege"]
+    return counters
