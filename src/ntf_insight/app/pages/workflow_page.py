@@ -42,7 +42,7 @@ from ntf_insight.storage.workflow_ssl_selection import (
     WorkflowSSLSelection, fin_ssl_groups,
 )
 from ntf_insight.storage.workflow_source_coverage import (
-    SourceCoverage, get_workflow_coverage,
+    SourceCoverage, count_project_documents, get_workflow_coverage,
 )
 from ntf_insight.storage.workflow_progress import (
     STEP_COUNT, WorkflowProgressStore, normalize_part_number,
@@ -590,15 +590,10 @@ class WorkflowPage(QWidget):
         body.addWidget(self.qec_table, 1)
 
     def _build_step_three(self) -> None:
-        _, body = self._workspace(
-            "03 · NTF-Neuauswertung auf QEC-Basis",
-            "Erste ChatGPT-Bewertung aus QEC-FIN-Liste (01) und vorhandenen "
-            "QEC-Berichten (02). Fehlende Dokumente sind zulaessig und "
-            "werden als Datenluecke erfasst; Vorschlaege bleiben ungeprueft.",
-        )
+        _, body = self._workspace("03 · NTF-Entscheidung")
         actions = QHBoxLayout()
         self.ai_export_button = self._add_action(
-            actions, "QEC-Neuauswertung exportieren (ZIP)",
+            actions, "LLM-Analysepaket erstellen (ZIP)",
             lambda: self.action_requested.emit("ai_export"),
             tooltip=(
                 "Nur QEC-Schadteilfaelle (01) und vorhandene QEC-Befunde (02). "
@@ -607,23 +602,13 @@ class WorkflowPage(QWidget):
             ),
         )
         self.ai_import_button = self._add_action(
-            actions, "ChatGPT-Ergebnis importieren (JSON)",
+            actions, "LLM-Ergebnis importieren (JSON)",
             lambda: self.action_requested.emit("ai_import"),
             tooltip="Prüft Paket-ID, Fallzuordnung und Belege. "
                     "Eine QEC-Entscheidung wird dabei nicht überschrieben.",
         )
         actions.addStretch(1)
         body.addLayout(actions)
-        info = QLabel(
-            "Erstanalyse nur aus Schritt 01/02. QEC-Lieferantenstellungnahme, "
-            "Nachanalyse und Reitertexte erfordern im Exportdialog eine "
-            "ausdrueckliche vertrauliche Freigabe. Ohne Freitext bleibt die "
-            "Bewertung entsprechend eingeschraenkt. Zusaetzliche Diagnosen "
-            "folgen erst in Schritt 04/05.",
-            objectName="PageSubtitle",
-        )
-        info.setWordWrap(True)
-        body.addWidget(info)
         for button in (self.ai_export_button, self.ai_import_button):
             button.setMinimumHeight(52)
             button.setMinimumWidth(250)
@@ -646,7 +631,9 @@ class WorkflowPage(QWidget):
             "Ein importierter ChatGPT-Vorschlag ist bis zur "
             "menschlichen Bestätigung oder Ablehnung ungeprüft."
         )
-        body.addWidget(self.ntf_status)
+        # Keine redundante Fachentscheidungs-/LLM-Textwand unter den Donuts.
+        # Fachentscheidung und LLM-Pruefstatus bleiben eigene Tabellenspalten.
+        self.ntf_status.hide()
 
         # Zeilensuche und Facetten betreffen NUR die Ansicht, nie die
         # QEC-Kohorte, den Export oder die fachlichen Statistiken.
@@ -1652,7 +1639,10 @@ class WorkflowPage(QWidget):
             key: value for key, value in self._source_coverage.items()
             if key in {"tp_dashboard", "diagnosis_viewer", "tips_writer", "celonis"}
         }
-        automatic_total = sum(item.local_documents for item in automatic.values())
+        doc_counts = count_project_documents(
+            self._source_coverage, self.context_files
+        )
+        automatic_total = doc_counts.automatic
         automatic_parsed = sum(item.parsed_documents for item in automatic.values())
         active_categories = {
             key for key, count in counts.items() if count
@@ -1660,9 +1650,10 @@ class WorkflowPage(QWidget):
             key for key, item in automatic.items() if item.local_documents
         }
         self.context_summary.setText(
-            f"{automatic_total} Quelldokumente lokal · "
+            f"{doc_counts.total} Dokumente gesamt · "
+            f"{automatic_total} aus TP/Diagnosis/TIPS · "
+            f"{doc_counts.manual} manuell zugeordnete Dokumente · "
             f"{automatic_parsed} geparst · "
-            f"{len(self.context_files)} manuell zugeordnete Unterlagen · "
             f"{len(active_categories)} von {len(counts)} Kategorien mit Bestand. "
             "Quelldokumente und manuelle Zuordnungen sind getrennte Bestände; "
             "Dateien werden nicht automatisch an ChatGPT gesendet."
@@ -2018,6 +2009,7 @@ class WorkflowPage(QWidget):
         statuses = {
             "NTF plausibel": "success", "NTF fraglich": "warning",
             "Kein reiner NTF": "error", "Nicht bewertbar": "muted",
+            "Nicht zuordenbar": "muted",
         }
         self.ntf_model.set_rows([
             (
@@ -2041,7 +2033,8 @@ class WorkflowPage(QWidget):
         self.ntf_donut.set_counts({
             key: ratings.get(key, 0) for key in (
                 "NTF plausibel", "NTF fraglich", "Kein reiner NTF",
-                "Nicht bewertbar", "Nicht bewertet", "Mehrere Bewertungen",
+                "Nicht bewertbar", "Nicht zuordenbar",
+                "Nicht bewertet", "Mehrere Bewertungen",
             ) if ratings.get(key, 0)
         })
         causes = self._per_fin_distribution(
@@ -2141,15 +2134,18 @@ class WorkflowPage(QWidget):
                 s for category, s in self._source_coverage.items()
                 if category in {"tp_dashboard", "diagnosis_viewer", "tips_writer", "celonis"}
             ]
-            documents = sum(s.local_documents for s in totals)
+            doc_counts = count_project_documents(
+                self._source_coverage, self.context_files
+            )
+            documents = doc_counts.total
             parsed = sum(s.parsed_documents for s in totals)
             manual_categories = {f.category for f in self.context_files}
             available_categories = manual_categories | {
                 s.category for s in totals if s.local_documents
             }
             self.context_summary.setText(
-                f"{documents} Quelldokumente lokal · {parsed} geparst · "
-                f"{len(self.context_files)} manuell zugeordnete Unterlagen · "
+                f"{documents} Dokumente gesamt · {parsed} geparst · "
+                f"{doc_counts.manual} manuell zugeordnete Dokumente · "
                 f"{len(available_categories)} von {len(CATEGORY_LABELS)} Kategorien "
                 "mit Bestand. Quelldokumente sind nicht gleich manuelle "
                 "Zuordnungen. Keine automatische ChatGPT-Übertragung."
@@ -2586,9 +2582,12 @@ class WorkflowPage(QWidget):
                     qec_coverage is not None and qec_coverage.local_documents
                 ) else "pending"
             ),
-            "done" if stats["cases"] and not stats["open"] else (
-                "partial" if reviewed or self._chatgpt_by_case else "pending"
-            ),
+            # Schritt 03 zeigt den Erfolg des ersten LLM-Durchlaufs,
+            # NICHT die separate manuelle QEC-Fachentscheidungsquote.
+            "done" if (
+                self.first_package is not None
+                and self.first_package.analysis_id is not None
+            ) else "partial" if self.first_package is not None else "pending",
             "done" if 3 in self.state.reviewed_steps and (
                 self.context_files or any(
                     s.local_documents for category, s in self._source_coverage.items()
@@ -2614,7 +2613,9 @@ class WorkflowPage(QWidget):
         self.progress.setValue(round(fraction / STEP_COUNT * 100))
         self.progress_label.setText(
             f"{stats['cases']} QEC-Fälle · {total} FINs · "
-            f"{downloaded} FINs mit QEC-Bericht · {reviewed} fachlich entschieden "
+            f"{downloaded} FINs mit QEC-Bericht · "
+            f"LLM-Durchlauf 1: "
+            f"{'Ergebnis importiert' if statuses[2] == 'done' else 'noch offen'} "
             f"· {self.progress.value()} % Bearbeitungsstand"
         )
         if self._source_name:
@@ -2643,28 +2644,22 @@ class WorkflowPage(QWidget):
             self._chatgpt_by_case.get(row["case_id"], {}).get("review_status")
             == "Abgelehnt" for row in self._scoped_rows
         )
-        self.ntf_status.setText(
-            f"QEC-Fachentscheidungen: {reviewed}/{stats['cases']} abgeschlossen "
-            f"({stats['ntf']} NTF · {stats['not_ntf']} Kein NTF · "
-            f"{stats['open']} offen). "
-            f"ChatGPT-Vorschläge: {imported}/{stats['cases']} importiert "
-            f"({accepted} bestätigt · {rejected} abgelehnt · "
-            f"{imported - accepted - rejected} ungeprüft). "
-            "SSL-Endbefund, QEC-Entscheidung und ChatGPT-Prüfstatus "
-            "sind unabhängige Angaben.\n"
-            "Fachentscheidung: Datenquellen → QEC-Prüfworkflow → "
-            "Bewertung speichern. ChatGPT-Prüfung: Datenquellen → "
-            "ChatGPT-Auswertung → Vorschlag bestätigen/ablehnen."
-        )
-        source_documents = sum(
-            s.local_documents for category, s in self._source_coverage.items()
-            if category in {"tp_dashboard", "diagnosis_viewer", "tips_writer", "celonis"}
-        )
+        # Die NTF-Tabelle zeigt die Details bereits; kein weiterer
+        # mehrzeiliger Fachentscheidungs-/LLM-Hinweis in Schritt 03.
+        self.ntf_status.clear()
+        source_documents = count_project_documents(
+            self._source_coverage, self.context_files
+        ).total
         names = (
             f"{total} FINs", f"{downloaded}/{total} Berichte",
-            f"{reviewed}/{stats['cases']} QEC-entschieden\n"
-            f"{imported}/{stats['cases']} KI-Vorschläge",
-            f"{source_documents} Quelldokumente",
+            (
+                "LLM-Analyse vorhanden"
+                if statuses[2] == "done"
+                else "LLM-Paket erstellt · Ergebnis offen"
+                if statuses[2] == "partial"
+                else "LLM-Analyse offen"
+            ),
+            f"{source_documents} Dokumente gesamt",
             "Geprüft" if statuses[4] == "done" else "Offen",
         )
         lamps = {"done": "●", "partial": "●", "pending": "○", "error": "!"}
