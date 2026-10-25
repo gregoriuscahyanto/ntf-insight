@@ -34,6 +34,8 @@ class KIAnalyseWorker(QThread):
         mit_freitext: bool,
         mit_qec_originalen: bool = False,
         selected_fins: set[str] | None = None,
+        selected_case_ids: set[str] | None = None,
+        workflow_project: tuple[str, str] | None = None,
     ) -> None:
         super().__init__()
         self.service = service
@@ -41,15 +43,33 @@ class KIAnalyseWorker(QThread):
         self.mit_freitext = mit_freitext
         self.mit_qec_originalen = mit_qec_originalen
         self.selected_fins = selected_fins
+        self.selected_case_ids = selected_case_ids
+        self.workflow_project = workflow_project
 
     def run(self) -> None:
         try:
-            result = export_ki_analysepaket(
-                self.service, self.path, mit_freitext=self.mit_freitext,
-                mit_qec_originalen=self.mit_qec_originalen,
-                progress=self.progress.emit,
-                selected_fins=self.selected_fins,
-            )
+            if self.workflow_project is not None:
+                from ntf_insight.reporting.qec_first_package import (
+                    export_qec_first_package,
+                )
+                profile_id, part_number = self.workflow_project
+                result = export_qec_first_package(
+                    self.service, self.path,
+                    profile_id=profile_id, part_number=part_number,
+                    selected_fins=self.selected_fins or set(),
+                    selected_case_ids=self.selected_case_ids or set(),
+                    mit_freitext=self.mit_freitext,
+                    mit_qec_originalen=self.mit_qec_originalen,
+                    progress=self.progress.emit,
+                )
+            else:
+                # Bestehender allgemeiner Quellenexport bleibt separat erhalten.
+                result = export_ki_analysepaket(
+                    self.service, self.path, mit_freitext=self.mit_freitext,
+                    mit_qec_originalen=self.mit_qec_originalen,
+                    progress=self.progress.emit,
+                    selected_fins=self.selected_fins,
+                )
         except Exception as exc:
             self.failed.emit(f"{type(exc).__name__}: {exc}")
             return
@@ -109,6 +129,8 @@ class KIAnalysepaketPanel(QWidget):
         self.import_worker: ChatGPTImportWorker | None = None
         self._guard: Callable[[], bool] | None = None
         self._next_workflow_fins: set[str] | None = None
+        self._next_workflow_case_ids: set[str] | None = None
+        self._next_workflow_project: tuple[str, str] | None = None
         self._use_shared_export_dialog = False
         self._visible: list[dict] = []
 
@@ -295,9 +317,19 @@ class KIAnalysepaketPanel(QWidget):
         )
         return reply == QMessageBox.StandardButton.Yes
 
-    def prepare_workflow_cohort(self, fins: set[str]) -> None:
-        """Einmaliger FIN-Filter für den nächsten Workflow-ZIP-Export."""
+    def prepare_workflow_cohort(
+        self, fins: set[str], *, profile_id: str, part_number: str,
+        case_ids: set[str],
+    ) -> None:
+        """Naechster Schritt-03-Export: exakt diese Sachnummern-Fallkohoerte."""
         self._next_workflow_fins = set(fins)
+        self._next_workflow_case_ids = set(case_ids)
+        self._next_workflow_project = (profile_id, part_number)
+
+    def clear_prepared_workflow_cohort(self) -> None:
+        self._next_workflow_fins = None
+        self._next_workflow_case_ids = None
+        self._next_workflow_project = None
 
     def _request_export(self) -> None:
         """MainWindow owns the shared export card, standalone panel stays usable."""
@@ -360,12 +392,16 @@ class KIAnalysepaketPanel(QWidget):
             )
             return False
         selected = self._next_workflow_fins
-        self._next_workflow_fins = None
+        case_ids = self._next_workflow_case_ids
+        workflow_project = self._next_workflow_project
+        self.clear_prepared_workflow_cohort()
         self.worker = KIAnalyseWorker(
             self.service, destination,
             mit_freitext=mit_freitext,
             mit_qec_originalen=mit_qec_originalen,
             selected_fins=selected,
+            selected_case_ids=case_ids,
+            workflow_project=workflow_project,
         )
         self.worker.progress.connect(self.status.setText)
         self.worker.progress.connect(self.export_progress.emit)
