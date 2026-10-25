@@ -1015,3 +1015,61 @@ def test_window_cannot_close_mid_zip_or_project_transfer(tmp_path, monkeypatch):
     window.pages["sources"]._diagnostics_worker = None
     window.close()
     app.processEvents()
+
+
+def test_workflow_background_import_does_not_open_modal_progress(tmp_path, monkeypatch):
+    """Ein Workflow-Parser hält die App nicht durch ein Import-Popup an."""
+    from PySide6.QtWidgets import QMessageBox
+
+    app, window = _window(tmp_path, monkeypatch)
+    source = window.pages["sources"]
+    workflow = window.pages["workflow"]
+    calls = []
+    monkeypatch.setattr(
+        window, "_show_operation_progress",
+        lambda *_a, **_kw: calls.append("modal"),
+    )
+    window._workflow_background_source_import = "qec"
+    window._source_import_started("3 Dateien einlesen")
+    assert calls == []
+    assert window._background_task_panel.isVisibleTo(window)
+    assert window._background_task_kind == "parsing"
+    assert window.stack.isEnabled()
+    assert window.navigation.isEnabled()
+    assert window._background_task_stop.isEnabled()
+
+    window._source_import_progress("Datei 2 von 3")
+    assert "Datei 2 von 3" in window._background_task_label.toolTip()
+    window._source_import_completed("Import abgeschlossen: 3 Dateien")
+    assert calls == []
+
+    # Simuliert SourcesPage.import_ended nach dem tatsächlichen QThread-Ende.
+    source.import_ended.emit()
+    assert window._workflow_background_source_import is None
+    assert window._background_task_kind is None
+    assert not window._background_task_panel.isVisibleTo(window)
+    window.close()
+    app.processEvents()
+
+
+def test_workflow_background_fetch_can_be_stopped_without_modal(tmp_path, monkeypatch):
+    """Statusleiste und Stop reagieren auch während des Seitenwechsels."""
+    app, window = _window(tmp_path, monkeypatch)
+    calls = []
+    monkeypatch.setattr(
+        window, "_context_scrape",
+        lambda category, scope: calls.append((category, scope)),
+    )
+    window._background_operation_started(
+        "abruf", "diagnosis_viewer", "10 FINs werden abgerufen",
+    )
+    window.navigation.select_page("dashboard")
+    assert window.navigation.buttons["dashboard"].isChecked()
+    assert window._background_task_kind == "abruf"
+    window._background_task_stop.click()
+    assert calls == [("diagnosis_viewer", "cancel")]
+    assert not window._background_task_stop.isEnabled()
+    window._background_operation_finished("Abruf beendet")
+    assert not window._background_task_panel.isVisibleTo(window)
+    window.close()
+    app.processEvents()
