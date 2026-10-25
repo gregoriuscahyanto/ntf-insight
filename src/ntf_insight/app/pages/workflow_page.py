@@ -2467,6 +2467,22 @@ class WorkflowPage(QWidget):
         case = cases[source_row]
         payload = case.payload
         recurrence_reason = case.recurrence_source
+        structured_symptoms = payload.get("fehlerbilder") or []
+        if structured_symptoms:
+            symptom_details = "\n".join(
+                f"• {entry.get('kategorie', 'Unbekannt')} "
+                f"[{entry.get('nachweisstatus', 'Offen')}; "
+                f"Sicherheit {entry.get('sicherheit', 'Offen')}]: "
+                f"{entry.get('begruendung') or 'Keine Begründung'}\n"
+                f"  Belege: {evidence_lines(entry.get('belege') or [], max_entries=4)}"
+                for entry in structured_symptoms
+                if isinstance(entry, dict)
+            )
+        else:
+            symptom_details = (
+                "Legacy-Themen (nicht nach neuem Nachweisvertrag validiert): "
+                + "; ".join(case.symptoms)
+            )
         self.chatgpt_case_details.setPlainText(
             f"Fall {case.case_id} · FIN {case.fin}\n"
             f"NTF-Einschätzung: {case.ntf} "
@@ -2481,6 +2497,9 @@ class WorkflowPage(QWidget):
             f"{payload.get('begruendung_zuordnung') or 'Nicht begründet'}\n"
             f"Fehlerwiederkehr nach Tausch: {case.recurrence} · "
             f"{recurrence_reason}\n"
+            f"Fehlerbild-Ebene (Mehrfachnennungen):\n{symptom_details}\n"
+            f"Nachweis-Ebene: "
+            f"{'; '.join(case.proof_profiles) or 'Nicht vorhanden'}\n"
             f"Technische Hinweise laut LLM: "
             f"{'; '.join(payload.get('themen') or []) or 'Keine'}\n"
             f"Gegenindizien / Datenlücken: "
