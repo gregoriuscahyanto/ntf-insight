@@ -591,14 +591,19 @@ class WorkflowPage(QWidget):
 
     def _build_step_three(self) -> None:
         _, body = self._workspace(
-            "03 · NTF-Entscheidung mit ChatGPT",
-            "Vorschläge sind zunächst ungeprüft und werden nicht automatisch zu QEC-Fallentscheidungen.",
+            "03 · NTF-Neuauswertung auf QEC-Basis",
+            "Erste ChatGPT-Bewertung ausschliesslich aus QEC-FIN-Liste (01) "
+            "und Befundungsberichten (02); Vorschlaege bleiben ungeprueft.",
         )
         actions = QHBoxLayout()
         self.ai_export_button = self._add_action(
-            actions, "Für ChatGPT exportieren (ZIP)",
+            actions, "QEC-Neuauswertung exportieren (ZIP)",
             lambda: self.action_requested.emit("ai_export"),
-            tooltip="Versioniertes Analysepaket mit JSON-Ergebnisvorlage und Schema.",
+            tooltip=(
+                "Nur QEC-Schadteilfaelle (01) und strukturierte QEC-Befunde "
+                "(02). Keine QuickTests, AutoExport oder TIPS. "
+                "Eine neue Auswertung bewahrt bisherige KI-Ergebnisse."
+            ),
         )
         self.ai_import_button = self._add_action(
             actions, "ChatGPT-Ergebnis importieren (JSON)",
@@ -608,6 +613,16 @@ class WorkflowPage(QWidget):
         )
         actions.addStretch(1)
         body.addLayout(actions)
+        info = QLabel(
+            "Erstanalyse nur aus Schritt 01/02. QEC-Lieferantenstellungnahme, "
+            "Nachanalyse und Reitertexte erfordern im Exportdialog eine "
+            "ausdrueckliche vertrauliche Freigabe. Ohne Freitext bleibt die "
+            "Bewertung entsprechend eingeschraenkt. Zusaetzliche Diagnosen "
+            "folgen erst in Schritt 04/05.",
+            objectName="PageSubtitle",
+        )
+        info.setWordWrap(True)
+        body.addWidget(info)
         for button in (self.ai_export_button, self.ai_import_button):
             button.setMinimumHeight(52)
             button.setMinimumWidth(250)
