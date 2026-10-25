@@ -557,6 +557,12 @@ def test_first_llm_result_rejects_clustering_but_accepts_unassigned_case(tmp_pat
     template["cluster"] = []
     template["clustermethode"] = ""
     template["faelle"][0]["cluster_id"] = None
+    template["faelle"][0]["ntf_bewertung"] = "Nicht bewertet"
+    out.write_text(json.dumps(template), encoding="utf-8")
+    with pytest.raises(ValueError, match="NTF-Einstufung"):
+        ChatGPTAnalyseStore(source.store).import_file(out)
+
+    template["faelle"][0]["ntf_bewertung"] = "Nicht zuordenbar"
     out.write_text(json.dumps(template), encoding="utf-8")
     result = ChatGPTAnalyseStore(source.store).import_file(out)
     assert result["faelle"] == 1 and result["cluster"] == 0
