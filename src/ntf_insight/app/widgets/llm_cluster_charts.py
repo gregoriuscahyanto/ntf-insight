@@ -176,15 +176,27 @@ class LlmCaseFilterProxy(QSortFilterProxyModel):
         super().__init__(parent)
         self.cluster_id = ""
         self.cause = ""
+        self.symptom = ""
+        self.proof = ""
         self.query = ""
+        self.label_index: list[tuple[tuple[str, ...], tuple[str, ...]]] = []
         self.setSortCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
         self.setDynamicSortFilter(True)
 
+    def set_label_index(
+        self, labels: list[tuple[tuple[str, ...], tuple[str, ...]]],
+    ) -> None:
+        self.label_index = labels
+        self.invalidateFilter()
+
     def update_filter(
         self, *, cluster_id: str, cause: str, query: str,
+        symptom: str = "", proof: str = "",
     ) -> None:
         self.cluster_id = cluster_id
         self.cause = cause
+        self.symptom = symptom
+        self.proof = proof
         self.query = query.strip().casefold()
         self.invalidateFilter()
 
@@ -204,6 +216,15 @@ class LlmCaseFilterProxy(QSortFilterProxyModel):
         ):
             return False
         if self.cause and col(4) != self.cause:
+            return False
+        symptoms, proofs = (
+            self.label_index[row]
+            if 0 <= row < len(self.label_index)
+            else ((), ())
+        )
+        if self.symptom and self.symptom not in symptoms:
+            return False
+        if self.proof and self.proof not in proofs:
             return False
         if not self.query:
             return True
