@@ -58,11 +58,13 @@ def _redact(value: object, vins: set[str], *, max_chars: int = 12000) -> str:
     if isinstance(value, datetime):
         return value.isoformat(sep=" ")
     text = str(value)[:max_chars]
-    for fin in vins:
-        text = re.sub(re.escape(fin), "<FIN>", text, flags=re.I)
-        text = re.sub(re.escape("MBC" + fin), "<FIN>", text, flags=re.I)
-    text = _FIN.sub("<FIN>", text)
-    return text
+    # Die allgemeinen FIN-Muster vermeiden >100 Regex-Laeufe pro
+    # Diagnosezeile in grossen 2.000+-QuickTest-Projekten.
+    text = re.sub(
+        r"(?<![A-Z0-9])MBC[A-HJ-NPR-Z0-9]{17}(?![A-Z0-9])",
+        "<FIN>", text, flags=re.I,
+    )
+    return _FIN.sub("<FIN>", text)
 
 
 def _csv_safe(value: object) -> str:
@@ -214,7 +216,6 @@ def export_parsed_diagnostics(
         str(row[0]): f"QT{i:06d}"
         for i, row in enumerate(reports, 1)
     }
-    timestamp = {str(r[0]): r[2] for r in reports}
     source_shas: set[str] = set()
     if aliases:
         with store.connect() as con:
@@ -373,13 +374,6 @@ def export_parsed_diagnostics(
                 "lage_zum_tausch": phase, "tage_relativ_zum_tausch": days,
                 "belegregel": "Nur Zeitvergleich; keine bewiesene Fehlerursache",
             })
-    count_rel, _ = _iter_query(
-        store, "quicktest_reports",
-        "SELECT 1 WHERE 1=0", [],
-        lambda r: {}, ("fall_id", "quicktest_id", "lage_zum_tausch",
-                      "tage_relativ_zum_tausch", "belegregel"),
-        archive, "diagnose/quicktest_fallbezug.csv", fins,
-    ) if False else (0, 0)
     # Relationen kommen aus den bereits validierten Faellen und Berichten.
     with archive.open("diagnose/quicktest_fallbezug.csv", "w") as target:
         with io.TextIOWrapper(target, encoding="utf-8-sig", newline="") as stream:
@@ -640,6 +634,7 @@ def export_tips_filtered(
 ) -> dict[str, int]:
     """Nur strukturierte TIPS-Eintraege fuer FINs der Projektkohorte."""
     counters = {"tips_berichte": 0, "tips_eintraege": 0}
+    seen_reports: set[str] = set()
     fins = set(scope.fins)
     allowed = {
         "tips_case", "tips_section", "tips_field",
@@ -660,7 +655,8 @@ def export_tips_filtered(
                 )):
                     return counters
                 query = (
-                    "SELECT r.fin,r.category,r.source_location,r.label,r.payload_json "
+                    "SELECT r.fin,r.category,r.source_location,r.label,"
+                    "r.payload_json,r.source_sha256 "
                     "FROM source_knowledge_rows r "
                     "JOIN source_knowledge_documents d "
                     "ON d.source_sha256=r.source_sha256 "
@@ -672,9 +668,10 @@ def export_tips_filtered(
                     batch = cursor.fetchmany(1000)
                     if not batch:
                         break
-                    for fin, category, location, label, data in batch:
+                    for fin, category, location, label, data, sha in batch:
                         if _normal_fin(fin) not in fins or category not in allowed:
                             continue
+                        seen_reports.add(str(sha))
                         counters["tips_eintraege"] += 1
                         if counters["tips_eintraege"] > MAX_TECH_ROWS:
                             raise ValueError("Zu viele TIPS-Eintraege.")
@@ -695,5 +692,5 @@ def export_tips_filtered(
                             "wert_oder_befund": _redact(readable, fins),
                             "textfreigabe": int(include_fulltext),
                         })
-    counters["tips_berichte"] = counters["tips_eintraege"]
+    counters["tips_berichte"] = len(seen_reports)
     return counters
