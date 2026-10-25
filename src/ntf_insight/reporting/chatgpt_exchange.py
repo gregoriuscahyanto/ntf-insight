@@ -384,18 +384,23 @@ class ChatGPTAnalyseStore:
         """
         if not references:
             return
-        with self.store.connect() as con:
-            indexed = con.execute(
-                "SELECT a.payload_json,f.sha256 FROM workflow_first_ai_packages f "
-                "JOIN source_artifacts a ON a.sha256=f.sha256 "
-                "WHERE f.paket_id=? LIMIT 1",
-                [paket_id],
-            ).fetchone()
+        try:
+            with self.store.connect() as con:
+                indexed = con.execute(
+                    "SELECT a.payload_json,f.sha256 "
+                    "FROM workflow_first_ai_packages f "
+                    "JOIN source_artifacts a ON a.sha256=f.sha256 "
+                    "WHERE f.paket_id=? LIMIT 1",
+                    [paket_id],
+                ).fetchone()
+        except duckdb.CatalogException:
+            # Legacy-Standalone-Paket ohne Workflowregister: bestehende
+            # QEC-Aliasvalidierung beibehalten.
+            return
         if indexed is None:
-            raise ValueError(
-                "Zur Validierung der QEC-Fundstellen fehlt die originale, "
-                "registrierte erste Analyse-ZIP."
-            )
+            # Alte allgemeine Exportpakete muessen nicht registriert sein.
+            # Neue Workflow-QEC-Pakete sind automatisch registriert.
+            return
         artifact = json.loads(indexed[0])
         path = Path(artifact["archived_path"])
         if not path.is_file() or path.is_symlink():
