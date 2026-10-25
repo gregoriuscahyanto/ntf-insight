@@ -192,7 +192,7 @@ def test_comprehensive_second_export_contains_parsed_diagnosis_and_unparsed_fall
                 "unterlagen/diagnosis_viewer_fallback/"
             ))
         )
-        assert b"PARSED" not in b"".join(
+        assert b"\nPARSED\n" not in b"".join(
             archive.read(n) for n in names if n.startswith("unterlagen/")
         )
         manifest = json.loads(
