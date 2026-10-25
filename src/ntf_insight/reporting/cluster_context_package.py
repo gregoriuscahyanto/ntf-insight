@@ -330,14 +330,15 @@ def export_cluster_context(
         "QEC-/SSL-/NTF-Endlabels und behauptete Lieferantenschuld NIE "
         "als Clustermerkmal oder Kausalnachweis einsetzen. "
         "Nachweisprofil separat aus den vorhandenen Quellen ableiten.",
-        "17. KEINE FORCIERTE URSACHENCLUSTERUNG: cluster[] und "
-        "cluster_id bleiben fuer technisch begruendete Muster mit "
-        "positiven fallbezogenen Indizien reserviert. Ein Fall darf "
-        "mehrere Fehlerbild-Kategorien tragen, aber hoechstens EINE "
-        "technische cluster_id. Alle nicht technisch clusterbaren "
-        "Faelle haben cluster_id=null, ABER mindestens ein "
-        "Fehlerbild oder 'Unbekannt'. Beide Abdeckungen getrennt "
-        "darstellen; keine Ursache erfinden.",
+        "17. KEINE FORCIERTE TECHNISCHE URSACHENCLUSTERUNG: Txx "
+        "nur bei positiven fallbezogenen technischen Indizien; "
+        "andere Faelle IMMER Sxx nach gemeldetem Symptom oder "
+        "expliziter Datenlage/Prozessart zuordnen. Jeder Fall hat "
+        "genau EINE T- oder S-cluster_id, keine null-Zuordnungen. "
+        "Mehrere fehlerbilder[] sind zulaessig. S ist niemals "
+        "gleichbedeutend mit einem belegten Defekt oder Verursacher. "
+        "Alle vier Dimensionen (T/S-Aehnlichkeit, Fehlerbild, "
+        "Nachweisbasis, Ursachenbereich) getrennt bewerten.",
         "18. QUICKTESTS AM TAUSCHTAG NICHT IGNORIEREN: "
         "diagnose/quicktest_fallbezug.csv enthaelt km_quicktest, "
         "km_tausch, km_differenz_zum_tausch und zeitliche_sicherheit. "
