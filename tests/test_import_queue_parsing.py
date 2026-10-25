@@ -202,7 +202,7 @@ def test_chatgpt_import_failure_is_shown_in_workflow_popup(
         )
         assert not dialog._running
         assert "Vorgang fehlgeschlagen" in dialog.status.text()
-        assert "ChatGPT-Rückimport abgebrochen" in window.pages["workflow"]._notice
+        assert "LLM-Rückimport abgebrochen" in window.pages["workflow"]._notice
         dialog.accept()
     finally:
         window.close()
