@@ -29,6 +29,48 @@ Datenlücke – kein Grund, ihre Inhalte zu erfinden.
 
 ### Workflow 05: vollständiger technischer Kontext (zweiter LLM-Export)
 
+#### Zwei unabhängige Analyseebenen statt künstlicher Cluster
+
+**Fehlerbild (mehrfach pro Fall):** Der zweite LLM-Durchlauf ordnet jedem
+QEC-Fall `fehlerbilder[]` zu. Eine Werkstattmeldung über Überstrom, einen
+Kurzschluss oder Kommunikationsausfälle darf als Fehlerbild erfasst werden,
+auch wenn ein Vortausch-QuickTest fehlt. Pro Kategorie sind **Nachweisstatus,
+Sicherheit, Begründung und konkrete Belegreferenzen** getrennt anzugeben.
+Mehrere Fehlerbilder pro Fall sind möglich. Bei völlig fehlenden Hinweisen
+lautet die Kategorie `Unbekannt`, niemals ein erfundenes technisches Muster.
+
+**Nachweisprofil (eigenständige Achse):** `nachweisprofil[]` unterscheidet
+Werkstattangaben, QEC-/Laborbefunde, eindeutig früher datierte QuickTests,
+taggleiche QuickTests mit km-Indiz, echte Nachtauschdiagnosen und offen
+gebliebene Datenlücken. Ein originales Werkstattzitat ist dabei **nicht**
+automatisch ein reproduzierter Fehler oder ein bewiesener Verursacher.
+
+**Technische Ursachencluster:** Die bisherigen Felder `cluster[]` und
+`cluster_id` bleiben **separat**. Sie dienen nur technisch begründeten
+Fallmustern; ein gemeinsames Symptom beweist keinen identischen Defekt
+oder Lieferantenfehler. Die Fehlerbildgruppen umfassen daher in der Regel
+mehr Fälle als die strenger begründbaren Ursachencluster. Ältere JSONs
+ohne `fehlerbilder` und `nachweisprofil` bleiben rückwärtskompatibel.
+
+#### QuickTests am selben Tauschtag
+
+`diagnose/quicktest_fallbezug.csv` enthält zusätzlich zu Datum und
+`lage_zum_tausch` den Diagnose-/Tausch-Kilometerstand, dessen Differenz,
+die zeitliche Sicherheit und die Belegregel. Liegt der Diagnose-km-Wert
+am Tauschtag unter dem QEC-Tausch-km-Wert, wird dies ausdrücklich als
+`gleicher_tag_km_vor_tausch_indiz` ausgegeben – **nicht als bewiesener
+Vortausch-QuickTest und nicht mehr als fehlende Diagnose**. Gleiche oder
+unbekannte km-Werte bleiben zeitlich unklar; Widersprüche von Datum und
+Kilometerstand werden gesondert markiert. Dasselbe gilt für nach dem
+Tausch liegende Kilometer-Indizien. Ohne originale Tauschuhrzeit darf
+keine sichere Reihenfolge behauptet werden.
+
+Eine erneute LLM-Auswertung nach dem verbesserten Export ist erforderlich,
+damit die Felder neu ausgefüllt werden. Die bereits importierte ältere
+Runde-2-JSON wird nicht rückwirkend umgedeutet oder überschrieben.
+
+
+
 **Ziel des zweiten LLM-Durchlaufs:** Belegorientierte technische Neubewertung
 aller ausgewählten QEC-Fälle. Gemeinsamkeiten in DTCs, ECU-Daten, Betriebs-
 bedingungen, Zeitverläufen und tatsächlich vorhandenen Dokumenten
@@ -36,25 +78,6 @@ dürfen zu nachvollziehbaren Clustern zusammengeführt werden. Fälle ohne
 belastbare Gemeinsamkeiten bleiben `cluster_id=null` und dürfen
 nicht künstlich zugeordnet werden. Cluster sind Hypothesen, keine
 Beweise einer technischen oder rechtlichen Verursachung.
-
-**Verbesserte Clusterung auf zwei unabhängigen Ebenen:** Das zweite
-LLM muss für **jeden einzelnen Fall** `fehlerbilder[]` und
-`nachweisprofil[]` nach dem JSON-Schema ausgeben. Zur
-**Fehlerbild-Ebene** gehören ausdrücklich auch Werkstatt- und QEC-
-Beanstandungsangaben zu Stromaufnahme, Kurzschluss, Sicherung,
-Buskommunikation, thermischem Verhalten, Mechanik, Korrosion,
-Versorgung oder sonstigen Symptomen. Ein Fall kann mehrere Fehlerbilder
-haben, und jedes besitzt seinen eigenen Nachweisstatus und Belege.
-Eine nicht bestätigte Werkstattmeldung bleibt als Meldung sichtbar.
-
-Die **Nachweis-Ebene** unterscheidet Laborbefund, nicht
-reproduzierten Laborbefund, objektive Diagnose, Werkstattangabe und
-unzureichende Datenlage – auch gleichzeitig. Die übergeordnete
-technische `cluster_id` bleibt eine **separate, vorsichtige
-Mechanismus-Hypothese**. `cluster_id=null` darf deshalb nicht mit
-»Fall hat kein erkennbares Fehlerbild« verwechselt werden. Fehlt
-jegliches beschreibbares Symptom, wird `Fehlerbild unbekannt`
-vergeben, nicht eine fiktive Clusterursache.
 
 Die mögliche Ursache wird **pro Fall** mit Verursachungsbereich,
 Zuordnungssicherheit, Begründung, Gegenindizien, Quelle und
@@ -92,17 +115,10 @@ aber **nur für FINs der gewählten Profil-/Sachnummern-Fallkohorte**:
   Fehlerstatus, Häufigkeit, Kilometerständen und Parameterwerten.
 - `quicktest_fallbezug.csv`: zeitlicher Vergleich je ausgewähltem
   QEC-Fall; bei fehlendem **QEC-belegtem** Tauschdatum ausdrücklich
-  `tauschdatum_nicht_belegt`. Jeder vorhandene QuickTest am
-  **Tauschtag** behält `zeitlich_unklar_gleicher_tag`, bekommt aber
-  zusätzlich QT-Datum/-Uhrzeit, QT-km, QEC-Tauschdatum/-km,
-  `km_relativ_zum_tausch` und `zeitindiz`.
-  Beispiel: QT 15.808 km, Tausch 15.890 km, beide am 05.01.2024:
-  **82 km niedriger = plausibles Vortausch-Indiz**, nicht
-  automatisch ein bewiesener Vortauschtest. Ein am Tauschtag vorhandener
-  QT wird nie als »kein QuickTest vorhanden« gewertet. Bei
-  widersprüchlichen Datum-/Kilometerangaben werden die Quellen
-  zur manuellen Prüfung markiert. Keine automatische Zuschreibung
-  zum Bauteil oder Lieferanten.
+  `tauschdatum_nicht_belegt`, am selben Tag nach Kilometer-Indiz
+  als Vortausch-/Nachtausch-Kandidat oder bei fehlenden/gleichen km
+  weiterhin `zeitlich_unklar_gleicher_tag`. Keine automatische
+  Zuschreibung zum Bauteil oder Lieferanten.
 - `tp_dashboard_dtc.csv`, `tp_dashboard_reparaturen.csv`,
   `tp_dashboard_tips.csv`: geparste TP-Dashboard-Zeilen der ausgewählten
   FINs. Multi-FIN-Sammeldateien werden nie ungefiltert kopiert.

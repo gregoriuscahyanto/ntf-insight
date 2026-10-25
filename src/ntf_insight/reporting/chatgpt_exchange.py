@@ -64,35 +64,47 @@ class ChatGPTBeleg(BaseModel):
 
 
 FehlerbildKategorie = Literal[
-    "Stromaufnahme zu hoch", "Stromaufnahme zu niedrig",
-    "Kurzschluss / Sicherung", "Bus / Kommunikation",
-    "Kühl-/Temperaturverhalten", "Mechanik / Geräusch / Beschädigung",
-    "Feuchte / Korrosion", "Stecker / Leitung / Versorgung",
-    "Software / Regelung", "Sonstiges Fehlerbild", "Fehlerbild unbekannt",
+    "Stromaufnahme zu hoch / Überstrom",
+    "Stromaufnahme zu niedrig / fehlender Strom",
+    "Kurzschluss / Sicherung",
+    "Bus / Kommunikation",
+    "Versorgung / Spannung / Masse",
+    "Ansteuerung / Software / Regelung",
+    "Leistung / Funktion / Temperatur",
+    "Mechanik / Geräusch / Beschädigung",
+    "Feuchte / Korrosion / Abdichtung",
+    "Sensorik / Signal",
+    "Sonstige Symptome",
+    "Unbekannt",
 ]
 FehlerbildNachweis = Literal[
-    "Werkstattangabe", "Diagnostisch belegt", "Laborbefund",
-    "Mehrere Quellen", "Nicht verifiziert",
+    "Werkstattangabe", "Diagnostisch belegt",
+    "Laborbefund", "Mehrfach belegt", "Hypothese / unbestätigt",
 ]
-Nachweisprofil = Literal[
-    "Werkstattangabe vorhanden", "Diagnose vor Tausch (Datum)",
-    "Diagnose am Tauschtag, km niedriger (Indiz)",
-    "Diagnose am Tauschtag, zeitlich offen",
-    "Diagnose nach Tausch", "Laborbefund optisch auffällig",
-    "Laborbefund funktionell bestätigt", "Labor nicht reproduziert",
+NachweisProfil = Literal[
+    "Werkstattangabe vorhanden",
+    "Diagnose vor Tausch (Datum)",
+    "Diagnose am Tauschtag (km-Indiz vor)",
+    "Diagnose am Tauschtag (km-Indiz nach)",
+    "Diagnose am Tauschtag (Reihenfolge offen)",
+    "Diagnose nach Tausch (Datum)",
+    "Zeitrelation widersprüchlich",
+    "Laborfehler reproduziert",
+    "Laborfehler nicht reproduziert",
+    "Laborbefund optisch auffällig",
     "Datenlage unzureichend",
 ]
 
 
 class LLMFehlerbild(BaseModel):
-    """Mehrfachlabel fuer ein *gemeldetes* Symptom, keine Ursache."""
+    """Mehrfachnennung eines SYMPTOMS; kein automatischer Verursachernachweis."""
 
     model_config = ConfigDict(extra="forbid")
     kategorie: FehlerbildKategorie
-    nachweisstatus: FehlerbildNachweis = "Nicht verifiziert"
+    nachweisstatus: FehlerbildNachweis = "Hypothese / unbestätigt"
     sicherheit: Sicherheit = "Offen"
-    begruendung: str = Field(default="", max_length=1300)
-    belege: list[ChatGPTBeleg] = Field(default_factory=list, max_length=8)
+    begruendung: str = Field(default="", max_length=1800)
+    belege: list[ChatGPTBeleg] = Field(default_factory=list, max_length=15)
 
 
 class ChatGPTFall(BaseModel):
@@ -119,15 +131,12 @@ class ChatGPTFall(BaseModel):
     begruendung_fehlerwiederkehr: str = Field(default="", max_length=2400)
     sicherheit_bewertung: Sicherheit = "Offen"
     themen: list[str] = Field(default_factory=list, max_length=30)
-    # Runde 2: Fehlerbild (mehrfach) und Nachweislage (mehrfach) sind
-    # fachlich getrennt von primaerem technischen Cluster und Ursache.
-    # Bei alten JSON-Dateien und der QEC-Erstrunde bleiben beide leer.
-    fehlerbilder: list[LLMFehlerbild] = Field(
-        default_factory=list, max_length=16,
-    )
-    nachweisprofil: list[Nachweisprofil] = Field(
-        default_factory=list, max_length=12,
-    )
+    # Ebene 1: alle Faelle haben ein oder mehrere, auch nur gemeldete,
+    # Fehlerbilder; Multi-Label, unabhaengig von exklusiver cluster_id.
+    # Ebene 2: Herkunft/Abdeckung ist getrennt von der Ursache bewertet.
+    # Optional fuer alte erste/zweite LLM-JSONs.
+    fehlerbilder: list[LLMFehlerbild] = Field(default_factory=list, max_length=15)
+    nachweisprofil: list[NachweisProfil] = Field(default_factory=list, max_length=12)
     belege: list[ChatGPTBeleg] = Field(default_factory=list, max_length=40)
 
 
@@ -147,6 +156,9 @@ class ChatGPTRueckgabe(BaseModel):
     schema_version: Literal[1] = SCHEMA_VERSION
     paket_id: str = Field(pattern=r"^[0-9a-f]{32}$")
     analyse_id: str = Field(max_length=90)
+    # Nur der NEUE LLM2-Export setzt diese optionale Markierung. Alte
+    # JSONs und LLM1 bleiben unveraendert kompatibel.
+    fehlerbild_methodik: Literal["multilabel_symptom_nachweis_v2"] | None = None
     clustermethode: str = Field(default="", max_length=800)
     verwendete_merkmale: list[str] = Field(default_factory=list, max_length=70)
     unsicherheiten: list[str] = Field(default_factory=list, max_length=50)
@@ -646,20 +658,33 @@ class ChatGPTAnalyseStore:
         if not case_by_alias:
             raise ValueError("Die lokale Zuordnung enthält keine gültigen Fälle.")
 
+        # Belegprüfung gilt fuer die neuen mehrdimensionalen
+        # Fehlerbild-Zuordnungen genauso wie fuer Cluster und Einzelfaelle.
+        # Eine Quelle darf nicht durch Verschachtelung ungeprueft werden.
+        all_evidence = [
+            evidence
+            for item in (*data.cluster, *data.faelle)
+            for evidence in item.belege
+        ]
+        all_evidence.extend(
+            evidence
+            for finding in data.faelle
+            for symptom in finding.fehlerbilder
+            for evidence in symptom.belege
+        )
+
         # AE-/LB-IDs sind Zeilennummern im originalen Export, keine Einträge
         # der privaten Pseudonymzuordnung. Nur durch ZIP-Prüfung akzeptieren.
         requested_rows: dict[str, set[str]] = defaultdict(set)
-        for item in (*data.cluster, *data.faelle):
-            for evidence in item.belege:
-                spec = self._ROW_EVIDENCE.get(evidence.quelle)
-                if spec and re.fullmatch(spec[2], evidence.quelle_id):
-                    requested_rows[evidence.quelle].add(evidence.quelle_id)
+        for evidence in all_evidence:
+            spec = self._ROW_EVIDENCE.get(evidence.quelle)
+            if spec and re.fullmatch(spec[2], evidence.quelle_id):
+                requested_rows[evidence.quelle].add(evidence.quelle_id)
         report("Zeilenbelege gegen das archivierte Analysepaket prüfen …")
         verified_rows = self._validate_export_rows(data.paket_id, requested_rows)
         qec_fields = {
             (evidence.quelle_id, evidence.fundstelle)
-            for item in (*data.cluster, *data.faelle)
-            for evidence in item.belege
+            for evidence in all_evidence
             if evidence.quelle == "qec_felder"
         }
         self._verify_qec_field_locations(data.paket_id, qec_fields)
@@ -694,6 +719,42 @@ class ChatGPTAnalyseStore:
             elif pseudo in members:
                 raise ValueError("Clusterzuordnung fehlt bei einem aufgeführten Mitglied.")
             self._validate_belege(finding.belege, mapping, verified_rows)
+            categories = [symptom.kategorie for symptom in finding.fehlerbilder]
+            if len(categories) != len(set(categories)):
+                raise ValueError(
+                    "Fehlerbild mehrfach angegeben: pro Kategorie nur eine "
+                    "Zuordnung mit zusammengefassten Belegen verwenden."
+                )
+            for symptom in finding.fehlerbilder:
+                self._validate_belege(symptom.belege, mapping, verified_rows)
+
+        if data.fehlerbild_methodik == "multilabel_symptom_nachweis_v2":
+            missing = set(case_by_alias) - input_cases
+            if missing:
+                raise ValueError(
+                    "LLM-Durchlauf 2 unvollstaendig: "
+                    f"{len(missing)} QEC-Faelle ohne Bewertung. "
+                    "Auch Faelle ohne DTC oder Werkstatttext muessen "
+                    "'Unbekannt' als Fehlerbild erhalten."
+                )
+            empty_symptom = [
+                item.fall_id for item in data.faelle if not item.fehlerbilder
+            ]
+            if empty_symptom:
+                raise ValueError(
+                    "LLM-Durchlauf 2 enthaelt einen Fall ohne "
+                    f"Fehlerbild-Zuordnung: {empty_symptom[0]}. "
+                    "Auch bei Datenluecken Kategorie 'Unbekannt' angeben."
+                )
+            empty_proof = [
+                item.fall_id for item in data.faelle if not item.nachweisprofil
+            ]
+            if empty_proof:
+                raise ValueError(
+                    "LLM-Durchlauf 2 enthaelt einen Fall ohne "
+                    f"Nachweisprofil: {empty_proof[0]}. "
+                    "'Datenlage unzureichend' ist zulaessig."
+                )
 
         report("Analyse und Cluster in einer Transaktion speichern …")
         with self.store.connect() as con:

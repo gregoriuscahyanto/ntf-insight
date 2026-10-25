@@ -311,54 +311,66 @@ def export_cluster_context(
         "Das Manifest listet ALLE Teile und ihre Zeilenzahlen unter "
         "diagnose_tabellen auf. Fuer eine vollstaendige Analyse muessen "
         "saemtliche Teile mitgezahlt und ausgewertet werden. "
-        "Die Wiederholung des CSV-Headers ist KEINE Diagnosezeile."
+        "Die Wiederholung des CSV-Headers ist KEINE Diagnosezeile.",
+        "15. ZWEI ANALYSEEBENEN - ALLE FAELLE: Ebene A sind GEMELDETE "
+        "FEHLERBILDER, Ebene B ist der technische NACHWEISGRAD. "
+        "Fuer JEDEN Fall fehlerbilder[] und nachweisprofil[] nach dem "
+        "JSON-Schema ausfuellen. Mehrere Fehlerbilder pro Fall sind "
+        "ERWUENSCHT. Generische Kategorien sind Stromaufnahme zu "
+        "hoch/zu niedrig, Kurzschluss/Sicherung, Bus/Kommunikation, "
+        "Versorgung/Masse, Ansteuerung, Leistung/Temperatur, Mechanik, "
+        "Feuchte/Korrosion, Sensorik oder Sonstige Symptome. Ohne "
+        "zuordenbares Symptom EXPLIZIT 'Unbekannt' statt still leer. "
+        "Nur dokumentierte Originalangaben verwenden.",
+        "16. FEHLERBILD IST KEINE URSACHE: Jede Fehlerbild-Kategorie "
+        "traegt nachweisstatus, sicherheit, begruendung und wirkliche "
+        "belege. Eine Werkstattbeanstandung ist 'Werkstattangabe', "
+        "kein laborbestaetigter Defekt; ein Pumpen-DTC ist ein "
+        "Diagnosehinweis, kein Beweis fuer den Tauschkomponentendefekt. "
+        "QEC-/SSL-/NTF-Endlabels und behauptete Lieferantenschuld NIE "
+        "als Clustermerkmal oder Kausalnachweis einsetzen. "
+        "Nachweisprofil separat aus den vorhandenen Quellen ableiten.",
+        "17. KEINE FORCIERTE URSACHENCLUSTERUNG: cluster[] und "
+        "cluster_id bleiben fuer technisch begruendete Muster mit "
+        "positiven fallbezogenen Indizien reserviert. Ein Fall darf "
+        "mehrere Fehlerbild-Kategorien tragen, aber hoechstens EINE "
+        "technische cluster_id. Alle nicht technisch clusterbaren "
+        "Faelle haben cluster_id=null, ABER mindestens ein "
+        "Fehlerbild oder 'Unbekannt'. Beide Abdeckungen getrennt "
+        "darstellen; keine Ursache erfinden.",
+        "18. QUICKTESTS AM TAUSCHTAG NICHT IGNORIEREN: "
+        "diagnose/quicktest_fallbezug.csv enthaelt km_quicktest, "
+        "km_tausch, km_differenz_zum_tausch und zeitliche_sicherheit. "
+        "gleicher_tag_km_vor_tausch_indiz bedeutet einen plausiblen "
+        "Vortausch-KANDIDATEN, NICHT einen bewiesenen Vortausch-QT. "
+        "gleicher_tag_km_nach_tausch_indiz ist ein Nachtausch-Indiz. "
+        "Gleiches Datum und gleicher/fehlender km-Stand bleibt "
+        "zeitlich_unklar_gleicher_tag. datum_km_widerspruch gesondert "
+        "als ungeklärt behandeln. Ohne originale QEC-Tausch-Uhrzeit "
+        "keine Chronologie behaupten. Niemals pauschal "
+        "'kein Vortausch-QuickTest' behaupten, wenn ein taggleicher "
+        "plausibler Kandidat vorhanden ist: seine km-Werte und "
+        "die Unsicherheit nennen.",
+        "19. FAELLE VOLLSTAENDIG UND OHNE ERFUNDENE BELEGE: "
+        "auch am Tauschtag vorliegende QuickTests mit DTCs beruecksichtigen. "
+        "DTCs koennen andere Pumpen/ECUs/Baugruppen betreffen. Ein "
+        "historisch gespeicherter DTC nach Tausch ist ohne neuen "
+        "Ereignis-km/Loeschhistorie KEIN Wiederkehrbeweis. "
+        "Datenluecken getrennt ausweisen, statt Faelle auszuschliessen."
     ]
     # Diese neutralen Zusatzanforderungen bleiben unabhaengig vom
     # CSV-Groesstdaten-Fix im separaten PR #60.
     instruction_lines.extend([
-        "ZUSATZAUFTRAG ZWEI UNABHAENGIGE GRUPPIERUNGSEBENEN: "
-        "JEDEN Fall zuerst auf Ebene 1 FEHLERBILD klassifizieren. "
-        "Ein Fehlerbild ist ein GEMELDETES SYMPTOM, keine bewiesene "
-        "Bauteil- oder Lieferantenursache. Verwende fehlerbilder[] "
-        "mit Mehrfachnennung pro Fall: kategorie (eine der Kategorien "
-        "Stromaufnahme zu hoch, Stromaufnahme zu niedrig, "
-        "Kurzschluss / Sicherung, Bus / Kommunikation, "
-        "Kühl-/Temperaturverhalten, Mechanik / Geräusch / Beschädigung, "
-        "Feuchte / Korrosion, Stecker / Leitung / Versorgung, "
-        "Software / Regelung, Sonstiges Fehlerbild, Fehlerbild unbekannt), "
-        "nachweisstatus (Werkstattangabe, Diagnostisch belegt, "
-        "Laborbefund, Mehrere Quellen, Nicht verifiziert), "
-        "sicherheit (Hoch/Mittel/Niedrig/Offen), begruendung, "
-        "belege. Kategorie und Quellentyp immer trennen. "
-        "Auch Werkstattbeschreibungen, QEC-Beanstandungstexte, "
-        "Reparaturkommentare und TIPS-Meldungen auswerten, "
-        "SELBST WENN KEIN EINDEUTIGER QT VOR TAUSCH EXISTIERT. "
-        "Deren Glaubhaftigkeit nicht kuenstlich hochsetzen. "
-        "Ohne beschreibbares Symptom genau Fehlerbild unbekannt angeben.",
-        "ZUSATZAUFTRAG EBENE 2 NACHWEISPROFIL: Fuer JEDEN Fall "
-        "nachweisprofil[] mit allen zutreffenden Beleglagen ausgeben: "
-        "Werkstattangabe vorhanden, Diagnose vor Tausch (Datum), "
-        "Diagnose am Tauschtag, km niedriger (Indiz), "
-        "Diagnose am Tauschtag, zeitlich offen, Diagnose nach Tausch, "
-        "Laborbefund optisch auffällig, "
-        "Laborbefund funktionell bestätigt, Labor nicht reproduziert, "
-        "Datenlage unzureichend. Das sind NACHWEISKLASSEN, keine "
-        "Fehlerursachen. Nicht reproduziert heisst weder fehlerfrei "
-        "noch fehlende Werkstattbeanstandung. Mehrfachnennung zulaessig; "
-        "kein Beleg ist Datenlage unzureichend, niemals NTF-Beweis.",
-        "ZUSATZAUFTRAG TECHNISCHE CLUSTER: Erst ZUSAETZLICH zu den "
-        "vollstaendigen Fehlerbild-/Nachweisklassen Gemeinsamkeiten "
-        "aufgrund konkreter Befunde untersuchen. In cluster[] nur "
-        "technisch belegbare oder explizit schwach belegte gemeinsame "
-        "Muster mit cluster_id, titel, fall_ids, "
-        "technische_hypothese, sicherheit und echten Fundstellen bilden. "
-        "clustermethode und verwendete_merkmale angeben. "
-        "Ein gleicher NTF-/SSL-Status, Lieferant oder dieselbe FIN "
-        "genuegt NICHT als gemeinsamer technischer Mechanismus. "
-        "Fall.cluster_id darf fuer nicht hinreichend belegte "
-        "TECHNISCHE Gruppen null bleiben, seine fehlerbilder[] "
-        "und nachweisprofil[] aber NICHT einfach auslassen. "
-        "Unbekannte Ursachen NICHT kuenstlich in Ursachencluster stecken.",
+        "ZUSATZAUFTRAG CLUSTER: Untersuche ALLE Faelle auf gemeinsame "
+        "TECHNISCHE Fehlerbilder. Bilde in cluster[] nur dann Cluster, "
+        "wenn mehrere Faelle durch vergleichbare DTCs, ECUs, "
+        "Fehlerbedingungen, Zeitverlaeufe, HW-/SW-Staende oder "
+        "Originalbefunde plausibel verbunden sind. Nenne cluster_id, "
+        "titel, fall_ids, technische_hypothese, sicherheit und konkrete "
+        "Belegstellen. clustermethode und verwendete_merkmale muessen "
+        "die Aehnlichkeit nachvollziehbar erklaeren. Reine NTF-/SSL-/"
+        "Lieferantenlabels oder gleiche FIN reichen NICHT. Unverbundene "
+        "Faelle behalten cluster_id=null; KEINE erfundenen Cluster.",
         "ZUSATZAUFTRAG VERURSACHUNG: Fuer jeden Fall verursachungsbereich "
         "(Bauteil/Lieferant, Ansteuerung/ECU, Kommunikation, Bordnetz, "
         "Leitung/Stecker, Einbau/Montage/Werkstatt oder Nicht zuordenbar), "
@@ -367,36 +379,17 @@ def export_cluster_context(
         "Gegenbeweise und Alternativhypothesen auffuehren. Eine "
         "Lieferantenverantwortung niemals aus QEC-/NTF-/SSL-Labels, "
         "Clusterhaeufigkeit oder einem DTC allein behaupten.",
-        "ZUSATZAUFTRAG QUICKTEST AM TAUSCHTAG: "
-        "diagnose/quicktest_fallbezug.csv enthaelt nun QT-Datum/Uhrzeit, "
-        "QT-km, QEC-Tauschdatum/-km, Kilometerabstand und zeitindiz. "
-        "zeitlich_unklar_gleicher_tag bedeutet VORHANDENER QT "
-        "mit ungeklärter Reihenfolge, NICHT fehlender QuickTest. "
-        "gleicher_tag_qt_km_kleiner ist ein VOR-Tausch-INDIZ, "
-        "keine zeitlich sichere Vortauschdiagnose; "
-        "gleicher_tag_qt_km_groesser ein Nach-Tausch-INDIZ. "
-        "QT am Tauschtag UND darunter liegender km muss in die "
-        "Fehlerbild-/Nachweisbetrachtung eingehen. "
-        "Bei Widerspruch Datum/Kilometer den Befund als Konflikt melden; "
-        "Tauschuhrzeiten niemals erfinden. Fehlender eindeutig frueherer "
-        "QT darf nicht als generell fehlender QT berichtet werden.",
         "ZUSATZAUFTRAG WIEDERKEHR: fehlerwiederkehr exakt einer von "
         "'Nach Tausch erneut nachgewiesen', 'Hinweise auf Wiederkehr', "
         "'Kein erneuter Fehler im dokumentierten Nachtest' oder "
         "'Nicht beurteilbar'. begruendung_fehlerwiederkehr mit belegtem "
         "Tauschanker, Diagnosezeitpunkt, DTC-Code und Fundstelle "
-        "befuellen. Ein gespeicherter historischer DTC oder ein "
-        "QT am Tauschtag beweist kein erneutes Auftreten. "
-        "Ohne echten Nachtest niemals Fehlerfreiheit behaupten.",
+        "befuellen. Ohne echten Nachtest niemals Fehlerfreiheit behaupten.",
         "ZUSATZAUFTRAG GESAMTAUSWERTUNG: Zweite Runde ist die umfassende "
-        "technische NTF-Neubewertung. Pro Fall Beweise und Gegenindizien, "
+        "technische NTF-Neubewertung. Pro Fall beweise und Gegenindizien, "
         "Verursachungssicherheit, Grenzen und priorisierte Pruefungen "
         "angeben; Abweichungen zur ersten Runde begruenden. "
-        "Alle Fallpseudonyme genau einmal auswerten. "
-        "Ausgabe als JSON streng nach chatgpt_ergebnis_schema.json; "
-        "fehlerbilder[] und nachweisprofil[] bei allen Faellen fuellen "
-        "und mit vorhandenem Quellbeleg begruenden. "
-        "Alle Diagnose-CSV-Teile aus dem ZIP-Manifest beruecksichtigen.",
+        "Alle Fallpseudonyme genau einmal auswerten.",
     ])
     if project is not None and project.ecu_names:
         instruction_lines.insert(
@@ -417,6 +410,8 @@ def export_cluster_context(
             list(project.ecu_names) if project is not None else []
         ),
         "sachnummer_wurde_lokal_gefiltert": project_scoped,
+        "fehlerbild_methodik": "multilabel_symptom_nachweis_v2",
+        "quicktest_zeitrelation": "datum_plus_km_indiz_ohne_tausch_uhrzeit",
         "unterlagen_nach_sachnummer_zugeordnet": bool(part_number.strip()),
         "basis_nicht_nach_sachnummer_gefiltert": not project_scoped,
         "erster_chatgpt_durchlauf": {
@@ -485,6 +480,11 @@ def export_cluster_context(
             # aber eine neue eindeutige ID statt einer Kopie der 1.-Runde-Vorlage.
             followup_template = ergebnis_vorlage(package_id)
             followup_template["analyse_id"] = analysis_id
+            # Kennzeichnet das NEUE zweite Ergebnis; beim Import werden
+            # damit Fehlerbild und Nachweisgrad je QEC-Fall verlangt.
+            followup_template["fehlerbild_methodik"] = (
+                "multilabel_symptom_nachweis_v2"
+            )
             _zip_text(
                 archive, "chatgpt_ergebnis_vorlage.json",
                 json.dumps(followup_template, ensure_ascii=False, indent=2),
@@ -547,10 +547,6 @@ def export_cluster_context(
                     "Dazu ECU-Staende, DTC-Beobachtungen, DTC-Parameter, "
                     "geparste Seitentexte (nur nach Freigabe) und "
                     "Fall-Zeitvergleiche im Ordner diagnose/.\n"
-                    "Der Fall-Zeitvergleich enthaelt bei taggleichen QTs "
-                    "zusaetzlich QT-km, QEC-Tausch-km und ein ZEITINDIZ. "
-                    "Taggleich heisst vorhanden aber Reihenfolge unklar; "
-                    "niedrigerer QT-km ist nur ein plausibles Vortausch-Indiz.\n"
                     "Berichtspseudonym QTnnnnnn ist NUR lokal fuer diese "
                     "zweite ZIP. QEC-Fall Fnnnn und Fahrzeug Vnnnn stammen "
                     "aus der ersten QEC-Basis.\n"
