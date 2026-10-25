@@ -2339,15 +2339,22 @@ class WorkflowPage(QWidget):
         self._llm_case_summaries = []
         self.chatgpt_cluster_model.set_rows([])
         self.chatgpt_case_model.set_rows([])
+        self.chatgpt_case_proxy.set_label_index([])
         self.llm_cluster_chart.set_items([])
         self.llm_cause_chart.set_items([])
+        self.llm_symptom_chart.set_items([])
+        self.llm_proof_chart.set_items([])
         for label in self.llm_metric_labels.values():
             label.setText("0")
-        for combo in (self.llm_cluster_filter, self.llm_cause_filter):
+        for combo, title in (
+            (self.llm_cluster_filter, "Alle Cluster"),
+            (self.llm_cause_filter, "Alle Verursachungsbereiche"),
+            (self.llm_symptom_filter, "Alle Fehlerbilder"),
+            (self.llm_proof_filter, "Alle Nachweisprofile"),
+        ):
             combo.blockSignals(True)
             combo.clear()
-            combo.addItem("Alle Cluster" if combo is self.llm_cluster_filter
-                          else "Alle Verursachungsbereiche", "")
+            combo.addItem(title, "")
             combo.blockSignals(False)
         self.llm_case_search.clear()
         self.chatgpt_cluster_details.clear()
@@ -2376,10 +2383,22 @@ class WorkflowPage(QWidget):
         if index >= 0:
             self.llm_cause_filter.setCurrentIndex(index)
 
+    def _filter_llm_symptom(self, symptom: str) -> None:
+        index = self.llm_symptom_filter.findData(symptom)
+        if index >= 0:
+            self.llm_symptom_filter.setCurrentIndex(index)
+
+    def _filter_llm_proof(self, proof: str) -> None:
+        index = self.llm_proof_filter.findData(proof)
+        if index >= 0:
+            self.llm_proof_filter.setCurrentIndex(index)
+
     def _reset_llm_filters(self) -> None:
         self.llm_case_search.clear()
         self.llm_cluster_filter.setCurrentIndex(0)
         self.llm_cause_filter.setCurrentIndex(0)
+        self.llm_symptom_filter.setCurrentIndex(0)
+        self.llm_proof_filter.setCurrentIndex(0)
         self.chatgpt_cluster_table.clearSelection()
         self.chatgpt_cluster_details.clear()
         self._apply_llm_case_filters()
@@ -2387,13 +2406,17 @@ class WorkflowPage(QWidget):
     def _apply_llm_case_filters(self, *_args) -> None:
         cluster_id = str(self.llm_cluster_filter.currentData() or "")
         cause = str(self.llm_cause_filter.currentData() or "")
+        symptom = str(self.llm_symptom_filter.currentData() or "")
+        proof = str(self.llm_proof_filter.currentData() or "")
         self.chatgpt_case_proxy.update_filter(
-            cluster_id=cluster_id,
-            cause=cause,
+            cluster_id=cluster_id, cause=cause,
+            symptom=symptom, proof=proof,
             query=self.llm_case_search.text(),
         )
         self.llm_cluster_chart.set_selected(cluster_id)
         self.llm_cause_chart.set_selected(cause)
+        self.llm_symptom_chart.set_selected(symptom)
+        self.llm_proof_chart.set_selected(proof)
         total = self.chatgpt_case_model.rowCount()
         visible = self.chatgpt_case_proxy.rowCount()
         self.llm_case_filter_info.setText(
@@ -2540,6 +2563,10 @@ class WorkflowPage(QWidget):
             statuses.get(item.review_status, "info")
             for item in overview.cases
         ])
+        self.chatgpt_case_proxy.set_label_index([
+            (item.symptoms, item.proof_profiles)
+            for item in overview.cases
+        ])
 
         top_groups = list(overview.groups[:10])
         cluster_bars = [
@@ -2556,6 +2583,12 @@ class WorkflowPage(QWidget):
         self.llm_cluster_chart.set_items(cluster_bars)
         self.llm_cause_chart.set_items([
             (cause, cause, count) for cause, count in overview.causes[:9]
+        ])
+        self.llm_symptom_chart.set_items([
+            (label, label, count) for label, count in overview.symptoms[:16]
+        ])
+        self.llm_proof_chart.set_items([
+            (label, label, count) for label, count in overview.proof_profiles[:16]
         ])
         for key, value in (
             ("cases", overview.total_cases),
@@ -2584,6 +2617,16 @@ class WorkflowPage(QWidget):
         for cause, _count in overview.causes:
             self.llm_cause_filter.addItem(cause, cause)
         self.llm_cause_filter.blockSignals(False)
+        for combo, title, values in (
+            (self.llm_symptom_filter, "Alle Fehlerbilder", overview.symptoms),
+            (self.llm_proof_filter, "Alle Nachweisprofile", overview.proof_profiles),
+        ):
+            combo.blockSignals(True)
+            combo.clear()
+            combo.addItem(title, "")
+            for label, _count in values:
+                combo.addItem(label, label)
+            combo.blockSignals(False)
         self.llm_case_search.clear()
         self.chatgpt_cluster_details.clear()
         self.chatgpt_case_details.clear()
@@ -2600,8 +2643,11 @@ class WorkflowPage(QWidget):
             f"technische Cluster · {overview.total_cases} von "
             f"{len(current)} aktuellen QEC-Fällen bewertet · "
             f"{overview.unknown_causes} Ursachen nicht sicher zugeordnet. "
-            "Die Diagramme zeigen importierte Hypothesen und führen "
-            "keine neue KI-Auswertung aus."
+            f"{overview.structurally_classified} Fälle mit neuer "
+            "Mehrfach-Fehlerbildklassifikation, "
+            f"{overview.legacy_without_symptom_fields} mit ausschließlich "
+            "älteren LLM-Themen. Fehlerbilder und technische Kausalcluster "
+            "sind bewusst getrennte Ebenen."
             + missing_clusters
         )
 
