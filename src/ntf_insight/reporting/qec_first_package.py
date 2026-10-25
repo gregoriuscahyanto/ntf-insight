@@ -31,6 +31,8 @@ from ntf_insight.reporting.qec_originalbelege import (
 )
 from ntf_insight.storage.cluster_evidence_store import part_key
 from ntf_insight.storage.source_knowledge_store import SourceKnowledgeStore
+from ntf_insight.storage.qec_project_scope import qec_case_matches_project
+from ntf_insight.storage.workflow_projects import WorkflowProjectStore
 
 
 def _captured_at(doc: dict) -> datetime:
@@ -63,11 +65,6 @@ def export_qec_first_package(
         raise ValueError("Bitte einen vorhandenen Zielordner und .zip waehlen.")
     if target.exists() or private_path.exists():
         raise FileExistsError("Erste Analyse-ZIP oder private Zuordnung existiert bereits.")
-    if profile_id != "coolant_pump":
-        raise ValueError(
-            "Schritt 03 ist derzeit nur fuer das freigegebene Bauteilprofil "
-            "Kuehlmittelpumpe verfuegbar."
-        )
     if not part_key(part_number) or not selected_fins or not selected_case_ids:
         raise ValueError("Keine eindeutige QEC-Sachnummern-/Fallauswahl in Schritt 01.")
     fins = {str(item).strip().upper() for item in selected_fins}
@@ -77,12 +74,21 @@ def export_qec_first_package(
             progress(message)
 
     tell("Schritt 01: QEC-Faelle und Sachnummer exakt abgleichen ...")
+    # Fremdprofile und doppelt belegte Sachnummern werden nicht vermischt.
+    # Ein unbekanntes Quellprofil ist nur bei EINDEUTIGEM registriertem
+    # Sachnummernprojekt erlaubt (z. B. HV-Batterie oder DC/DC-Wandler).
+    projects = WorkflowProjectStore(service.store).list_projects()
     chosen = [
         case for case in service.store.load_cases()
         if case.case_id in case_ids
         and case.vin.strip().upper() in fins
-        and case.component_profile_id == profile_id
-        and part_key(str(case.qec_part_number or "")) == part_key(part_number)
+        and qec_case_matches_project(
+            case_part_number=str(case.qec_part_number or ""),
+            source_profile_id=case.component_profile_id,
+            project_profile_id=profile_id,
+            project_part_number=part_number,
+            projects=projects,
+        )
         and str(case.qec_reference or "").strip()
     ]
     if len(chosen) != len(case_ids):
@@ -131,7 +137,9 @@ def export_qec_first_package(
         fin = case.vin.strip().upper()
         ref = str(case.qec_reference or "").strip()
         candidates = by_key.get((fin, ref), [])
-        status, reason, doc = "Nicht erfasst", "Kein geparster QEC-Bericht", None
+        status, reason, doc = (
+            "Nicht vorhanden", "Kein QEC-Bericht/keine Dokumente fuer diesen Fall", None
+        )
         if candidates:
             newest = max(_captured_at(item) for item in candidates)
             latest = [item for item in candidates if _captured_at(item) == newest]
@@ -167,12 +175,9 @@ def export_qec_first_package(
                     ready += 1
                     chosen_docs[candidate["source_sha256"]] = candidate
         report_details[case.case_id] = (status, reason, doc["source_sha256"] if doc else "")
-    if not ready:
-        raise ValueError(
-            "Noch kein eindeutig zum Projekt passender QEC-Bericht aus Schritt 02 "
-            "strukturiert eingelesen. Bitte QEC herunterladen und parsen; "
-            "Schritt 03 kann ohne QEC-Befunde keine Neuauswertung liefern."
-        )
+    # Zero-Report-Projekte sind ein gueltiger Anwendungsfall: alle Faelle
+    # behalten ihre Platzhalter und werden als unbelegt/nicht bewertbar
+    # gekennzeichnet. Weder fehlende PDFs noch fehlende QEC-Reiter blockieren.
     report_alias = {
         sha: f"Q{i:05d}" for i, sha in enumerate(
             sorted(chosen_docs, key=lambda x: _key_order(secret, "qec", x)), 1
@@ -362,7 +367,16 @@ def export_qec_first_package(
         "qec_berichte_vollstaendig": sum(
             value[0] == "Vollstaendig" for value in report_details.values()
         ),
-        "qec_berichte_fehlen_oder_pruefbedarf": len(chosen) - ready,
+        "qec_berichte_fehlen_oder_pruefbedarf": sum(
+            item[0] in {"Nicht vorhanden", "Pruefbedarf"}
+            for item in report_details.values()
+        ),
+        "qec_berichte_teilweise": sum(
+            item[0] == "Teilweise" for item in report_details.values()
+        ),
+        "qec_berichte_nicht_vorhanden": sum(
+            item[0] == "Nicht vorhanden" for item in report_details.values()
+        ),
         "analyseumfang": "workflow_01_02_qec",
     }
     tell("QEC-Analyse-Tabellen und vorlaeufige ChatGPT-Vorlage erzeugen ...")
@@ -395,6 +409,11 @@ def export_qec_first_package(
         "Ergebnis-/Kontextdaten, keine Beweise fuer Lieferantenschuld. "
         "Vorher-/Nachher-DTCs oder TIPS/AutoExport/QuickTests NICHT "
         "vortaeuschen, denn diese Quellen sind in Runde 1 nicht enthalten.\n"
+        "Fehlende QEC-Berichte/Dokumente sind legitim: jeden Fall auch "
+        "OHNE QEC-Belege in die JSON aufnehmen, dann nur mit "
+        "'Nicht bewertbar' und konkreter Datenluecke dokumentieren. "
+        "Nicht aus fehlenden Dokumenten auf NTF, Verschulden oder "
+        "Fehlerfreiheit schliessen. "
         "Jeden Fall bewerten, auch 'Nicht bewertbar', Unsicherheit und "
         "naechsten konkreten Pruefschritt nennen. "
         "Alle QEC-Datenluecken aus qec_datenluecken.csv beruecksichtigen.\n"
@@ -410,7 +429,10 @@ def export_qec_first_package(
         "strukturiert eingelesene QEC-Berichte und Datenluecken.\n"
         "KEINE QuickTests, KEIN AutoExport, KEINE separaten TIPS-Berichte "
         "und KEINE technischen Unterlagen aus Schritt 04/05.\n"
-        "Ein fehlender QEC-Bericht oder Reiter bleibt als Luecke dokumentiert. "
+        "Fehlende QEC-Berichte, einzelne Dokumente oder Reiter sind "
+        "ausdruecklich ZULAESSIG und blockieren den Export nicht. "
+        "Alle Faelle aus Schritt 01 bleiben im Paket; ohne Beleg "
+        "nur 'Nicht bewertbar' statt erfundener Aussage. "
         "QEC-SSL-Endbefunde NICHT als Clustermerkmal verwenden.\n"
         + ("ACHTUNG: NICHT ANONYMISIERTE QEC-FACHTEXTE ENTHALTEN.\n"
            if mit_freitext else
@@ -436,6 +458,8 @@ def export_qec_first_package(
     files["manifest.json"] = json.dumps({
         "schema_version": EXPORT_VERSION,
         "analyseumfang": "workflow_01_02_qec",
+        "projektprofil": profile_id,
+        "teilgruppe_pseudonym": "T0001",
         "paket_id": paket_id,
         "pseudonymisiert": not mit_freitext and not mit_qec_originalen,
         "anonymisiert_garantiert": False,
