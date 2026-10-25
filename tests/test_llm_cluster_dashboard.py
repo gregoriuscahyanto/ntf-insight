@@ -54,6 +54,10 @@ def _examples():
                 "fehlerwiederkehr": "Hinweise auf Wiederkehr",
                 "begruendung_fehlerwiederkehr": "DTC nach dem Tausch",
                 "belege": [],
+                "themen": (
+                    ["Gleicher DTC nach Tausch: letzter Ereignis-km über Tauschstand"]
+                    if case == "FALL-001" else []
+                ),
             }),
             "Offen",
         )
@@ -84,6 +88,8 @@ def test_overview_uses_only_current_project_and_does_not_infer_causality():
     assert overview.ungrouped == 1
     assert overview.supplier_hypotheses == 1
     assert overview.unknown_causes == 2
+    assert overview.recurrence_signals == 1
+    assert overview.cases[0].recurrence == "Gleicher DTC nach Tausch · LLM-Hinweis"
     assert "FREMD-005" not in {case.case_id for case in overview.cases}
     assert overview.cases[0].recurrence == "Hinweise auf Wiederkehr"
     assert overview.causes[0][0] in {
@@ -167,6 +173,7 @@ def test_workflow_llm_dashboard_is_interactive_and_project_scoped(
         assert page.llm_metric_labels["clusters"].text() == "2"
         assert page.llm_metric_labels["ungrouped"].text() == "1"
         assert page.llm_metric_labels["supplier"].text() == "1"
+        assert page.llm_metric_labels["recurrence"].text() == "1"
         assert page.chatgpt_cluster_model.rowCount() == 2
         assert page.chatgpt_case_model.rowCount() == 4
         assert len(page.llm_cluster_chart.items) == 3
@@ -245,3 +252,46 @@ def test_unclustered_and_legacy_answers_are_readable_without_fabricated_causes()
         }],
     })
     assert data.faelle[0].fehlerwiederkehr == "Nach Tausch erneut nachgewiesen"
+
+
+
+def test_old_result_distinguishes_new_dtc_from_historical_memory():
+    """Gleicher DTC nach Tausch ist nicht automatisch ein erneuter Fehler."""
+    from ntf_insight.analysis.llm_cluster_overview import (
+        _recurrence_for_display,
+    )
+
+    label, note, counted = _recurrence_for_display({
+        "themen": [
+            "Gleicher DTC nach Tausch: letzter Ereignis-km über Tauschstand",
+        ],
+    })
+    assert counted and "LLM-Hinweis" in label
+    assert "unbewiesen" in note
+
+    label, note, counted = _recurrence_for_display({
+        "themen": [
+            "Gleicher Code nach Tausch gespeichert: Wiederauftreten unbewiesen",
+        ],
+    })
+    assert not counted
+    assert "nicht belegt" in label
+
+    label, note, counted = _recurrence_for_display({
+        "themen": [
+            "Neuer Auftretens-km pumpenbezogener DTC nach Tausch",
+        ],
+    })
+    assert not counted and "Vergleich offen" in label
+
+    label, note, counted = _recurrence_for_display({})
+    assert not counted and label == "Nicht strukturiert ausgewertet"
+
+    # Explizite neue Struktur hat Vorrang vor alten Themenkennzeichen.
+    label, note, counted = _recurrence_for_display({
+        "fehlerwiederkehr": "Nicht beurteilbar",
+        "themen": [
+            "Gleicher DTC nach Tausch: letzter Ereignis-km über Tauschstand",
+        ],
+    })
+    assert label == "Nicht beurteilbar" and not counted
