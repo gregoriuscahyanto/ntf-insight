@@ -452,3 +452,33 @@ def test_existing_qec_report_with_inconsistent_tab_counts_is_only_partial(tmp_pa
         gap = _rows(archive, "qec_datenluecken.csv")[0]
         assert "Historie" in gap["fehlende_reiter"]
         assert "Abruf ist unvollstaendig" in gap["datenluecke"]
+
+
+def test_qec_original_field_location_must_exist_in_registered_first_zip(tmp_path):
+    """Erfundene QEC-Quellfundstellen werden beim ChatGPT-Import abgelehnt."""
+    source = _set_up(tmp_path)
+    first = _export(source, tmp_path / "basis-fundstelle.zip")
+    chain = WorkflowAIChainStore(source.store)
+    chain.register_first_export("coolant_pump", PART, first.pfad)
+    with ZipFile(first.pfad) as archive:
+        template = json.loads(archive.read("chatgpt_ergebnis_vorlage.json"))
+        pseudo = _rows(archive, "faelle.csv")[0]["fall_id"]
+        qec = _rows(archive, "qec_berichte.csv")[0]["qec_bericht_id"]
+        correct = _rows(archive, "qec_felder.csv")[0]["fundstelle"]
+    template["analyse_id"] = "Analyse-Test-QEC-Feld"
+    template["faelle"] = [{
+        "fall_id": pseudo,
+        "ntf_bewertung": "NTF fraglich",
+        "belege": [{
+            "quelle": "qec_felder", "quelle_id": qec,
+            "fundstelle": "QEC/99-ERFUNDEN/feld:1",
+            "belegstatus": "Originalbefund",
+        }],
+    }]
+    answer = tmp_path / "qec-falsch.json"
+    answer.write_text(json.dumps(template), encoding="utf-8")
+    with pytest.raises(ValueError, match="QEC-Feldbeleg nicht"):
+        ChatGPTAnalyseStore(source.store).import_file(answer)
+    template["faelle"][0]["belege"][0]["fundstelle"] = correct
+    answer.write_text(json.dumps(template), encoding="utf-8")
+    assert ChatGPTAnalyseStore(source.store).import_file(answer)["faelle"] == 1
