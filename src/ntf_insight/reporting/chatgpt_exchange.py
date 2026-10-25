@@ -1,4 +1,4 @@
-"""Versionierter ChatGPT-Rückgabe-Vertrag für NTF-/QEC-Fallbewertungen.
+"""Versionierter LLM-Rückgabe-Vertrag für NTF-/QEC-Fallbewertungen.
 
 Die Antwort aus einem externen Analysemodell bleibt eine überprüfbare Hypothese,
 kein automatischer Ersatz für QEC-Entscheidungen oder manuelle Fallbewertungen.
@@ -39,7 +39,7 @@ BelegQuelle = Literal[
 ]
 Bewertung = Literal[
     "NTF plausibel", "NTF fraglich", "Kein reiner NTF",
-    "Nicht bewertbar", "Nicht bewertet",
+    "Nicht bewertbar", "Nicht zuordenbar", "Nicht bewertet",
 ]
 Sicherheit = Literal["Hoch", "Mittel", "Niedrig", "Offen"]
 Zuordnung = Literal["Belegt", "Plausibel", "Offen"]
@@ -143,7 +143,7 @@ def _csv_private_mapping(csv_path: Path, paket_id: str) -> list[dict]:
         raise ValueError("Private Zuordnung ist leer oder zu groß.")
     if any(row["paket_id"] != paket_id for row in rows):
         raise ValueError(
-            "Paketkennung der privaten Zuordnung stimmt nicht mit dem ChatGPT-Ergebnis überein."
+            "Paketkennung der privaten Zuordnung stimmt nicht mit dem LLM-Ergebnis überein."
         )
     return rows
 
@@ -324,7 +324,7 @@ class ChatGPTAnalyseStore:
         if row is None:
             raise ValueError(
                 "Zur Prüfung der AE-/LB-Belegzeilen fehlt das ursprünglich "
-                "exportierte ChatGPT-Analyse-ZIP im lokalen Projektarchiv. "
+                "exportierte LLM-Analyse-ZIP im lokalen Projektarchiv. "
                 "Bitte den passenden Projektstand bzw. das erste Analysepaket "
                 "auf diesem PC wiederherstellen; Belege werden nicht geraten."
             )
@@ -373,6 +373,117 @@ class ChatGPTAnalyseStore:
                     f"{category}/{sorted(missing)[0]}"
                 )
         return found
+
+    def _verify_qec_field_locations(
+        self, paket_id: str, references: set[tuple[str, str]],
+    ) -> None:
+        """Feldbelege aus einem QEC-Erstpaket nur fuer echte ZIP-Fundstellen.
+
+        Das neue QEC-Paket erzwingt feldgenaue Belege. Fuer alte, breiter
+        angelegte Analysepakete bleibt die bestehende Legacy-Validierung.
+        """
+        if not references:
+            return
+        try:
+            with self.store.connect() as con:
+                indexed = con.execute(
+                    "SELECT a.payload_json,f.sha256 "
+                    "FROM workflow_first_ai_packages f "
+                    "JOIN source_artifacts a ON a.sha256=f.sha256 "
+                    "WHERE f.paket_id=? LIMIT 1",
+                    [paket_id],
+                ).fetchone()
+        except duckdb.CatalogException:
+            # Legacy-Standalone-Paket ohne Workflowregister: bestehende
+            # QEC-Aliasvalidierung beibehalten.
+            return
+        if indexed is None:
+            # Alte allgemeine Exportpakete muessen nicht registriert sein.
+            # Neue Workflow-QEC-Pakete sind automatisch registriert.
+            return
+        artifact = json.loads(indexed[0])
+        path = Path(artifact["archived_path"])
+        if not path.is_file() or path.is_symlink():
+            raise ValueError("Erstes Analyse-ZIP ist lokal nicht mehr verfuegbar.")
+        with path.open("rb") as source:
+            digest = hashlib.sha256()
+            for chunk in iter(lambda: source.read(1024 * 1024), b""):
+                digest.update(chunk)
+        if digest.hexdigest() != indexed[1]:
+            raise ValueError("Die SHA-256 der ersten QEC-Basis stimmt nicht.")
+        try:
+            with ZipFile(path) as archive:
+                manifest = json.loads(archive.read("manifest.json"))
+                if manifest.get("analyseumfang") != "workflow_01_02_qec":
+                    return
+                with archive.open("qec_felder.csv") as source:
+                    rows = csv.DictReader(
+                        io.TextIOWrapper(
+                            source, encoding="utf-8-sig", newline=""
+                        )
+                    )
+                    existing = {
+                        (str(item.get("qec_bericht_id") or ""),
+                         str(item.get("fundstelle") or ""))
+                        for item in rows
+                    }
+        except (BadZipFile, KeyError, UnicodeError, ValueError) as exc:
+            raise ValueError(
+                "QEC-Belegindex im registrierten Erstpaket nicht lesbar."
+            ) from exc
+        unknown = references - existing
+        if unknown:
+            alias, position = sorted(unknown)[0]
+            raise ValueError(
+                f"QEC-Feldbeleg nicht im exportierten Original vorhanden: "
+                f"{alias}/{position or '[Fundstelle fehlt]'}"
+            )
+
+    def _validate_first_round_focus(self, data: ChatGPTRueckgabe) -> None:
+        """Neue QEC-Erstrunde darf KEINE Clusteranalyse vorwegnehmen.
+
+        Legacy- und allgemeine Quellenpakete sowie die zweite Runde
+        behalten ihre bisherigen kompatiblen Rueckgabeformate.
+        """
+        if data.analyse_id != ergebnis_vorlage(data.paket_id)["analyse_id"]:
+            return
+        try:
+            with self.store.connect() as con:
+                archived = con.execute(
+                    "SELECT a.payload_json FROM workflow_first_ai_packages f "
+                    "JOIN source_artifacts a ON a.sha256=f.sha256 "
+                    "WHERE f.paket_id=? LIMIT 1",
+                    [data.paket_id],
+                ).fetchone()
+        except duckdb.CatalogException:
+            return
+        if archived is None:
+            return
+        source_path = Path(json.loads(archived[0])["archived_path"])
+        try:
+            with ZipFile(source_path) as archive:
+                manifest = json.loads(archive.read("manifest.json"))
+        except (OSError, BadZipFile, ValueError, KeyError) as exc:
+            raise ValueError(
+                "Erste QEC-Analyse-ZIP fuer die Rundenzuordnung "
+                "nicht lesbar."
+            ) from exc
+        if manifest.get("analysezweck") == "ntf_erstentscheidung_ohne_cluster":
+            if (
+                data.cluster or data.clustermethode.strip()
+                or any(case.cluster_id is not None for case in data.faelle)
+            ):
+                raise ValueError(
+                    "LLM-Durchlauf 1 darf keine Cluster enthalten. "
+                    "Bitte cluster=[], clustermethode='' und "
+                    "cluster_id=null je Fall liefern. Clusterung erst in Runde 2."
+                )
+            if any(case.ntf_bewertung == "Nicht bewertet" for case in data.faelle):
+                raise ValueError(
+                    "Jeder Fall im LLM-Durchlauf 1 benoetigt eine "
+                    "NTF-Einstufung. Bei Datenluecken 'Nicht bewertbar' "
+                    "oder 'Nicht zuordenbar' verwenden."
+                )
 
     @staticmethod
     def _validate_belege(
@@ -429,12 +540,12 @@ class ChatGPTAnalyseStore:
             if progress is not None:
                 progress(message)
 
-        report("ChatGPT-Datei prüfen …")
+        report("LLM-Datei prüfen …")
         path = Path(path)
         if path.suffix.casefold() != ".json" or not path.is_file():
-            raise ValueError("Bitte eine ChatGPT-Ergebnisdatei im Format .json wählen.")
+            raise ValueError("Bitte eine LLM-Ergebnisdatei im Format .json wählen.")
         if path.stat().st_size > MAX_JSON_SIZE:
-            raise ValueError("ChatGPT-Ergebnisdatei ist zu groß.")
+            raise ValueError("LLM-Ergebnisdatei ist zu groß.")
         content = path.read_bytes()
         try:
             data = ChatGPTRueckgabe.model_validate_json(content)
@@ -444,11 +555,11 @@ class ChatGPTAnalyseStore:
                 for item in exc.errors()[:3]
             )
             raise ValueError(
-                "ChatGPT-Ergebnis entspricht nicht der gültigen Analysevorlage: "
+                "LLM-Ergebnis entspricht nicht der gültigen Analysevorlage: "
                 + details
             ) from exc
         except ValueError as exc:
-            raise ValueError("ChatGPT-Ergebnis enthält ungültiges JSON.") from exc
+            raise ValueError("LLM-Ergebnis enthält ungültiges JSON.") from exc
         if not _IDENT.fullmatch(data.analyse_id) or not _PAKET_ID.fullmatch(data.paket_id):
             raise ValueError("Ungültige Paket- oder Analysekennung.")
         report("Lokale Paket- und FIN-Zuordnung prüfen …")
@@ -466,6 +577,7 @@ class ChatGPTAnalyseStore:
                 "Analyse-ID ist bereits mit anderem Inhalt gespeichert. "
                 "Für eine neue Version bitte eine neue analyse_id vergeben."
             )
+        self._validate_first_round_focus(data)
 
         case_by_alias: dict[str, str] = {}
         for (art, pseudo), row in mapping.items():
@@ -493,6 +605,13 @@ class ChatGPTAnalyseStore:
                     requested_rows[evidence.quelle].add(evidence.quelle_id)
         report("Zeilenbelege gegen das archivierte Analysepaket prüfen …")
         verified_rows = self._validate_export_rows(data.paket_id, requested_rows)
+        qec_fields = {
+            (evidence.quelle_id, evidence.fundstelle)
+            for item in (*data.cluster, *data.faelle)
+            for evidence in item.belege
+            if evidence.quelle == "qec_felder"
+        }
+        self._verify_qec_field_locations(data.paket_id, qec_fields)
 
         cluster_ids: set[str] = set()
         members: dict[str, str] = {}
@@ -514,7 +633,7 @@ class ChatGPTAnalyseStore:
                 report(f"Fallbewertungen prüfen ({number}/{len(data.faelle)}) …")
             pseudo = finding.fall_id
             if pseudo not in case_by_alias or pseudo in input_cases:
-                raise ValueError("Unbekannte oder doppelte Fallkennung in ChatGPT-Ergebnis.")
+                raise ValueError("Unbekannte oder doppelte Fallkennung in LLM-Ergebnis.")
             input_cases.add(pseudo)
             if finding.cluster_id is not None:
                 if finding.cluster_id not in cluster_ids:
@@ -616,4 +735,4 @@ class ChatGPTAnalyseStore:
                  analyse_id, case_id],
             ).fetchone()
         if not updated:
-            raise ValueError("ChatGPT-Fallbewertung nicht gefunden.")
+            raise ValueError("LLM-Fallbewertung nicht gefunden.")

@@ -19,7 +19,7 @@ from PySide6.QtWidgets import (
 
 
 class ExportOperationDialog(QDialog):
-    """Dieselbe schwebende Oberfläche für ZIP, Projekttransfer und ChatGPT."""
+    """Dieselbe schwebende Oberfläche für ZIP, Projekttransfer und LLM."""
 
     start_requested = Signal(dict)
     cancel_requested = Signal()

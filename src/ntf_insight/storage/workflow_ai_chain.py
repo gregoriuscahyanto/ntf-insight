@@ -1,8 +1,8 @@
-"""Automatische, PC-übertragbare Verknüpfung der beiden ChatGPT-Durchläufe.
+"""Automatische, PC-übertragbare Verknüpfung der beiden LLM-Durchläufe.
 
 Das in Schritt 03 erstellte ZIP wird als unveränderliches SHA-Artefakt im
 bestehenden raw/-Archiv gehalten. Für Schritt 05 wird nur eine bereits
-importierte erste ChatGPT-Antwort mit derselben paket_id verwendet.
+importierte erste LLM-Antwort mit derselben paket_id verwendet.
 """
 from __future__ import annotations
 
@@ -142,14 +142,14 @@ class WorkflowAIChainStore:
 
     def record_import(self, analyse_id: str, *, round_number: int) -> bool:
         if round_number not in (1, 2):
-            raise ValueError("Unbekannter ChatGPT-Durchlauf.")
+            raise ValueError("Unbekannter LLM-Durchlauf.")
         with self.store.connect() as con:
             row = con.execute(
                 "SELECT paket_id FROM chatgpt_imports WHERE analyse_id=?",
                 [analyse_id],
             ).fetchone()
             if row is None:
-                raise ValueError("ChatGPT-Ergebnis wurde noch nicht importiert.")
+                raise ValueError("LLM-Ergebnis wurde noch nicht importiert.")
             package_id = row[0]
             linked = con.execute(
                 "SELECT 1 FROM workflow_first_ai_packages "
@@ -165,7 +165,7 @@ class WorkflowAIChainStore:
                 ).fetchone()
                 if prepared is None:
                     raise ValueError(
-                        "Zweites ChatGPT-Ergebnis passt zu keinem zuvor "
+                        "Zweites LLM-Ergebnis passt zu keinem zuvor "
                         "erzeugten Cluster-Kontextpaket."
                     )
             con.execute(
@@ -193,7 +193,7 @@ class WorkflowAIChainStore:
         payload = json.loads(row[0])
         data = ChatGPTRueckgabe.model_validate(payload)
         if data.paket_id != package_id:
-            raise ValueError("Erste ChatGPT-Auswertung gehört zu einem anderen Paket.")
+            raise ValueError("Erste LLM-Auswertung gehört zu einem anderen Paket.")
         return data.model_dump(exclude_none=True)
 
     def validate_cached_zip(self, package: FirstPackage) -> None:

@@ -128,6 +128,8 @@ class QecWorkflowStore:
                     "fin": case.vin,
                     "reference": reference,
                     "part_number": part_number,
+                    "component_profile_id": case.component_profile_id,
+                    "component_type": case.component_type,
                     "finding": finding,
                     "report": bool(report),
                     "decision": decision,

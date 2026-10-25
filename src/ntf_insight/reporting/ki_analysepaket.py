@@ -135,7 +135,11 @@ def _excel_summary(tables: dict[str, tuple[tuple[str, ...], list[dict]]], stats:
     workbook = Workbook()
     summary = workbook.active
     summary.title = "Übersicht"
-    summary.append(["NTF Insight | KI-Analysepaket"])
+    first_qec = stats.get("analyseumfang") == "workflow_01_02_qec"
+    summary.append([
+        "NTF Insight | LLM-Erstentscheidung" if first_qec
+        else "NTF Insight | Allgemeines KI-Analysepaket"
+    ])
     summary.append(["Stand", "Pseudonymisierte, strukturierte Quelldaten"])
     summary.append(["Fahrzeuge", stats["fahrzeuge"]])
     summary.append(["QEC-/NTF-Fälle", stats["faelle"]])
@@ -144,7 +148,12 @@ def _excel_summary(tables: dict[str, tuple[tuple[str, ...], list[dict]]], stats:
     summary.append(["QEC-JSON-Berichte", stats["qec_berichte"]])
     summary.append(["QEC/TIPS/AutoExport/Lieferanten-Freitext", "Enthalten" if stats["freitexte"] else "Nicht enthalten"])
     summary.append(["Hinweis", "Private Zuordnung bleibt lokal; Freitext kann echte Identifikatoren enthalten."])
-    summary.append(["Methodik", "Clustermerkmale vor Tausch; spätere Befunde/Bewertungen separat."])
+    summary.append([
+        "Methodik",
+        "Nur NTF-Einzelfallvorschlaege; Clustering in Runde 2."
+        if first_qec else
+        "Clustermerkmale vor Tausch; spätere Befunde/Bewertungen separat.",
+    ])
     for sheet_name, table_name in (
         ("Fallliste", "faelle"),
         ("Falldaten", "fallmerkmale"),
@@ -812,7 +821,7 @@ def export_ki_analysepaket(
         "Für jeden Fall Belege mit Quelle, Quelle-ID und genauer Fundstelle angeben.\n"
         "Falls ein QEC-Dokument fehlt, ausdrücklich als Datenlücke kennzeichnen.\n"
         "JSON niemals mit echten FINs, QEC-Referenzen oder internen Dateipfaden füllen.\n"
-        "Die private NICHT_HOCHLADEN-Zuordnung wird niemals an ChatGPT gegeben.\n"
+        "Die private NICHT_HOCHLADEN-Zuordnung wird niemals an LLM gegeben.\n"
         "Weder QEC-Originale noch die KI-Antwort sind automatisch anonymisiert.\n"
     ).encode("utf-8")
     qec_plan = None

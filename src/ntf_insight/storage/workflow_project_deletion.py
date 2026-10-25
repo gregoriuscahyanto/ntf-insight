@@ -248,7 +248,7 @@ def fully_delete_project(
             }
             if followup_packages - packages:
                 raise ValueError(
-                    "Nicht verknüpfte zweite ChatGPT-Analyse vorhanden. "
+                    "Nicht verknüpfte zweite LLM-Analyse vorhanden. "
                     "Vollständiges Löschen aus Sicherheitsgründen verweigert."
                 )
         for package in packages:
@@ -258,7 +258,7 @@ def fully_delete_project(
                 [package, profile, key],
             ).fetchone()[0]:
                 raise ValueError(
-                    "Ein ChatGPT-Paket wird von mehreren Projekten genutzt."
+                    "Ein LLM-Paket wird von mehreren Projekten genutzt."
                 )
             mappings = con.execute(
                 "SELECT art,original_id,fin FROM chatgpt_export_mapping "
@@ -291,7 +291,7 @@ def fully_delete_project(
                 for analyse_id, case_id in legacy_rows
             ):
                 raise ValueError(
-                    "Mindestens eine ChatGPT-Analyse der Projektfälle ist "
+                    "Mindestens eine LLM-Analyse der Projektfälle ist "
                     "noch keinem Projektpaket zugeordnet. Bitte erst "
                     "den Datenstand sichern bzw. die Zuordnung prüfen."
                 )

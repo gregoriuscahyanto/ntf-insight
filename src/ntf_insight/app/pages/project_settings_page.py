@@ -16,6 +16,8 @@ def _component_label(profile_id: str) -> str:
     profiles = {
         "coolant_pump": "Kühlmittelpumpe",
         "hv_battery": "HV-Batterie",
+        "dcdc_converter": "DC/DC-Wandler",
+        "other_component": "Weiteres Bauteil",
     }
     return profiles.get(profile_id, profile_id.replace("_", " ").title())
 

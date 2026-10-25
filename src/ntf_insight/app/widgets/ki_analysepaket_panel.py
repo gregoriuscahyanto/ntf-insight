@@ -1,4 +1,4 @@
-"""GUI für den zweistufigen KI-Analyseexport und geprüften ChatGPT-Rückimport."""
+"""GUI für den zweistufigen KI-Analyseexport und geprüften LLM-Rückimport."""
 from __future__ import annotations
 
 import json
@@ -34,6 +34,8 @@ class KIAnalyseWorker(QThread):
         mit_freitext: bool,
         mit_qec_originalen: bool = False,
         selected_fins: set[str] | None = None,
+        selected_case_ids: set[str] | None = None,
+        workflow_project: tuple[str, str] | None = None,
     ) -> None:
         super().__init__()
         self.service = service
@@ -41,15 +43,33 @@ class KIAnalyseWorker(QThread):
         self.mit_freitext = mit_freitext
         self.mit_qec_originalen = mit_qec_originalen
         self.selected_fins = selected_fins
+        self.selected_case_ids = selected_case_ids
+        self.workflow_project = workflow_project
 
     def run(self) -> None:
         try:
-            result = export_ki_analysepaket(
-                self.service, self.path, mit_freitext=self.mit_freitext,
-                mit_qec_originalen=self.mit_qec_originalen,
-                progress=self.progress.emit,
-                selected_fins=self.selected_fins,
-            )
+            if self.workflow_project is not None:
+                from ntf_insight.reporting.qec_first_package import (
+                    export_qec_first_package,
+                )
+                profile_id, part_number = self.workflow_project
+                result = export_qec_first_package(
+                    self.service, self.path,
+                    profile_id=profile_id, part_number=part_number,
+                    selected_fins=self.selected_fins or set(),
+                    selected_case_ids=self.selected_case_ids or set(),
+                    mit_freitext=self.mit_freitext,
+                    mit_qec_originalen=self.mit_qec_originalen,
+                    progress=self.progress.emit,
+                )
+            else:
+                # Bestehender allgemeiner Quellenexport bleibt separat erhalten.
+                result = export_ki_analysepaket(
+                    self.service, self.path, mit_freitext=self.mit_freitext,
+                    mit_qec_originalen=self.mit_qec_originalen,
+                    progress=self.progress.emit,
+                    selected_fins=self.selected_fins,
+                )
         except Exception as exc:
             self.failed.emit(f"{type(exc).__name__}: {exc}")
             return
@@ -109,6 +129,8 @@ class KIAnalysepaketPanel(QWidget):
         self.import_worker: ChatGPTImportWorker | None = None
         self._guard: Callable[[], bool] | None = None
         self._next_workflow_fins: set[str] | None = None
+        self._next_workflow_case_ids: set[str] | None = None
+        self._next_workflow_project: tuple[str, str] | None = None
         self._use_shared_export_dialog = False
         self._visible: list[dict] = []
 
@@ -116,7 +138,7 @@ class KIAnalysepaketPanel(QWidget):
         layout.setContentsMargins(0, 8, 0, 8)
         layout.setSpacing(8)
         layout.addWidget(QLabel(
-            "KI-Analysepaket · ChatGPT-Austausch und geprüfter Rückimport",
+            "KI-Analysepaket · LLM-Austausch und geprüfter Rückimport",
             objectName="CardTitle",
         ))
         description = QLabel(
@@ -163,7 +185,7 @@ class KIAnalysepaketPanel(QWidget):
         )
         self.export_button.setToolTip(
             "CSV-Clusterdateien und Excel-Übersicht, vollständige einheitliche "
-            "ChatGPT-Ergebnisvorlage, lokale private Pseudonymzuordnung."
+            "LLM-Ergebnisvorlage, lokale private Pseudonymzuordnung."
         )
         self.export_button.clicked.connect(self._request_export)
         row.addWidget(self.export_button)
@@ -181,12 +203,12 @@ class KIAnalysepaketPanel(QWidget):
         layout.addWidget(self.status)
 
         layout.addWidget(QLabel(
-            "ChatGPT-Ergebnisse wieder in die App übernehmen",
+            "LLM-Ergebnisse wieder in die App übernehmen",
             objectName="CardTitle",
         ))
         hint = QLabel(
             "Das Analyse-ZIP enthält chatgpt_ergebnis_vorlage.json und "
-            "chatgpt_ergebnis_schema.json. ChatGPT kann damit eine "
+            "chatgpt_ergebnis_schema.json. LLM kann damit eine "
             "chatgpt_ergebnis.json zurückgeben. Beim Import werden Paket-ID, "
             "Fallpseudonyme und Belegverweise geprüft. Ergebnisse bleiben "
             "von fachlichen Entscheidungen GETRENNT und zunächst ungeprüft.",
@@ -195,7 +217,7 @@ class KIAnalysepaketPanel(QWidget):
         hint.setWordWrap(True)
         layout.addWidget(hint)
         import_row = QHBoxLayout()
-        self.import_button = QPushButton("ChatGPT-Auswertung als JSON importieren…")
+        self.import_button = QPushButton("LLM-Auswertung als JSON importieren…")
         self.import_button.clicked.connect(self._import_result)
         import_row.addWidget(self.import_button)
         self.review_confirm = QPushButton("Markierten Vorschlag als geprüft bestätigen")
@@ -238,12 +260,12 @@ class KIAnalysepaketPanel(QWidget):
         self.review_details.setMinimumHeight(80)
         self.review_details.setMaximumHeight(155)
         self.review_details.setPlaceholderText(
-            "Eine importierte ChatGPT-Fallanalyse auswählen, um alle "
+            "Eine importierte LLM-Fallanalyse auswählen, um alle "
             "Begründungen, Prüfgrenzen, Empfehlungen und Belege zu lesen."
         )
         layout.addWidget(self.review_details)
         self.review_note = QLabel(
-            "Review-Status ändert nur den Prüfvermerk der ChatGPT-Analyse. "
+            "Review-Status ändert nur den Prüfvermerk der LLM-Analyse. "
             "QEC-Entscheidung, Lieferantenursache und bestehende Fallbewertung "
             "werden ausdrücklich NICHT überschrieben.",
             objectName="PageSubtitle",
@@ -295,9 +317,19 @@ class KIAnalysepaketPanel(QWidget):
         )
         return reply == QMessageBox.StandardButton.Yes
 
-    def prepare_workflow_cohort(self, fins: set[str]) -> None:
-        """Einmaliger FIN-Filter für den nächsten Workflow-ZIP-Export."""
+    def prepare_workflow_cohort(
+        self, fins: set[str], *, profile_id: str, part_number: str,
+        case_ids: set[str],
+    ) -> None:
+        """Naechster Schritt-03-Export: exakt diese Sachnummern-Fallkohoerte."""
         self._next_workflow_fins = set(fins)
+        self._next_workflow_case_ids = set(case_ids)
+        self._next_workflow_project = (profile_id, part_number)
+
+    def clear_prepared_workflow_cohort(self) -> None:
+        self._next_workflow_fins = None
+        self._next_workflow_case_ids = None
+        self._next_workflow_project = None
 
     def _request_export(self) -> None:
         """MainWindow owns the shared export card, standalone panel stays usable."""
@@ -360,12 +392,16 @@ class KIAnalysepaketPanel(QWidget):
             )
             return False
         selected = self._next_workflow_fins
-        self._next_workflow_fins = None
+        case_ids = self._next_workflow_case_ids
+        workflow_project = self._next_workflow_project
+        self.clear_prepared_workflow_cohort()
         self.worker = KIAnalyseWorker(
             self.service, destination,
             mit_freitext=mit_freitext,
             mit_qec_originalen=mit_qec_originalen,
             selected_fins=selected,
+            selected_case_ids=case_ids,
+            workflow_project=workflow_project,
         )
         self.worker.progress.connect(self.status.setText)
         self.worker.progress.connect(self.export_progress.emit)
@@ -421,8 +457,8 @@ class KIAnalysepaketPanel(QWidget):
         if not self._can_start():
             return
         filename, _ = QFileDialog.getOpenFileName(
-            self, "ChatGPT-Ergebnis im NTF-Insight-JSON-Vertrag wählen",
-            str(Path.home()), "NTF ChatGPT-Auswertung (*.json)",
+            self, "LLM-Ergebnis im NTF-Insight-JSON-Vertrag wählen",
+            str(Path.home()), "NTF LLM-Auswertung (*.json)",
         )
         if not filename:
             return
@@ -468,7 +504,7 @@ class KIAnalysepaketPanel(QWidget):
         self.import_worker.finished.connect(self._import_finished)
         self.import_button.setEnabled(False)
         self.export_button.setEnabled(False)
-        self.status.setText("ChatGPT-Ergebnis und lokale Fallzuordnung prüfen …")
+        self.status.setText("LLM-Ergebnis und lokale Fallzuordnung prüfen …")
         self.analysis_import_started.emit(path.name)
         self.transfer_busy.emit(True)
         self.import_worker.start()
@@ -481,7 +517,7 @@ class KIAnalysepaketPanel(QWidget):
     def _import_completed(self, result: dict) -> None:
         suffix = " (bereits identisch importiert)" if result["bereits_importiert"] else ""
         self.status.setText(
-            f"ChatGPT-Analyse {result['analyse_id']} lokal gespeichert: "
+            f"LLM-Analyse {result['analyse_id']} lokal gespeichert: "
             f"{result['faelle']} Fälle, {result['cluster']} Cluster{suffix}. "
             "Vorschläge bleiben separat und bis zur fachlichen Prüfung offen."
         )
@@ -490,7 +526,7 @@ class KIAnalysepaketPanel(QWidget):
         self.analysis_imported.emit(result)
 
     def _import_failed(self, message: str) -> None:
-        self.status.setText("ChatGPT-Rückimport abgebrochen: " + message)
+        self.status.setText("LLM-Rückimport abgebrochen: " + message)
         self.analysis_import_failed.emit(message)
 
     def _import_finished(self) -> None:
@@ -542,7 +578,7 @@ class KIAnalysepaketPanel(QWidget):
             return
         finding = self._visible[row]
         prompt = (
-            f"ChatGPT-Vorschlag für Fall {finding['case_id']} "
+            f"LLM-Vorschlag für Fall {finding['case_id']} "
             f"als {status.lower()} markieren?\n\n"
             "Dies ist nur ein Prüfvermerk. Die eigentliche Fallbewertung, "
             "der QEC-Status und Lieferantenangaben bleiben unverändert."

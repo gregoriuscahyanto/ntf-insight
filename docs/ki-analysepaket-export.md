@@ -12,6 +12,127 @@ Die KI-Analyse-ZIP ist **kein** vollständiges Backup. Sie enthält **keine**
 QuickTest-PDFs, QEC-/TIPS-Rohdateien, Anhänge, SMR-D-XML/JSON oder Originalpfade.
 Bereits extrahierte Daten sind zur fallbezogenen Analyse als Tabellen verfügbar.
 
+## Workflow 03: QEC-basierte Erst-/Neuauswertung
+
+**Für jedes registrierte Bauteilprofil nutzbar:** Neben Kühlmittelpumpe auch
+HV-Batterie, DC/DC-Wandler und das frei benennbare Profil „Weiteres Bauteil“.
+Die Eingangs-QEC-Excel muss eine Sachnummer und eine eindeutige Fallreferenz
+haben. Bei unbekannter Bauteilbenennung darf eine Sachnummer nur einem
+Profilprojekt zugeordnet sein, ansonsten bleibt der Fall getrennt.
+
+**Auch Runde 2 ist bauteilneutral:** Ihr Kontext-ZIP verwendet die
+registrierte erste Analysebasis und Unterlagen aus demselben
+Bauteilprofil-/Sachnummernprojekt. Die Hinweise setzen weder eine Pumpe
+noch CPC3 voraus. Diagnosen und Ursachen werden nur bei vorhandenen
+Nachweisen als Hypothesen ausgewertet. Fehlt eine Quelle, ist das eine
+Datenlücke – kein Grund, ihre Inhalte zu erfinden.
+
+### Workflow 05: vollständiger technischer Kontext (zweiter LLM-Export)
+
+Der zweite ZIP-Export übernimmt in `basis/` die **gesamte erste QEC-ZIP**
+und in `voranalyse/erstes_chatgpt_ergebnis.json` die validierte erste
+LLM-Auswertung. Alle Fälle und Pseudonyme bleiben erhalten.
+
+Zusätzlich befinden sich im Ordner `diagnose/` automatisch,
+aber **nur für FINs der gewählten Profil-/Sachnummern-Fallkohorte**:
+
+- `quicktests.csv`: alle lokal geparsten Diagnosis-Viewer-Berichte mit
+  Pseudonym, Diagnosezeitpunkt, Kilometerstand und DTC-/ECU-Anzahlen.
+- `ecu_staende.csv`, `dtc_beobachtungen.csv`,
+  `dtc_parameter.csv`: geparste ECU- und DTC-Einzelwerte samt
+  Fehlerstatus, Häufigkeit, Kilometerständen und Parameterwerten.
+- `quicktest_fallbezug.csv`: zeitlicher Vergleich je ausgewähltem
+  QEC-Fall; bei fehlendem **QEC-belegtem** Tauschdatum ausdrücklich
+  `tauschdatum_nicht_belegt`, bei identischem Tag `zeitlich_unklar`.
+  Keine automatische Zuschreibung zum Bauteil oder Lieferanten.
+- `tp_dashboard_dtc.csv`, `tp_dashboard_reparaturen.csv`,
+  `tp_dashboard_tips.csv`: geparste TP-Dashboard-Zeilen der ausgewählten
+  FINs. Multi-FIN-Sammeldateien werden nie ungefiltert kopiert.
+- `tips_writer.csv`: gegebenenfalls strukturierte TIPS-Writer-Einträge.
+  Mit expliziter Freigabe auch `quicktest_seitentexte.csv` mit dem
+  geparsten Text der vorhandenen Diagnosis-Viewer-Seiten.
+- `LESEHINWEISE.txt`: genaue Tabellenbezüge, Quellenstatus und
+  Trennung von Fahrzeugbeobachtung und Schadteilbefund.
+
+Mit **getrennter Freigabe** umfasst `unterlagen/` zusätzlich alle
+diesem Projekt explizit zugeordneten Originalunterlagen aus Schritt 04,
+nicht geparste QuickTest-PDFs als Fallback sowie abrufbare TIPS-Writer-
+Originale/Anhänge. Ein bereits geparster QuickTest wird nicht noch
+einmal als PDF mitgeschickt. Die vollständigen QEC-Freitexte/Originale
+aus Runde 1 haben **ihre eigene Freigabe**, unabhängig von den
+zusätzlichen technischen Unterlagen.
+
+Das `cluster_kontext_manifest.json` nennt den Projektbezug, den
+Diagnosedatenumfang, die Kategorie der Originalbelege und
+**Auslassungsgründe**. Beispiele: ein Beleg hat einen unpassenden
+FIN-/Fallhinweis, ist bereits geparst, ist nicht freigegeben oder
+ist eine nicht filterbare globale TP-Sammeldatei.
+
+**Wichtig:** Unstrukturierte, manuell einem Projekt zugeordnete Dateien
+werden nach Profil/Sachnummer archiviert, ihr gesamter Inhalt kann aber
+nicht automatisch auf weitere Sachnummern/FINs geprüft werden.
+Alle Daten benötigen eine Unternehmensfreigabe. Das Programm erstellt
+nur eine lokale ZIP; einen Upload löst es nicht aus.
+Für mehr als 1 GiB unkomprimierte Unterlagen ist eine bewusste Aufteilung
+erforderlich; die App ersetzt keine Dateibelege stillschweigend.
+
+Die Schaltfläche **QEC-Neuauswertung exportieren (ZIP)** in Schritt 03 ist
+absichtlich **enger** als der bisherige allgemeine Quellenexport:
+
+- **Schritt 01:** Nur explizit ausgewählte QEC-Fälle des aktuellen
+  Kühlmittelpumpen-Profils und der aktuellen Sachnummer, Fahrzeugpseudonym,
+  Teilegruppe und Pumpentauschanker. Auch eine gemeinsame FIN mit einem
+  anderen Schadteilfall führt **nicht** zu einer Übernahme des Fremdfalls.
+- **Schritt 02:** Alle gespeicherten, eindeutig passenden QEC-Befundungsreiter
+  (WE-Daten, Voranalysen, Stellungnahme Lieferant, Ergebnis/Nachanalyse,
+  Historie), strukturierte Feld- und Tabellenbelege und QEC-Datenlücken.
+- **Nicht enthalten:** QuickTests, DTCs aus Diagnosis Viewer, AutoExport,
+  separate TIPS-Quellen, SMR-D oder technische Unterlagen aus Schritt 04.
+  Die vertiefte Untersuchung dieser Zusatzquellen folgt erst in Schritt 05.
+- **Standardmäßig ohne Freitext:** Originale Feldtexte, Lieferantenstellungnahme,
+  Nachanalyse und ganze QEC-Reitertexte werden nur bei aktivierter
+  **vertraulicher Freitext-Option** aufgenommen. Eine getrennte Option
+  erlaubt unveränderte QEC-Originale und Anhänge. Beide Optionen erfordern
+  Unternehmensfreigabe; auch Pseudonyme sind keine sichere Anonymisierung.
+
+Das erste ZIP enthält in diesem Modus unter anderem
+`faelle.csv`, `fahrzeuge.csv`, `fallmerkmale.csv`,
+`qec_berichte.csv`, `qec_felder.csv`,
+`qec_datenluecken.csv`, `bewertungen_NICHT_CLUSTER.csv`,
+`methodik.csv`, `Auswertung.xlsx`, das Manifest und den bestehenden
+LLM-Rückgabevertrag. Die Datensätze in `qec_felder.csv` verweisen auf
+die pseudonymisierten QEC-Berichte und ihre konkrete Fundstelle.
+Ein veralteter, widersprüchlicher oder fehlender QEC-Teilbericht wird nicht
+als verlässlicher Originalbefund ausgegeben. **Fehlende Dokumente sind
+ausdrücklich zulässig:** Auch ohne einen einzigen QEC-Bericht erzeugt Schritt
+03 ein vollständiges Fallpaket mit leeren QEC-Belegtabellen und
+`qec_datenluecken.csv`. Für unbelegte Fälle ist `Nicht bewertbar`
+die richtige Ausgangskategorie, nicht eine behauptete Fehlerfreiheit.
+
+**Getrennte LLM-Runden:** Der erste Workflow-Export dient **nur** der
+vorläufigen NTF-Einzelfallentscheidung. Zulässige Einstufungen sind
+`NTF plausibel`, `NTF fraglich`, `Kein reiner NTF` und
+`Nicht bewertbar`/`Nicht zuordenbar` bei unzureichender Datenlage.
+Ein möglicher Verursachungsbereich ist eine getrennte Hypothese, keine
+Schuldzuschreibung. Runde 1 liefert `cluster=[]`, keine Cluster-IDs und
+auch keine `cluster_input.csv`. Die tiefgehende technische Ursachenanalyse
+und Clusterung erfolgen erst mit dem zweiten LLM-Export aus Schritt 05.
+Der **allgemeine** Datenquellen-Export besitzt weiterhin seine eigene
+`cluster_input.csv`, unabhängig vom QEC-Erstworkflow.
+**Neuauswertung:** Ein erneuter Export erzeugt eine neue `paket_id`
+mit eigener lokaler `_NICHT_HOCHLADEN_ZUORDNUNG.csv`. Frühere Pakete
+und die zugehörigen LLM-Ergebnisse bleiben bestehen. Die erste
+Auswertung des neuen Pakets erscheint erst nach Import ihrer neuen
+Ergebnis-JSON; manuelle QEC-Entscheidungen bleiben unverändert.
+
+### Separater allgemeiner Quellenexport
+
+Der nachfolgend dokumentierte **allgemeine Quellenexport unter
+Datenquellen** behält für bestehende Arbeitsweisen den größeren
+Datenumfang mit QuickTests, AutoExport, TIPS und Lieferantenkontext.
+Die Tabellenliste im nächsten Abschnitt beschreibt **diesen allgemeinen
+Export**, nicht das QEC-ZIP von Workflow 03.
+
 ## Bedienung
 
 Unter **Datenquellen**:

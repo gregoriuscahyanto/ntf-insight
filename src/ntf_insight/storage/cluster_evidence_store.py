@@ -26,7 +26,7 @@ EVIDENCE_CATEGORIES = (
     ("network_topology", "Vehicle Network Topology"),
     ("hardware_changes", "HW-Änderungsstände"),
     ("software_changes", "SW-Änderungsstände"),
-    ("additional", "Weitere Unterlagen (Kühlung/Pumpe)"),
+    ("additional", "Weitere technische Unterlagen"),
 )
 CATEGORY_LABELS = dict(EVIDENCE_CATEGORIES)
 ALLOWED_SUFFIXES = frozenset({

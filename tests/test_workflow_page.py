@@ -54,6 +54,61 @@ def test_workflow_upsert_and_context_survive_reopen(tmp_path):
     assert restored.load("hv_battery", "A 123 456") == WorkflowProgress()
 
 
+def test_generic_qec_project_scope_and_targets(tmp_path, monkeypatch):
+    """HV-/DC-DC-Projekte bekommen QEC-Faelle; uneindeutige Profile nie."""
+    from ntf_insight.storage.workflow_projects import NTFProject
+
+    app, window = _window(tmp_path, monkeypatch)
+    page = window.pages["workflow"]
+    source = page.qec_store
+    try:
+        page.project_store.save(
+            NTFProject("hv_battery", "A 100 001", "HV-Batterie", ("BMS",))
+        )
+        page.project_store.save(
+            NTFProject("dcdc_converter", "B 200 002", "DC/DC-Wandler", ())
+        )
+        rows = [
+            {
+                "fin": "WDD12345678901234", "case_id": "QEC-BAT-1",
+                "reference": "123456", "part_number": "A 100 001",
+                "component_profile_id": None,
+                "component_type": "HV-Batterie",
+                "finding": "Nicht geprüft", "tp_dashboard": False,
+                "decision": "Offen", "reason": "", "report": False,
+            },
+            {
+                "fin": "WDD12345678901235", "case_id": "QEC-DCDC-1",
+                "reference": "123457", "part_number": "B 200 002",
+                "component_profile_id": None,
+                "component_type": "DC/DC-Wandler",
+                "finding": "", "tp_dashboard": False,
+                "decision": "Offen", "reason": "", "report": False,
+            },
+        ]
+        monkeypatch.setattr(source, "rows", lambda _root: rows)
+        monkeypatch.setattr(source, "active_sources", lambda: [])
+        page.activate_project("hv_battery", "A 100 001")
+        assert [item["case_id"] for item in page._scoped_rows] == ["QEC-BAT-1"]
+        assert [(x.fin, x.reference) for x in page.qec_targets()] == [
+            ("WDD12345678901234", "123456")
+        ]
+        assert page.ai_export_button.isEnabled()
+
+        page.activate_project("dcdc_converter", "B 200 002")
+        assert [item["case_id"] for item in page._scoped_rows] == ["QEC-DCDC-1"]
+
+        # Nachträglich doppelt deklarierte Sachnummer: kein erratenes Profil.
+        page.project_store.save(
+            NTFProject("hv_battery", "B 200 002", "HV-Batterie", ())
+        )
+        page.refresh_data()
+        assert page._scoped_rows == []
+    finally:
+        window.close()
+        app.processEvents()
+
+
 def test_five_horizontal_steps_show_inline_workspaces_and_resume(tmp_path, monkeypatch):
     app, window = _window(tmp_path, monkeypatch)
     page = window.pages["workflow"]
@@ -198,12 +253,10 @@ def test_ntf_table_combined_filters_search_sort_and_original_counts(tmp_path, mo
         assert page.ntf_model.rowCount() == 3
         assert page.ntf_table.isSortingEnabled()
         assert page.ntf_proxy.rowCount() == 3
-        assert "QEC-Fachentscheidungen: 1/3" in page.ntf_status.text()
-        assert "ChatGPT-Vorschläge: 3/3 importiert" in page.ntf_status.text()
-        assert "1 bestätigt" in page.ntf_status.text()
-        assert "1 abgelehnt" in page.ntf_status.text()
-        assert "1 ungeprüft" in page.ntf_status.text()
-        assert "1/3 QEC-entschieden" in page.cards[2].text()
+        assert not page.ntf_status.isVisible()
+        assert not page.ntf_status.text()
+        assert "LLM-Analyse offen" in page.cards[2].text()
+        assert page.cards[2].property("workflowState") == "pending"
         assert "3 von 3" in page.ntf_filter_count.text()
 
         page.ntf_search.setText("WDD12345678901236 stecker")
@@ -213,7 +266,7 @@ def test_ntf_table_combined_filters_search_sort_and_original_counts(tmp_path, mo
         # SSL-Kohorte und Verteilung dürfen NICHT neu berechnet werden.
         assert len(page._scoped_rows) == 3
         assert page.ntf_model.rowCount() == 3
-        assert "1/3 QEC-entschieden" in page.cards[2].text()
+        assert "LLM-Analyse offen" in page.cards[2].text()
 
         page.ntf_search.clear()
         review_filter = page.ntf_filter_boxes[6]
@@ -992,7 +1045,7 @@ def test_export_dialog_keeps_completed_file_and_estimated_remaining_time(
     window.show()
     app.processEvents()
     dialog = window._show_operation_progress(
-        "Zweiter ChatGPT-Export", "Paket vorbereiten …",
+        "Zweiter LLM-Export", "Paket vorbereiten …",
     )
     assert isinstance(dialog, ExportOperationDialog)
     dialog.update_message("KI-Basis kopieren: 2/8")
@@ -1085,3 +1138,84 @@ def test_workflow_fetch_has_no_secondary_progress_or_stop_button(
     page.set_context_scraper_busy("diagnosis_viewer", False)
     window.close()
     app.processEvents()
+
+
+
+def test_step_three_card_turns_green_only_after_first_llm_result(tmp_path, monkeypatch):
+    """Manuelle QEC-Entscheidungen sind kein LLM-Ergebnis."""
+    from types import SimpleNamespace
+
+    app, window = _window(tmp_path, monkeypatch)
+    try:
+        page = window.pages["workflow"]
+        monkeypatch.setattr(page.qec_store, "rows", lambda _root: _qec_rows())
+        monkeypatch.setattr(page.qec_store, "active_sources", lambda: [])
+        page.activate_project("coolant_pump", "A 123 456")
+        assert page.ai_export_button.text() == "LLM-Analysepaket erstellen (ZIP)"
+        assert page.ai_import_button.text() == "LLM-Ergebnis importieren (JSON)"
+        assert page.cards[2].property("workflowState") == "pending"
+        assert "LLM-Analyse offen" in page.cards[2].text()
+        assert "QEC-entschieden" not in page.cards[2].text()
+        assert not page.ntf_status.text()
+
+        page.first_package = SimpleNamespace(
+            paket_id="a" * 32, analysis_id=None
+        )
+        page.refresh()
+        assert page.cards[2].property("workflowState") == "partial"
+        assert "LLM-Paket erstellt" in page.cards[2].text()
+
+        page.first_package = SimpleNamespace(
+            paket_id="a" * 32, analysis_id="Analyse-aaa-01"
+        )
+        page.refresh()
+        assert page.cards[2].property("workflowState") == "done"
+        assert "LLM-Analyse vorhanden" in page.cards[2].text()
+    finally:
+        window.close()
+        app.processEvents()
+
+
+def test_step_four_counts_unique_auto_and_selected_technical_documents(tmp_path):
+    """Portal-PDF und manuelles +Beleg derselben SHA werden einmal gezaehlt."""
+    from hashlib import sha256
+    from types import SimpleNamespace
+
+    from ntf_insight.storage.workflow_source_coverage import (
+        SourceCoverage, count_project_documents,
+    )
+
+    quicktest = tmp_path / "quicktest.pdf"
+    quicktest.write_bytes(b"%PDF-1.0\nquicktest")
+    tp = tmp_path / "tp.csv"
+    tp.write_text("fin,dtc\nWDD12345678901234,P001", encoding="utf-8")
+    network = tmp_path / "netzwerk.cdd"
+    network.write_bytes(b"<cdd>Netzwerk</cdd>")
+
+    def evidence(path, category):
+        return SimpleNamespace(
+            source_path=path,
+            category=category,
+            sha256=sha256(path.read_bytes()).hexdigest(),
+        )
+
+    coverage = {
+        "diagnosis_viewer": SourceCoverage(
+            "diagnosis_viewer", 1, 1, 1, 1, 1,
+            local_paths=(quicktest,),
+        ),
+        "tp_dashboard": SourceCoverage(
+            "tp_dashboard", 1, 1, 1, 1, 1,
+            local_paths=(tp,),
+        ),
+    }
+    attached = [
+        evidence(quicktest, "diagnosis_viewer"),
+        evidence(network, "cdd_smrd"),
+        evidence(network, "additional"),  # Gleiche Bytes trotz zwei Kategorien.
+    ]
+    counts = count_project_documents(coverage, attached)
+    assert counts.total == 3
+    assert counts.automatic == 2
+    assert counts.manual == 2
+    assert counts.overlap == 1

@@ -560,7 +560,7 @@ class SourcesPage(QWidget):
             "Originaldaten oder ein ZIP mit unveränderten Dateien.\n\n"
             "Originaldateien können echte FINs, Diagnose- und Lieferanteninformationen "
             "enthalten. Das ZIP ist nicht verschlüsselt; eine Anonymisierung "
-            "erfolgt NICHT. Kein ungeprüfter Upload an ChatGPT oder GitHub."
+            "erfolgt NICHT. Kein ungeprüfter Upload an LLM oder GitHub."
         )
         safe_button = choice.addButton(
             "Nur technisches Fehlerprotokoll", QMessageBox.ButtonRole.AcceptRole
