@@ -1320,6 +1320,19 @@ class WorkflowPage(QWidget):
         if coverage is not None:
             coverage.setVisible(not active)
         if timestamp is not None:
+            if active:
+                # Ein kurzer Zeitstempel unter dem zweizeiligen FIN-Bestand
+                # konnte beim Verkleinern der Quellzeile hinter dem aktiven
+                # Parsing-Balken durchscheinen. Waehrend eines Jobs ist er
+                # nicht nutzbar: Text zusaetzlich zur Sichtbarkeit leeren.
+                if timestamp.property("inactiveSourceDate") is None:
+                    timestamp.setProperty("inactiveSourceDate", timestamp.text())
+                timestamp.clear()
+            else:
+                saved = timestamp.property("inactiveSourceDate")
+                if isinstance(saved, str):
+                    timestamp.setText(saved)
+                timestamp.setProperty("inactiveSourceDate", None)
             timestamp.setVisible(not active)
         bar.setVisible(active)
         label.setVisible(active)
