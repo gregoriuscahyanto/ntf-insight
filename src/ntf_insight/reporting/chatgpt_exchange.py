@@ -58,14 +58,14 @@ class ChatGPTBeleg(BaseModel):
 
 
 FehlerbildKategorie = Literal[
-    "Stromaufnahme zu hoch / Ueberstrom",
+    "Stromaufnahme zu hoch / Überstrom",
     "Stromaufnahme zu niedrig / fehlender Strom",
     "Kurzschluss / Sicherung",
     "Bus / Kommunikation",
     "Versorgung / Spannung / Masse",
     "Ansteuerung / Software / Regelung",
     "Leistung / Funktion / Temperatur",
-    "Mechanik / Geraeusch / Beschaedigung",
+    "Mechanik / Geräusch / Beschädigung",
     "Feuchte / Korrosion / Abdichtung",
     "Sensorik / Signal",
     "Sonstige Symptome",
@@ -73,7 +73,7 @@ FehlerbildKategorie = Literal[
 ]
 FehlerbildNachweis = Literal[
     "Werkstattangabe", "Diagnostisch belegt",
-    "Laborbefund", "Mehrfach belegt", "Hypothese / unbestaetigt",
+    "Laborbefund", "Mehrfach belegt", "Hypothese / unbestätigt",
 ]
 NachweisProfil = Literal[
     "Werkstattangabe vorhanden",
@@ -82,10 +82,10 @@ NachweisProfil = Literal[
     "Diagnose am Tauschtag (km-Indiz nach)",
     "Diagnose am Tauschtag (Reihenfolge offen)",
     "Diagnose nach Tausch (Datum)",
-    "Zeitrelation widerspruechlich",
+    "Zeitrelation widersprüchlich",
     "Laborfehler reproduziert",
     "Laborfehler nicht reproduziert",
-    "Laborbefund optisch auffaellig",
+    "Laborbefund optisch auffällig",
     "Datenlage unzureichend",
 ]
 
@@ -95,7 +95,7 @@ class LLMFehlerbild(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
     kategorie: FehlerbildKategorie
-    nachweisstatus: FehlerbildNachweis = "Hypothese / unbestaetigt"
+    nachweisstatus: FehlerbildNachweis = "Hypothese / unbestätigt"
     sicherheit: Sicherheit = "Offen"
     begruendung: str = Field(default="", max_length=1800)
     belege: list[ChatGPTBeleg] = Field(default_factory=list, max_length=15)
