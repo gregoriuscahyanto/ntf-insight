@@ -147,7 +147,7 @@ def _create_test_data(tmp_path: Path):
 def test_comprehensive_second_export_contains_parsed_diagnosis_and_unparsed_fallback(
     tmp_path,
 ):
-    source, evidence, pending, parsed, tech, foreign = _create_test_data(tmp_path)
+    source, evidence, _pending, _parsed, _tech, _foreign = _create_test_data(tmp_path)
     first, first_result = _first(source, tmp_path / "first.zip")
     exported = export_cluster_context(
         evidence, "coolant_pump", PART, first.path,
