@@ -168,6 +168,22 @@ def _gekuerzte_fin(fin: str) -> str:
     return f"***{fin[-5:]}"
 
 
+class VeDocBrowserFehler(RuntimeError):
+    """Browserprozess oder Browserfenster ist waehrend des Abrufs verschwunden."""
+
+
+def _browserfehler(erreur: Exception) -> bool:
+    """Playwright-Fehler ohne ungesicherte URL-/DOM-Texte auszugeben einordnen."""
+    meldung = str(erreur).lower()
+    # Ein SSO-Popup darf beim erfolgreichen Redirect normal schliessen.
+    if "target page, context or browser has been closed" in meldung:
+        return False
+    return any(text in meldung for text in (
+        "page crashed", "browser has been closed", "browser closed",
+        "connection closed", "browser disconnected",
+    ))
+
+
 def _ist_sso_seite(url: str) -> bool:
     adresse = urlsplit(url)
     return adresse.scheme == "https" and adresse.hostname == _SSO_HOST
@@ -235,25 +251,66 @@ def _sso_felder_ausfuellen(seite, zugang: tuple[str, str], gesendet: dict[str, b
         print("Mercedes-SSO: Passwort gesendet. Gegebenenfalls PING ID bestaetigen.")
 
 
-def _anmelden(kontext, *, vedoc_host: str, login_timeout_s: int) -> object:
-    """Automatischer SSO-Login, MFA bleibt ein manueller Sicherheitsschritt."""
+def _anmelden(
+    kontext, *, vedoc_host: str, login_timeout_s: int, browser=None,
+    auto_login: bool = True,
+) -> object:
+    """SSO abwarten; Browserabsturz statt stiller Endlosschleife erkennen.
+
+    Auto-Login nutzt nur Mercedes-SSO. Im manuellen Modus werden keine
+    gespeicherten Zugangsdaten ausgelesen und keine Eingaben automatisiert.
+    """
     deadline = time.monotonic() + login_timeout_s
     zugang: tuple[str, str] | None = None
     gesendet = {"benutzer": False, "passwort": False}
     sso_geoeffnet = False
-    print("Warte auf die VeDoc-Anmeldung. PING ID bei Bedarf am Smartphone bestaetigen.")
+    manuell_erklaert = False
+    naechster_status = time.monotonic() + 12
+    ohne_fenster_seit: float | None = None
+    beobachtet: set[int] = set()
+    renderer_abgestuerzt = {"ja": False}
+
+    def crash_erkannt(*_argumente) -> None:
+        renderer_abgestuerzt["ja"] = True
+
+    print("Warte auf die VeDoc-Anmeldung. PING ID bei Bedarf am Smartphone bestaetigen.", flush=True)
     while time.monotonic() < deadline:
-        for seite in reversed(kontext.pages):
-            if seite.is_closed():
-                continue
+        if renderer_abgestuerzt["ja"]:
+            raise VeDocBrowserFehler("Die VeDoc-/SSO-Browserseite ist abgestuerzt.")
+        if browser is not None and not browser.is_connected():
+            raise VeDocBrowserFehler("Die Verbindung zu Edge/Chromium ist abgebrochen.")
+        try:
+            seiten = [seite for seite in kontext.pages if not seite.is_closed()]
+        except Exception:
+            raise VeDocBrowserFehler("Der Browser-Kontext ist nicht mehr erreichbar.") from None
+
+        if not seiten:
+            if ohne_fenster_seit is None:
+                ohne_fenster_seit = time.monotonic()
+            elif time.monotonic() - ohne_fenster_seit >= 5:
+                raise VeDocBrowserFehler("Alle Browserfenster wurden geschlossen.")
+        else:
+            ohne_fenster_seit = None
+
+        for seite in reversed(seiten):
+            if id(seite) not in beobachtet:
+                beobachtet.add(id(seite))
+                registrieren = getattr(seite, "on", None)
+                if callable(registrieren):
+                    registrieren("crash", crash_erkannt)
             try:
                 if _ist_vedoc_bereit(seite, vedoc_host):
-                    print("VeDoc-Anmeldung abgeschlossen.")
+                    print("VeDoc-Anmeldung abgeschlossen.", flush=True)
                     return seite
                 if _ist_sso_seite(seite.url):
-                    if zugang is None:
-                        zugang = _zugangsdaten_fuer_lauf()
-                    _sso_felder_ausfuellen(seite, zugang, gesendet)
+                    if auto_login:
+                        if zugang is None:
+                            zugang = _zugangsdaten_fuer_lauf()
+                        _sso_felder_ausfuellen(seite, zugang, gesendet)
+                    elif not manuell_erklaert:
+                        print("Manueller SSO-Modus: Benutzerkennung und Passwort im Browser eingeben; "
+                              "PING ID selbst bestaetigen.", flush=True)
+                        manuell_erklaert = True
                     continue
                 if not sso_geoeffnet:
                     adresse = urlsplit(seite.url)
@@ -264,13 +321,33 @@ def _anmelden(kontext, *, vedoc_host: str, login_timeout_s: int) -> object:
                         if sso.count() and sso.first.is_visible():
                             sso.first.click(timeout=3000)
                             sso_geoeffnet = True
-            except (KeyboardInterrupt, EOFError, ValueError):
+            except (KeyboardInterrupt, EOFError, ValueError, VeDocBrowserFehler):
                 raise
-            except Exception:
-                # Login-Redirects koennen gleichzeitig den DOM invalidieren.
+            except Exception as fehler:
+                if renderer_abgestuerzt["ja"] or (browser is not None and not browser.is_connected()):
+                    raise VeDocBrowserFehler("Der Browser ist waehrend der Anmeldung abgestuerzt.") from None
+                if _browserfehler(fehler):
+                    raise VeDocBrowserFehler("Die Browserseite wurde geschlossen oder ist abgestuerzt.") from None
+                # Ein normaler SSO-Redirect kann die aktuelle Seite kurzfristig ungueltig machen.
                 continue
-        time.sleep(0.5)
-    raise TimeoutError("SSO-/PING-ID-Anmeldung nicht abgeschlossen; VeDoc-Seite nicht bereit.")
+
+        if time.monotonic() >= naechster_status:
+            verbleibend = max(0, int(deadline - time.monotonic()))
+            print(f"SSO/PING ID weiterhin ausstehend ({verbleibend} s verbleibend). "
+                  "Browserfenster pruefen; Abbruch mit Strg+C.", flush=True)
+            naechster_status = time.monotonic() + 12
+        if seiten:
+            try:
+                seiten[0].wait_for_timeout(400)
+            except Exception as fehler:
+                if renderer_abgestuerzt["ja"] or (browser is not None and not browser.is_connected()):
+                    raise VeDocBrowserFehler("Der Browser ist waehrend der Anmeldung abgestuerzt.") from None
+                if _browserfehler(fehler):
+                    raise VeDocBrowserFehler("Die Browserseite wurde geschlossen oder ist abgestuerzt.") from None
+                # Redirect kann genau beim Warten stattgefunden haben.
+        else:
+            time.sleep(0.4)
+    raise TimeoutError("SSO-/PING-ID-Anmeldung nach Ablauf des Login-Timeouts nicht abgeschlossen.")
 
 
 def _fahrzeugdaten_oeffnen(seite, timeout_ms: int) -> None:
@@ -418,6 +495,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--timeout", type=int, default=30, help="Timeout pro Schritt in Sekunden")
     parser.add_argument("--login-timeout", type=int, default=240,
                         help="Maximale Wartezeit fuer SSO/PING ID in Sekunden")
+    parser.add_argument("--login-manuell", action="store_true",
+                        help="SSO ohne automatisches Ausfuellen von Benutzername/Passwort")
     argumente = parser.parse_args(argv)
     try:
         fins = lade_fins(argumente.eingabe)
@@ -451,32 +530,51 @@ def main(argv: list[str] | None = None) -> int:
                     pass
                 seite = _anmelden(
                     kontext, vedoc_host=urlsplit(url).hostname or "",
-                    login_timeout_s=argumente.login_timeout,
+                    login_timeout_s=argumente.login_timeout, browser=browser,
+                    auto_login=not argumente.login_manuell,
                 )
                 _fahrzeugdaten_oeffnen(seite, argumente.timeout * 1000)
                 for nummer, fin in enumerate(fins, 1):
                     try:
                         ergebnis = _abfrage(seite, fin, argumente.timeout * 1000)
-                    except Exception:
+                    except Exception as fehler:
+                        if not browser.is_connected() or _browserfehler(fehler):
+                            raise VeDocBrowserFehler(
+                                "Browser waehrend der FIN-Abfrage geschlossen oder abgestuerzt."
+                            ) from None
                         # Keine internen Browserfehlermeldungen mit FIN/URLs ausgeben.
                         ergebnis = _ergebnis(fin, "fehler", hinweis="VeDoc-Abfrage fehlgeschlagen.")
                     ergebnisse.append(ergebnis)
                     _schreibe_json(json_pfad, ergebnisse)  # Zwischenstand nach jeder FIN.
                     print(f"[{nummer}/{len(fins)}] {_gekuerzte_fin(fin)}: {ergebnis.status}")
             finally:
-                browser.close()  # Temporaeres Profil; keine SSO-Sitzung speichern.
+                try:
+                    if browser.is_connected():
+                        browser.close()  # Temporaeres Profil; keine SSO-Sitzung speichern.
+                except Exception:
+                    pass  # Browserabsturz beim Aufraeumen darf den eigentlichen Fehler nicht ueberdecken.
     except (KeyboardInterrupt, EOFError):
         print("Abgebrochen: bisherige Ergebnisse werden exportiert.")
         returncode = 130
+    except VeDocBrowserFehler as fehler:
+        print(f"Browser-Verbindung verloren: {fehler}", flush=True)
+        print("Erneut starten oder zum Eingrenzen --login-manuell verwenden.", flush=True)
+        returncode = 3
+    except TimeoutError as fehler:
+        print(f"Anmeldung nicht abgeschlossen: {fehler}", flush=True)
+        returncode = 4
     except Exception as fehler:
-        print(f"VeDoc konnte nicht gestartet werden ({type(fehler).__name__}).")
+        print(f"VeDoc konnte nicht gestartet werden ({type(fehler).__name__}).", flush=True)
         returncode = 2
     else:
         returncode = 0 if all(x.status == "gefunden" for x in ergebnisse) else 1
     finally:
-        _schreibe_json(json_pfad, ergebnisse)
-        _schreibe_excel(excel_pfad, ergebnisse)
-        print(f"JSON: {json_pfad}\nExcel: {excel_pfad}")
+        if ergebnisse:
+            _schreibe_json(json_pfad, ergebnisse)
+            _schreibe_excel(excel_pfad, ergebnisse)
+            print(f"JSON: {json_pfad}\nExcel: {excel_pfad}")
+        else:
+            print("Keine FIN verarbeitet; vorhandene Exporte bleiben unveraendert.", flush=True)
     return returncode
 
 
