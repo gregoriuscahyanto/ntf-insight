@@ -1,35 +1,46 @@
-# VeDoc: DCDC223-Seriennummern als JSON und Excel exportieren
+# VeDoc: DCDC223-Seriennummernhistorie nach FIN exportieren
 
-Dieses **eigenständige Kommandozeilenskript** hat keine Verbindung zur NTF-Insight-GUI. Es liest eine TXT-Liste mit vollständigen Fahrzeug-Identnummern (FINs), fragt VeDoc nacheinander ab und schreibt JSON sowie Excel. Grundlage ist die bereitgestellte *Anleitung VeDoc*, insbesondere der Weg **Fahrzeugdaten → FIN-Suche → Steuergeräte → Filter DCDC223 → Seriennummer**.
+Das **eigenständige Python-Skript** `scripts/vedoc_dcdc223_seriennummern.py` arbeitet ohne GUI-Integration. Es liest eine TXT-Liste mit FINs, fragt VeDoc im berechtigten Browserzugang ab und exportiert die **Seriennummern-Änderungshistorie des Steuergeräts DCDC223** als JSON und Excel.
 
-## Voraussetzung
+## Datenquelle und Ablauf (VeDoc-Anleitung v2)
 
-- Berechtigter VeDoc-Zugang, Unternehmensnetz/VPN und ggf. PING-ID/SSO.
-- Python 3.11+ mit den bestehenden Projektabhängigkeiten (python -m pip install -e .).
-- Microsoft Edge (Standard) oder Playwright-Chromium (python -m playwright install chromium).
-- Die VeDoc-Startadresse ist im Skript fest eingebaut: `https://prod.core.public.vedoc.i.mercedes-benz.com/ui/homepage.html`. Eine manuelle URL-Konfiguration ist nicht nötig.
-- Für das automatische Ausfüllen wird der vorhandene **Windows-Anmeldetresor** von NTF Insight genutzt (`NTF Insight - Diagnosis Viewer`). Das Skript liest keine Browser-Passwörter aus.
+**Fahrzeugdaten → vollständige FIN eingeben → Suchen → Historie → Filter öffnen → DCDC223 eingeben.** Danach werden ausschließlich Zeilen mit **Objekt = DCDC223**, **Attributname = Seriennummer** und **exakter FIN im Pfad** ausgewertet. Pro Treffer speichert das Skript:
 
-## Ausführen (PowerShell)
+- **Änderungszeitpunkt** in der von VeDoc angezeigten Schreibweise (ohne angenommene Zeitzone)
+- **Alter Wert** der Seriennummer
+- **Neuer Wert** der Seriennummer
 
-Eine Datei fins.txt außerhalb des Git-Repositories erstellen, **eine vollständige FIN mit 17 Zeichen pro Zeile**. Leere Zeilen und Kommentarzeilen mit # sind erlaubt. Doppelte FINs werden nur einmal verarbeitet. Ungültige FINs führen vor dem Browserstart zu einem Fehler.
+Eine FIN kann mehrere passende Historieneinträge haben. **Alle** werden exportiert, nicht nur die letzte Änderung. Der zeitlich jüngste „Neue Wert“ erscheint zusätzlich in der Übersicht unter **„Letzter neuer Wert (Historie)“**. Dies ist der letzte **dokumentierte** Wert, kein unabhängig bestätigter Ist-Einbauzustand. Bei uneindeutigen oder nicht lesbaren Zeitstempeln wird kein letzter Wert geraten.
 
-~~~powershell
+## Voraussetzungen
+
+- Berechtigter VeDoc-Zugang, Unternehmensnetz/VPN, ggf. PING-ID/SSO.
+- Python 3.11+ und die Projektabhängigkeiten: `python -m pip install -e .`.
+- Microsoft Edge (Standard) oder Playwright-Chromium (`python -m playwright install chromium`).
+- Die fest hinterlegte Startseite ist `https://prod.core.public.vedoc.i.mercedes-benz.com/ui/homepage.html`.
+
+## Start in PowerShell
+
+TXT-Datei **außerhalb des Repositorys** erstellen; pro Zeile eine 17-stellige FIN (leere Zeilen / `#`-Kommentare erlaubt). Doppelte FINs werden nur einmal verarbeitet. Ungültige FINs werden vor dem Browserstart zurückgewiesen.
+
+```powershell
 python scripts/vedoc_dcdc223_seriennummern.py --eingabe 'C:\lokal\fins.txt' --ausgabe 'C:\lokal\vedoc-ergebnisse'
-~~~
+```
 
-Das Skript startet den Browser und erkennt die Anmeldung. Es verwendet bereits im NTF-Insight-Betriebssystem-Tresor gespeicherte SSO-Zugangsdaten oder fragt andernfalls die **Benutzerkennung** und das **Passwort** direkt in PowerShell ab (Passwort verdeckt). Das Ausfüllen erfolgt ausschließlich auf `https://login.mercedes-benz.com`. Eine nötige PING-ID-Freigabe bleibt manuell. Sobald VeDoc bereit ist, beginnt die FIN-Abfrage automatisch; eine Eingabetaste ist dafür nicht mehr erforderlich. Falls Edge nicht verfügbar ist: `--browser chromium`. Bei langsamer Verbindung: `--timeout 60 --login-timeout 360`.
+Die Anmeldung nutzt vorhandene NTF-Insight-Zugangsdaten aus dem Windows-Anmeldetresor (`NTF Insight - Diagnosis Viewer`). Fehlen sie, fragt das Skript die Benutzerkennung und das **verdeckt eingegebene** Passwort in PowerShell ab. Es übermittelt die Zugangsdaten ausschließlich an `https://login.mercedes-benz.com`. Eine erforderliche PING-ID-Freigabe bleibt manuell. Danach beginnt die FIN-Verarbeitung. Optional: `--browser chromium`, `--timeout 60`, `--login-timeout 360`.
 
-## Ausgabe
+## Ausgabedateien
 
-Im angegebenen Ordner entstehen dcdc223_seriennummern.json und dcdc223_seriennummern.xlsx. Die Excel-Tabelle enthält **FIN**, **Steuergerät**, **Seriennummer**, **Status**, **Hinweis** und **Abfragezeit (UTC)**. Die Seriennummer wird bewusst als **Text** gespeichert, damit führende Nullen erhalten bleiben. Die JSON-Datei enthält dieselben Einträge unter fahrzeuge.
+- **`dcdc223_seriennummern.json`**: `fahrzeuge` mit `fin`, `steuergeraet`, `seriennummer` (= letzter neuer Wert, soweit eindeutig), `status`, `hinweis`, `abgefragt_am_utc` und **`aenderungen`** (Liste mit `aenderungszeitpunkt`, `alter_wert`, `neuer_wert`). Quelle: `VeDoc/Historie`.
+- **`dcdc223_seriennummern.xlsx`**, Blatt **DCDC223**: eine Zeile pro FIN, letzter dokumentierter neuer Wert, Anzahl Änderungen und Status.
+- **`dcdc223_seriennummern.xlsx`**, Blatt **Historie**: **eine Zeile je Seriennummernänderung** mit FIN, Steuergerät, Attributname, Änderungszeitpunkt, altem und neuem Wert und FIN-Status.
 
-Statuswerte: gefunden, steuergeraet_nicht_gefunden, seriennummer_fehlt, mehrdeutig, fin_nicht_bestaetigt, zeitueberschreitung, fehler. **Nur gefunden bedeutet, dass für genau diese FIN eine Seriennummer ausgelesen wurde.** Alle anderen Werte müssen bei Bedarf manuell geprüft werden.
+Seriennummern und FINs bleiben in Excel Text; führende Nullen bleiben erhalten und Formeleinschleusungen werden nicht ausgeführt. Die JSON-Datei wird nach jeder FIN als Zwischenstand aktualisiert, am Ende werden beide Formate geschrieben. Erneute Läufe mit demselben Ausgabeordner überschreiben die Dateien.
 
-Nach jeder FIN wird ein JSON-Zwischenstand gespeichert; am Ende (auch bei Abbruch) werden beide Dateien geschrieben. Wiederholte Läufe im selben Ausgabeordner überschreiben die Dateien. Wenn einzelne FINs fehlen, können diese gezielt erneut abgefragt werden.
+Statuswerte: `gefunden`, `keine_seriennummer_aenderung`, `seriennummer_fehlt`, `mehrdeutig`, `zeitstempel_ungueltig`, `fin_nicht_bestaetigt`, `historie_nicht_bestaetigt`, `zeitueberschreitung`, `fehler`. **Keine Historienänderung bedeutet nicht, dass kein DCDC223 verbaut ist.** Eine nicht zur FIN passende Historie wird ausdrücklich zurückgewiesen.
 
-## Datenschutz und Grenzen
+## Datenschutz, technische Grenzen und Prüfung
 
-FINs und Seriennummern sind vertrauliche Fahrzeugdaten. Eingabelisten und Exporte gehören nur in freigegebene lokale Ablagen, **nicht in Git, GitHub Issues, Pull Requests oder CI-Artefakte**. Das Skript speichert **selbst** keine Passwörter, Cookies, Browserprofile oder HTML-Snapshots; es greift lesend auf bereits im Betriebssystem-Tresor gespeicherte NTF-Insight-Anmeldedaten zu. Eine Eingabe über PowerShell wird nicht in den Betriebssystem-Tresor übernommen. Es nutzt nur die reguläre Mercedes-SSO-Anmeldung und die berechtigte VeDoc-Oberfläche. Es gibt keine Backend-API- oder Zugriffsrechtsumgehung.
+Keine echten FINs, Seriennummern, HTML-Beispiele aus dem Unternehmenssystem oder VeDoc-PDFs nach GitHub übertragen. Die lokalen Eingaben und Exporte gehören nur in freigegebene Verzeichnisse. Das Skript speichert keine Passwörter, Browserprofile, Cookies oder HTML-Snapshots; es liest ggf. vorhandene Zugangsdaten aus dem Betriebssystem-Tresor und umgeht keine Zugriffsrechte.
 
-Die HTML-Selektoren wurden anhand der bereitgestellten Anleitung und gespeicherten VeDoc-Seiten entwickelt. **Ein Live-Test im Unternehmensnetz mit berechtigtem Zugang ist noch erforderlich.** Ändert VeDoc die Oberfläche, müssen die Selektoren geprüft werden. Der Abgleich mit der von VeDoc angezeigten FIN verhindert die Zuordnung veralteter Daten vom vorherigen Fahrzeug.
+Die Selektoren und Felder wurden anhand der mitgelieferten **VeDoc-Anleitung v2** und der sechs HTML-Snapshots geprüft. Die Ausleselogik wurde mit dem gefilterten HTML-Beispiel und synthetischen Testfällen offline getestet. **Ein echter VeDoc-Lauf im Unternehmensnetz steht weiterhin aus.** Bei geänderter Oberfläche können Anpassungen an Selektoren, Filter- und Ladeverhalten nötig werden.
