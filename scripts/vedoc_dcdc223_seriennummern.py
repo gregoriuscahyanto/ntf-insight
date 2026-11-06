@@ -284,14 +284,14 @@ def _fahrzeugdaten_oeffnen(seite, timeout_ms: int) -> None:
 
 
 def _abfrage(seite, fin: str, timeout_ms: int) -> Ergebnis:
-    """Bevor Seriennummern gelesen werden, muss VeDoc exakt diese FIN anzeigen."""
+    """Historie nach bestaetigtem FIN-Wechsel laden und DCDC223-Zeilen sammeln."""
     from playwright.sync_api import TimeoutError as PlaywrightTimeout
 
     try:
         _fahrzeugdaten_oeffnen(seite, timeout_ms)
         seite.locator(_FIN_EINGABE).fill(fin)
         seite.locator("#VehicleSearch_000_search").click(timeout=timeout_ms)
-        # Schutz gegen Daten des vorherigen Fahrzeugs bei langsamer Angular-Antwort.
+        # Verhindert das Zuordnen von Ergebnissen des vorherigen Fahrzeugs.
         seite.wait_for_function(
             """fin => {
                 const anzeige = document.querySelector('span[data-ng-bind="viewControl.globalFin"]');
@@ -301,32 +301,39 @@ def _abfrage(seite, fin: str, timeout_ms: int) -> Ergebnis:
             timeout=timeout_ms,
         )
     except PlaywrightTimeout:
-        return _ergebnis(fin, "fin_nicht_bestaetigt", hinweis="FIN-Wechsel in VeDoc nicht bestaetigt.")
+        return _ergebnis(fin, "fin_nicht_bestaetigt", hinweis="FIN-Wechsel nicht bestaetigt.")
 
     try:
         seite.locator(_TAB).click(timeout=timeout_ms)
-        seite.locator("#controlUnitTable").wait_for(state="visible", timeout=timeout_ms)
+        seite.locator("#historyTable").wait_for(state="visible", timeout=timeout_ms)
         filter_feld = seite.locator(_FILTER)
         if not filter_feld.is_visible():
-            seite.locator('button[data-ng-click*="toggleFilter"][data-ng-click*="controlUnitTable"]').click(
-                timeout=timeout_ms
-            )
+            seite.locator(_FILTER_SCHALTER).click(timeout=timeout_ms)
+        filter_feld.wait_for(state="visible", timeout=timeout_ms)
         filter_feld.fill(_STEUERGERAET)
-        # Die Tabelle wird dynamisch gefiltert; Enter ist laut Anleitung nicht noetig.
-        try:
-            seite.locator(_ZEILE).first.wait_for(state="visible", timeout=min(timeout_ms, 8000))
-        except PlaywrightTimeout:
-            pass  # Bei bekannter FIN darf ein DCDC223 tatsaechlich fehlen.
-        vorhanden, seriennummer = lese_seriennummer_aus_html(seite.content())
-        if not vorhanden:
-            return _ergebnis(fin, "steuergeraet_nicht_gefunden", hinweis="Kein DCDC223-Eintrag.")
-        if not seriennummer:
-            return _ergebnis(fin, "seriennummer_fehlt", hinweis="DCDC223 ohne Seriennummer.")
-        return _ergebnis(fin, "gefunden", seriennummer=seriennummer)
+        # Der Filter arbeitet dynamisch ohne Enter; unpassende DOM-Zeilen abwarten.
+        seite.wait_for_function(
+            """() => {
+                const t = document.querySelector('#historyTable');
+                if (!t || !t.getClientRects().length) return false;
+                return [...t.querySelectorAll('tbody tr')].every(r => {
+                    const o = r.querySelector('[data-ng-bind^="historyTable_rec.parentObjectIdentifier"]');
+                    return !o || o.textContent.trim().toUpperCase() === 'DCDC223';
+                });
+            }""",
+            timeout=timeout_ms,
+        )
+        erweitern = seite.locator(_ERWEITERN)
+        if erweitern.count() and erweitern.first.is_visible():
+            erweitern.first.click(timeout=timeout_ms)
+        eintraege = lese_historie_aus_html(seite.content(), fin)
+        return _bewerte_historie(fin, eintraege)
     except ValueError:
-        return _ergebnis(fin, "mehrdeutig", hinweis="Mehrere DCDC223-Eintraege vorhanden.")
+        return _ergebnis(fin, "historie_nicht_bestaetigt",
+                         hinweis="Historie ist nicht eindeutig dieser FIN zuzuordnen.")
     except PlaywrightTimeout:
-        return _ergebnis(fin, "zeitueberschreitung", hinweis="Steuergeraete-Tabelle nicht erreichbar.")
+        return _ergebnis(fin, "zeitueberschreitung",
+                         hinweis="Historienreiter oder Filter nicht bereit.")
 
 
 def _schreibe_json(pfad: Path, ergebnisse: list[Ergebnis]) -> None:
@@ -337,39 +344,62 @@ def _schreibe_json(pfad: Path, ergebnisse: list[Ergebnis]) -> None:
     temporaer.replace(pfad)
 
 
-def _schreibe_excel(pfad: Path, ergebnisse: list[Ergebnis]) -> None:
-    wb = Workbook()
-    ws = wb.active
-    ws.title = "DCDC223"
+def _tabelle_formatieren(ws, spalten: list[str], zeilen: list[list[str]]) -> None:
     ws.sheet_view.showGridLines = False
-    spalten = ["FIN", "Steuergerät", "Seriennummer", "Status", "Hinweis", "Abfragezeit (UTC)"]
     ws.append(spalten)
     for zelle in ws[1]:
         zelle.fill = PatternFill("solid", fgColor="1C2730")
         zelle.font = Font(name="Aptos", size=11, bold=True, color="FFFFFF")
         zelle.alignment = Alignment(vertical="center")
-    ws.row_dimensions[1].height = 25
-    for eintrag in ergebnisse:
-        werte = [eintrag.fin, eintrag.steuergeraet, eintrag.seriennummer or "",
-                 eintrag.status, eintrag.hinweis, eintrag.abgefragt_am_utc]
+    ws.row_dimensions[1].height = 28
+    for werte in zeilen:
         ws.append(werte)
         for zelle in ws[ws.max_row]:
-            # Externe Inhalte bleiben Text, auch wenn sie mit '=' beginnen.
+            # Alle aus VeDoc gelesenen Inhalte sind Text; verhindert Excel-Formeln.
             zelle.data_type = "s"
             zelle.number_format = "@"
             zelle.alignment = Alignment(vertical="center")
-        ws.cell(ws.max_row, 3).font = Font(name="Aptos", color="16635A")
-        ws.row_dimensions[ws.max_row].height = 22
-    for nummer, breite in enumerate((24, 17, 35, 30, 55, 28), 1):
-        ws.column_dimensions[get_column_letter(nummer)].width = breite
+        ws.row_dimensions[ws.max_row].height = 23
     ws.freeze_panes = "A2"
-    if ergebnisse:
-        tabelle = Table(displayName="VeDocDCDC223", ref=f"A1:F{len(ergebnisse) + 1}")
+    for nummer, breite in enumerate(([24, 17, 39, 21, 30, 68, 29]
+                                    if ws.title == "DCDC223" else
+                                    [24, 17, 20, 25, 39, 39, 27]), 1):
+        ws.column_dimensions[get_column_letter(nummer)].width = breite
+    if zeilen:
+        tabelle = Table(displayName="VeDoc" + ws.title, ref=f"A1:G{len(zeilen) + 1}")
         tabelle.tableStyleInfo = TableStyleInfo(
             name="TableStyleMedium2", showFirstColumn=False,
             showLastColumn=False, showRowStripes=True, showColumnStripes=False
         )
         ws.add_table(tabelle)
+
+
+def _schreibe_excel(pfad: Path, ergebnisse: list[Ergebnis]) -> None:
+    wb = Workbook()
+    uebersicht = wb.active
+    uebersicht.title = "DCDC223"
+    _tabelle_formatieren(
+        uebersicht,
+        ["FIN", "Steuergerät", "Letzter neuer Wert (Historie)", "Änderungen", "Status",
+         "Hinweis", "Abfragezeit (UTC)"],
+        [
+            [e.fin, e.steuergeraet, e.seriennummer or "", str(len(e.aenderungen)),
+             e.status, e.hinweis, e.abgefragt_am_utc]
+            for e in ergebnisse
+        ],
+    )
+    historie = wb.create_sheet("Historie")
+    zeilen = [
+        [e.fin, e.steuergeraet, "Seriennummer", a.aenderungszeitpunkt,
+         a.alter_wert or "", a.neuer_wert or "", e.status]
+        for e in ergebnisse for a in e.aenderungen
+    ]
+    _tabelle_formatieren(
+        historie,
+        ["FIN", "Steuergerät", "Attributname", "Änderungszeitpunkt (VeDoc)",
+         "Alter Wert", "Neuer Wert", "FIN-Status"],
+        zeilen,
+    )
     temporaer = pfad.with_suffix(".tmp.xlsx")
     wb.save(temporaer)
     temporaer.replace(pfad)
@@ -377,7 +407,7 @@ def _schreibe_excel(pfad: Path, ergebnisse: list[Ergebnis]) -> None:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
-        description="Liest die DCDC223-Seriennummer je FIN aus VeDoc und exportiert JSON + Excel."
+        description="Exportiert die DCDC223-Seriennummernhistorie je FIN als JSON und Excel."
     )
     parser.add_argument("--eingabe", required=True, type=Path, help="TXT mit einer FIN pro Zeile")
     parser.add_argument("--ausgabe", type=Path, default=Path("data/processed/vedoc_dcdc223"),
