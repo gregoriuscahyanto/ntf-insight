@@ -1,4 +1,4 @@
-"""Eigenstaendiger, lesender VeDoc-Export: FIN-TXT -> DCDC223-Seriennummern (JSON/XLSX).
+"""Eigenstaendiger, lesender VeDoc-Export: FIN-TXT -> DCDC223-Seriennummernhistorie (JSON/XLSX).
 
 Die Anmeldung nutzt den bestehenden NTF-Insight-Schluesselbund oder fragt in PowerShell.
 Weder Zugangsdaten noch HTML-Snapshots oder Browser-Profile werden gespeichert.
@@ -29,12 +29,17 @@ VEDOC_START = "https://prod.core.public.vedoc.i.mercedes-benz.com/ui/homepage.ht
 _SSO_HOST = "login.mercedes-benz.com"
 _FIN_EINGABE = 'input[data-ng-model="viewDataObject.vehicleSearchValue"]'
 _FIN_ANZEIGE = 'span[data-ng-bind="viewControl.globalFin"]'
-_TAB = 'li[heading="Steuergeräte"] a'
-_FILTER = 'input[input-binding="viewControl.controlUnitTable_filterExpression"]'
-_ZEILE = (
-    '#controlUnitTable tbody tr:has('
-    'span[data-ng-bind="controlUnitTable_rec.cuDesignation"]:text-is("DCDC223"))'
-)
+_TAB = 'li[heading="Historie"] a'
+_FILTER = 'input[input-binding="viewControl.historyTable_filterExpression"]'
+_FILTER_SCHALTER = 'button[data-ng-click="toggleFilter(\'historyTable\', \'filter\')"]'
+_ERWEITERN = 'a[data-ng-click="removeScrollLimit(\'historyTable\',viewDataObject.logEntry.length)"]'
+
+
+@dataclass(frozen=True)
+class SeriennummerAenderung:
+    aenderungszeitpunkt: str
+    alter_wert: str | None
+    neuer_wert: str | None
 
 
 @dataclass(frozen=True)
@@ -45,6 +50,7 @@ class Ergebnis:
     status: str
     hinweis: str
     abgefragt_am_utc: str
+    aenderungen: tuple[SeriennummerAenderung, ...] = ()
 
 
 def lade_fins(pfad: Path) -> list[str]:
@@ -79,30 +85,83 @@ def pruefe_vedoc_url(url: str) -> str:
     return url
 
 
-def lese_seriennummer_aus_html(quelltext: str) -> tuple[bool, str | None]:
-    """Verknuepft die DCDC223-Bezeichnung und Seriennummer in derselben Tabellenzeile."""
+def _history_feld(zeile, feld: str) -> str:
+    """Liest explizit das Angular-Binding, nicht beliebige Spaltentexte."""
+    elemente = zeile.xpath(
+        './/*[@data-ng-bind and starts-with(@data-ng-bind, "historyTable_rec.' + feld + '")]'
+    )
+    return elemente[0].text_content().strip() if elemente else ""
+
+
+def lese_historie_aus_html(quelltext: str, fin: str) -> tuple[SeriennummerAenderung, ...]:
+    """Nur Seriennummer-Aenderungen von DCDC223 fuer die volle FIN.
+
+    Die VeDoc-Historie enthaelt auch andere Attribute, z.B. das Datum des
+    ersten Zugriffs. Alte DOM-Zeilen der vorherigen FIN werden abgewiesen.
+    """
     dokument = html.fromstring(quelltext)
-    treffer: list[str | None] = []
-    for zeile in dokument.xpath('//table[@id="controlUnitTable"]//tbody/tr'):
-        bezeichnungen = zeile.xpath('.//*[@data-ng-bind="controlUnitTable_rec.cuDesignation"]')
-        if not any(text.text_content().strip().upper() == _STEUERGERAET for text in bezeichnungen):
+    tabellen = dokument.xpath('//table[@id="historyTable"]')
+    if len(tabellen) != 1:
+        raise ValueError("Historientabelle fehlt oder ist nicht eindeutig.")
+    eintraege: list[SeriennummerAenderung] = []
+    for zeile in tabellen[0].xpath('./tbody/tr'):
+        pfad = _history_feld(zeile, "pathToAttribute")
+        # FIN-Praefix in VeDoc, z.B. '<FIN> / DCDC223'.
+        anfang = pfad.split("/", 1)[0].strip().upper()
+        if _FIN.fullmatch(anfang) and anfang != fin:
+            raise ValueError("Historie gehoert noch zu einer anderen FIN.")
+        if _history_feld(zeile, "parentObjectIdentifier").upper() != _STEUERGERAET:
             continue
-        serielle = zeile.xpath(
-            './/*[@data-ng-bind="controlUnitTable_rec.activeState.serialNumber"]'
-        )
-        seriennummer = serielle[0].text_content().strip() if serielle else ""
-        treffer.append(seriennummer or None)
-    if len(treffer) > 1:
-        raise ValueError("DCDC223 wurde mehrfach gefunden; keine eindeutige Zuordnung.")
-    return (True, treffer[0]) if treffer else (False, None)
+        if _history_feld(zeile, "attributeName").casefold() != "seriennummer":
+            continue
+        if anfang != fin:
+            raise ValueError("DCDC223-Historienzeile hat keine bestaetigte Voll-FIN.")
+        zeit = _history_feld(zeile, "date")
+        alt = _history_feld(zeile, "oldValue")
+        neu = _history_feld(zeile, "newValue")
+        eintraege.append(SeriennummerAenderung(zeit, alt or None, neu or None))
+    return tuple(eintraege)
+
+
+def _bewerte_historie(fin: str, eintraege: tuple[SeriennummerAenderung, ...]) -> Ergebnis:
+    """Letzten dokumentierten neuen Wert ableiten, nicht den aktuellen Einbau behaupten."""
+    if not eintraege:
+        return _ergebnis(fin, "keine_seriennummer_aenderung",
+                         hinweis="Keine passende Seriennummer-Aenderung in der Historie.")
+    try:
+        sortiert = sorted(eintraege, key=lambda x: datetime.strptime(
+            x.aenderungszeitpunkt, "%d.%m.%Y %H:%M:%S"
+        ))
+    except ValueError:
+        return _ergebnis(fin, "zeitstempel_ungueltig",
+                         hinweis="Zeitangabe nicht eindeutig lesbar; keine letzte Seriennummer ableiten.",
+                         aenderungen=eintraege)
+    zeit = sortiert[-1].aenderungszeitpunkt
+    letzte_werte = {eintrag.neuer_wert for eintrag in sortiert
+                    if eintrag.aenderungszeitpunkt == zeit}
+    if len(letzte_werte) != 1:
+        return _ergebnis(fin, "mehrdeutig",
+                         hinweis="Verschiedene neue Seriennummern zum letzten Zeitpunkt.",
+                         aenderungen=tuple(sortiert))
+    wert = next(iter(letzte_werte))
+    if not wert:
+        return _ergebnis(fin, "seriennummer_fehlt",
+                         hinweis="Der letzte Historieneintrag enthaelt keinen neuen Wert.",
+                         aenderungen=tuple(sortiert))
+    return _ergebnis(fin, "gefunden", seriennummer=wert,
+                     hinweis="Seriennummer ist der letzte dokumentierte neue Wert aus VeDoc-Historie.",
+                     aenderungen=tuple(sortiert))
 
 
 def _zeitpunkt() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
-def _ergebnis(fin: str, status: str, seriennummer: str | None = None, hinweis: str = "") -> Ergebnis:
-    return Ergebnis(fin, _STEUERGERAET, seriennummer, status, hinweis, _zeitpunkt())
+def _ergebnis(
+    fin: str, status: str, seriennummer: str | None = None, hinweis: str = "",
+    aenderungen: tuple[SeriennummerAenderung, ...] = (),
+) -> Ergebnis:
+    return Ergebnis(fin, _STEUERGERAET, seriennummer, status, hinweis, _zeitpunkt(), aenderungen)
 
 
 def _gekuerzte_fin(fin: str) -> str:
@@ -271,7 +330,7 @@ def _abfrage(seite, fin: str, timeout_ms: int) -> Ergebnis:
 
 
 def _schreibe_json(pfad: Path, ergebnisse: list[Ergebnis]) -> None:
-    daten = {"quelle": "VeDoc", "steuergeraet": _STEUERGERAET,
+    daten = {"quelle": "VeDoc/Historie", "steuergeraet": _STEUERGERAET,
              "anzahl": len(ergebnisse), "fahrzeuge": [asdict(x) for x in ergebnisse]}
     temporaer = pfad.with_suffix(pfad.suffix + ".tmp")
     temporaer.write_text(json.dumps(daten, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
