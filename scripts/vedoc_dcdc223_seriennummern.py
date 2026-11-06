@@ -494,15 +494,14 @@ def _fahrzeugdaten_oeffnen(seite, timeout_ms: int) -> None:
     feld.wait_for(state="visible", timeout=timeout_ms)
 
 
-def _abfrage(seite, fin: str, timeout_ms: int) -> Ergebnis:
-    """Historie nach bestaetigtem FIN-Wechsel laden und DCDC223-Zeilen sammeln."""
+def _abfrage(seite, fin: str, timeout_ms: int, historie_wartezeit_ms: int = 20000) -> Ergebnis:
+    """Historie nach bestaetigtem FIN-Wechsel laden und auf Ergebnisse warten."""
     from playwright.sync_api import TimeoutError as PlaywrightTimeout
 
     try:
         _fahrzeugdaten_oeffnen(seite, timeout_ms)
         seite.locator(_FIN_EINGABE).fill(fin)
         seite.locator("#VehicleSearch_000_search").click(timeout=timeout_ms)
-        # Verhindert das Zuordnen von Ergebnissen des vorherigen Fahrzeugs.
         seite.wait_for_function(
             """fin => {
                 const anzeige = document.querySelector('span[data-ng-bind="viewControl.globalFin"]');
@@ -521,30 +520,19 @@ def _abfrage(seite, fin: str, timeout_ms: int) -> Ergebnis:
         if not filter_feld.is_visible():
             seite.locator(_FILTER_SCHALTER).click(timeout=timeout_ms)
         filter_feld.wait_for(state="visible", timeout=timeout_ms)
+        # Alter Filter kann noch zur vorherigen FIN gehoeren.
+        filter_feld.fill("")
+        seite.wait_for_timeout(350)
         filter_feld.fill(_STEUERGERAET)
-        # Der Filter arbeitet dynamisch ohne Enter; unpassende DOM-Zeilen abwarten.
-        seite.wait_for_function(
-            """() => {
-                const t = document.querySelector('#historyTable');
-                if (!t || !t.getClientRects().length) return false;
-                return [...t.querySelectorAll('tbody tr')].every(r => {
-                    const o = r.querySelector('[data-ng-bind^="historyTable_rec.parentObjectIdentifier"]');
-                    return !o || o.textContent.trim().toUpperCase() === 'DCDC223';
-                });
-            }""",
-            timeout=timeout_ms,
+        return _warte_auf_historieneintraege(
+            seite, fin, filter_feld, historie_wartezeit_ms,
         )
-        erweitern = seite.locator(_ERWEITERN)
-        if erweitern.count() and erweitern.first.is_visible():
-            erweitern.first.click(timeout=timeout_ms)
-        eintraege = lese_historie_aus_html(seite.content(), fin)
-        return _bewerte_historie(fin, eintraege)
-    except ValueError:
-        return _ergebnis(fin, "historie_nicht_bestaetigt",
-                         hinweis="Historie ist nicht eindeutig dieser FIN zuzuordnen.")
     except PlaywrightTimeout:
         return _ergebnis(fin, "zeitueberschreitung",
                          hinweis="Historienreiter oder Filter nicht bereit.")
+    except ValueError:
+        return _ergebnis(fin, "historie_nicht_bestaetigt",
+                         hinweis="Historie ist nicht eindeutig dieser FIN zuzuordnen.")
 
 
 def _schreibe_json(pfad: Path, ergebnisse: list[Ergebnis]) -> None:
@@ -629,6 +617,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--timeout", type=int, default=30, help="Timeout pro Schritt in Sekunden")
     parser.add_argument("--login-timeout", type=int, default=240,
                         help="Maximale Wartezeit fuer SSO/PING ID in Sekunden")
+    parser.add_argument("--historie-wartezeit", type=int, default=20,
+                        help="Wartezeit auf DCDC223-Historie pro FIN in Sekunden (Standard: 20)")
     parser.add_argument("--login-manuell", action="store_true",
                         help="SSO ohne automatisches Ausfuellen von Benutzername/Passwort")
     parser.add_argument("--nur-login", action="store_true",
@@ -643,6 +633,8 @@ def main(argv: list[str] | None = None) -> int:
             raise ValueError("--timeout muss zwischen 5 und 120 Sekunden liegen.")
         if not 30 <= argumente.login_timeout <= 900:
             raise ValueError("--login-timeout muss zwischen 30 und 900 Sekunden liegen.")
+        if not 5 <= argumente.historie_wartezeit <= 120:
+            raise ValueError("--historie-wartezeit muss zwischen 5 und 120 Sekunden liegen.")
     except (OSError, ValueError) as fehler:
         parser.error(str(fehler))
 
@@ -688,7 +680,10 @@ def main(argv: list[str] | None = None) -> int:
                     _fahrzeugdaten_oeffnen(seite, argumente.timeout * 1000)
                     for nummer, fin in enumerate(fins, 1):
                         try:
-                            ergebnis = _abfrage(seite, fin, argumente.timeout * 1000)
+                            ergebnis = _abfrage(
+                                seite, fin, argumente.timeout * 1000,
+                                argumente.historie_wartezeit * 1000,
+                            )
                         except Exception as fehler:
                             if _browserfehler(fehler) or not _kontext_hat_seiten(kontext):
                                 raise VeDocBrowserFehler(
