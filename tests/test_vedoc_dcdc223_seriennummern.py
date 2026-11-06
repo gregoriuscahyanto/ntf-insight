@@ -371,3 +371,118 @@ def test_browserkontext_schliessung_in_login_wird_sofort_erkannt():
 def test_fin_export_verlangt_weiterhin_eingabedatei():
     with pytest.raises(SystemExit, match='2'):
         modul.main([])
+
+
+class FakeHistorienSeite:
+    """Simuliert Angular-Filterupdates ohne echtes Unternehmensnetz."""
+
+    def __init__(self, gefiltert, ungefiltert):
+        self.sekunden = 0.0
+        self.filter_wert = "DCDC223"
+        self.gefiltert = gefiltert
+        self.ungefiltert = ungefiltert
+        self.filter_feld = self.Filter(self)
+
+    class Filter:
+        def __init__(self, seite):
+            self.seite = seite
+        def fill(self, wert):
+            self.seite.filter_wert = wert
+
+    class Expand:
+        @property
+        def first(self):
+            return self
+        def count(self):
+            return 0
+        def is_visible(self):
+            return False
+
+    def locator(self, selector):
+        assert selector == modul._ERWEITERN
+        return self.Expand()
+
+    def content(self):
+        generator = self.gefiltert if self.filter_wert else self.ungefiltert
+        return generator(self.sekunden)
+
+    def wait_for_timeout(self, ms):
+        self.sekunden += ms / 1000
+
+
+def test_verzoegerte_historie_wird_nicht_als_leer_bewertet(monkeypatch):
+    seite = FakeHistorienSeite(
+        lambda t: html_tabelle() if t < 3 else html_tabelle(html_zeile(neu="000789")),
+        lambda t: html_tabelle(html_zeile(neu="000789")),
+    )
+    monkeypatch.setattr(modul.time, "monotonic", lambda: seite.sekunden)
+    ergebnis = modul._warte_auf_historieneintraege(
+        seite, FIN_1, seite.filter_feld, 8000, ruhezeit_ms=600, intervall_ms=200,
+    )
+    assert ergebnis.status == "gefunden"
+    assert ergebnis.seriennummer == "000789"
+    assert seite.sekunden >= 3.6
+
+
+def test_erst_nach_stabiler_historie_alle_aenderungen_erfasst(monkeypatch):
+    erste = html_zeile(zeit="01.11.2026 10:00:00", neu="000111")
+    zweite = html_zeile(zeit="02.11.2026 10:00:00", alt="000111", neu="000222")
+    seite = FakeHistorienSeite(
+        lambda t: html_tabelle() if t < 1 else (
+            html_tabelle(erste) if t < 1.5 else html_tabelle(erste, zweite)
+        ),
+        lambda t: html_tabelle(erste, zweite),
+    )
+    monkeypatch.setattr(modul.time, "monotonic", lambda: seite.sekunden)
+    ergebnis = modul._warte_auf_historieneintraege(
+        seite, FIN_1, seite.filter_feld, 5000, ruhezeit_ms=700, intervall_ms=200,
+    )
+    assert ergebnis.status == "gefunden"
+    assert ergebnis.seriennummer == "000222"
+    assert len(ergebnis.aenderungen) == 2
+
+
+def test_filter_zeigt_nichts_ungefilterte_historie_findet_seriennummer(monkeypatch):
+    seite = FakeHistorienSeite(
+        lambda t: html_tabelle(),
+        lambda t: html_tabelle(html_zeile(neu="000999")),
+    )
+    monkeypatch.setattr(modul.time, "monotonic", lambda: seite.sekunden)
+    ergebnis = modul._warte_auf_historieneintraege(
+        seite, FIN_1, seite.filter_feld, 1400, ruhezeit_ms=600, intervall_ms=200,
+    )
+    assert ergebnis.status == "gefunden"
+    assert ergebnis.seriennummer == "000999"
+    assert "ungefiltert" in ergebnis.hinweis
+
+
+def test_auch_nach_nachpruefung_kein_passender_eintrag(monkeypatch):
+    ohne_seriennummer = html_tabelle(html_zeile(attribut="Datum des ersten Zugriffs"))
+    seite = FakeHistorienSeite(lambda t: html_tabelle(), lambda t: ohne_seriennummer)
+    monkeypatch.setattr(modul.time, "monotonic", lambda: seite.sekunden)
+    ergebnis = modul._warte_auf_historieneintraege(
+        seite, FIN_1, seite.filter_feld, 1400, ruhezeit_ms=600, intervall_ms=200,
+    )
+    assert ergebnis.status == "keine_seriennummer_aenderung"
+    assert ergebnis.seriennummer is None
+
+
+def test_leere_tabelle_bleibt_unbestaetigt(monkeypatch):
+    seite = FakeHistorienSeite(lambda t: html_tabelle(), lambda t: html_tabelle())
+    monkeypatch.setattr(modul.time, "monotonic", lambda: seite.sekunden)
+    ergebnis = modul._warte_auf_historieneintraege(
+        seite, FIN_1, seite.filter_feld, 1400, ruhezeit_ms=600, intervall_ms=200,
+    )
+    assert ergebnis.status == "historie_nicht_bestaetigt"
+    assert ergebnis.seriennummer is None
+
+
+def test_fremde_fin_auch_nach_warten_nicht_als_fehlend_bewerten(monkeypatch):
+    fremd = html_tabelle(html_zeile(fin=FIN_2, neu="000888"))
+    seite = FakeHistorienSeite(lambda t: fremd, lambda t: fremd)
+    monkeypatch.setattr(modul.time, "monotonic", lambda: seite.sekunden)
+    ergebnis = modul._warte_auf_historieneintraege(
+        seite, FIN_1, seite.filter_feld, 1400, ruhezeit_ms=600, intervall_ms=200,
+    )
+    assert ergebnis.status == "historie_nicht_bestaetigt"
+    assert ergebnis.seriennummer is None
