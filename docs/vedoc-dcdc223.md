@@ -27,7 +27,23 @@ TXT-Datei **außerhalb des Repositorys** erstellen; pro Zeile eine 17-stellige F
 python scripts/vedoc_dcdc223_seriennummern.py --eingabe 'C:\lokal\fins.txt' --ausgabe 'C:\lokal\vedoc-ergebnisse'
 ```
 
-Die Anmeldung nutzt vorhandene NTF-Insight-Zugangsdaten aus dem Windows-Anmeldetresor (`NTF Insight - Diagnosis Viewer`). Fehlen sie, fragt das Skript die Benutzerkennung und das **verdeckt eingegebene** Passwort in PowerShell ab. Es übermittelt die Zugangsdaten ausschließlich an `https://login.mercedes-benz.com`. Eine erforderliche PING-ID-Freigabe bleibt manuell. Danach beginnt die FIN-Verarbeitung. Optional: `--browser chromium`, `--timeout 60`, `--login-timeout 360`. Mit `--login-manuell` erfolgt die gesamte Benutzerkennung-/Passworteingabe direkt im Browser; der Betriebssystem-Tresor wird dabei **nicht** ausgelesen.
+Die Anmeldung nutzt vorhandene NTF-Insight-Zugangsdaten aus dem Windows-Anmeldetresor (`NTF Insight - Diagnosis Viewer`). Fehlen sie, fragt das Skript die Benutzerkennung und das **verdeckt eingegebene** Passwort in PowerShell ab. Es übermittelt die Zugangsdaten ausschließlich an `https://login.mercedes-benz.com`. Eine erforderliche PING-ID-Freigabe bleibt manuell. Danach beginnt die FIN-Verarbeitung. Optional: `--browser chromium`, `--timeout 60`, `--login-timeout 360`, `--historie-wartezeit 40` (Standard: 20 Sekunden pro FIN bei fehlendem Filtertreffer). Mit `--login-manuell` erfolgt die gesamte Benutzerkennung-/Passworteingabe direkt im Browser; der Betriebssystem-Tresor wird dabei **nicht** ausgelesen.
+
+## Verzoegerte Historie und scheinbar fehlende Seriennummernaenderungen
+
+VeDoc aktualisiert seine Historientabelle nach FIN-Suche und Filtereingabe asynchron. Eine unmittelbar leere Tabelle ist deshalb **kein sicherer Negativbefund**. Der Exporter setzt den DCDC223-Filter bei jeder FIN neu, kontrolliert die Voll-FIN der angezeigten Eintraege und wartet auf einen mindestens 1,5 Sekunden stabilen Datenstand. Falls nach standardmaessig 20 Sekunden keine passende Seriennummernaenderung sichtbar ist, entfernt er den Filter und prueft die ungefilterte Historie erneut. Vorhandene Zeilen werden nach Moeglichkeit vollstaendig aufgeklappt.
+
+- `gefunden`: Passende Aenderung nach stabiler gefilterter oder ungefilterter Kontrolle erfasst.
+- `keine_seriennummer_aenderung`: Auch die nachgepruefte ungefilterte Historie hatte andere, eindeutig zur FIN gehoerende Eintraege, aber keine passende DCDC223-Seriennummernaenderung. Das ist kein Beweis fuer einen fehlenden Verbau.
+- `historie_nicht_bestaetigt`: Historientabelle blieb leer, unvollstaendig oder die Zuordnung der angezeigten Zeilen zur FIN liess sich nicht sicher pruefen. **Nicht als fehlende Aenderung interpretieren**, sondern erneut abrufen.
+
+Bei auffaelligen FINs fuer einen gezielten Wiederholungstest eine neue TXT-Liste verwenden und die Exporte in einem **neuen** Ordner speichern:
+
+```powershell
+python scripts/vedoc_dcdc223_seriennummern.py --eingabe 'C:\lokal\fins_nachpruefen.txt' --ausgabe 'C:\lokal\vedoc-nachpruefung' --historie-wartezeit 45
+```
+
+Die zusaetzliche Wartezeit ist eine Absicherung gegen langsames Laden, keine Garantie fuer fehlerfreie Quellsystemdaten. Einen echten Live-Test mit verschiedenen FINs bitte weiterhin im Unternehmensnetz durchfuehren.
 
 ## Ausgabedateien
 
