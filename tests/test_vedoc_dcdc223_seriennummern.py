@@ -218,3 +218,89 @@ def test_anmelden_bei_bereits_offenem_vedoc_ohne_credentials(monkeypatch):
     monkeypatch.setattr(modul, "_zugangsdaten_fuer_lauf", lambda: pytest.fail("Unnoetige Eingabe"))
     assert modul._anmelden(ctx, vedoc_host="prod.core.public.vedoc.i.mercedes-benz.com",
                           login_timeout_s=1) is fake
+
+
+def test_browser_disconnect_stoppt_aktiv_wartenden_sso_loop_sofort():
+    browser = type('Browser', (), {'is_connected': lambda self: False})()
+    kontext = type('Kontext', (), {'pages': [FakePage(modul.VEDOC_START)]})()
+    with pytest.raises(modul.VeDocBrowserFehler, match='Verbindung'):
+        modul._anmelden(kontext, vedoc_host='prod.core.public.vedoc.i.mercedes-benz.com',
+                        login_timeout_s=240, browser=browser)
+
+
+def test_abgestuerzter_browser_tab_wird_erkannt(monkeypatch):
+    seite = FakePage('https://login.mercedes-benz.com/', sichtbar=('#userid',))
+    events = {}
+    seite.on = lambda name, callback: events.__setitem__(name, callback)
+    seite.wait_for_timeout = lambda ms: events['crash'](seite)
+    kontext = type('Kontext', (), {'pages': [seite]})()
+    browser = type('Browser', (), {'is_connected': lambda self: True})()
+    monkeypatch.setattr(modul, '_zugangsdaten_fuer_lauf',
+                        lambda: pytest.fail('Im manuellen Login ist kein Keyring erlaubt.'))
+    with pytest.raises(modul.VeDocBrowserFehler, match='abgestuerzt'):
+        modul._anmelden(kontext, vedoc_host='prod.core.public.vedoc.i.mercedes-benz.com',
+                        login_timeout_s=30, browser=browser, auto_login=False)
+
+
+def test_manueller_login_laesst_kennwort_unberuehrt(monkeypatch):
+    sso = FakePage('https://login.mercedes-benz.com/', sichtbar=('#userid', '#password'))
+    bereit = FakePage(modul.VEDOC_START, sichtbar=(modul._FIN_EINGABE,))
+    sso.wait_for_timeout = lambda ms: None
+    class Kontext:
+        def __init__(self):
+            self.counter = 0
+        @property
+        def pages(self):
+            self.counter += 1
+            return [sso] if self.counter == 1 else [bereit]
+    monkeypatch.setattr(modul, '_zugangsdaten_fuer_lauf',
+                        lambda: pytest.fail('Keine Anmeldedaten im manuellen Modus auslesen.'))
+    assert modul._anmelden(Kontext(), vedoc_host='prod.core.public.vedoc.i.mercedes-benz.com',
+                          login_timeout_s=30, auto_login=False) is bereit
+    assert all(not locator.actions for locator in sso.eintraege.values())
+
+
+def test_normales_schliessen_von_ssopopup_ist_nicht_automatisch_browserabsturz():
+    assert not modul._browserfehler(RuntimeError('Target page, context or browser has been closed'))
+    assert modul._browserfehler(RuntimeError('Page crashed'))
+
+
+def test_login_absturz_ueberschreibt_keine_bestehenden_exporte(tmp_path, monkeypatch):
+    import sys
+    from types import ModuleType, SimpleNamespace
+
+    eingabe = tmp_path / 'fins.txt'
+    eingabe.write_text(FIN_1)
+    ausgabe = tmp_path / 'ausgabe'
+    ausgabe.mkdir()
+    json_datei = ausgabe / 'dcdc223_seriennummern.json'
+    xlsx_datei = ausgabe / 'dcdc223_seriennummern.xlsx'
+    json_datei.write_bytes(b'altes-json')
+    xlsx_datei.write_bytes(b'altes-excel')
+
+    class Browser:
+        def is_connected(self):
+            return False
+        def new_context(self, **_kwargs):
+            return SimpleNamespace(
+                pages=[],
+                new_page=lambda: SimpleNamespace(goto=lambda *a, **kw: None),
+            )
+
+    class PlaywrightManager:
+        def __enter__(self):
+            return SimpleNamespace(chromium=SimpleNamespace(launch=lambda **kwargs: Browser()))
+        def __exit__(self, *_args):
+            return False
+
+    package = ModuleType('playwright')
+    sync_api = ModuleType('playwright.sync_api')
+    sync_api.TimeoutError = TimeoutError
+    sync_api.sync_playwright = lambda: PlaywrightManager()
+    package.sync_api = sync_api
+    monkeypatch.setitem(sys.modules, 'playwright', package)
+    monkeypatch.setitem(sys.modules, 'playwright.sync_api', sync_api)
+
+    assert modul.main(['--eingabe', str(eingabe), '--ausgabe', str(ausgabe)]) == 3
+    assert json_datei.read_bytes() == b'altes-json'
+    assert xlsx_datei.read_bytes() == b'altes-excel'
