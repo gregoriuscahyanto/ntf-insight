@@ -27,7 +27,7 @@ TXT-Datei **außerhalb des Repositorys** erstellen; pro Zeile eine 17-stellige F
 python scripts/vedoc_dcdc223_seriennummern.py --eingabe 'C:\lokal\fins.txt' --ausgabe 'C:\lokal\vedoc-ergebnisse'
 ```
 
-Die Anmeldung nutzt vorhandene NTF-Insight-Zugangsdaten aus dem Windows-Anmeldetresor (`NTF Insight - Diagnosis Viewer`). Fehlen sie, fragt das Skript die Benutzerkennung und das **verdeckt eingegebene** Passwort in PowerShell ab. Es übermittelt die Zugangsdaten ausschließlich an `https://login.mercedes-benz.com`. Eine erforderliche PING-ID-Freigabe bleibt manuell. Danach beginnt die FIN-Verarbeitung. Optional: `--browser chromium`, `--timeout 60`, `--login-timeout 360`.
+Die Anmeldung nutzt vorhandene NTF-Insight-Zugangsdaten aus dem Windows-Anmeldetresor (`NTF Insight - Diagnosis Viewer`). Fehlen sie, fragt das Skript die Benutzerkennung und das **verdeckt eingegebene** Passwort in PowerShell ab. Es übermittelt die Zugangsdaten ausschließlich an `https://login.mercedes-benz.com`. Eine erforderliche PING-ID-Freigabe bleibt manuell. Danach beginnt die FIN-Verarbeitung. Optional: `--browser chromium`, `--timeout 60`, `--login-timeout 360`. Mit `--login-manuell` erfolgt die gesamte Benutzerkennung-/Passworteingabe direkt im Browser; der Betriebssystem-Tresor wird dabei **nicht** ausgelesen.
 
 ## Ausgabedateien
 
@@ -35,7 +35,7 @@ Die Anmeldung nutzt vorhandene NTF-Insight-Zugangsdaten aus dem Windows-Anmeldet
 - **`dcdc223_seriennummern.xlsx`**, Blatt **DCDC223**: eine Zeile pro FIN, letzter dokumentierter neuer Wert, Anzahl Änderungen und Status.
 - **`dcdc223_seriennummern.xlsx`**, Blatt **Historie**: **eine Zeile je Seriennummernänderung** mit FIN, Steuergerät, Attributname, Änderungszeitpunkt, altem und neuem Wert und FIN-Status.
 
-Seriennummern und FINs bleiben in Excel Text; führende Nullen bleiben erhalten und Formeleinschleusungen werden nicht ausgeführt. Die JSON-Datei wird nach jeder FIN als Zwischenstand aktualisiert, am Ende werden beide Formate geschrieben. Erneute Läufe mit demselben Ausgabeordner überschreiben die Dateien.
+Seriennummern und FINs bleiben in Excel Text; führende Nullen bleiben erhalten und Formeleinschleusungen werden nicht ausgeführt. Die JSON-Datei wird nach jeder FIN als Zwischenstand aktualisiert, am Ende werden beide Formate geschrieben. Erneute Läufe mit demselben Ausgabeordner überschreiben die Dateien. **Wenn noch keine FIN verarbeitet wurde**, bleiben bereits vorhandene Exporte nach einem Loginfehler oder Browserabsturz unangetastet.
 
 Statuswerte: `gefunden`, `keine_seriennummer_aenderung`, `seriennummer_fehlt`, `mehrdeutig`, `zeitstempel_ungueltig`, `fin_nicht_bestaetigt`, `historie_nicht_bestaetigt`, `zeitueberschreitung`, `fehler`. **Keine Historienänderung bedeutet nicht, dass kein DCDC223 verbaut ist.** Eine nicht zur FIN passende Historie wird ausdrücklich zurückgewiesen.
 
@@ -44,3 +44,21 @@ Statuswerte: `gefunden`, `keine_seriennummer_aenderung`, `seriennummer_fehlt`, `
 Keine echten FINs, Seriennummern, HTML-Beispiele aus dem Unternehmenssystem oder VeDoc-PDFs nach GitHub übertragen. Die lokalen Eingaben und Exporte gehören nur in freigegebene Verzeichnisse. Das Skript speichert keine Passwörter, Browserprofile, Cookies oder HTML-Snapshots; es liest ggf. vorhandene Zugangsdaten aus dem Betriebssystem-Tresor und umgeht keine Zugriffsrechte.
 
 Die Selektoren und Felder wurden anhand der mitgelieferten **VeDoc-Anleitung v2** und der sechs HTML-Snapshots geprüft. Die Ausleselogik wurde mit dem gefilterten HTML-Beispiel und synthetischen Testfällen offline getestet. **Ein echter VeDoc-Lauf im Unternehmensnetz steht weiterhin aus.** Bei geänderter Oberfläche können Anpassungen an Selektoren, Filter- und Ladeverhalten nötig werden.
+
+
+## Problembehebung: Browser schliesst nach der SSO-Passworteingabe
+
+Wenn Edge unmittelbar nach „Mercedes-SSO: Passwort gesendet“ verschwindet, ist die **technische Ursache des Browserabsturzes noch nicht bekannt**. Der Exporter erkennt nun sowohl den Verlust der Browser-Verbindung als auch einen abgestuerzten Browser-Tab und beendet den Prozess mit einem klaren Fehler, statt still bis zum Login-Timeout zu warten. Waerend einer normalen SSO-/PING-ID-Wartephase erscheint etwa alle 12 Sekunden eine Statusmeldung.
+
+1. Den bisherigen Prozess in PowerShell mit **Strg+C** abbrechen. Anschliessend den aktuellen Stand des Branches mit `git pull --ff-only` abrufen.
+2. Den Login ohne automatische Formularausfuellung testen:
+
+   ```powershell
+   python scripts/vedoc_dcdc223_seriennummern.py --eingabe 'C:\lokal\fins.txt' --login-manuell
+   ```
+
+   Im geoeffneten Browser Benutzerkennung, Passwort und ggf. PING ID selbst eingeben. Der Exporter wartet weiterhin auf die erfolgreich geladene VeDoc-Oberflaeche.
+3. Falls Edge weiterhin abstuerzt, **sofern nach Unternehmensrichtlinie erlaubt** in einem Playwright-Chromium-Fenster testen. Vorher einmalig `python -m playwright install chromium` ausfuehren; dann `--browser chromium --login-manuell` an den Befehl anhaengen.
+4. Schlaegt auch die manuelle Anmeldung fehl, Browser-Version, Unternehmenssicherheitsrichtlinien und Windows-Ereignisanzeige (Anwendung) pruefen und ggf. die lokale IT hinzuziehen. **Keine** Passwoerter, PING-ID-Codes, Cookies oder vollstaendigen FINs in Fehlermeldungen oder Tickets weitergeben.
+
+Die Browserinstanz und alle Anmeldedaten bleiben temporaer. Ein Neustart der Browser-Anmeldung erfolgt **nicht automatisch**, um ungewollte wiederholte Loginversuche zu vermeiden. Der Statuscode des Skripts ist `3` bei erkanntem Browserabbruch und `4` bei Login-Timeout.
