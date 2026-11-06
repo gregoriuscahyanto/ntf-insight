@@ -83,3 +83,88 @@ def test_json_und_excel_enthalten_text_statt_formeln(tmp_path):
     assert sheet["C3"].value == "=1+1"
     assert sheet["C3"].data_type == "s"
     assert sheet.freeze_panes == "A2"
+
+
+def test_vedoc_url_ist_als_standard_hinterlegt():
+    assert modul.VEDOC_START == (
+        "https://prod.core.public.vedoc.i.mercedes-benz.com/ui/homepage.html"
+    )
+    assert modul.pruefe_vedoc_url(modul.VEDOC_START) == modul.VEDOC_START
+
+
+def test_gespeicherte_credentials_ohne_rueckfrage(monkeypatch):
+    monkeypatch.setattr(modul, "_lade_zugangsdaten", lambda: ("gespeicherter-nutzer", "geheim"))
+    monkeypatch.setattr("builtins.input", lambda prompt: pytest.fail("Unnoetige Eingabe"))
+    monkeypatch.setattr(modul.getpass, "getpass", lambda prompt: pytest.fail("Unnoetige Eingabe"))
+    assert modul._zugangsdaten_fuer_lauf() == ("gespeicherter-nutzer", "geheim")
+
+
+def test_keine_gespeicherten_credentials_fuehrt_zu_powershell_eingabe(monkeypatch):
+    prompts = []
+    monkeypatch.setattr(modul, "_lade_zugangsdaten", lambda: None)
+    monkeypatch.setattr("builtins.input", lambda prompt: prompts.append(prompt) or " mb-nutzer ")
+    monkeypatch.setattr(modul.getpass, "getpass", lambda prompt: prompts.append(prompt) or "test-passwort")
+    assert modul._zugangsdaten_fuer_lauf() == ("mb-nutzer", "test-passwort")
+    assert prompts == ["Mercedes-Benz-Benutzerkennung: ", "Mercedes-Benz-Passwort (verdeckt): "]
+
+
+def test_ssologin_host_strikt_validiert():
+    assert modul._ist_sso_seite("https://login.mercedes-benz.com/abc")
+    assert not modul._ist_sso_seite("https://login.mercedes-benz.com.evil.example/abc")
+    assert not modul._ist_sso_seite("http://login.mercedes-benz.com/abc")
+    assert not modul._ist_sso_seite("https://other.mercedes-benz.com/abc")
+
+
+class FakeLocator:
+    def __init__(self, shown=False):
+        self.shown = shown
+        self.actions = []
+        self.first = self
+
+    def count(self):
+        return 1 if self.shown else 0
+
+    def is_visible(self):
+        return self.shown
+
+    def fill(self, value):
+        self.actions.append(("fill", value))
+
+    def click(self, **kwargs):
+        self.actions.append(("click", kwargs))
+
+
+class FakePage:
+    def __init__(self, url: str, *, sichtbar=()):
+        self.url = url
+        self.eintraege = {selector: FakeLocator(True) for selector in sichtbar}
+
+    def locator(self, selector):
+        return self.eintraege.setdefault(selector, FakeLocator())
+
+    def is_closed(self):
+        return False
+
+
+def test_credentials_nur_an_echten_sso_host_uebergeben():
+    fake = FakePage("https://login.mercedes-benz.com.evil.example/",
+                    sichtbar=("#userid", "#next-btn", "#password", "#loginSubmitButton"))
+    status = {"benutzer": False, "passwort": False}
+    modul._sso_felder_ausfuellen(fake, ("user", "secret"), status)
+    assert all(not eintrag.actions for eintrag in fake.eintraege.values())
+    assert status == {"benutzer": False, "passwort": False}
+    fake.url = "https://login.mercedes-benz.com/"
+    modul._sso_felder_ausfuellen(fake, ("user", "secret"), status)
+    assert fake.locator("#userid").actions == [("fill", "user")]
+    assert status == {"benutzer": True, "passwort": False}
+    modul._sso_felder_ausfuellen(fake, ("user", "secret"), status)
+    assert fake.locator("#password").actions == [("fill", "secret")]
+    assert status == {"benutzer": True, "passwort": True}
+
+
+def test_anmelden_bei_bereits_offenem_vedoc_ohne_credentials(monkeypatch):
+    fake = FakePage(modul.VEDOC_START, sichtbar=(modul._FIN_EINGABE,))
+    ctx = type("FakeContext", (), {"pages": [fake]})()
+    monkeypatch.setattr(modul, "_zugangsdaten_fuer_lauf", lambda: pytest.fail("Unnoetige Eingabe"))
+    assert modul._anmelden(ctx, vedoc_host="prod.core.public.vedoc.i.mercedes-benz.com",
+                          login_timeout_s=1) is fake
