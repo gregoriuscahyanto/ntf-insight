@@ -41,16 +41,30 @@ Statuswerte: `gefunden`, `keine_seriennummer_aenderung`, `seriennummer_fehlt`, `
 
 ## Datenschutz, technische Grenzen und Prüfung
 
-Keine echten FINs, Seriennummern, HTML-Beispiele aus dem Unternehmenssystem oder VeDoc-PDFs nach GitHub übertragen. Die lokalen Eingaben und Exporte gehören nur in freigegebene Verzeichnisse. Das Skript speichert keine Passwörter, Browserprofile, Cookies oder HTML-Snapshots; es liest ggf. vorhandene Zugangsdaten aus dem Betriebssystem-Tresor und umgeht keine Zugriffsrechte.
+Keine echten FINs, Seriennummern, HTML-Beispiele aus dem Unternehmenssystem oder VeDoc-PDFs nach GitHub übertragen. Die lokalen Eingaben und Exporte gehören nur in freigegebene Verzeichnisse. Das Skript speichert keine Passwörter oder HTML-Snapshots und liest ggf. vorhandene Zugangsdaten aus dem Betriebssystem-Tresor. Für die Browseranmeldung legt Playwright ein **temporäres, separates Browserprofil** mit Sitzungsdaten an, das beim normalen Schließen aufgeräumt wird. Nach einem Absturz können temporäre Profilreste verbleiben. Es werden keine Zugriffsrechte umgangen.
 
 Die Selektoren und Felder wurden anhand der mitgelieferten **VeDoc-Anleitung v2** und der sechs HTML-Snapshots geprüft. Die Ausleselogik wurde mit dem gefilterten HTML-Beispiel und synthetischen Testfällen offline getestet. **Ein echter VeDoc-Lauf im Unternehmensnetz steht weiterhin aus.** Bei geänderter Oberfläche können Anpassungen an Selektoren, Filter- und Ladeverhalten nötig werden.
 
+
+## SSO/PING ID gezielt testen
+
+Der VeDoc-Exporter nutzt ab jetzt - wie QEC und Diagnosis Viewer - einen eigenen Playwright-**Persistent Context** statt des bisherigen Inkognito-Kontexts. Playwright erstellt dazu ein separates, temporäres Browserprofil, das bei regulärem Beenden entfernt wird. Das normale Edge-Benutzerprofil bleibt unberührt. Der Wechsel ist ein **Lösungsversuch**, keine Garantie, dass die unternehmensspezifische SSO-/PING-ID-Weiterleitung funktioniert.
+
+Zur Eingrenzung bitte zunächst **nur die Anmeldung** testen; dazu ist keine FIN-Liste nötig:
+
+```powershell
+python scripts/vedoc_dcdc223_seriennummern.py --nur-login --login-manuell
+```
+
+Nach der Passwort-Eingabe gegebenenfalls PING ID im vorgesehenen Verfahren bestätigen. Erfolgreich ist der Test erst bei der Meldung **„SSO/PING ID erfolgreich: VeDoc ist erreichbar“**. In diesem Modus werden keine FINs abgefragt und keine JSON-/Excel-Dateien erstellt oder überschrieben.
+
+Falls Edge erneut beim Übergang zu PING ID abstürzt: VeDoc einmal **ohne Skript im normal gestarteten Edge** öffnen und den regulären Login prüfen. Funktioniert der Standard-Edge, liegt die Ursache eher an der isolierten Automatisierungssitzung, einer Sicherheitsrichtlinie oder an Browserintegration. Stürzt auch der reguläre Edge ab, zuerst die Windows-/Edge- bzw. SSO-Umgebung mit der Unternehmens-IT überprüfen. Bitte nicht versuchen, SSO, PING ID oder Unternehmensrichtlinien zu umgehen.
 
 ## Problembehebung: Browser schliesst nach der SSO-Passworteingabe
 
 Wenn Edge unmittelbar nach „Mercedes-SSO: Passwort gesendet“ verschwindet, ist die **technische Ursache des Browserabsturzes noch nicht bekannt**. Der Exporter erkennt nun sowohl den Verlust der Browser-Verbindung als auch einen abgestuerzten Browser-Tab und beendet den Prozess mit einem klaren Fehler, statt still bis zum Login-Timeout zu warten. Waerend einer normalen SSO-/PING-ID-Wartephase erscheint etwa alle 12 Sekunden eine Statusmeldung.
 
-1. Den bisherigen Prozess in PowerShell mit **Strg+C** abbrechen. Anschliessend den aktuellen Stand des Branches mit `git pull --ff-only` abrufen.
+1. Den bisherigen Prozess in PowerShell mit **Strg+C** abbrechen. Anschliessend den aktuellen Stand des Branches mit `git pull --ff-only` abrufen und zuerst `--nur-login --login-manuell` testen.
 2. Den Login ohne automatische Formularausfuellung testen:
 
    ```powershell
