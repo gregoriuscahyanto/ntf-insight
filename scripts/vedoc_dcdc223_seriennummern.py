@@ -123,6 +123,122 @@ def lese_historie_aus_html(quelltext: str, fin: str) -> tuple[SeriennummerAender
     return tuple(eintraege)
 
 
+def _historienmoment(quelltext: str, fin: str) -> tuple[tuple[SeriennummerAenderung, ...], int, bool]:
+    """Aus einem DOM-Snapshot Historienentries und FIN-Zuordnung ableiten.
+
+    Eine leere oder alte Tabelle ist kein Nachweis, dass es keine Aenderung gibt.
+    """
+    dokument = html.fromstring(quelltext)
+    tabellen = dokument.xpath('//table[@id="historyTable"]')
+    if len(tabellen) != 1:
+        raise ValueError("Historientabelle noch nicht eindeutig verfuegbar.")
+    zeilen = tabellen[0].xpath('./tbody/tr')
+    bestaetigte_fin = False
+    for zeile in zeilen:
+        pfad = _history_feld(zeile, "pathToAttribute")
+        moegliche_fin = pfad.split("/", 1)[0].strip().upper()
+        if _FIN.fullmatch(moegliche_fin):
+            if moegliche_fin != fin:
+                raise ValueError("Historie zeigt noch Eintraege einer anderen FIN.")
+            bestaetigte_fin = True
+    return lese_historie_aus_html(quelltext, fin), len(zeilen), bestaetigte_fin
+
+
+def _warte_auf_historieneintraege(
+    seite, fin: str, filter_feld, wartezeit_ms: int, *,
+    ruhezeit_ms: int = 1500, intervall_ms: int = 350,
+) -> Ergebnis:
+    """Wartet auf gerenderte DCDC223-Daten; prueft danach ungefiltert nach.
+
+    Kein fruehzeitiges `keine_seriennummer_aenderung` beim Angular-Zwischenzustand
+    0 Zeilen. Bei nicht belegbarer Vollstaendigkeit wird explizit ein unsicherer
+    Status ausgegeben statt ein negativer Befund behauptet.
+    """
+    deadline = time.monotonic() + wartezeit_ms / 1000
+    letzte_signatur: tuple[SeriennummerAenderung, ...] | None = None
+    stabil_seit: float | None = None
+    erweitert = False
+    print(f"{_gekuerzte_fin(fin)}: Filter DCDC223 wird geladen und kontrolliert ...", flush=True)
+
+    while time.monotonic() < deadline:
+        # Erweiterung erst nach dem ersten sichtbaren Datenstand ist moeglich.
+        erweitern = seite.locator(_ERWEITERN)
+        if not erweitert and erweitern.count() and erweitern.first.is_visible():
+            erweitern.first.click(timeout=max(1000, min(5000, wartezeit_ms)))
+            erweitert = True
+            seite.wait_for_timeout(intervall_ms)
+        try:
+            eintraege, _anzahl, _fin_erkennbar = _historienmoment(seite.content(), fin)
+        except ValueError:
+            # Seitenwechsel / Angular ist noch nicht fertig. Nicht als 0 Treffer zaehlen.
+            eintraege = ()
+        if eintraege:
+            jetzt = time.monotonic()
+            if eintraege != letzte_signatur:
+                letzte_signatur, stabil_seit = eintraege, jetzt
+            elif stabil_seit is not None and (jetzt - stabil_seit) * 1000 >= ruhezeit_ms:
+                return _bewerte_historie(fin, eintraege)
+        else:
+            letzte_signatur, stabil_seit = None, None
+        seite.wait_for_timeout(intervall_ms)
+
+    # Der Filter kann verzoegert rendern oder das Suchfeld kann beim FIN-Wechsel
+    # alte Daten behalten. Daher zweiter unabhaengiger Pruefweg OHNE Filter.
+    print(f"{_gekuerzte_fin(fin)}: Kein Filtertreffer. Pruefe ungefilterte Historie ...", flush=True)
+    filter_feld.fill("")
+    deadline_ungefiltert = time.monotonic() + max(3, ruhezeit_ms / 1000 + 1)
+    letzte_signatur = None
+    stabil_seit = None
+    erweitert = False  # Nach Filterwechsel ggf. erneut alle Zeilen freigeben.
+    letzte_anzahl = 0
+    unveraendert_seit: float | None = None
+    fehlerhafte_fins = False
+    while time.monotonic() < deadline_ungefiltert:
+        erweitern = seite.locator(_ERWEITERN)
+        if not erweitert and erweitern.count() and erweitern.first.is_visible():
+            erweitern.first.click(timeout=5000)
+            erweitert = True
+        try:
+            eintraege, anzahl, gilt_fin = _historienmoment(seite.content(), fin)
+        except ValueError:
+            fehlerhafte_fins = True
+            letzte_signatur, stabil_seit = None, None
+            seite.wait_for_timeout(intervall_ms)
+            continue
+        if anzahl > 0 and gilt_fin and not eintraege:
+            if anzahl != letzte_anzahl:
+                letzte_anzahl, unveraendert_seit = anzahl, time.monotonic()
+        else:
+            letzte_anzahl, unveraendert_seit = 0, None
+        if eintraege:
+            jetzt = time.monotonic()
+            if eintraege != letzte_signatur:
+                letzte_signatur, stabil_seit = eintraege, jetzt
+            elif stabil_seit is not None and (jetzt - stabil_seit) * 1000 >= ruhezeit_ms:
+                ergebnis = _bewerte_historie(fin, eintraege)
+                return _ergebnis(
+                    fin, ergebnis.status, seriennummer=ergebnis.seriennummer,
+                    hinweis=("Treffer nach ungefilterter Nachpruefung. " + ergebnis.hinweis),
+                    aenderungen=ergebnis.aenderungen,
+                )
+        else:
+            letzte_signatur, stabil_seit = None, None
+        seite.wait_for_timeout(intervall_ms)
+    # Negativbefund nur, wenn ein eindeutig zugeordnetes, nichtleeres
+    # Historienbild am Ende der Nachpruefung mindestens 1 Sekunde stabil war.
+    if (letzte_anzahl > 0 and unveraendert_seit is not None
+            and (time.monotonic() - unveraendert_seit) >= 1.0
+            and not fehlerhafte_fins):
+        return _ergebnis(
+            fin, "keine_seriennummer_aenderung",
+            hinweis="Nach Wartezeit auch ungefiltert keine DCDC223-Seriennummernaenderung gefunden.",
+        )
+    return _ergebnis(
+        fin, "historie_nicht_bestaetigt",
+        hinweis="Historie nach Wartezeit nicht vollstaendig / FIN nicht zweifelsfrei belegt.",
+    )
+
+
 def _bewerte_historie(fin: str, eintraege: tuple[SeriennummerAenderung, ...]) -> Ergebnis:
     """Letzten dokumentierten neuen Wert ableiten, nicht den aktuellen Einbau behaupten."""
     if not eintraege:
