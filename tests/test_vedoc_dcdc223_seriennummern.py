@@ -17,16 +17,21 @@ FIN_1 = "WDD12345678901234"
 FIN_2 = "WDD98765432101234"
 
 
-def html_zeile(bezeichnung: str, seriennummer: str) -> str:
-    return (
-        '<tr><td><span data-ng-bind="controlUnitTable_rec.cuDesignation">'
-        + bezeichnung + '</span></td><td><span data-ng-bind="controlUnitTable_rec.activeState.serialNumber">'
-        + seriennummer + '</span></td></tr>'
-    )
+def html_zeile(
+    fin=FIN_1, objekt="DCDC223", attribut="Seriennummer",
+    zeit="03.11.2026 13:27:22", alt="000123", neu="000456",
+):
+    werte = {"date": zeit, "attributeName": attribut,
+             "parentObjectIdentifier": objekt, "pathToAttribute": f"{fin} / {objekt}",
+             "oldValue": alt, "newValue": neu}
+    return "<tr>" + "".join(
+        f'<td><span data-ng-bind="historyTable_rec.{feld}">{wert}</span></td>'
+        for feld, wert in werte.items()
+    ) + "</tr>"
 
 
 def html_tabelle(*zeilen: str) -> str:
-    return '<table id="controlUnitTable"><tbody>' + ''.join(zeilen) + '</tbody></table>'
+    return '<table id="historyTable"><tbody>' + ''.join(zeilen) + '</tbody></table>
 
 
 def test_lade_fins_bom_kommentare_doppelte(tmp_path):
@@ -42,21 +47,52 @@ def test_ungueltige_fin_vor_browser_verhindern(tmp_path):
         modul.lade_fins(quelle)
 
 
-def test_lokalisiert_seriennummer_in_der_richtigen_zeile():
-    auszug = html_tabelle(
-        html_zeile("CPC3", "99999999"),
-        html_zeile("DCDC223", "0003456000123"),
+def test_lokalisiert_nur_dcdc223_seriennummer_und_beide_werte():
+    dokument = html_tabelle(
+        html_zeile(objekt="CPC3", neu="falsch"),
+        html_zeile(attribut="Datum des ersten Zugriffs", neu="datum"),
+        html_zeile(alt="000001234", neu="000004567"),
     )
-    assert modul.lese_seriennummer_aus_html(auszug) == (True, "0003456000123")
+    ergebnis = modul.lese_historie_aus_html(dokument, FIN_1)
+    assert ergebnis == (modul.SeriennummerAenderung("03.11.2026 13:27:22", "000001234", "000004567"),)
 
 
-def test_fehlende_und_mehrdeutige_seriennummer():
-    assert modul.lese_seriennummer_aus_html(html_tabelle(html_zeile("CPC3", "12"))) == (False, None)
-    assert modul.lese_seriennummer_aus_html(html_tabelle(html_zeile("DCDC223", ""))) == (True, None)
-    with pytest.raises(ValueError, match="mehrfach"):
-        modul.lese_seriennummer_aus_html(
-            html_tabelle(html_zeile("DCDC223", "1"), html_zeile("DCDC223", "2"))
-        )
+def test_ohne_seriennummer_aenderung_wird_nichts_erfunden():
+    auszug = html_tabelle(html_zeile(attribut="Datum des ersten Zugriffs", neu="datum"))
+    assert modul.lese_historie_aus_html(auszug, FIN_1) == ()
+    assert modul._bewerte_historie(FIN_1, ()).status == "keine_seriennummer_aenderung"
+
+
+def test_fremde_fin_und_fehlender_pfad_abweisen():
+    with pytest.raises(ValueError, match="anderen FIN"):
+        modul.lese_historie_aus_html(html_tabelle(html_zeile(fin=FIN_2)), FIN_1)
+    with pytest.raises(ValueError, match="bestaetigte Voll-FIN"):
+        modul.lese_historie_aus_html(html_tabelle(html_zeile(fin="UNBEKANNT")), FIN_1)
+    with pytest.raises(ValueError, match="Historientabelle"):
+        modul.lese_historie_aus_html("<html></html>", FIN_1)
+
+
+def test_mehrere_historieneintraege_chronologisch_und_letzter_wert():
+    zeilen = html_tabelle(
+        html_zeile(zeit="10.11.2026 09:00:00", alt="002", neu="003"),
+        html_zeile(zeit="03.11.2026 09:00:00", alt="001", neu="002"),
+    )
+    ergebnis = modul._bewerte_historie(FIN_1, modul.lese_historie_aus_html(zeilen, FIN_1))
+    assert ergebnis.status == "gefunden"
+    assert ergebnis.seriennummer == "003"
+    assert [eintrag.neuer_wert for eintrag in ergebnis.aenderungen] == ["002", "003"]
+
+
+def test_mehrdeutige_oder_ungueltige_zeitstempel_keine_letzte_seriennummer():
+    eintraege = modul.lese_historie_aus_html(html_tabelle(
+        html_zeile(neu="002"), html_zeile(neu="003")
+    ), FIN_1)
+    ergebnis = modul._bewerte_historie(FIN_1, eintraege)
+    assert ergebnis.status == "mehrdeutig"
+    assert ergebnis.seriennummer is None
+    falsch = modul._bewerte_historie(FIN_1, (modul.SeriennummerAenderung("unbekannt", "001", "002"),))
+    assert falsch.status == "zeitstempel_ungueltig"
+    assert falsch.seriennummer is None
 
 
 def test_nur_unternehmensdomain_fuer_fin_suche():
@@ -66,23 +102,37 @@ def test_nur_unternehmensdomain_fuer_fin_suche():
             modul.pruefe_vedoc_url(url)
 
 
-def test_json_und_excel_enthalten_text_statt_formeln(tmp_path):
+def test_json_und_excel_enthalten_historie_und_schuetzen_vor_formeln(tmp_path):
     daten = [
-        modul.Ergebnis(FIN_1, "DCDC223", "000340001234", "gefunden", "", "2026-11-06T10:00:00+00:00"),
-        modul.Ergebnis(FIN_2, "DCDC223", "=1+1", "gefunden", "", "2026-11-06T10:00:00+00:00"),
+        modul.Ergebnis(FIN_1, "DCDC223", "000340001234", "gefunden", "", "2026-11-06T10:00:00+00:00",
+                      (modul.SeriennummerAenderung("01.11.2026 13:30:00", "000111", "000340001234"),)),
+        modul.Ergebnis(FIN_2, "DCDC223", "=1+1", "gefunden", "", "2026-11-06T10:00:00+00:00",
+                      (modul.SeriennummerAenderung("05.11.2026 13:30:00", "+SUM(A1:A2)", "=1+1"),)),
     ]
     json_pfad, excel_pfad = tmp_path / "ergebnis.json", tmp_path / "ergebnis.xlsx"
     modul._schreibe_json(json_pfad, daten)
     modul._schreibe_excel(excel_pfad, daten)
     gespeichert = json.loads(json_pfad.read_text(encoding="utf-8"))
-    assert gespeichert["fahrzeuge"][0]["seriennummer"] == "000340001234"
+    assert gespeichert["quelle"] == "VeDoc/Historie"
+    assert gespeichert["fahrzeuge"][0]["aenderungen"][0]["alter_wert"] == "000111"
     workbook = load_workbook(excel_pfad, data_only=False)
-    sheet = workbook["DCDC223"]
-    assert sheet["C2"].value == "000340001234"
-    assert sheet["C2"].data_type == "s"
-    assert sheet["C3"].value == "=1+1"
-    assert sheet["C3"].data_type == "s"
-    assert sheet.freeze_panes == "A2"
+    assert workbook.sheetnames == ["DCDC223", "Historie"]
+    uebersicht, historie = workbook["DCDC223"], workbook["Historie"]
+    assert uebersicht["C2"].value == "000340001234"
+    assert uebersicht["C3"].value == "=1+1"
+    assert uebersicht["C3"].data_type == "s"
+    assert historie["E2"].value == "000111"
+    assert historie["F2"].value == "000340001234"
+    assert historie["E3"].value == "+SUM(A1:A2)"
+    assert historie["E3"].data_type == "s"
+    assert historie["F3"].data_type == "s"
+    assert uebersicht.freeze_panes == historie.freeze_panes == "A2"
+
+
+def test_steuergeraete_reiter_wird_nicht_verwendet():
+    assert modul._TAB == 'li[heading="Historie"] a'
+    assert 'historyTable_filterExpression' in modul._FILTER
+    assert 'historyTable' in modul._FILTER_SCHALTER
 
 
 def test_vedoc_url_ist_als_standard_hinterlegt():
