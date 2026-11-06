@@ -278,18 +278,24 @@ def test_login_absturz_ueberschreibt_keine_bestehenden_exporte(tmp_path, monkeyp
     json_datei.write_bytes(b'altes-json')
     xlsx_datei.write_bytes(b'altes-excel')
 
-    class Browser:
-        def is_connected(self):
-            return False
-        def new_context(self, **_kwargs):
-            return SimpleNamespace(
-                pages=[],
-                new_page=lambda: SimpleNamespace(goto=lambda *a, **kw: None),
-            )
+    class Kontext:
+        @property
+        def pages(self):
+            page = SimpleNamespace(goto=lambda *a, **kw: None)
+            return [page]
+
+        def on(self, name, callback):
+            if name == "close":
+                callback()
+
+        def close(self):
+            pass
 
     class PlaywrightManager:
         def __enter__(self):
-            return SimpleNamespace(chromium=SimpleNamespace(launch=lambda **kwargs: Browser()))
+            return SimpleNamespace(chromium=SimpleNamespace(
+                launch_persistent_context=lambda **kwargs: Kontext()
+            ))
         def __exit__(self, *_args):
             return False
 
@@ -304,3 +310,64 @@ def test_login_absturz_ueberschreibt_keine_bestehenden_exporte(tmp_path, monkeyp
     assert modul.main(['--eingabe', str(eingabe), '--ausgabe', str(ausgabe)]) == 3
     assert json_datei.read_bytes() == b'altes-json'
     assert xlsx_datei.read_bytes() == b'altes-excel'
+
+
+def test_temporaeres_profil_und_nur_login_ohne_fin_export(tmp_path, monkeypatch):
+    import sys
+    from types import ModuleType, SimpleNamespace
+
+    start_parameter = []
+    geschlossen = []
+    class Kontext:
+        def __init__(self):
+            self.seite = FakePage(modul.VEDOC_START, sichtbar=(modul._FIN_EINGABE,))
+            self.seite.goto = lambda *args, **kwargs: None
+        @property
+        def pages(self):
+            return [self.seite]
+        def on(self, name, callback):
+            pass
+        def close(self):
+            geschlossen.append(True)
+
+    def starte(**kwargs):
+        start_parameter.append(kwargs)
+        return Kontext()
+
+    class Manager:
+        def __enter__(self):
+            return SimpleNamespace(chromium=SimpleNamespace(launch_persistent_context=starte))
+        def __exit__(self, *_args):
+            return False
+
+    package, api = ModuleType('playwright'), ModuleType('playwright.sync_api')
+    api.TimeoutError = TimeoutError
+    api.sync_playwright = lambda: Manager()
+    package.sync_api = api
+    monkeypatch.setitem(sys.modules, 'playwright', package)
+    monkeypatch.setitem(sys.modules, 'playwright.sync_api', api)
+    ziel = tmp_path / 'soll_nicht_existieren'
+    assert modul.main(['--nur-login', '--ausgabe', str(ziel)]) == 0
+    assert not ziel.exists()
+    assert len(start_parameter) == 1
+    assert start_parameter[0]['user_data_dir'] == ''
+    assert start_parameter[0]['channel'] == 'msedge'
+    assert start_parameter[0]['headless'] is False
+    assert start_parameter[0]['accept_downloads'] is False
+    assert geschlossen == [True]
+
+
+def test_browserkontext_schliessung_in_login_wird_sofort_erkannt():
+    class Kontext:
+        pages = [FakePage('https://login.mercedes-benz.com/')]
+        def on(self, name, callback):
+            if name == 'close':
+                callback()
+    with pytest.raises(modul.VeDocBrowserFehler, match='Browserkontext'):
+        modul._anmelden(Kontext(), vedoc_host='prod.core.public.vedoc.i.mercedes-benz.com',
+                        login_timeout_s=30, auto_login=False)
+
+
+def test_fin_export_verlangt_weiterhin_eingabedatei():
+    with pytest.raises(SystemExit, match='2'):
+        modul.main([])
