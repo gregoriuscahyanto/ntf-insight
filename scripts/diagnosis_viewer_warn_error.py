@@ -967,6 +967,8 @@ def build_parser() -> argparse.ArgumentParser:
                         help="Auch bereits erfolgreiche Sitzungen neu einlesen")
     parser.add_argument("--nur-zusammenfassen", action="store_true",
                         help="Teildateien ohne Browser in die bisherige Gesamt-JSON uebernehmen")
+    parser.add_argument("--nur-aufteilen", action="store_true",
+                        help="Bestehende Gesamt-JSON ohne Browser verlustfrei in Teildateien uebernehmen")
     parser.add_argument("--ohne-gesamtdatei", action="store_true",
                         help="Schnellster Lauf: Gesamt-JSON am Ende nicht neu schreiben; Teildateien bleiben aktuell")
     parser.add_argument("--nur-login", action="store_true",
@@ -1000,11 +1002,12 @@ def main(argv: list[str] | None = None) -> int:
         if args.eingabe and args.fin_datei and args.eingabe != args.fin_datei:
             raise ValueError("Bitte nur eine Eingabedatei angeben.")
         input_path = args.eingabe or args.fin_datei
-        if args.nur_login and args.nur_zusammenfassen:
-            raise ValueError("--nur-login und --nur-zusammenfassen schliessen sich aus.")
-        if not (args.nur_login or args.nur_zusammenfassen) and input_path is None:
+        offline = args.nur_zusammenfassen or args.nur_aufteilen
+        if sum((args.nur_login, args.nur_zusammenfassen, args.nur_aufteilen)) > 1:
+            raise ValueError("--nur-login, --nur-aufteilen und --nur-zusammenfassen sind alternativ.")
+        if not (args.nur_login or offline) and input_path is None:
             raise ValueError("Eine FIN-Liste mit --eingabe muss angegeben werden.")
-        fins = [] if (args.nur_login or args.nur_zusammenfassen) else read_fins(input_path)
+        fins = [] if (args.nur_login or offline) else read_fins(input_path)
         output = args.ausgabe.expanduser().resolve()
         if output.suffix.lower() != ".json":
             raise ValueError("Die Ausgabe muss die Endung .json besitzen.")
@@ -1020,6 +1023,13 @@ def main(argv: list[str] | None = None) -> int:
             raise ValueError("--abschnitt-wartezeit muss 0.5 bis 10 Sekunden betragen.")
         if not 0 <= args.abstand <= 10:
             raise ValueError("--abstand muss 0 bis 10 Sekunden betragen.")
+        if args.nur_aufteilen:
+            if not output.is_file():
+                raise ValueError("Zum erstmaligen Aufteilen muss die Gesamt-JSON existieren.")
+            stand = load_state(output)
+            SitzungsSpeicher(output).bestand_uebernehmen(stand)
+            print(f"Gesamt-JSON unveraendert; Teildateien: {teile_verzeichnis(output)}", flush=True)
+            return 0
         if args.nur_zusammenfassen:
             if not output.exists() and not teile_verzeichnis(output).exists():
                 raise ValueError("Keine Gesamtdatei oder Teildateien zum Zusammenfassen vorhanden.")
