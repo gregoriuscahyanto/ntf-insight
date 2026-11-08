@@ -470,3 +470,170 @@ def test_api_aufruf_hat_festes_abort_timeout(tmp_path):
             return None
     runner = scraper.DiagnosisViewerScraper(tmp_path / 'ausgabe.json', tmp_path / 'profil')
     assert runner._read_api_section(BrowserPage(), view_url(FIN1)) is None
+
+# Einzeldateien und Resume: synthetische Beispieldaten, niemals echte FINs.
+def _entry(title: str, status: str = 'erfolgreich') -> dict:
+    return {'quelle': 'XD', 'status': status, 'meldungen': [{'kennung': title}],
+            'anzahl_meldungen': 1, 'abgerufen_utc': '2026-01-01T00:00:00+00:00'}
+
+
+def test_alte_gesamt_json_wird_verlustfrei_in_einzel_json_uebernommen(tmp_path):
+    output = tmp_path / 'warnings_errors.json'
+    keys = [scraper.session_key(view_url(FIN1, f'{i}.json.gz')) for i in range(3)]
+    initial = scraper.fresh_state()
+    initial['fahrzeuge'][FIN1] = {
+        'status': 'teilweise', 'suchfehler': None,
+        'sitzungen': {key: _entry(f'meldung-{index}') for index, key in enumerate(keys)},
+    }
+    scraper.save_state(output, initial)
+    old_bytes = output.read_bytes()
+    store = scraper.SitzungsSpeicher(output)
+    store.bestand_uebernehmen(scraper.load_state(output))
+    assert output.read_bytes() == old_bytes  # Original niemals bei der Migration antasten
+    shard_dir = scraper.teile_verzeichnis(output) / FIN1
+    assert (shard_dir / '_status.json').exists()
+    assert len(list((shard_dir / 'sitzungen').glob('*.json'))) == 3
+    assert scraper.load_state(output)['fahrzeuge'][FIN1]['sitzungen'] == initial['fahrzeuge'][FIN1]['sitzungen']
+    assert not list(shard_dir.rglob('*.tmp'))
+
+
+def test_teil_json_hat_vorrang_und_migration_ueberschreibt_nichts(tmp_path):
+    output = tmp_path / 'messages.json'
+    key = scraper.session_key(view_url(FIN1))
+    initial = scraper.fresh_state()
+    initial['fahrzeuge'][FIN1] = {'status': 'abgeschlossen', 'sitzungen': {key: _entry('alt')}}
+    scraper.save_state(output, initial)
+    store = scraper.SitzungsSpeicher(output)
+    store.bestand_uebernehmen(scraper.load_state(output))
+    newer = _entry('neuer Stand')
+    store.sitzung_speichern(FIN1, key, newer)
+    store.fahrzeug_speichern(FIN1, {'status': 'in_bearbeitung', 'sitzungen': {key: newer}})
+    store.bestand_uebernehmen(scraper.load_state(output))  # Zweiter Start
+    result = scraper.load_state(output)
+    assert result['fahrzeuge'][FIN1]['status'] == 'in_bearbeitung'
+    assert result['fahrzeuge'][FIN1]['sitzungen'][key] == newer
+    assert json.loads(output.read_text())['fahrzeuge'][FIN1]['sitzungen'][key]['meldungen'][0]['kennung'] == 'alt'
+
+
+def test_abbruch_nach_sitzungs_json_vor_status_checkpoint_ist_resumierbar(tmp_path):
+    output = tmp_path / 'ausgabe.json'
+    key = scraper.session_key(view_url(FIN1))
+    old = scraper.fresh_state()
+    old['fahrzeuge'][FIN1] = {'status': 'abgeschlossen', 'sitzungen': {}}
+    scraper.save_state(output, old)
+    store = scraper.SitzungsSpeicher(output)
+    store.bestand_uebernehmen(scraper.load_state(output))
+    # Der Prozess wird hart beendet, nachdem die Sitzungsdatei gespeichert ist,
+    # aber bevor der FIN-Metadatenstatus aktualisiert werden konnte.
+    store.sitzung_speichern(FIN1, key, _entry('gerettet', status='fehler'))
+    result = scraper.load_state(output)
+    assert result['fahrzeuge'][FIN1]['status'] == 'teilweise'
+    assert result['fahrzeuge'][FIN1]['sitzungen'][key]['status'] == 'fehler'
+    # Ein vollendeter Checkpoint hingegen wird beim Resume uebersprungen.
+    store.sitzung_speichern(FIN1, key, _entry('gerettet'))
+    result = scraper.load_state(output)
+    assert result['fahrzeuge'][FIN1]['sitzungen'][key]['status'] in scraper.ENDED
+
+
+def test_unvollstaendige_migration_kann_idempotent_fortgesetzt_werden(tmp_path):
+    output = tmp_path / 'ausgabe.json'
+    keys = [scraper.session_key(view_url(FIN1, f'{i}.json.gz')) for i in range(2)]
+    initial = scraper.fresh_state()
+    initial['fahrzeuge'][FIN1] = {'status': 'teilweise', 'sitzungen': {
+        keys[0]: _entry('original-0'), keys[1]: _entry('original-1')}}
+    scraper.save_state(output, initial)
+    store = scraper.SitzungsSpeicher(output)
+    store.sitzung_speichern(FIN1, keys[0], _entry('neuer-wert'))
+    # Zweite Datei und Status fehlen - genau wie nach SIGKILL bei der Migration.
+    store.bestand_uebernehmen(scraper.load_state(output))
+    loaded = scraper.load_state(output)['fahrzeuge'][FIN1]
+    assert loaded['status'] == 'teilweise'
+    assert loaded['sitzungen'][keys[0]]['meldungen'][0]['kennung'] == 'neuer-wert'
+    assert loaded['sitzungen'][keys[1]]['meldungen'][0]['kennung'] == 'original-1'
+
+
+def test_sitzungen_schreiben_nicht_jedes_mal_gesamtdatei(monkeypatch, tmp_path):
+    context = FakeContext()
+    monkeypatch.setitem(sys.modules, 'playwright.sync_api', SimpleNamespace(
+        sync_playwright=lambda: FakePlaywright(context)))
+    output = tmp_path / 'warnungen.json'
+    initial = scraper.fresh_state()
+    initial['fahrzeuge'][FIN1] = {'status': 'teilweise', 'sitzungen': {}}
+    scraper.save_state(output, initial)
+    original_bytes = output.read_bytes()
+    writes = []
+    original_writer = scraper.save_state
+
+    def counting_writer(path, state):
+        writes.append(path)
+        # Vor dem einzigen abschliessenden Gesamtexport bleibt das Original unveraendert.
+        assert output.read_bytes() == original_bytes
+        return original_writer(path, state)
+
+    monkeypatch.setattr(scraper, 'save_state', counting_writer)
+    runner = scraper.DiagnosisViewerScraper(output, tmp_path / 'browser', pacing=0)
+    sessions = [{'href': view_url(FIN1, f'session-{i}.json.gz'), 'quelle': 'XD',
+                 'diagnosezeitpunkt': f'2026-01-0{i+1}', 'fin': FIN1} for i in range(4)]
+    monkeypatch.setattr(runner, '_search', lambda ctx, page, fin: (page, sessions))
+    monkeypatch.setattr(runner, '_read_session', lambda ctx, href: ([{'kennung':'fake'}], 'datenstruktur'))
+    assert runner.run([FIN1], scraper.load_state(output), refresh=False, redo=False) == 0
+    assert writes == [output]  # Statt viele Voll-Rewrites nur EINER bei Abschluss
+    assert len(list(scraper.teile_verzeichnis(output).glob(f'{FIN1}/sitzungen/*.json'))) == 4
+    assert len(scraper.load_state(output)['fahrzeuge'][FIN1]['sitzungen']) == 4
+
+
+def test_ohne_gesamtdatei_funktioniert_resume_ohne_legacy_datei(monkeypatch, tmp_path):
+    context = FakeContext()
+    monkeypatch.setitem(sys.modules, 'playwright.sync_api', SimpleNamespace(
+        sync_playwright=lambda: FakePlaywright(context)))
+    output = tmp_path / 'file.json'
+    runner = scraper.DiagnosisViewerScraper(output, tmp_path / 'browser',
+                                            gesamtdatei_am_ende=False)
+    sessions = [{'href': view_url(FIN1, f'session-{i}.json.gz'), 'quelle': 'XD',
+                 'diagnosezeitpunkt': f'2026-01-0{i+1}', 'fin': FIN1} for i in range(2)]
+    monkeypatch.setattr(runner, '_search', lambda ctx, page, fin: (page, sessions))
+    attempted = []
+
+    def interrupt(ctx, href):
+        attempted.append(href)
+        if len(attempted) == 2:
+            raise KeyboardInterrupt
+        return ([{'kennung': 'synthetisch'}], 'datenstruktur')
+
+    monkeypatch.setattr(runner, '_read_session', interrupt)
+    with pytest.raises(KeyboardInterrupt):
+        runner.run([FIN1], scraper.fresh_state(), refresh=False, redo=False)
+    assert not output.exists()
+    resumed_state = scraper.load_state(output)
+    assert resumed_state['fahrzeuge'][FIN1]['status'] == 'unterbrochen'
+    assert len(resumed_state['fahrzeuge'][FIN1]['sitzungen']) == 1
+    runner2 = scraper.DiagnosisViewerScraper(output, tmp_path / 'browser', gesamtdatei_am_ende=False)
+    monkeypatch.setattr(runner2, '_search', lambda ctx, page, fin: (page, sessions))
+    remaining = []
+    monkeypatch.setattr(runner2, '_read_session', lambda ctx, href: (remaining.append(href) or [], 'datenstruktur'))
+    assert runner2.run([FIN1], resumed_state, refresh=False, redo=False) == 0
+    assert remaining == [sessions[1]['href']]
+    assert not output.exists()
+    assert scraper.load_state(output)['fahrzeuge'][FIN1]['status'] == 'abgeschlossen'
+
+
+def test_nur_zusammenfassen_offline_baut_alte_json_aus_teilen(monkeypatch, tmp_path):
+    output = tmp_path / 'warnungen.json'
+    key = scraper.session_key(view_url(FIN1))
+    store = scraper.SitzungsSpeicher(output)
+    store.sitzung_speichern(FIN1, key, _entry('synthetische Warnung'))
+    store.fahrzeug_speichern(FIN1, {'status': 'abgeschlossen', 'sitzungen': {key: _entry('synthetische Warnung')}})
+    monkeypatch.setattr(scraper, '_load_keyring_credentials',
+                        lambda: pytest.fail('Offline-Zusammenfassen darf keinen SSO-Tresor verwenden'))
+    assert scraper.main(['--nur-zusammenfassen', '--ausgabe', str(output)]) == 0
+    assert output.exists()
+    assert scraper.load_state(output)['fahrzeuge'][FIN1]['sitzungen'][key]['meldungen'][0]['kennung'] == 'synthetische Warnung'
+
+
+def test_sitzungs_id_und_url_validieren_gegen_sensible_dateinamen(tmp_path):
+    store = scraper.SitzungsSpeicher(tmp_path / 'ausgabe.json')
+    with pytest.raises(ValueError, match='Sitzungs-ID'):
+        store.sitzung_speichern(FIN1, '../unzulässig', _entry('test'))
+    with pytest.raises(ValueError, match='Sitzungslinks'):
+        store.sitzung_speichern(FIN1, scraper.session_key(view_url(FIN1)),
+                                {'status': 'erfolgreich', 'href': view_url(FIN1)})
