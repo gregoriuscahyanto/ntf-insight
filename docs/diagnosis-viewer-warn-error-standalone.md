@@ -53,6 +53,14 @@ warnings_errors_teile/
 ```
 
 - **Beim ersten Start mit bestehender Datei:** Die bisherige `warnings_errors.json` wird verlustfrei und idempotent in Teildateien uebernommen. Ihre Original-Bytes bleiben waehrend der Migration unangetastet. Bereits neuere Teildateien werden niemals durch alte Daten ueberschrieben.
+**Nur vorhandenen Altbestand aufteilen (kein Browser, keine FIN-TXT, kein Login):**
+
+```powershell
+py -3.11 scripts/diagnosis_viewer_warn_error.py --ausgabe 'C:\lokal\warnings_errors.json' --nur-aufteilen
+```
+
+Danach kann der regulaere Abruf mit demselben `--ausgabe`-Pfad sicher fortgesetzt werden. Ein wiederholtes `--nur-aufteilen` ueberschreibt keine neueren Sitzungsdateien.
+
 - **Im laufenden Abruf:** Pro Sitzung werden nur ihre kleine JSON und der kurze FIN-Status atomar aktualisiert. Die grosse Gesamtdatei bleibt in dieser Phase auf ihrem letzten Stand.
 - **Bei normalem Laufende (Standard):** Der Scraper erzeugt **einmal** eine aktualisierte `warnings_errors.json` mit derselben Struktur wie bisher. Das kostet bei sehr grossen Datenmengen einmalig Zeit, nicht nach jeder Sitzung.
 - **Bei `Strg+C` oder Absturz:** Schon geschriebene Sitzungsdateien und der FIN-Status bleiben gueltig. Der teure Gesamtexport wird bei Unterbrechung nicht erzwungen; Resume kombiniert beim Laden die bisherige Gesamtdatei mit den neueren Teildateien. `fehler` wird erneut versucht, `erfolgreich`, `keine_meldungen` und `abschnitt_fehlt` werden uebersprungen.
