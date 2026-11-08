@@ -637,3 +637,21 @@ def test_sitzungs_id_und_url_validieren_gegen_sensible_dateinamen(tmp_path):
     with pytest.raises(ValueError, match='Sitzungslinks'):
         store.sitzung_speichern(FIN1, scraper.session_key(view_url(FIN1)),
                                 {'status': 'erfolgreich', 'href': view_url(FIN1)})
+
+
+def test_nur_aufteilen_altbestand_offline_und_original_unveraendert(monkeypatch, tmp_path):
+    output = tmp_path / 'warnungen.json'
+    key = scraper.session_key(view_url(FIN1))
+    initial = scraper.fresh_state()
+    initial['fahrzeuge'][FIN1] = {'status': 'abgeschlossen', 'sitzungen': {key: _entry('alt')}}
+    scraper.save_state(output, initial)
+    alte_bytes = output.read_bytes()
+    monkeypatch.setattr(scraper, '_load_keyring_credentials',
+                        lambda: pytest.fail('Offline-Aufteilen darf keinen SSO-Tresor verwenden'))
+    assert scraper.main(['--nur-aufteilen', '--ausgabe', str(output)]) == 0
+    assert output.read_bytes() == alte_bytes
+    assert (scraper.teile_verzeichnis(output) / FIN1 / 'sitzungen' / (key + '.json')).exists()
+    # Idempotent, auch bei wiederholtem Start.
+    assert scraper.main(['--nur-aufteilen', '--ausgabe', str(output)]) == 0
+    assert output.read_bytes() == alte_bytes
+    assert scraper.load_state(output)['fahrzeuge'][FIN1]['sitzungen'][key] == _entry('alt')
