@@ -217,11 +217,18 @@ def test_empty_warning_section_requires_explicit_api_proof():
     another.observe(FakeResponse(root + "/view", {
         "type": "sectioned", "sections": ["quicktests", "ecuProtocols"]
     }))
-    assert another.empty_verified is True
+    assert another.empty_verified is False
+    assert another.section_missing_verified is True
     assert another.messages is None
     missing = scraper.WarningCapture()
     missing.observe(FakeResponse(root + "/view", {"type": "sectioned", "sections": ["warningEventMessages"]}))
     assert missing.empty_verified is False
+    assert missing.section_missing_verified is False
+    unknown_section_format = scraper.WarningCapture()
+    unknown_section_format.observe(FakeResponse(root + '/view', {
+        'type': 'sectioned', 'sections': [{'name': 'warningEventMessages'}]
+    }))
+    assert unknown_section_format.section_missing_verified is False
 
 
 def test_output_never_contains_session_link_or_s3_path(monkeypatch, tmp_path):
@@ -314,3 +321,152 @@ def test_unknown_api_payload_keine_erfundenen_leeren_meldungen():
     watcher.observe(FakeResponse(root, {'type':'url', 'downloadUrl':'https://example.invalid'}))
     assert watcher.messages is None
     assert watcher.empty_verified is False
+
+
+def test_standardstart_ohne_kuenstlichen_aktionsabstand(tmp_path):
+    args = scraper.build_parser().parse_args(["--eingabe", "liste.txt"])
+    assert args.abstand == 0.0
+    assert args.sitzungs_timeout == 25
+    assert scraper.DiagnosisViewerScraper(tmp_path / "ergebnis.json", tmp_path / "profil").taktung.interval == 0
+    assert scraper.build_parser().parse_args(["--abstand", "0"]).abstand == 0
+
+
+def test_restzeit_anzeige_verwendet_beobachtete_sitzungszeiten(monkeypatch):
+    jetzt = [100.0]
+    monkeypatch.setattr(scraper.time, "monotonic", lambda: jetzt[0])
+    eta = scraper.Restzeit(3)
+    assert "wird ermittelt" in eta.text()
+    jetzt[0] = 104.0
+    eta.suche_fertig(4.0, 2)
+    assert "wird ermittelt" in eta.text()
+    jetzt[0] = 110.0
+    eta.sitzung_fertig(6.0)
+    # 1 Sitzung bei aktueller FIN, 2 FINs noch nicht durchsucht:
+    # 1*6 + 2*(4 + 2*6) = 38 Sekunden.
+    assert "Restzeit grob ca. 00:38" in eta.text()
+    eta.sitzung_fertig(None)  # Uebersprungene bereits gespeicherte Sitzung: keine 0-Sekunden-Probe
+    assert "Restzeit grob ca. 00:32" in eta.text()
+    eta.fin_fertig()
+    assert "Restzeit grob ca. 00:32" in eta.text()
+
+
+class FakeMissingPage:
+    """Offline-Browserdouble: Diagnoseinformationen sind da, Warnungssektion fehlt."""
+
+    def __init__(self, *, ready=True, emit_missing_metadata=False, clock=None):
+        self.ready = ready
+        self.emit_missing_metadata = emit_missing_metadata
+        self.clock = clock
+        self.listeners = {}
+        self.waits = 0
+        self.closed = False
+        self.goto_urls = []
+
+    def on(self, name, callback):
+        self.listeners[name] = callback
+
+    def remove_listener(self, name, callback):
+        assert self.listeners[name] == callback
+        del self.listeners[name]
+
+    def goto(self, url, **kwargs):
+        self.goto_urls.append(url)
+        if self.emit_missing_metadata:
+            self.listeners['response'](FakeResponse(
+                scraper.SEARCH_URL.replace('app.', 'api.').replace('/search', '/view'),
+                {'type': 'sectioned', 'sections': ['quicktests', 'ecuProtocols']}
+            ))
+
+    def get_by_role(self, *args, **kwargs):
+        return SimpleNamespace(count=lambda: 0)
+
+    def evaluate(self, script, *args):
+        assert "accordion" in script
+        return {"ready": self.ready, "warning": False, "busy": False,
+                "signature": "Diagnosis Session Info: Test|Quick Test(s): 2" if self.ready else ""}
+
+    def wait_for_timeout(self, ms):
+        self.waits += 1
+        if self.clock is not None:
+            self.clock[0] += ms / 1000
+
+    def close(self):
+        self.closed = True
+
+
+class FakeSessionContext:
+    def __init__(self, page):
+        self.page = page
+
+    def new_page(self):
+        return self.page
+
+
+def test_fehlender_abschnitt_wird_schnell_uebersprungen(monkeypatch, tmp_path):
+    clock = [100.0]
+    monkeypatch.setattr(scraper.time, 'monotonic', lambda: clock[0])
+    page = FakeMissingPage(clock=clock)
+    runner = scraper.DiagnosisViewerScraper(tmp_path / 'ausgabe.json', tmp_path / 'profil',
+                                            pacing=0, session_timeout=25, missing_section_grace=1.25)
+    monkeypatch.setattr(runner, '_read_api_section',
+                        lambda *args: pytest.fail('Bei bestaetigt fehlendem Abschnitt keine API-Anfrage'))
+    rows, method = runner._read_session(FakeSessionContext(page), view_url(FIN1))
+    assert rows == [] and method == 'abschnitt_fehlt'
+    assert clock[0] - 100 < 2.0  # Kein 25-/70-Sekunden-Timeout
+    assert page.closed and not page.listeners
+    assert page.waits > 0
+
+
+def test_api_belegt_nicht_vorhandenen_abschnitt_ohne_warten(monkeypatch, tmp_path):
+    clock = [0.0]
+    monkeypatch.setattr(scraper.time, 'monotonic', lambda: clock[0])
+    page = FakeMissingPage(ready=False, emit_missing_metadata=True, clock=clock)
+    runner = scraper.DiagnosisViewerScraper(tmp_path / 'ausgabe.json', tmp_path / 'profil', pacing=0)
+    assert runner._read_session(FakeSessionContext(page), view_url(FIN1)) == ([], 'abschnitt_fehlt')
+    assert page.waits == 0
+
+
+def test_unfertige_ansicht_nicht_faelschlich_als_fehlen_klassifizieren(monkeypatch, tmp_path):
+    clock = [0.0]
+    monkeypatch.setattr(scraper.time, 'monotonic', lambda: clock[0])
+    page = FakeMissingPage(ready=False, clock=clock)
+    runner = scraper.DiagnosisViewerScraper(tmp_path / 'ausgabe.json', tmp_path / 'profil',
+                                            pacing=0, session_timeout=3)
+    with pytest.raises(TimeoutError, match='nicht vollstaendig geladen'):
+        runner._read_session(FakeSessionContext(page), view_url(FIN1))
+    assert clock[0] >= 3
+    assert page.closed
+
+
+def test_abschnitt_fehlt_hat_eigenen_resume_status_und_keine_falsche_nullzahl(monkeypatch, tmp_path):
+    context = FakeContext()
+    monkeypatch.setitem(sys.modules, 'playwright.sync_api', SimpleNamespace(
+        sync_playwright=lambda: FakePlaywright(context)))
+    output = tmp_path / 'ergebnis.json'
+    runner = scraper.DiagnosisViewerScraper(output, tmp_path / 'profil', pacing=0)
+    sessions = [{"href": view_url(FIN1), "quelle": "XD", "diagnosezeitpunkt": "2026-01-01", "fin": FIN1}]
+    monkeypatch.setattr(runner, '_search', lambda ctx, page, fin: (page, sessions))
+    monkeypatch.setattr(runner, '_read_session', lambda ctx, href: ([], 'abschnitt_fehlt'))
+    messages = []
+    monkeypatch.setattr(runner, 'log', messages.append)
+    assert runner.run([FIN1], scraper.fresh_state(), refresh=False, redo=False) == 0
+    state = scraper.load_state(output)
+    assert state['fahrzeuge'][FIN1]['status'] == 'abgeschlossen'
+    session = next(iter(state['fahrzeuge'][FIN1]['sitzungen'].values()))
+    assert session['status'] == 'abschnitt_fehlt'
+    assert session['anzahl_meldungen'] is None
+    assert session['hinweis'] and session['meldungen'] == []
+    assert any('Restzeit' in msg for msg in messages)
+    assert any('Sitzung 1/1' in msg for msg in messages)
+    assert runner.run([FIN1], state, refresh=False, redo=False) == 0
+
+
+def test_api_aufruf_hat_festes_abort_timeout(tmp_path):
+    class BrowserPage:
+        def evaluate(self, code, filename):
+            assert 'AbortController' in code
+            assert '4000' in code
+            assert filename == 'beispiel.json.gz'
+            return None
+    runner = scraper.DiagnosisViewerScraper(tmp_path / 'ausgabe.json', tmp_path / 'profil')
+    assert runner._read_api_section(BrowserPage(), view_url(FIN1)) is None
