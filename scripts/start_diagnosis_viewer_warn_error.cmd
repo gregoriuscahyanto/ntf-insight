@@ -22,7 +22,9 @@ if not errorlevel 1 (
 )
 set "CODE=%ERRORLEVEL%"
 echo.
-echo JSON: "%AUSGABE%"
+echo Gesamt-JSON (am Laufende aktualisiert): "%AUSGABE%"
+echo Laufende Checkpoints: "%CD%\data\processed\diagnosis_viewer_warn_error\warnings_errors_teile"
 echo Zum Fortsetzen die CMD-Datei einfach erneut starten.
+echo Optional: --ohne-gesamtdatei spart den Gesamtexport beim Laufende.
 pause
 exit /b %CODE%
