@@ -17,6 +17,7 @@ import re
 import sys
 import tempfile
 import time
+from collections import deque
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -28,7 +29,7 @@ API_HOST = "api.diagviewer.prod.gspp-eu.cloud.corpintra.net"
 LOGIN_HOST = "login.mercedes-benz.com"
 SOURCES = "XD,XD(AQT),TD,DAS"
 FIN_PATTERN = re.compile(r"[A-HJ-NPR-Z0-9]{17}\Z")
-ENDED = {"erfolgreich", "keine_meldungen"}
+ENDED = {"erfolgreich", "keine_meldungen", "abschnitt_fehlt"}
 SCHEMA_VERSION = 1
 
 
@@ -238,12 +239,69 @@ class Taktung:
         self.last = time.monotonic()
 
 
+def format_duration(seconds: float) -> str:
+    """Monotone Laufzeiten als lesbare Dauer; keine Uhrzeit/Deadline vorgaukeln."""
+    seconds = max(0, round(seconds))
+    minutes, rest = divmod(seconds, 60)
+    hours, minutes = divmod(minutes, 60)
+    return f"{hours:d}:{minutes:02d}:{rest:02d}" if hours else f"{minutes:02d}:{rest:02d}"
+
+
+class Restzeit:
+    """Grobe ETA aus bereits beobachteten Such- und Sitzungsdauern.
+
+    Die Sitzungsanzahl unbekannter FINs ist nicht vorhersagbar. Hier wird
+    der Durchschnitt der bisher gefundenen FINs hochgerechnet und stets
+    als Schaetzung gekennzeichnet (nicht als feste Zusage).
+    """
+
+    def __init__(self, fin_anzahl: int):
+        self.start = time.monotonic()
+        self.fin_anzahl = fin_anzahl
+        self.fertige_fins = 0
+        self.suchen: deque[float] = deque(maxlen=20)
+        self.sitzungen: deque[float] = deque(maxlen=30)
+        self.sitzungen_je_fin: deque[int] = deque(maxlen=20)
+        self.aktuelle_sitzungen: int | None = None
+        self.aktuell_fertig = 0
+
+    def suche_fertig(self, dauer: float, sitzungen: int) -> None:
+        self.suchen.append(max(0, dauer))
+        self.sitzungen_je_fin.append(sitzungen)
+        self.aktuelle_sitzungen = sitzungen
+        self.aktuell_fertig = 0
+
+    def sitzung_fertig(self, dauer: float | None) -> None:
+        if dauer is not None:
+            self.sitzungen.append(max(0, dauer))
+        self.aktuell_fertig += 1
+
+    def fin_fertig(self) -> None:
+        self.fertige_fins += 1
+        self.aktuelle_sitzungen = None
+        self.aktuell_fertig = 0
+
+    def text(self) -> str:
+        laufzeit = format_duration(time.monotonic() - self.start)
+        if not self.suchen or (self.sitzungen_je_fin and any(self.sitzungen_je_fin) and not self.sitzungen):
+            return f"Laufzeit {laufzeit} | Restzeit wird ermittelt"
+        durchschnitt_suche = sum(self.suchen) / len(self.suchen)
+        durchschnitt_sitzung = (sum(self.sitzungen) / len(self.sitzungen)) if self.sitzungen else 0
+        rest_aktuell = max(0, (self.aktuelle_sitzungen or 0) - self.aktuell_fertig)
+        noch_ungesucht = max(0, self.fin_anzahl - self.fertige_fins - (self.aktuelle_sitzungen is not None))
+        mittel_sitzungen = sum(self.sitzungen_je_fin) / len(self.sitzungen_je_fin)
+        rest = (rest_aktuell * durchschnitt_sitzung
+                + noch_ungesucht * (durchschnitt_suche + mittel_sitzungen * durchschnitt_sitzung))
+        return f"Laufzeit {laufzeit} | Restzeit grob ca. {format_duration(rest)}"
+
+
 class WarningCapture:
     """Passiv nur Warnungsfelder aus den legitimen Viewer-Antworten aufnehmen."""
 
     def __init__(self):
         self.messages: list[dict[str, Any]] | None = None
         self.empty_verified = False
+        self.section_missing_verified = False
 
     def observe(self, response: Any) -> None:
         try:
@@ -263,9 +321,14 @@ class WarningCapture:
             if records is not None:
                 self.messages = records
                 self.empty_verified = not records
+                self.section_missing_verified = False
             elif url.path == "/view" and isinstance(payload, dict):
                 if payload.get("type") == "sectioned" and isinstance(payload.get("sections"), list):
-                    self.empty_verified = "warningEventMessages" not in payload["sections"]
+                    # Fehlt die Sektion in der expliziten Metadatenliste, ist das
+                    # nicht dasselbe wie eine vorhandene, leere Meldungstabelle.
+                    sections = payload["sections"]
+                    if all(isinstance(name, str) for name in sections):
+                        self.section_missing_verified = "warningEventMessages" not in sections
                 # Ein unbekannter API-Payload-Typ ist KEIN Beleg fuer 0 Meldungen.
                 # Sonst koennte z.B. ein S3-Verweis faelschlich als leer gelten.
         except Exception:
@@ -276,7 +339,8 @@ class WarningCapture:
 class DiagnosisViewerScraper:
     def __init__(
         self, output: Path, profile: Path, *, user_id: str = "", password: str = "",
-        pacing: float = 1.5, login_timeout: float = 300, page_timeout: float = 70,
+        pacing: float = 0.0, login_timeout: float = 300, page_timeout: float = 70,
+        session_timeout: float = 25, missing_section_grace: float = 1.25,
     ):
         self.output = output
         self.profile = profile
@@ -285,6 +349,8 @@ class DiagnosisViewerScraper:
         self.taktung = Taktung(pacing)
         self.login_timeout = login_timeout
         self.page_timeout = page_timeout
+        self.session_timeout = session_timeout
+        self.missing_section_grace = missing_section_grace
         self.stopped = False
 
     @staticmethod
@@ -340,9 +406,9 @@ class DiagnosisViewerScraper:
                     continue
             alive = next((p for p in context.pages if not p.is_closed()), None)
             if alive:
-                alive.wait_for_timeout(450)
+                alive.wait_for_timeout(200)
             else:
-                time.sleep(0.45)
+                time.sleep(0.2)
         raise TimeoutError("SSO/PING ID wurde nicht innerhalb des Zeitlimits abgeschlossen.")
 
     def _search(self, context: Any, page: Any, fin: str) -> tuple[Any, list[dict[str, str]]]:
@@ -354,8 +420,7 @@ class DiagnosisViewerScraper:
         field.fill(fin)
         self.taktung.pause()
         page.get_by_role("button", name=re.compile(r"^(Search|Suchen)$", re.I)).click(timeout=15000)
-        # Ein alter "No Results Found"-Zustand darf nicht als Ergebnis der neuen FIN gelten.
-        page.wait_for_timeout(650)
+        # Nicht pauschal schlafen: eine neue FIN wird anhand der Zellen geprueft.
         deadline = time.monotonic() + self.page_timeout
         empty_since: float | None = None
         found: dict[str, dict[str, str]] = {}
@@ -397,7 +462,7 @@ class DiagnosisViewerScraper:
                 }""", table.element_handle())
                 if scroll["bottom"]:
                     # Einmal noch reagieren lassen, damit virtualisierte Schlusszeilen erscheinen.
-                    page.wait_for_timeout(350)
+                    page.wait_for_timeout(80)
                     last_rows = page.evaluate("""fin => Array.from(document.querySelectorAll('table tbody tr'))
                       .map(tr => { const c = Array.from(tr.querySelectorAll(':scope > td'));
                         if (c.length < 10) return null;
@@ -415,12 +480,12 @@ class DiagnosisViewerScraper:
                 if empty_label.count() and empty_label.first.is_visible():
                     if empty_since is None:
                         empty_since = time.monotonic()
-                    elif time.monotonic() - empty_since >= 1.5:
+                    elif time.monotonic() - empty_since >= 1.2:
                         empty = True
                         break
                 else:
                     empty_since = None
-            page.wait_for_timeout(450)
+            page.wait_for_timeout(180)
         if not saw_requested_fin and not empty:
             raise TimeoutError(f"Keine eindeutigen Suchergebnisse fuer {fin} geladen.")
         if saw_requested_fin:
@@ -437,6 +502,26 @@ class DiagnosisViewerScraper:
                 )
         return page, list(found.values())
 
+    @staticmethod
+    def _view_sections_status(page: Any) -> dict[str, Any]:
+        """Erkennen, ob eine Sitzungsansicht *fertig* ohne Warnungsabschnitt ist.
+
+        'Nicht vorhanden' erst werten, wenn die Sitzungsinformationen und das
+        Accordion bereits gerendert sind; ein Ladebildschirm ist kein Beweis.
+        """
+        return page.evaluate("""() => {
+            const root = document.querySelector('[data-slot="accordion"]');
+            const headings = root ? Array.from(root.querySelectorAll('h3 button'))
+                .map(x => (x.textContent || '').trim().replace(/\\s+/g, ' ')) : [];
+            // Der Viewer rendert zuerst 'Loading...' im Sitzungstitel.
+            // Erst echte Metadaten duerfen das Fehlen der Warnungssektion belegen.
+            const ready = headings.some(x => /^Diagnosis Session Info:/i.test(x)
+                && !/Loading/i.test(x));
+            const warning = headings.some(x => /Warning and Error Messages/i.test(x));
+            const busy = Boolean(document.querySelector('[aria-busy="true"]'));
+            return {ready, warning, busy, signature: headings.join('|')};
+        }""")
+
     def _read_api_section(self, page: Any, href: str) -> list[dict[str, Any]] | None:
         """Vom Browser bereits genutzte Leseschnittstelle, ausschliesslich section=warningEventMessages.
 
@@ -448,19 +533,24 @@ class DiagnosisViewerScraper:
             const endpoint = new URL('https://api.diagviewer.prod.gspp-eu.cloud.corpintra.net/view/section');
             endpoint.searchParams.set('filename', filename);
             endpoint.searchParams.set('section', 'warningEventMessages');
+            // Eine haengende API-Anfrage darf den gesamten FIN-Lauf nie blockieren.
+            const controller = new AbortController();
+            const timer = setTimeout(() => controller.abort(), 4000);
             try {
-                const result = await fetch(endpoint.toString(), {credentials: 'include'});
+                const result = await fetch(endpoint.toString(), {
+                    credentials: 'include', signal: controller.signal
+                });
                 if (!result.ok || !(result.headers.get('content-type') || '').includes('json')) return null;
                 let value = await result.json();
                 if (value?.type === 'url' && value?.downloadUrl && value?.fileType === 'gzip') {
                     // Dieselbe freigegebene, signierte Lese-URL, die auch der Viewer verwendet.
-                    const sub = await fetch(value.downloadUrl);
+                    const sub = await fetch(value.downloadUrl, {signal: controller.signal});
                     if (!sub.ok) return null;
                     value = await sub.json();
                 }
                 if (value?.type === 'url') return null; // ZIP -> DOM-Fallback
                 return value;
-            } catch { return null; }
+            } catch { return null; } finally { clearTimeout(timer); }
         }""", filename)
         return _raw_warnings(response)
 
@@ -528,9 +618,12 @@ class DiagnosisViewerScraper:
         page.on("response", capture.observe)
         try:
             self.taktung.pause()
-            page.goto(href, wait_until="domcontentloaded", timeout=45000)
+            page.goto(href, wait_until="domcontentloaded",
+                      timeout=int(self.session_timeout * 1000))
             button = page.get_by_role("button", name=re.compile("Warning and Error Messages", re.I))
-            deadline = time.monotonic() + self.page_timeout
+            deadline = time.monotonic() + self.session_timeout
+            missing_since: float | None = None
+            last_signature = ""
             while time.monotonic() < deadline:
                 if capture.messages is not None:
                     return [normalize_raw(row) for row in capture.messages], "datenstruktur"
@@ -538,19 +631,32 @@ class DiagnosisViewerScraper:
                     return [], "datenstruktur"
                 if button.count() and button.first.is_visible():
                     break
-                page.wait_for_timeout(350)
+                if capture.section_missing_verified:
+                    return [], "abschnitt_fehlt"
+                # Nicht erst 70 Sekunden auf einen Button warten, den es in
+                # dieser vollstaendig geladenen Diagnose-Sitzung gar nicht gibt.
+                view_state = self._view_sections_status(page)
+                if (view_state.get("ready") and not view_state.get("warning")
+                        and not view_state.get("busy")):
+                    signature = view_state.get("signature", "")
+                    if signature != last_signature:
+                        missing_since = time.monotonic()
+                        last_signature = signature
+                    elif (missing_since is not None
+                          and time.monotonic() - missing_since >= self.missing_section_grace):
+                        return [], "abschnitt_fehlt"
+                else:
+                    missing_since = None
+                    last_signature = ""
+                page.wait_for_timeout(160)
             else:
-                # Falls der Viewer eine leere Warnungssektion ganz ausblendet.
-                records = self._read_api_section(page, href)
-                if records is not None:
-                    return [normalize_raw(row) for row in records], "datenstruktur"
-                raise TimeoutError("Warnungssektion nicht vorhanden und keine leeren Quelldaten bestaetigt.")
+                # Unvollstaendig geladene Ansicht: nicht als 'Abschnitt fehlt'
+                # werten. Nach dem begrenzten Timeout mit Fehler weitergehen.
+                raise TimeoutError("Sitzungsansicht nicht vollstaendig geladen; Warnungsabschnitt ungeklärt.")
             if button.get_attribute("aria-expanded") != "true":
                 self.taktung.pause()
                 button.click(timeout=15000)
             # Leseversuch bevorzugt die strukturierten Originalfelder statt einer UI-Teilansicht.
-            if capture.messages is None:
-                page.wait_for_timeout(700)
             records = capture.messages
             if records is None:
                 records = self._read_api_section(page, href)
@@ -576,6 +682,7 @@ class DiagnosisViewerScraper:
             fin for fin in fins
             if redo or refresh or state["fahrzeuge"].get(fin, {}).get("status") != "abgeschlossen"
         ]
+        fortschritt = Restzeit(len(todo))
         if not todo and not login_only:
             self.log("Alle FINs bereits abgeschlossen. --aktualisieren prueft neue Sitzungen.")
             return 0
@@ -607,18 +714,22 @@ class DiagnosisViewerScraper:
                     existing["letzter_versuch_utc"] = utc_now()
                     existing["status"] = "in_bearbeitung"
                     save_state(self.output, state)
-                    self.log(f"[{fin_index}/{len(todo)}] FIN {fin}: Diagnose-Sitzungen suchen ...")
+                    self.log(f"[{fin_index}/{len(todo)} FIN] {fin}: Sitzungen suchen | {fortschritt.text()}")
                     try:
+                        start_suche = time.monotonic()
                         page, sessions = self._search(context, page, fin)
+                        fortschritt.suche_fertig(time.monotonic() - start_suche, len(sessions))
                         existing["anzahl_sitzungen_gefunden"] = len(sessions)
                         existing["suchfehler"] = None
                         save_state(self.output, state)
+                        self.log(f"  {len(sessions)} Sitzung(en) gefunden | {fortschritt.text()}")
                         for current, session in enumerate(sessions, 1):
                             href = session["href"]
                             key = session_key(href) if href else session_key(f"https://invalid.local/view/{session['quelle']}/{session['diagnosezeitpunkt']}?fin={fin}")
                             entry = existing["sitzungen"].get(key, {})
                             if entry.get("status") in ENDED and not redo:
-                                self.log(f"  [{current}/{len(sessions)}] Bereits gespeichert – uebersprungen.")
+                                fortschritt.sitzung_fertig(None)
+                                self.log(f"  [{current}/{len(sessions)}] Bereits gespeichert | {fortschritt.text()}")
                                 continue
                             if not safe_view_link(href, fin):
                                 err = "Kein gueltiger Augen-Link fuer die Diagnose-Sitzung vorhanden."
@@ -627,18 +738,29 @@ class DiagnosisViewerScraper:
                                     "status": "fehler", "fehler": err, "versucht_utc": utc_now(),
                                 }
                                 save_state(self.output, state)
-                                self.log(f"  [{current}/{len(sessions)}] {err}")
+                                fortschritt.sitzung_fertig(None)
+                                self.log(f"  [{current}/{len(sessions)}] {err} | {fortschritt.text()}")
                                 continue
                             self.log(f"  [{current}/{len(sessions)}] {session['quelle']} {session['diagnosezeitpunkt']}: Meldungen ...")
+                            start_sitzung = time.monotonic()
                             try:
                                 warnings, method = self._read_session(context, href)
                                 existing["sitzungen"][key] = {
                                     **{k: v for k, v in session.items() if k != "href"},
-                                    "status": "erfolgreich" if warnings else "keine_meldungen",
-                                    "auslesemethode": method, "anzahl_meldungen": len(warnings),
+                                    "status": ("abschnitt_fehlt" if method == "abschnitt_fehlt"
+                                               else "erfolgreich" if warnings else "keine_meldungen"),
+                                    "auslesemethode": method,
+                                    "anzahl_meldungen": None if method == "abschnitt_fehlt" else len(warnings),
                                     "meldungen": warnings, "abgerufen_utc": utc_now(), "fehler": None,
                                 }
-                                self.log(f"    {len(warnings)} Meldung(en) / {method}; gespeichert.")
+                                if method == "abschnitt_fehlt":
+                                    existing["sitzungen"][key]["hinweis"] = (
+                                        "Die geladene Diagnose-Sitzung enthaelt keinen "
+                                        "Abschnitt 'Warning and Error Messages'."
+                                    )
+                                    self.log("    Kein Warning-and-Error-Messages-Abschnitt; uebersprungen.")
+                                else:
+                                    self.log(f"    {len(warnings)} Meldung(en) / {method}; gespeichert.")
                             except KeyboardInterrupt:
                                 raise
                             except Exception as exc:
@@ -650,6 +772,8 @@ class DiagnosisViewerScraper:
                                 self.log(f"    FEHLER: {no_sensitive_error(exc)}")
                             finally:
                                 save_state(self.output, state)
+                                fortschritt.sitzung_fertig(time.monotonic() - start_sitzung)
+                                self.log(f"    FIN {fin_index}/{len(todo)} | Sitzung {current}/{len(sessions)} | {fortschritt.text()}")
                         current_ids = [
                             session_key(item["href"]) if item["href"] else session_key(
                                 f"https://invalid.local/view/{item['quelle']}/{item['diagnosezeitpunkt']}?fin={fin}"
@@ -673,7 +797,8 @@ class DiagnosisViewerScraper:
                         self.log(f"  Suchfehler: {no_sensitive_error(exc)}")
                     finally:
                         save_state(self.output, state)
-                    self.log(f"  FIN {fin}: {existing['status']}.")
+                        fortschritt.fin_fertig()
+                    self.log(f"  FIN {fin}: {existing['status']} | {fortschritt.text()}")
             finally:
                 context.close()
                 self.password = ""
@@ -725,8 +850,12 @@ def build_parser() -> argparse.ArgumentParser:
                         help="Passwort bei Bedarf maskiert im Terminal abfragen")
     parser.add_argument("--anmelde-timeout", type=float, default=300)
     parser.add_argument("--seiten-timeout", type=float, default=70)
-    parser.add_argument("--abstand", type=float, default=1.5,
-                        help="Mindestabstand zwischen Browseraktionen (Sekunden)")
+    parser.add_argument("--sitzungs-timeout", type=float, default=25,
+                        help="Maximale Wartezeit auf die Sitzungsansicht (Sekunden, Standard 25)")
+    parser.add_argument("--abschnitt-wartezeit", type=float, default=1.25,
+                        help="Stabilitaetspruefung bei fehlendem Warnungsabschnitt (Sekunden)")
+    parser.add_argument("--abstand", type=float, default=0.0,
+                        help="Optionaler Abstand zwischen Browseraktionen (Standard 0 = keine Zwangspause)")
     return parser
 
 
@@ -753,8 +882,12 @@ def main(argv: list[str] | None = None) -> int:
             raise ValueError("--anmelde-timeout muss 30 bis 900 Sekunden betragen.")
         if not 5 <= args.seiten_timeout <= 180:
             raise ValueError("--seiten-timeout muss 5 bis 180 Sekunden betragen.")
-        if args.abstand < 1.0:
-            raise ValueError("--abstand muss mindestens 1 Sekunde betragen.")
+        if not 5 <= args.sitzungs_timeout <= 180:
+            raise ValueError("--sitzungs-timeout muss 5 bis 180 Sekunden betragen.")
+        if not 0.5 <= args.abschnitt_wartezeit <= 10:
+            raise ValueError("--abschnitt-wartezeit muss 0.5 bis 10 Sekunden betragen.")
+        if not 0 <= args.abstand <= 10:
+            raise ValueError("--abstand muss 0 bis 10 Sekunden betragen.")
         state = fresh_state() if args.nur_login else load_state(output)
 
         user_id, password = args.benutzer_id, ""
@@ -774,7 +907,8 @@ def main(argv: list[str] | None = None) -> int:
         scraper = DiagnosisViewerScraper(
             output, args.profil.expanduser(), user_id=user_id, password=password,
             pacing=args.abstand, login_timeout=args.anmelde_timeout,
-            page_timeout=args.seiten_timeout,
+            page_timeout=args.seiten_timeout, session_timeout=args.sitzungs_timeout,
+            missing_section_grace=args.abschnitt_wartezeit,
         )
         if not args.nur_login:
             scraper.log(f"FINs: {len(fins)} | Ausgabe: {output}")
