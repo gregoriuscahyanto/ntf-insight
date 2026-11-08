@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Eigenstaendiger Diagnosis-Viewer-Scraper fuer Warning and Error Messages.
 
-Eingabe: TXT mit FINs. Ausgabe: eine JSON-Datei mit atomaren Checkpoints.
+Eingabe: FIN-TXT. Ausgabe: atomare JSON-Teildateien plus optionale Gesamtdatei.
 Nutzt ausschliesslich das vorhandene Edge und die interaktive Unternehmens-SSO.
 Es werden keine QuickTest-PDFs heruntergeladen.
 """
@@ -73,36 +73,140 @@ def fresh_state() -> dict[str, Any]:
     }
 
 
-def load_state(output: Path) -> dict[str, Any]:
+def teile_verzeichnis(output: Path) -> Path:
+    """Das Verzeichnis gehoert genau zur angegebenen Gesamt-JSON-Datei."""
+    return output.with_name(output.stem + "_teile")
+
+
+def _json_atomisch_schreiben(path: Path, payload: dict[str, Any]) -> None:
+    """Einzelne JSONs crash-sicher ersetzen; nie unvollstaendige Zieldateien."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, name = tempfile.mkstemp(prefix=f".{path.stem}.", suffix=".tmp", dir=path.parent)
+    temporaer = Path(name)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as stream:
+            json.dump(payload, stream, indent=2, ensure_ascii=False, sort_keys=False)
+            stream.write("\n")
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temporaer, path)
+    finally:
+        temporaer.unlink(missing_ok=True)
+
+
+def _json_laden(path: Path) -> dict[str, Any]:
+    with path.open("r", encoding="utf-8") as stream:
+        obj = json.load(stream)
+    if not isinstance(obj, dict):
+        raise ValueError(f"Ungueltiges JSON-Objekt in {path.name}.")
+    return obj
+
+
+def _basiszustand_laden(output: Path) -> dict[str, Any]:
     if not output.exists():
         return fresh_state()
-    with output.open("r", encoding="utf-8") as stream:
-        data = json.load(stream)
-    if not isinstance(data, dict) or data.get("schema_version") != SCHEMA_VERSION:
+    data = _json_laden(output)
+    if data.get("schema_version") != SCHEMA_VERSION:
         raise ValueError("Bestehende Ausgabedatei hat eine unbekannte JSON-Struktur.")
     if not isinstance(data.get("fahrzeuge"), dict):
         raise ValueError("Ausgabedatei enthaelt kein gueltiges 'fahrzeuge'-Objekt.")
     return data
 
 
-def save_state(output: Path, state: dict[str, Any]) -> None:
-    """Ganze JSON-Datei auf demselben Datentraeger atomar austauschen.
+def load_state(output: Path) -> dict[str, Any]:
+    """Alte Gesamtdatei UND neue Teildateien zusammenfuehren.
 
-    Bei SIGKILL/Absturz bleibt die vorangehende gueltige JSON-Version bestehen.
+    Teildateien haben Vorrang: Nach SIGKILL oder altem Gesamt-Snapshot
+    gehen die spaeter einzeln gespeicherten Sitzungen nicht verloren.
     """
-    output.parent.mkdir(parents=True, exist_ok=True)
+    data = _basiszustand_laden(output)
+    root = teile_verzeichnis(output)
+    if not root.exists():
+        return data
+    for directory in sorted(root.iterdir()):
+        if not directory.is_dir() or not FIN_PATTERN.fullmatch(directory.name):
+            continue
+        fin = directory.name
+        fahrzeug = data["fahrzeuge"].setdefault(fin, {"status": "ausstehend", "sitzungen": {}})
+        if not isinstance(fahrzeug, dict) or not isinstance(fahrzeug.get("sitzungen"), dict):
+            raise ValueError("Ungueltiger Fahrzeug-Datensatz in der Gesamtdatei.")
+        meta_path = directory / "_status.json"
+        if meta_path.exists():
+            meta = _json_laden(meta_path)
+            if meta.get("fin") != fin or meta.get("schema_version") != SCHEMA_VERSION:
+                raise ValueError("FIN-Status-Teildatei ist ungueltig.")
+            fahrzeug.update({k: v for k, v in meta.items() if k not in ("fin", "schema_version", "sitzungen")})
+        sessions_dir = directory / "sitzungen"
+        if sessions_dir.is_dir():
+            for part in sessions_dir.glob("*.json"):
+                if not re.fullmatch(r"[a-f0-9]{24}", part.stem):
+                    raise ValueError("Unerwarteter Sitzungs-Dateiname.")
+                record = _json_laden(part)
+                if not isinstance(record.get("status"), str):
+                    raise ValueError("Sitzungs-Teildatei ohne gueltigen Status.")
+                fahrzeug["sitzungen"][part.stem] = record
+        # Selbst bei ausgefallenem Abschluss-Checkpoint keine Fehler ueberspringen.
+        if fahrzeug.get("status") == "abgeschlossen" and any(
+            entry.get("status") not in ENDED for entry in fahrzeug["sitzungen"].values()
+        ):
+            fahrzeug["status"] = "teilweise"
+    return data
+
+
+def save_state(output: Path, state: dict[str, Any]) -> None:
+    """Gesamt-JSON nur am Laufende oder auf Wunsch atomar erzeugen.
+
+    Abwaertskompatibel: identische JSON-Struktur wie bisher; kein Teildatenindex.
+    """
     state["aktualisiert_utc"] = utc_now()
-    fd, name = tempfile.mkstemp(prefix=f".{output.stem}.", suffix=".tmp", dir=output.parent)
-    temp_path = Path(name)
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as stream:
-            json.dump(state, stream, indent=2, ensure_ascii=False, sort_keys=False)
-            stream.write("\n")
-            stream.flush()
-            os.fsync(stream.fileno())
-        os.replace(temp_path, output)
-    finally:
-        temp_path.unlink(missing_ok=True)
+    _json_atomisch_schreiben(output, state)
+
+
+class SitzungsSpeicher:
+    """Kleine, unabhaengige Checkpoints; grosse Gesamt-JSON nicht pro Sitzung schreiben."""
+
+    def __init__(self, output: Path):
+        self.output = output
+        self.root = teile_verzeichnis(output)
+
+    def _fahrzeugpfad(self, fin: str) -> Path:
+        if not FIN_PATTERN.fullmatch(fin):
+            raise ValueError("Ungueltige FIN fuer die Teildatei.")
+        return self.root / fin
+
+    def _sitzungspfad(self, fin: str, key: str) -> Path:
+        if not re.fullmatch(r"[a-f0-9]{24}", key):
+            raise ValueError("Ungueltige Sitzungs-ID fuer die Teildatei.")
+        return self._fahrzeugpfad(fin) / "sitzungen" / (key + ".json")
+
+    def sitzung_speichern(self, fin: str, key: str, entry: dict[str, Any]) -> None:
+        """Der Einzeldatensatz ist bei einem Absturz vor dem FIN-Status bereits sicher."""
+        if "href" in entry:
+            raise ValueError("Sitzungslinks duerfen nicht in Ausgabedateien gespeichert werden.")
+        _json_atomisch_schreiben(self._sitzungspfad(fin, key), entry)
+
+    def fahrzeug_speichern(self, fin: str, entry: dict[str, Any]) -> None:
+        """FIN-Metadaten ohne Meldungslisten: konstante Checkpoint-Groesse."""
+        meta = {"schema_version": SCHEMA_VERSION, "fin": fin}
+        meta.update({key: value for key, value in entry.items() if key != "sitzungen"})
+        _json_atomisch_schreiben(self._fahrzeugpfad(fin) / "_status.json", meta)
+
+    def bestand_uebernehmen(self, state: dict[str, Any]) -> None:
+        """Idempotente Erstmigration: alte Gesamt-JSON bleibt erhalten.
+
+        Existierende Teildateien sind neuer und werden NIE ueberschrieben.
+        Ein Absturz waehrend der Migration kann gefahrlos erneut gestartet werden.
+        """
+        for fin, entry in state["fahrzeuge"].items():
+            if not FIN_PATTERN.fullmatch(fin):
+                raise ValueError("Ungueltige FIN im bestehenden Export.")
+            for key, session in entry.get("sitzungen", {}).items():
+                path = self._sitzungspfad(fin, key)
+                if not path.exists():
+                    self.sitzung_speichern(fin, key, session)
+            meta = self._fahrzeugpfad(fin) / "_status.json"
+            if not meta.exists():
+                self.fahrzeug_speichern(fin, entry)
 
 
 def session_key(href: str) -> str:
@@ -341,6 +445,7 @@ class DiagnosisViewerScraper:
         self, output: Path, profile: Path, *, user_id: str = "", password: str = "",
         pacing: float = 0.0, login_timeout: float = 300, page_timeout: float = 70,
         session_timeout: float = 25, missing_section_grace: float = 1.25,
+        gesamtdatei_am_ende: bool = True,
     ):
         self.output = output
         self.profile = profile
@@ -351,6 +456,7 @@ class DiagnosisViewerScraper:
         self.page_timeout = page_timeout
         self.session_timeout = session_timeout
         self.missing_section_grace = missing_section_grace
+        self.gesamtdatei_am_ende = gesamtdatei_am_ende
         self.stopped = False
 
     @staticmethod
@@ -678,6 +784,9 @@ class DiagnosisViewerScraper:
         except ImportError as exc:
             raise RuntimeError("Playwright fehlt: python -m pip install playwright") from exc
         failures = 0
+        speicher = SitzungsSpeicher(self.output)
+        if not login_only and (self.output.exists() or state["fahrzeuge"] or speicher.root.exists()):
+            speicher.bestand_uebernehmen(state)
         todo = [] if login_only else [
             fin for fin in fins
             if redo or refresh or state["fahrzeuge"].get(fin, {}).get("status") != "abgeschlossen"
@@ -687,121 +796,138 @@ class DiagnosisViewerScraper:
             self.log("Alle FINs bereits abgeschlossen. --aktualisieren prueft neue Sitzungen.")
             return 0
         self.profile.mkdir(parents=True, exist_ok=True)
-        if not login_only:
-            save_state(self.output, state)
-        with sync_playwright() as playwright:
-            try:
-                browser_args = {
-                    "user_data_dir": str(self.profile), "headless": False,
-                    "no_viewport": True, "accept_downloads": False,
-                }
-                if browser == "edge":
-                    browser_args["channel"] = "msedge"
-                context = playwright.chromium.launch_persistent_context(**browser_args)
-            except Exception as exc:
-                raise RuntimeError("Microsoft Edge konnte nicht gestartet werden. Profil ggf. bereits geoeffnet.") from exc
-            try:
-                page = context.pages[0] if context.pages else context.new_page()
-                if login_only:
-                    self.taktung.pause()
-                    page.goto(SEARCH_URL, wait_until="domcontentloaded", timeout=45000)
-                    self._login(context)
-                    self.log("SSO/PING ID erfolgreich: Diagnosis Viewer ist erreichbar. Keine FIN abgefragt.")
-                    return 0
-                for fin_index, fin in enumerate(todo, 1):
-                    existing = state["fahrzeuge"].setdefault(fin, {"status": "ausstehend", "sitzungen": {}})
-                    existing.setdefault("sitzungen", {})
-                    existing["letzter_versuch_utc"] = utc_now()
-                    existing["status"] = "in_bearbeitung"
-                    save_state(self.output, state)
-                    self.log(f"[{fin_index}/{len(todo)} FIN] {fin}: Sitzungen suchen | {fortschritt.text()}")
-                    try:
-                        start_suche = time.monotonic()
-                        page, sessions = self._search(context, page, fin)
-                        fortschritt.suche_fertig(time.monotonic() - start_suche, len(sessions))
-                        existing["anzahl_sitzungen_gefunden"] = len(sessions)
-                        existing["suchfehler"] = None
-                        save_state(self.output, state)
-                        self.log(f"  {len(sessions)} Sitzung(en) gefunden | {fortschritt.text()}")
-                        for current, session in enumerate(sessions, 1):
-                            href = session["href"]
-                            key = session_key(href) if href else session_key(f"https://invalid.local/view/{session['quelle']}/{session['diagnosezeitpunkt']}?fin={fin}")
-                            entry = existing["sitzungen"].get(key, {})
-                            if entry.get("status") in ENDED and not redo:
-                                fortschritt.sitzung_fertig(None)
-                                self.log(f"  [{current}/{len(sessions)}] Bereits gespeichert | {fortschritt.text()}")
-                                continue
-                            if not safe_view_link(href, fin):
-                                err = "Kein gueltiger Augen-Link fuer die Diagnose-Sitzung vorhanden."
-                                existing["sitzungen"][key] = {
-                                    **{k: v for k, v in session.items() if k != "href"},
-                                    "status": "fehler", "fehler": err, "versucht_utc": utc_now(),
-                                }
-                                save_state(self.output, state)
-                                fortschritt.sitzung_fertig(None)
-                                self.log(f"  [{current}/{len(sessions)}] {err} | {fortschritt.text()}")
-                                continue
-                            self.log(f"  [{current}/{len(sessions)}] {session['quelle']} {session['diagnosezeitpunkt']}: Meldungen ...")
-                            start_sitzung = time.monotonic()
-                            try:
-                                warnings, method = self._read_session(context, href)
-                                existing["sitzungen"][key] = {
-                                    **{k: v for k, v in session.items() if k != "href"},
-                                    "status": ("abschnitt_fehlt" if method == "abschnitt_fehlt"
-                                               else "erfolgreich" if warnings else "keine_meldungen"),
-                                    "auslesemethode": method,
-                                    "anzahl_meldungen": None if method == "abschnitt_fehlt" else len(warnings),
-                                    "meldungen": warnings, "abgerufen_utc": utc_now(), "fehler": None,
-                                }
-                                if method == "abschnitt_fehlt":
-                                    existing["sitzungen"][key]["hinweis"] = (
-                                        "Die geladene Diagnose-Sitzung enthaelt keinen "
-                                        "Abschnitt 'Warning and Error Messages'."
-                                    )
-                                    self.log("    Kein Warning-and-Error-Messages-Abschnitt; uebersprungen.")
-                                else:
-                                    self.log(f"    {len(warnings)} Meldung(en) / {method}; gespeichert.")
-                            except KeyboardInterrupt:
-                                raise
-                            except Exception as exc:
-                                existing["sitzungen"][key] = {
-                                    **{k: v for k, v in session.items() if k != "href"},
-                                    "status": "fehler", "fehler": no_sensitive_error(exc),
-                                    "versucht_utc": utc_now(),
-                                }
-                                self.log(f"    FEHLER: {no_sensitive_error(exc)}")
-                            finally:
-                                save_state(self.output, state)
-                                fortschritt.sitzung_fertig(time.monotonic() - start_sitzung)
-                                self.log(f"    FIN {fin_index}/{len(todo)} | Sitzung {current}/{len(sessions)} | {fortschritt.text()}")
-                        current_ids = [
-                            session_key(item["href"]) if item["href"] else session_key(
-                                f"https://invalid.local/view/{item['quelle']}/{item['diagnosezeitpunkt']}?fin={fin}"
-                            ) for item in sessions
-                        ]
-                        done = len(sessions) == 0 or all(
-                            existing["sitzungen"].get(key, {}).get("status") in ENDED
-                            for key in current_ids
-                        )
-                        existing["status"] = "abgeschlossen" if done else "teilweise"
-                        if not done:
+        abgebrochen = False
+        try:
+            with sync_playwright() as playwright:
+                try:
+                    browser_args = {
+                        "user_data_dir": str(self.profile), "headless": False,
+                        "no_viewport": True, "accept_downloads": False,
+                    }
+                    if browser == "edge":
+                        browser_args["channel"] = "msedge"
+                    context = playwright.chromium.launch_persistent_context(**browser_args)
+                except Exception as exc:
+                    raise RuntimeError("Microsoft Edge konnte nicht gestartet werden. Profil ggf. bereits geoeffnet.") from exc
+                try:
+                    page = context.pages[0] if context.pages else context.new_page()
+                    if login_only:
+                        self.taktung.pause()
+                        page.goto(SEARCH_URL, wait_until="domcontentloaded", timeout=45000)
+                        self._login(context)
+                        self.log("SSO/PING ID erfolgreich: Diagnosis Viewer ist erreichbar. Keine FIN abgefragt.")
+                        return 0
+                    for fin_index, fin in enumerate(todo, 1):
+                        existing = state["fahrzeuge"].setdefault(fin, {"status": "ausstehend", "sitzungen": {}})
+                        existing.setdefault("sitzungen", {})
+                        existing["letzter_versuch_utc"] = utc_now()
+                        existing["status"] = "in_bearbeitung"
+                        speicher.fahrzeug_speichern(fin, existing)
+                        self.log(f"[{fin_index}/{len(todo)} FIN] {fin}: Sitzungen suchen | {fortschritt.text()}")
+                        try:
+                            start_suche = time.monotonic()
+                            page, sessions = self._search(context, page, fin)
+                            fortschritt.suche_fertig(time.monotonic() - start_suche, len(sessions))
+                            existing["anzahl_sitzungen_gefunden"] = len(sessions)
+                            existing["suchfehler"] = None
+                            speicher.fahrzeug_speichern(fin, existing)
+                            self.log(f"  {len(sessions)} Sitzung(en) gefunden | {fortschritt.text()}")
+                            for current, session in enumerate(sessions, 1):
+                                href = session["href"]
+                                key = session_key(href) if href else session_key(f"https://invalid.local/view/{session['quelle']}/{session['diagnosezeitpunkt']}?fin={fin}")
+                                entry = existing["sitzungen"].get(key, {})
+                                if entry.get("status") in ENDED and not redo:
+                                    fortschritt.sitzung_fertig(None)
+                                    self.log(f"  [{current}/{len(sessions)}] Bereits gespeichert | {fortschritt.text()}")
+                                    continue
+                                if not safe_view_link(href, fin):
+                                    err = "Kein gueltiger Augen-Link fuer die Diagnose-Sitzung vorhanden."
+                                    existing["sitzungen"][key] = {
+                                        **{k: v for k, v in session.items() if k != "href"},
+                                        "status": "fehler", "fehler": err, "versucht_utc": utc_now(),
+                                    }
+                                    speicher.sitzung_speichern(fin, key, existing["sitzungen"][key])
+                                    speicher.fahrzeug_speichern(fin, existing)
+                                    fortschritt.sitzung_fertig(None)
+                                    self.log(f"  [{current}/{len(sessions)}] {err} | {fortschritt.text()}")
+                                    continue
+                                self.log(f"  [{current}/{len(sessions)}] {session['quelle']} {session['diagnosezeitpunkt']}: Meldungen ...")
+                                start_sitzung = time.monotonic()
+                                try:
+                                    warnings, method = self._read_session(context, href)
+                                    existing["sitzungen"][key] = {
+                                        **{k: v for k, v in session.items() if k != "href"},
+                                        "status": ("abschnitt_fehlt" if method == "abschnitt_fehlt"
+                                                   else "erfolgreich" if warnings else "keine_meldungen"),
+                                        "auslesemethode": method,
+                                        "anzahl_meldungen": None if method == "abschnitt_fehlt" else len(warnings),
+                                        "meldungen": warnings, "abgerufen_utc": utc_now(), "fehler": None,
+                                    }
+                                    if method == "abschnitt_fehlt":
+                                        existing["sitzungen"][key]["hinweis"] = (
+                                            "Die geladene Diagnose-Sitzung enthaelt keinen "
+                                            "Abschnitt 'Warning and Error Messages'."
+                                        )
+                                        self.log("    Kein Warning-and-Error-Messages-Abschnitt; uebersprungen.")
+                                    else:
+                                        self.log(f"    {len(warnings)} Meldung(en) / {method}; gespeichert.")
+                                except KeyboardInterrupt:
+                                    raise
+                                except Exception as exc:
+                                    existing["sitzungen"][key] = {
+                                        **{k: v for k, v in session.items() if k != "href"},
+                                        "status": "fehler", "fehler": no_sensitive_error(exc),
+                                        "versucht_utc": utc_now(),
+                                    }
+                                    self.log(f"    FEHLER: {no_sensitive_error(exc)}")
+                                finally:
+                                    if key in existing["sitzungen"]:
+                                        speicher.sitzung_speichern(fin, key, existing["sitzungen"][key])
+                                    speicher.fahrzeug_speichern(fin, existing)
+                                    fortschritt.sitzung_fertig(time.monotonic() - start_sitzung)
+                                    self.log(f"    FIN {fin_index}/{len(todo)} | Sitzung {current}/{len(sessions)} | {fortschritt.text()}")
+                            current_ids = [
+                                session_key(item["href"]) if item["href"] else session_key(
+                                    f"https://invalid.local/view/{item['quelle']}/{item['diagnosezeitpunkt']}?fin={fin}"
+                                ) for item in sessions
+                            ]
+                            done = len(sessions) == 0 or all(
+                                existing["sitzungen"].get(key, {}).get("status") in ENDED
+                                for key in current_ids
+                            )
+                            existing["status"] = "abgeschlossen" if done else "teilweise"
+                            if not done:
+                                failures += 1
+                        except KeyboardInterrupt:
+                            existing["status"] = "unterbrochen"
+                            speicher.fahrzeug_speichern(fin, existing)
+                            raise
+                        except Exception as exc:
+                            existing["suchfehler"] = no_sensitive_error(exc)
+                            existing["status"] = "fehler"
                             failures += 1
-                    except KeyboardInterrupt:
-                        existing["status"] = "unterbrochen"
-                        save_state(self.output, state)
-                        raise
-                    except Exception as exc:
-                        existing["suchfehler"] = no_sensitive_error(exc)
-                        existing["status"] = "fehler"
-                        failures += 1
-                        self.log(f"  Suchfehler: {no_sensitive_error(exc)}")
-                    finally:
-                        save_state(self.output, state)
-                        fortschritt.fin_fertig()
-                    self.log(f"  FIN {fin}: {existing['status']} | {fortschritt.text()}")
-            finally:
-                context.close()
-                self.password = ""
+                            self.log(f"  Suchfehler: {no_sensitive_error(exc)}")
+                        finally:
+                            speicher.fahrzeug_speichern(fin, existing)
+                            fortschritt.fin_fertig()
+                        self.log(f"  FIN {fin}: {existing['status']} | {fortschritt.text()}")
+                finally:
+                    context.close()
+                    self.password = ""
+        except BaseException:
+            # Unterbrechungen und Browserabstuerze muessen nicht auf einen
+            # teuren Gesamtexport warten: die atomaren Teildateien reichen.
+            abgebrochen = True
+            raise
+        finally:
+            if (not login_only and not abgebrochen and self.gesamtdatei_am_ende
+                    and speicher.root.exists()):
+                # Snapshot aus den bereits atomar gespeicherten Dateien bauen.
+                # Ein plötzlicher Prozessabbruch hinterlaesst immer die Teildateien.
+                try:
+                    save_state(self.output, load_state(self.output))
+                except (OSError, ValueError, TypeError) as exc:
+                    self.log(f"Gesamtdatei konnte nicht erneuert werden; Teildateien bleiben erhalten: {no_sensitive_error(exc)}")
         return failures
 
 
@@ -839,6 +965,10 @@ def build_parser() -> argparse.ArgumentParser:
                         help="Abgeschlossene FINs nach NEUEN Sitzungen durchsuchen")
     parser.add_argument("--erneut", action="store_true",
                         help="Auch bereits erfolgreiche Sitzungen neu einlesen")
+    parser.add_argument("--nur-zusammenfassen", action="store_true",
+                        help="Teildateien ohne Browser in die bisherige Gesamt-JSON uebernehmen")
+    parser.add_argument("--ohne-gesamtdatei", action="store_true",
+                        help="Schnellster Lauf: Gesamt-JSON am Ende nicht neu schreiben; Teildateien bleiben aktuell")
     parser.add_argument("--nur-login", action="store_true",
                         help="Nur SSO/PING-ID testen, ohne FIN-Abfrage oder JSON-Aenderung")
     parser.add_argument("--login-manuell", action="store_true",
@@ -870,9 +1000,11 @@ def main(argv: list[str] | None = None) -> int:
         if args.eingabe and args.fin_datei and args.eingabe != args.fin_datei:
             raise ValueError("Bitte nur eine Eingabedatei angeben.")
         input_path = args.eingabe or args.fin_datei
-        if not args.nur_login and input_path is None:
+        if args.nur_login and args.nur_zusammenfassen:
+            raise ValueError("--nur-login und --nur-zusammenfassen schliessen sich aus.")
+        if not (args.nur_login or args.nur_zusammenfassen) and input_path is None:
             raise ValueError("Eine FIN-Liste mit --eingabe muss angegeben werden.")
-        fins = [] if args.nur_login else read_fins(input_path)
+        fins = [] if (args.nur_login or args.nur_zusammenfassen) else read_fins(input_path)
         output = args.ausgabe.expanduser().resolve()
         if output.suffix.lower() != ".json":
             raise ValueError("Die Ausgabe muss die Endung .json besitzen.")
@@ -888,6 +1020,13 @@ def main(argv: list[str] | None = None) -> int:
             raise ValueError("--abschnitt-wartezeit muss 0.5 bis 10 Sekunden betragen.")
         if not 0 <= args.abstand <= 10:
             raise ValueError("--abstand muss 0 bis 10 Sekunden betragen.")
+        if args.nur_zusammenfassen:
+            if not output.exists() and not teile_verzeichnis(output).exists():
+                raise ValueError("Keine Gesamtdatei oder Teildateien zum Zusammenfassen vorhanden.")
+            stand = load_state(output)
+            save_state(output, stand)
+            print(f"Gesamt-JSON aktualisiert: {output} (ohne Browser)", flush=True)
+            return 0
         state = fresh_state() if args.nur_login else load_state(output)
 
         user_id, password = args.benutzer_id, ""
@@ -909,9 +1048,10 @@ def main(argv: list[str] | None = None) -> int:
             pacing=args.abstand, login_timeout=args.anmelde_timeout,
             page_timeout=args.seiten_timeout, session_timeout=args.sitzungs_timeout,
             missing_section_grace=args.abschnitt_wartezeit,
+            gesamtdatei_am_ende=not args.ohne_gesamtdatei,
         )
         if not args.nur_login:
-            scraper.log(f"FINs: {len(fins)} | Ausgabe: {output}")
+            scraper.log(f"FINs: {len(fins)} | Teildateien: {teile_verzeichnis(output)}")
         scraper.log("Nur mit berechtigtem Unternehmenszugang und im erlaubten Umfang nutzen.")
         scraper.log("FINs/Diagnosedaten nicht nach GitHub oder in CI-Artefakte hochladen.")
         failed = scraper.run(
@@ -919,10 +1059,11 @@ def main(argv: list[str] | None = None) -> int:
             login_only=args.nur_login, browser=args.browser,
         )
         if not args.nur_login:
-            scraper.log(f"Fertig. Fehlgeschlagene/unvollstaendige FINs: {failed}. Datei: {output}")
+            gesamt = "Gesamtdatei: " + str(output) if not args.ohne_gesamtdatei else "Gesamtdatei nicht neu geschrieben (--ohne-gesamtdatei)"
+            scraper.log(f"Fertig. Fehlgeschlagene/unvollstaendige FINs: {failed}. {gesamt}")
         return 1 if failed else 0
     except KeyboardInterrupt:
-        print("\nUnterbrochen. Bereits gespeicherte Sitzungen bleiben in der JSON erhalten.",
+        print("\nUnterbrochen. Teildateien enthalten alle bereits gespeicherten Sitzungen.",
               file=sys.stderr)
         return 130
     except (OSError, ValueError, RuntimeError) as exc:
