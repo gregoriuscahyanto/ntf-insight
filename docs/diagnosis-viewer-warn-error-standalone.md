@@ -29,3 +29,12 @@ Bei jeder Meldung werden soweit verfuegbar Kennung, Status, erstes und letztes A
 `py -3.11 -m pytest -q tests/test_diagnosis_viewer_warn_error.py`
 
 Die Tests verwenden synthetische FINs. Kein Live-Test im Unternehmensnetz wurde durchgefuehrt. Vor Seriennutzung den Export mit einer berechtigten Test-FIN gegen den Viewer vergleichen. Echte FINs, Diagnoseberichte oder Zugangsdaten duerfen nicht ins Repository oder CI-Artefakte gelangen.
+
+## Schnellmodus, fehlender Abschnitt und Restzeit (Update)
+
+- **Keine kuenstliche Pause:** Der Standard ist jetzt `--abstand 0`. Browseraktionen werden ohne festen Abstand ausgefuehrt; notwendige Lade- und Zustandspruefungen bleiben bestehen. FINs und Sitzungen werden weiterhin nacheinander ausgelesen, nicht parallel. Fuer eine vorsichtigere Lastbegrenzung kann `--abstand 1.5` gesetzt werden.
+- **Abschnitt fehlt:** Wenn die Diagnose-Sitzungsinformationen vollstaendig geladen sind und `Warning and Error Messages` nach einer kurzen stabilen Kontrolle nicht existiert, speichert das Skript die Sitzung mit dem eindeutigen Status `abschnitt_fehlt` und verarbeitet sofort die naechste. Eine explizite Abschnittsliste der Quelle kann das ebenfalls direkt belegen. `anzahl_meldungen` ist hier `null`, nicht 0; `keine_meldungen` bleibt fuer eine nachweislich leere Warnungsliste reserviert. Beim Resume wird `abschnitt_fehlt` uebersprungen, mit `--erneut` neu geprueft.
+- **Unvollstaendige Ansicht:** Laedt die Sitzung nicht ausreichend, bleibt der Datensatz `fehler` und wird bei einem Folgeabruf erneut versucht; ein fehlender Abschnitt wird nicht einfach geraten. Standardmaessig ist die Suche nach dem Abschnitt auf 25 Sekunden begrenzt; ein eventuell haengender direkter API-Leseversuch auf 4 Sekunden.
+- **Restzeit:** Die PowerShell-Konsole zeigt nach jeder FIN-Suche und Sitzung die bisherige Laufzeit und eine **grob geschaetzte Restzeit**. Sie berechnet sich aus den bisher gemessenen Such-/Sitzungszeiten und der durchschnittlichen Sitzungszahl pro FIN. Vor dem ersten ausreichenden Messwert steht `Restzeit wird ermittelt`; die Schaetzung ist keine Zusage, weil manche FINs deutlich mehr Sitzungen haben.
+
+Optionen fuer langsamere Netze oder geaenderte Oberflaechen: `--sitzungs-timeout 45`, `--abschnitt-wartezeit 2`, `--seiten-timeout 90` oder `--abstand 0.5`. Unternehmensrichtlinien fuer berechtigten Zugriff gelten weiterhin.
