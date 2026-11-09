@@ -315,7 +315,7 @@ def export_cluster_context(
         "15. ZWEI ANALYSEEBENEN - ALLE FAELLE: Ebene A sind GEMELDETE "
         "FEHLERBILDER, Ebene B ist der technische NACHWEISGRAD. "
         "Fuer JEDEN Fall fehlerbilder[] und nachweisprofil[] nach dem "
-        "JSON-Schema ausfuellen. Mehrere Fehlerbilder pro Fall sind "
+        "JSON-Schema ausfuellen. Mehrere Fehlerbild-Kategorien pro Fall sind "
         "ERWUENSCHT. Generische Kategorien sind Stromaufnahme zu "
         "hoch/zu niedrig, Kurzschluss/Sicherung, Bus/Kommunikation, "
         "Versorgung/Masse, Ansteuerung, Leistung/Temperatur, Mechanik, "
@@ -325,7 +325,7 @@ def export_cluster_context(
         "16. FEHLERBILD IST KEINE URSACHE: Jede Fehlerbild-Kategorie "
         "traegt nachweisstatus, sicherheit, begruendung und wirkliche "
         "belege. Eine Werkstattbeanstandung ist 'Werkstattangabe', "
-        "kein laborbestaetigter Defekt; ein Pumpen-DTC ist ein "
+        "kein laborbestaetigter Defekt; ein bauteilbezogener DTC ist ein "
         "Diagnosehinweis, kein Beweis fuer den Tauschkomponentendefekt. "
         "QEC-/SSL-/NTF-Endlabels und behauptete Lieferantenschuld NIE "
         "als Clustermerkmal oder Kausalnachweis einsetzen. "
@@ -333,7 +333,7 @@ def export_cluster_context(
         "17. PRIORISIERTE CLUSTERUNG T -> S -> H: Pruefe fuer JEDEN "
         "Fall zuerst T: gemeinsame konkrete technische Labor-/ECU-/DTC-"
         "Indizien mit dokumentierten Originalbelegen. Ein DTC beweist "
-        "noch keinen Defekt des reklamierten Pumpenbauteils. "
+        "noch keinen Defekt des reklamierten Bauteils. "
         "Ohne belastbares T-Muster pruefe S: NUR dokumentierte, "
         "vergleichbare Kunden- oder Werkstattsymptome (z.B. LIN-Ausfall, "
         "Warnmeldung, Ueberstrommeldung); kein als Symptom verkleideter "
@@ -363,7 +363,7 @@ def export_cluster_context(
         "die Unsicherheit nennen.",
         "19. FAELLE VOLLSTAENDIG UND OHNE ERFUNDENE BELEGE: "
         "auch am Tauschtag vorliegende QuickTests mit DTCs beruecksichtigen. "
-        "DTCs koennen andere Pumpen/ECUs/Baugruppen betreffen. Ein "
+        "DTCs koennen andere Bauteile/ECUs/Baugruppen betreffen. Ein "
         "historisch gespeicherter DTC nach Tausch ist ohne neuen "
         "Ereignis-km/Loeschhistorie KEIN Wiederkehrbeweis. "
         "Datenluecken getrennt ausweisen, statt Faelle auszuschliessen.",
@@ -398,7 +398,7 @@ def export_cluster_context(
         "empfohlene_pruefung. H-Cluster erst NACH T- und "
         "S-Pruefung aus den vorliegenden Quellen und ihren "
         "Widerspruechen nachvollziehbar unterteilen. "
-        "Weder S noch H beweisen Pumpendefekt/Lieferantenverantwortung.",
+        "Weder S noch H beweisen Bauteildefekt/Lieferantenverantwortung.",
     ]
     # Diese neutralen Zusatzanforderungen bleiben unabhaengig vom
     # CSV-Groesstdaten-Fix im separaten PR #60.
