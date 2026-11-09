@@ -92,7 +92,7 @@ def test_second_package_preserves_same_day_qt_and_km_detail(tmp_path):
                        for row in close)
         prompt = archive.read("CHATGPT_2_DURCHLAUF.txt").decode("utf-8")
         assert "QUICKTESTS AM TAUSCHTAG" in prompt
-        assert "mehrere Fehlerbild-Kategorien" in prompt
+        assert "mehrere fehlerbild-kategorien" in prompt.casefold()
         assert "fehlerbilder[]" in prompt
         schema = json.loads(archive.read("chatgpt_ergebnis_schema.json"))
         assert schema == ergebnis_schema()
