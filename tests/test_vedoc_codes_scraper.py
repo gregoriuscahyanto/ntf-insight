@@ -149,3 +149,173 @@ def test_standardpfad_legt_data_processed_an(tmp_path, monkeypatch):
     assert m.abrufen(options) == 0
     assert ausgabe.exists()
     assert len(json.loads(ausgabe.read_text(encoding="utf-8"))["fahrzeuge"]) == 1
+
+
+
+class FakeSSOLocator:
+    def __init__(self, page, selector: str):
+        self.page = page
+        self.selector = selector
+
+    @property
+    def first(self):
+        return self
+
+    def count(self):
+        return int(self.is_visible())
+
+    def is_visible(self):
+        return (
+            self.selector == m.SUCHFELD and self.page.stage == "fertig"
+            or self.selector == "#userid" and self.page.stage == "benutzer"
+            or self.selector == "#password" and self.page.stage == "passwort"
+            or self.selector in ("#next-btn", "#loginSubmitButton")
+        )
+
+    def fill(self, value, **kwargs):
+        self.page.aktionen.append(("fill", self.selector, value))
+
+    def click(self, **kwargs):
+        self.page.aktionen.append(("click", self.selector))
+        if self.selector == "#next-btn":
+            self.page.stage = "passwort"
+        elif self.selector == "#loginSubmitButton":
+            self.page.stage = "fertig"
+            self.page.url = m.VEDOC_URL
+
+
+class FakeSSOPage:
+    def __init__(self, url=None, stage="benutzer"):
+        self.url = url or f"https://{m.SSO_HOST}/login"
+        self.stage = stage
+        self.aktionen = []
+        self.closed = False
+
+    def is_closed(self):
+        return self.closed
+
+    def locator(self, selector):
+        self.aktionen.append(("locator", selector))
+        return FakeSSOLocator(self, selector)
+
+
+def test_automatische_sso_eingabe_nutzt_ntf_tresor(monkeypatch):
+    from ntf_insight.acquisition.credentials import LoginCredentials
+
+    aufrufe = []
+    def lade():
+        aufrufe.append("tresor")
+        return LoginCredentials(user_id="sso-benutzer", password="synthetisch-testpasswort")
+
+    monkeypatch.setattr(m, "load_saved_credentials", lade)
+    monkeypatch.setattr(m.time, "sleep", lambda _: None)
+    page = FakeSSOPage()
+    context = SimpleNamespace(pages=[page])
+    ready = m.browser_bereit(context, 3, auto_login=True)
+    assert ready is page
+    assert aufrufe == ["tresor"]
+    assert ("fill", "#userid", "sso-benutzer") in page.aktionen
+    assert ("fill", "#password", "synthetisch-testpasswort") in page.aktionen
+    assert ("click", "#next-btn") in page.aktionen
+    assert ("click", "#loginSubmitButton") in page.aktionen
+
+
+def test_auto_login_bei_bestehender_sso_session_keine_tresor_abfrage(monkeypatch):
+    monkeypatch.setattr(
+        m, "load_saved_credentials",
+        lambda: pytest.fail("Bei bestehender Anmeldung darf kein Passwort geladen werden"),
+    )
+    page = FakeSSOPage(url=m.VEDOC_URL, stage="fertig")
+    assert m.browser_bereit(SimpleNamespace(pages=[page]), 3, auto_login=True) is page
+
+
+def test_login_manuell_fasst_tresor_und_login_felder_nicht_an(monkeypatch):
+    monkeypatch.setattr(
+        m, "load_saved_credentials",
+        lambda: pytest.fail("Mit --login-manuell darf der Tresor nicht gelesen werden"),
+    )
+    calls = []
+    clock = [0.0]
+    monkeypatch.setattr(m.time, "monotonic", lambda: clock[0])
+    monkeypatch.setattr(m.time, "sleep", lambda seconds: clock.__setitem__(0, clock[0] + seconds))
+    page = FakeSSOPage()
+    with pytest.raises(TimeoutError, match="VeDoc-Suche"):
+        m.browser_bereit(SimpleNamespace(pages=[page]), 1.0, auto_login=False)
+    assert all(aktion[0] != "fill" for aktion in page.aktionen)
+
+
+@pytest.mark.parametrize("url", [
+    "http://login.mercedes-benz.com/login",
+    "https://login.mercedes-benz.com.evil.invalid/login",
+    "https://login.mercedes-benz.com@evil.invalid/login",
+    "https://evil.invalid/login",
+])
+def test_sso_ausfuellen_verweigert_fremde_hosts(url):
+    page = FakeSSOPage(url=url)
+    m._sso_ausfuellen(page, ("benutzer", "testpasswort"), {"benutzer": False, "passwort": False})
+    assert page.aktionen == []
+
+
+def test_zugangsdaten_aus_tresor_oder_terminal_fallback(monkeypatch):
+    from ntf_insight.acquisition.credentials import LoginCredentials
+
+    monkeypatch.setattr(
+        m, "load_saved_credentials",
+        lambda: LoginCredentials(user_id="konto", password="sicheres-testpasswort"),
+    )
+    assert m._zugangsdaten_fuer_lauf() == ("konto", "sicheres-testpasswort")
+
+    monkeypatch.setattr(m, "load_saved_credentials", lambda: None)
+    monkeypatch.setattr(m.sys.stdin, "isatty", lambda: True)
+    monkeypatch.setattr("builtins.input", lambda prompt: "manuell")
+    monkeypatch.setattr(m.getpass, "getpass", lambda prompt: "verdecktes-testpasswort")
+    assert m._zugangsdaten_fuer_lauf() == ("manuell", "verdecktes-testpasswort")
+
+
+def test_keine_tresordaten_und_keine_konsole_erlaubt_manuale_browseranmeldung(monkeypatch):
+    monkeypatch.setattr(m, "load_saved_credentials", lambda: None)
+    monkeypatch.setattr(m.sys.stdin, "isatty", lambda: False)
+    assert m._zugangsdaten_fuer_lauf() is None
+
+
+def test_cli_nur_login_ohne_fin_liste():
+    args = m.kommandozeile(["--nur-login", "--login-manuell"])
+    assert args.nur_login is True
+    assert args.login_manuell is True
+    assert args.fin_datei is None
+
+
+def test_nur_login_schreibt_keine_fahrzeugdaten(monkeypatch, tmp_path):
+    class ReadyPage(FakeSSOPage):
+        def __init__(self):
+            super().__init__(url=m.VEDOC_URL, stage="fertig")
+        def goto(self, url, **kwargs):
+            assert url == m.VEDOC_URL
+    page = ReadyPage()
+    class FakeContext:
+        pages = [page]
+        def close(self):
+            pass
+    context = FakeContext()
+
+    class PW:
+        chromium = SimpleNamespace(launch_persistent_context=lambda **kw: context)
+
+    class Runner:
+        def __enter__(self):
+            return PW()
+        def __exit__(self, *args):
+            pass
+
+    import sys
+    monkeypatch.setitem(sys.modules, "playwright.sync_api",
+                        SimpleNamespace(sync_playwright=lambda: Runner()))
+    monkeypatch.setattr(
+        m, "load_saved_credentials",
+        lambda: pytest.fail("Keine Tresor-Abfrage ohne Login noetig"),
+    )
+    output = tmp_path / "data" / "processed" / "vedoc_codes.json"
+    args = m.kommandozeile(["--nur-login", "--ausgabe", str(output),
+                            "--profil", str(tmp_path / "profil")])
+    assert m.abrufen(args) == 0
+    assert not output.exists()
