@@ -31,7 +31,7 @@ def html_zeile(
 
 
 def html_tabelle(*zeilen: str) -> str:
-    return '<table id="historyTable"><tbody>' + ''.join(zeilen) + '</tbody></table>
+    return '<table id="historyTable"><tbody>' + ''.join(zeilen) + '</tbody></table>'
 
 
 def test_lade_fins_bom_kommentare_doppelte(tmp_path):
