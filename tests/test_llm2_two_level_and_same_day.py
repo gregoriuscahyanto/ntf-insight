@@ -300,7 +300,7 @@ def test_legacy_detail_json_imports_without_editing_file(tmp_path):
     assert any(e["fundstelle"] == proof["fundstelle"] for e in finding["belege"])
     with source.store.connect() as con:
         archived = con.execute(
-            "SELECT payload_json FROM chatgpt_imports WHERE analyse_id=?",
+            "SELECT original_json FROM chatgpt_imports WHERE analyse_id=?",
             [answer["analyse_id"]],
         ).fetchone()[0]
     assert archived == original.decode("utf-8")
