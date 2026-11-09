@@ -27,6 +27,7 @@ dependencies = [
 [project.scripts]
 ntf-insight = "ntf_insight.app.application:main"
 ntf-insight-import = "ntf_insight.ingestion.cli:main"
+ntf-insight-vedoc-codes = "ntf_insight.acquisition.vedoc_codes:main"
 
 [project.optional-dependencies]
 dev = [
