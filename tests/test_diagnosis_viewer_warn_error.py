@@ -790,3 +790,22 @@ def test_zuvor_ausgeschlossene_sitzung_bei_neuer_mileage_abrufen(monkeypatch, tm
     record = scraper.load_state(output)['fahrzeuge'][FIN1]['sitzungen'][key]
     assert record['status'] == 'erfolgreich'
     assert record['meldungen'][0]['kennung'] == 'neu'
+
+
+def test_fuenf_sekunden_gesamtbudget_schliesst_navigation_ein(monkeypatch, tmp_path):
+    clock = [0.0]
+    monkeypatch.setattr(scraper.time, "monotonic", lambda: clock[0])
+
+    class NavigationProbe(FakeMissingPage):
+        def goto(self, url, **kwargs):
+            self.timeout_ms = kwargs["timeout"]
+            super().goto(url, **kwargs)
+
+    page = NavigationProbe(ready=False, clock=clock)
+    runner = scraper.DiagnosisViewerScraper(tmp_path / "out.json", tmp_path / "profil")
+    assert runner.session_timeout == 5
+    with pytest.raises(TimeoutError, match="Sitzungsansicht"):
+        runner._read_session(FakeSessionContext(page), view_url(FIN1))
+    assert 4900 <= page.timeout_ms <= 5000
+    assert 5 <= clock[0] < 5.2
+    assert page.closed
