@@ -36,7 +36,7 @@ def html_tabelle(*zeilen: str) -> str:
 
 def test_lade_fins_bom_kommentare_doppelte(tmp_path):
     quelle = tmp_path / "fins.txt"
-    quelle.write_text("\ufeff# intern\n" + FIN_1.lower() + "\n\n" + FIN_1 + "\n" + FIN_2)
+    quelle.write_text("\ufeff# intern\n" + FIN_1.lower() + "\n\n" + FIN_1 + "\n" + FIN_2, encoding="utf-8")
     assert modul.lade_fins(quelle) == [FIN_1, FIN_2]
 
 
