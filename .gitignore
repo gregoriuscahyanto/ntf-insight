@@ -45,3 +45,7 @@ Thumbs.db
 *.xls
 *.csv
 *.pdf
+
+# Diagnosis-Viewer-Standalone-Exporte enthalten vertrauliche FIN- und Diagnosedaten.
+warnings_errors.json
+warnings_errors_teile/

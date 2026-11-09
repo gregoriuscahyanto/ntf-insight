@@ -1,0 +1,2 @@
+playwright>=1.55
+keyring>=25.0
