@@ -130,7 +130,7 @@ def test_context_package_rejects_unsafe_first_package(tmp_path):
 def test_context_package_rejects_unredacted_first_zip_without_opt_in(tmp_path):
     store = _store(tmp_path)
     basis = _basis(tmp_path, originals=True)
-    with pytest.raises(ValueError, match="Freitext/Originaldaten"):
+    with pytest.raises(ValueError, match="vertrauliche QEC"):
         export_cluster_context(
             store, "coolant_pump", "", basis,
             tmp_path / "nur-metadaten.zip",
