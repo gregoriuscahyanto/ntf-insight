@@ -2,6 +2,7 @@
 
 import importlib.util
 import json
+import sys
 from pathlib import Path
 
 import pytest
@@ -10,7 +11,6 @@ from openpyxl import load_workbook
 SCRIPT = Path(__file__).resolve().parents[1] / "scripts" / "vedoc_dcdc223_seriennummern.py"
 spezifikation = importlib.util.spec_from_file_location("vedoc_export", SCRIPT)
 modul = importlib.util.module_from_spec(spezifikation)
-import sys
 sys.modules[spezifikation.name] = modul
 spezifikation.loader.exec_module(modul)
 FIN_1 = "WDD12345678901234"
