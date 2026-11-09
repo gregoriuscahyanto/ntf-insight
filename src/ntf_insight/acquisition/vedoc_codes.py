@@ -490,9 +490,13 @@ def kommandozeile(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description='VeDoc-Fahrzeugcodes fuer eine FIN-Liste mit Edge/SSO als JSON exportieren.'
     )
-    parser.add_argument('fin_datei', type=Path, help='TXT-Datei mit je einer oder mehreren FINs')
-    parser.add_argument('-o', '--ausgabe', type=Path, default=Path('vedoc_codes.json'),
-                        help='Ausgabe-JSON, Standard: vedoc_codes.json')
+    parser.add_argument('fin_datei', nargs='?', type=Path,
+                        help='TXT-Datei mit FINs (alternativ --eingabe)')
+    parser.add_argument('-i', '--eingabe', type=Path,
+                        help='TXT-Datei mit FINs (alternativ als Positionsargument)')
+    parser.add_argument('-o', '--ausgabe', type=Path,
+                        default=Path('data/processed/vedoc_codes.json'),
+                        help='Ausgabe-JSON (Standard: data/processed/vedoc_codes.json)')
     parser.add_argument('--profil', type=Path,
                         default=Path.home() / '.ntf-insight' / 'vedoc-edge-profile',
                         help='Lokales separates Edge-Profil fuer VeDoc-SSO')
@@ -504,7 +508,15 @@ def kommandozeile(argv: list[str] | None = None) -> argparse.Namespace:
                         help='Mindestpause zwischen Browseraktionen in Sekunden (mind. 0.5)')
     parser.add_argument('--erneut', action='store_true',
                         help='Erfolgreich gespeicherte FINs erneut abrufen (sonst Fortsetzen)')
-    return parser.parse_args(argv)
+    args = parser.parse_args(argv)
+    if args.fin_datei is not None and args.eingabe is not None:
+        parser.error('FIN-Datei entweder positional oder mit --eingabe angeben, nicht beides.')
+    if args.fin_datei is None and args.eingabe is None:
+        parser.error('FIN-Datei fehlt: bitte --eingabe oder Positionsargument verwenden.')
+    if args.eingabe is not None:
+        args.fin_datei = args.eingabe
+    del args.eingabe
+    return args
 
 
 def main() -> int:
