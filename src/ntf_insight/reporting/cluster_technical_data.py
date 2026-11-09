@@ -455,7 +455,7 @@ def export_parsed_diagnostics(
         for report_id, fin, diagnosed, qt_km, _ecu, _dtc in reports:
             for case in by_fin.get(fin, ()):
                 anchor = case.investigated_replacement()
-                source_ref = str(case.source_ref or "")
+                source_ref = str(getattr(case, "source_ref", None) or "")
                 if (
                     anchor is None or not source_ref.startswith("raw:")
                     or anchor.source_ref != source_ref
