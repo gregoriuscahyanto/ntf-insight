@@ -234,7 +234,6 @@ def test_login_manuell_fasst_tresor_und_login_felder_nicht_an(monkeypatch):
         m, "load_saved_credentials",
         lambda: pytest.fail("Mit --login-manuell darf der Tresor nicht gelesen werden"),
     )
-    calls = []
     clock = [0.0]
     monkeypatch.setattr(m.time, "monotonic", lambda: clock[0])
     monkeypatch.setattr(m.time, "sleep", lambda seconds: clock.__setitem__(0, clock[0] + seconds))
