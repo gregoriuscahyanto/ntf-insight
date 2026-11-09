@@ -113,3 +113,39 @@ def test_input_und_output_must_not_match(tmp_path: Path) -> None:
     optionen = SimpleNamespace(fin_datei=eingabe, ausgabe=eingabe)
     with pytest.raises(ValueError, match="nicht die FIN"):
         m.abrufen(optionen)
+
+
+def test_cli_eingabe_und_ausgabe():
+    options = m.kommandozeile(["--eingabe", "fins.txt", "--ausgabe", "daten.json"])
+    assert options.fin_datei == Path("fins.txt")
+    assert options.ausgabe == Path("daten.json")
+
+
+def test_cli_standardpfad_und_positionsargument():
+    expected = Path("data/processed/vedoc_codes.json")
+    assert m.kommandozeile(["--eingabe", "fins.txt"]).ausgabe == expected
+    assert m.kommandozeile(["fins.txt"]).ausgabe == expected
+
+
+def test_cli_fehlende_oder_doppelte_eingabe():
+    with pytest.raises(SystemExit) as missing:
+        m.kommandozeile([])
+    assert missing.value.code == 2
+    with pytest.raises(SystemExit) as duplicate:
+        m.kommandozeile(["fins.txt", "--eingabe", "zweite.txt"])
+    assert duplicate.value.code == 2
+
+
+def test_standardpfad_legt_data_processed_an(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    eingabe = tmp_path / "fins.txt"
+    eingabe.write_text(FIN1 + "\n", encoding="utf-8")
+    ausgabe = tmp_path / "data" / "processed" / "vedoc_codes.json"
+    m.speichere_json_zuverlaessig(ausgabe, {
+        "schema_version": "1.0",
+        "fahrzeuge": [{"fin": FIN1, "status": "erfolgreich", "codes": [{"code": "01U"}]}],
+    })
+    options = m.kommandozeile(["--eingabe", str(eingabe)])
+    assert m.abrufen(options) == 0
+    assert ausgabe.exists()
+    assert len(json.loads(ausgabe.read_text(encoding="utf-8"))["fahrzeuge"]) == 1
