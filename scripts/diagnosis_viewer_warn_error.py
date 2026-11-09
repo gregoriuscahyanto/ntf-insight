@@ -363,10 +363,11 @@ class Taktung:
 
 def _restzeit_sitzung_ms(deadline: float) -> int:
     """Alle Aktionen eines WEM-Abrufs teilen sich ein Zeitbudget."""
-    remaining = int((deadline - time.monotonic()) * 1000)
+    remaining = deadline - time.monotonic()
     if remaining <= 0:
         raise TimeoutError("WEM-Sitzungs-Timeout abgelaufen.")
-    return remaining
+    # Sub-Millisekunden-Rest nicht versehentlich als abgelaufen behandeln.
+    return max(1, int(remaining * 1000))
 
 
 def format_duration(seconds: float) -> str:
