@@ -45,3 +45,7 @@ Thumbs.db
 *.xls
 *.csv
 *.pdf
+
+# VeDoc: lokale FIN-Listen und Fahrzeugcode-Exports nicht versionieren
+fins.txt
+vedoc_codes.json
