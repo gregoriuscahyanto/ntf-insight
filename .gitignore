@@ -46,6 +46,10 @@ Thumbs.db
 *.csv
 *.pdf
 
-# VeDoc: lokale FIN-Listen und Fahrzeugcode-Exports nicht versionieren
+# Diagnosis-Viewer-Standalone-Exporte enthalten vertrauliche FIN- und Diagnosedaten.
+warnings_errors.json
+warnings_errors_teile/
+
+# VeDoc: lokale FIN-Listen und Fahrzeugcode-Exporte nicht versionieren
 fins.txt
 vedoc_codes.json
