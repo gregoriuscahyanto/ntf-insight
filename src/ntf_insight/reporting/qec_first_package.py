@@ -92,24 +92,24 @@ def export_qec_first_package(
     for source_case in all_cases:
         key = (
             source_case.vin.strip().upper(),
-            str(source_case.qec_reference or "").strip(),
+            str(getattr(source_case, "qec_reference", None) or "").strip(),
         )
         if key[0] and key[1]:
             parts_by_qec_ref[key].add(
-                part_key(str(source_case.qec_part_number or ""))
+                part_key(str(getattr(source_case, "qec_part_number", None) or ""))
             )
     chosen = [
         case for case in all_cases
         if case.case_id in case_ids
         and case.vin.strip().upper() in fins
         and qec_case_matches_project(
-            case_part_number=str(case.qec_part_number or ""),
+            case_part_number=str(getattr(case, "qec_part_number", None) or ""),
             source_profile_id=case.component_profile_id,
             project_profile_id=profile_id,
             project_part_number=part_number,
             projects=projects,
         )
-        and str(case.qec_reference or "").strip()
+        and str(getattr(case, "qec_reference", None) or "").strip()
     ]
     if len(chosen) != len(case_ids):
         raise ValueError(
@@ -154,7 +154,7 @@ def export_qec_first_package(
     ready = 0
     for case in chosen:
         fin = case.vin.strip().upper()
-        ref = str(case.qec_reference or "").strip()
+        ref = str(getattr(case, "qec_reference", None) or "").strip()
         candidates = by_key.get((fin, ref), [])
         status, reason, doc = (
             "Nicht vorhanden", "Kein QEC-Bericht/keine Dokumente fuer diesen Fall", None
@@ -238,7 +238,7 @@ def export_qec_first_package(
         # hinzufuegen. In Runde 1 gilt ausschliesslich der QEC-Excel-Anker
         # aus GENAU derselben Originalzeile wie der ausgewählte QEC-Fall.
         candidate_swap = case.investigated_replacement()
-        case_source = str(case.source_ref or "")
+        case_source = str(getattr(case, "source_ref", None) or "")
         swap = (
             candidate_swap if candidate_swap is not None
             and case_source.startswith("raw:")
@@ -260,9 +260,9 @@ def export_qec_first_package(
         cases_rows.append(row)
         features.append(dict(row))
         ssl_rows.append({
-            "fall_id": fid, "ssl_endbefund_code": _code(case.qec_ssl_end_code),
+            "fall_id": fid, "ssl_endbefund_code": _code(getattr(case, "qec_ssl_end_code", None)),
             "ssl_endbefund_text_opt_in": (
-                str(case.qec_ssl_end_finding or "") if mit_freitext else ""
+                str(getattr(case, "qec_ssl_end_finding", None) or "") if mit_freitext else ""
             ),
             "hinweis": "QEC-Endbefund ist ein Vorbefund, kein Ursachenbeweis.",
         })
@@ -549,8 +549,8 @@ def export_qec_first_package(
         mapping_rows.append({
             "art": "fall", "pseudonym": case_alias[case.case_id],
             "fin": case.vin, "fall_id_original": case.case_id,
-            "qec_referenz_original": str(case.qec_reference or ""),
-            "sachnummer_original": str(case.qec_part_number or ""),
+            "qec_referenz_original": str(getattr(case, "qec_reference", None) or ""),
+            "sachnummer_original": str(getattr(case, "qec_part_number", None) or ""),
         })
     mapping_rows.append({
         "art": "teil", "pseudonym": "T0001",
