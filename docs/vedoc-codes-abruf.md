@@ -29,8 +29,16 @@ Auch durch Leerzeichen, `,` oder `;` getrennte FINs sind zulässig. Kommentare b
 ## Abrufen
 
 ```powershell
-ntf-insight-vedoc-codes .\fins.txt --ausgabe .\vedoc_codes.json
+ntf-insight-vedoc-codes --eingabe .\fins.txt --ausgabe .\daten\vedoc_codes.json
 ```
+
+Ohne `--ausgabe` schreibt der Scraper automatisch nach **`data/processed/vedoc_codes.json`** (relativ zum aktuellen Arbeitsverzeichnis, normalerweise das Repository-Hauptverzeichnis). Der Ordner wird automatisch erstellt. Mit `--ausgabe` lässt sich ein anderer JSON-Zielpfad angeben.
+
+```powershell
+ntf-insight-vedoc-codes --eingabe .\fins.txt
+```
+
+Das bisherige Positionsargument bleibt gültig, z. B. `ntf-insight-vedoc-codes .\fins.txt`. Bitte entweder `--eingabe` **oder** das Positionsargument verwenden, nicht beide.
 
 1. Das Skript öffnet Microsoft Edge mit einem **separaten lokalen Profil** (`%USERPROFILE%\.ntf-insight\vedoc-edge-profile`).
 2. Falls erforderlich, die reguläre Unternehmensanmeldung und **PING ID** selbst durchführen. Wenn die Startseite erscheint, auf **Fahrzeugdaten** klicken.
@@ -41,10 +49,10 @@ ntf-insight-vedoc-codes .\fins.txt --ausgabe .\vedoc_codes.json
 Alle FINs gezielt neu abfragen:
 
 ```powershell
-ntf-insight-vedoc-codes .\fins.txt -o .\vedoc_codes.json --erneut
+ntf-insight-vedoc-codes --eingabe .\fins.txt --erneut
 ```
 
-Weitere Optionen: `--profil`, `--anmeldezeit`, `--ladezeit`, `--pause` (siehe `--help`).
+Weitere Optionen: `-i` (alias für `--eingabe`), `-o` (alias für `--ausgabe`), `--profil`, `--anmeldezeit`, `--ladezeit`, `--pause` (siehe `--help`).
 
 ## JSON-Schema
 
