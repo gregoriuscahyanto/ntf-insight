@@ -136,8 +136,8 @@ def test_interrupted_job_resumes_at_next_session(monkeypatch, tmp_path):
     profile = tmp_path / "profile"
     state = scraper.fresh_state()
     sessions = [
-        {"href": view_url(FIN1, "first.xml.json.gz"), "quelle": "XD", "diagnosezeitpunkt": "2026-01-01", "fin": FIN1},
-        {"href": view_url(FIN1, "second.xml.json.gz"), "quelle": "XD", "diagnosezeitpunkt": "2026-01-02", "fin": FIN1},
+        {"href": view_url(FIN1, "first.xml.json.gz"), "quelle": "XD", "diagnosezeitpunkt": "2026-01-01", "fin": FIN1, "laufleistung": "120 km"},
+        {"href": view_url(FIN1, "second.xml.json.gz"), "quelle": "XD", "diagnosezeitpunkt": "2026-01-02", "fin": FIN1, "laufleistung": "120 km"},
     ]
     runner = scraper.DiagnosisViewerScraper(file, profile, pacing=0)
     monkeypatch.setattr(runner, "_search", lambda ctx, page, fin: (page, sessions))
@@ -238,7 +238,7 @@ def test_output_never_contains_session_link_or_s3_path(monkeypatch, tmp_path):
     ))
     output = tmp_path / "warnings.json"
     url = view_url(FIN1)
-    session = {"href": url, "quelle": "XD", "diagnosezeitpunkt": "2026-01-01", "fin": FIN1}
+    session = {"href": url, "quelle": "XD", "diagnosezeitpunkt": "2026-01-01", "fin": FIN1, "laufleistung": "120 km"}
     runner = scraper.DiagnosisViewerScraper(output, tmp_path / "edge", pacing=0)
     monkeypatch.setattr(runner, "_search", lambda context, page, fin: (page, [session]))
     monkeypatch.setattr(runner, "_read_session", lambda context, href: ([{"kennung": "synthetic"}], "datenstruktur"))
@@ -326,7 +326,7 @@ def test_unknown_api_payload_keine_erfundenen_leeren_meldungen():
 def test_standardstart_ohne_kuenstlichen_aktionsabstand(tmp_path):
     args = scraper.build_parser().parse_args(["--eingabe", "liste.txt"])
     assert args.abstand == 0.0
-    assert args.sitzungs_timeout == 25
+    assert args.sitzungs_timeout == 5
     assert scraper.DiagnosisViewerScraper(tmp_path / "ergebnis.json", tmp_path / "profil").taktung.interval == 0
     assert scraper.build_parser().parse_args(["--abstand", "0"]).abstand == 0
 
@@ -444,7 +444,7 @@ def test_abschnitt_fehlt_hat_eigenen_resume_status_und_keine_falsche_nullzahl(mo
         sync_playwright=lambda: FakePlaywright(context)))
     output = tmp_path / 'ergebnis.json'
     runner = scraper.DiagnosisViewerScraper(output, tmp_path / 'profil', pacing=0)
-    sessions = [{"href": view_url(FIN1), "quelle": "XD", "diagnosezeitpunkt": "2026-01-01", "fin": FIN1}]
+    sessions = [{"href": view_url(FIN1), "quelle": "XD", "diagnosezeitpunkt": "2026-01-01", "fin": FIN1, "laufleistung": "120 km"}]
     monkeypatch.setattr(runner, '_search', lambda ctx, page, fin: (page, sessions))
     monkeypatch.setattr(runner, '_read_session', lambda ctx, href: ([], 'abschnitt_fehlt'))
     messages = []
@@ -463,13 +463,29 @@ def test_abschnitt_fehlt_hat_eigenen_resume_status_und_keine_falsche_nullzahl(mo
 
 def test_api_aufruf_hat_festes_abort_timeout(tmp_path):
     class BrowserPage:
-        def evaluate(self, code, filename):
+        def evaluate(self, code, args):
             assert 'AbortController' in code
-            assert '4000' in code
-            assert filename == 'beispiel.json.gz'
+            assert 'timeout_ms' in code
+            assert args == {'filename': 'beispiel.json.gz', 'timeout_ms': 4000}
             return None
     runner = scraper.DiagnosisViewerScraper(tmp_path / 'ausgabe.json', tmp_path / 'profil')
     assert runner._read_api_section(BrowserPage(), view_url(FIN1)) is None
+
+
+def test_api_timeout_begrenzt_durch_restliches_sitzungsbudget(monkeypatch, tmp_path):
+    monkeypatch.setattr(scraper.time, "monotonic", lambda: 100.0)
+    timeouts = []
+
+    class BrowserPage:
+        def evaluate(self, code, args):
+            timeouts.append(args["timeout_ms"])
+            return None
+
+    runner = scraper.DiagnosisViewerScraper(tmp_path / "out.json", tmp_path / "profil")
+    assert runner._read_api_section(BrowserPage(), view_url(FIN1), deadline=100.7) is None
+    assert 0 < timeouts[0] <= 700
+    with pytest.raises(TimeoutError, match="Sitzungs-Timeout"):
+        runner._read_api_section(BrowserPage(), view_url(FIN1), deadline=100.0)
 
 # Einzeldateien und Resume: synthetische Beispieldaten, niemals echte FINs.
 def _entry(title: str, status: str = 'erfolgreich') -> dict:
@@ -573,7 +589,7 @@ def test_sitzungen_schreiben_nicht_jedes_mal_gesamtdatei(monkeypatch, tmp_path):
     monkeypatch.setattr(scraper, 'save_state', counting_writer)
     runner = scraper.DiagnosisViewerScraper(output, tmp_path / 'browser', pacing=0)
     sessions = [{'href': view_url(FIN1, f'session-{i}.json.gz'), 'quelle': 'XD',
-                 'diagnosezeitpunkt': f'2026-01-0{i+1}', 'fin': FIN1} for i in range(4)]
+                 'diagnosezeitpunkt': f'2026-01-0{i+1}', 'fin': FIN1, 'laufleistung': '120 km'} for i in range(4)]
     monkeypatch.setattr(runner, '_search', lambda ctx, page, fin: (page, sessions))
     monkeypatch.setattr(runner, '_read_session', lambda ctx, href: ([{'kennung':'fake'}], 'datenstruktur'))
     assert runner.run([FIN1], scraper.load_state(output), refresh=False, redo=False) == 0
@@ -590,7 +606,7 @@ def test_ohne_gesamtdatei_funktioniert_resume_ohne_legacy_datei(monkeypatch, tmp
     runner = scraper.DiagnosisViewerScraper(output, tmp_path / 'browser',
                                             gesamtdatei_am_ende=False)
     sessions = [{'href': view_url(FIN1, f'session-{i}.json.gz'), 'quelle': 'XD',
-                 'diagnosezeitpunkt': f'2026-01-0{i+1}', 'fin': FIN1} for i in range(2)]
+                 'diagnosezeitpunkt': f'2026-01-0{i+1}', 'fin': FIN1, 'laufleistung': '120 km'} for i in range(2)]
     monkeypatch.setattr(runner, '_search', lambda ctx, page, fin: (page, sessions))
     attempted = []
 
@@ -655,3 +671,122 @@ def test_nur_aufteilen_altbestand_offline_und_original_unveraendert(monkeypatch,
     assert scraper.main(['--nur-aufteilen', '--ausgabe', str(output)]) == 0
     assert output.read_bytes() == alte_bytes
     assert scraper.load_state(output)['fahrzeuge'][FIN1]['sitzungen'][key] == _entry('alt')
+
+
+
+@pytest.mark.parametrize(
+    ("session", "expected"),
+    [
+        ({"quelle": "AKT", "laufleistung": "2000 km"}, ["source_akt"]),
+        ({"quelle": " akt ", "laufleistung": "0 km"}, ["source_akt"]),
+        ({"quelle": "XD", "laufleistung": ""}, ["mileage_fehlt"]),
+        ({"quelle": "TD", "laufleistung": None}, ["mileage_fehlt"]),
+        ({"quelle": "XD", "laufleistung": "N/A"}, ["mileage_fehlt"]),
+        ({"quelle": "DAS", "laufleistung": "—"}, ["mileage_fehlt"]),
+        ({"quelle": "AKT", "laufleistung": ""}, ["source_akt", "mileage_fehlt"]),
+        ({"quelle": "XD", "laufleistung": "0 km"}, []),
+        ({"quelle": "TD", "laufleistung": "176.543 km"}, []),
+    ],
+)
+def test_wem_ausschlussregel_source_akt_oder_mileage_fehlt(session, expected):
+    assert scraper.ausschlussgruende(session) == expected
+
+
+def test_wem_filter_schliesst_sitzungen_vor_browser_oeffnung_aus(monkeypatch, tmp_path):
+    ctx = FakeContext()
+    monkeypatch.setitem(sys.modules, 'playwright.sync_api', SimpleNamespace(
+        sync_playwright=lambda: FakePlaywright(ctx)
+    ))
+    output = tmp_path / 'wem.json'
+    sessions = [
+        {'href': view_url(FIN1, 'gueltig.json.gz'), 'quelle': 'XD',
+         'diagnosezeitpunkt': '2026-01-01', 'fin': FIN1, 'laufleistung': '100 km'},
+        {'href': view_url(FIN1, 'akt.json.gz'), 'quelle': 'AKT',
+         'diagnosezeitpunkt': '2026-01-02', 'fin': FIN1, 'laufleistung': '100 km'},
+        {'href': view_url(FIN1, 'ohne-km.json.gz'), 'quelle': 'TD',
+         'diagnosezeitpunkt': '2026-01-03', 'fin': FIN1, 'laufleistung': ''},
+        {'href': view_url(FIN1, 'beides.json.gz'), 'quelle': 'AKT',
+         'diagnosezeitpunkt': '2026-01-04', 'fin': FIN1, 'laufleistung': 'N/A'},
+    ]
+    runner = scraper.DiagnosisViewerScraper(output, tmp_path / 'profil')
+    monkeypatch.setattr(runner, '_search', lambda ctx, page, fin: (page, sessions))
+    opened = []
+    def read_session(context, href):
+        opened.append(href)
+        return [{'kennung': 'synthetische Meldung'}], 'datenstruktur'
+    monkeypatch.setattr(runner, '_read_session', read_session)
+
+    assert runner.run([FIN1], scraper.fresh_state(), refresh=False, redo=False) == 0
+    assert opened == [sessions[0]['href']]
+    state = scraper.load_state(output)['fahrzeuge'][FIN1]
+    assert state['status'] == 'abgeschlossen'
+    assert state['anzahl_sitzungen_gefunden'] == 4
+    records = state['sitzungen']
+    assert len(records) == 4
+    assert records[scraper.session_key(sessions[0]['href'])]['status'] == 'erfolgreich'
+    for session in sessions[1:]:
+        record = records[scraper.session_key(session['href'])]
+        assert record['status'] == 'ausgeschlossen'
+        assert record['ausschlussgruende'] == scraper.ausschlussgruende(session)
+        assert record['anzahl_meldungen'] is None
+        assert record['meldungen'] == []
+        assert 'href' not in record
+        assert record['hinweis']
+    assert '"href"' not in output.read_text(encoding='utf-8')
+    assert '"status": "keine_meldungen"' not in output.read_text(encoding='utf-8')
+
+    opened.clear()
+    assert runner.run([FIN1], scraper.load_state(output), refresh=True, redo=True) == 0
+    assert opened == [sessions[0]['href']]  # Ausgeschlossene trotz --erneut nicht lesen
+
+
+def test_gespeicherte_wem_bei_neuem_ausschluss_aufbewahren(monkeypatch, tmp_path):
+    ctx = FakeContext()
+    monkeypatch.setitem(sys.modules, 'playwright.sync_api', SimpleNamespace(
+        sync_playwright=lambda: FakePlaywright(ctx)
+    ))
+    output = tmp_path / 'wem.json'
+    href = view_url(FIN1)
+    key = scraper.session_key(href)
+    state = scraper.fresh_state()
+    existing = {'status': 'erfolgreich', 'meldung': 'bestehender Datensatz',
+                'anzahl_meldungen': 1, 'meldungen': [{'kennung': 'alt'}]}
+    state['fahrzeuge'][FIN1] = {'status': 'abgeschlossen', 'sitzungen': {key: existing}}
+    scraper.save_state(output, state)
+    runner = scraper.DiagnosisViewerScraper(output, tmp_path / 'profil')
+    monkeypatch.setattr(runner, '_search', lambda ctx, page, fin: (page, [
+        {'href': href, 'quelle': 'AKT', 'fin': FIN1, 'laufleistung': ''}
+    ]))
+    monkeypatch.setattr(runner, '_read_session', lambda ctx, href:
+                        pytest.fail('Archivierte WEM und ausgeschlossene Sitzungen nicht erneut lesen'))
+    assert runner.run([FIN1], scraper.load_state(output), refresh=True, redo=True) == 0
+    assert scraper.load_state(output)['fahrzeuge'][FIN1]['sitzungen'][key] == existing
+
+
+def test_zuvor_ausgeschlossene_sitzung_bei_neuer_mileage_abrufen(monkeypatch, tmp_path):
+    ctx = FakeContext()
+    monkeypatch.setitem(sys.modules, 'playwright.sync_api', SimpleNamespace(
+        sync_playwright=lambda: FakePlaywright(ctx)
+    ))
+    output = tmp_path / 'wem.json'
+    href = view_url(FIN1)
+    key = scraper.session_key(href)
+    state = scraper.fresh_state()
+    state['fahrzeuge'][FIN1] = {'status': 'abgeschlossen', 'sitzungen': {
+        key: {'status': 'ausgeschlossen', 'ausschlussgruende': ['mileage_fehlt'],
+              'anzahl_meldungen': None, 'meldungen': []}
+    }}
+    scraper.save_state(output, state)
+    runner = scraper.DiagnosisViewerScraper(output, tmp_path / 'profil')
+    monkeypatch.setattr(runner, '_search', lambda ctx, page, fin: (page, [
+        {'href': href, 'quelle': 'XD', 'fin': FIN1,
+         'diagnosezeitpunkt': '2026-01-01', 'laufleistung': '345 km'}
+    ]))
+    opened = []
+    monkeypatch.setattr(runner, '_read_session', lambda ctx, href:
+                        (opened.append(href) or [{'kennung': 'neu'}], 'datenstruktur'))
+    assert runner.run([FIN1], scraper.load_state(output), refresh=True, redo=False) == 0
+    assert opened == [href]
+    record = scraper.load_state(output)['fahrzeuge'][FIN1]['sitzungen'][key]
+    assert record['status'] == 'erfolgreich'
+    assert record['meldungen'][0]['kennung'] == 'neu'
