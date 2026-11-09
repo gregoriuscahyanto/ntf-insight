@@ -136,10 +136,10 @@ def load_technical_scope(
         case = store.get_case(case_id)
         if (
             case is None or case.vin != _normal_fin(fin)
-            or case.qec_reference != ref
+            or getattr(case, "qec_reference", None) != ref
             or _normal_fin(fin) not in vins
             or not qec_case_matches_project(
-                case_part_number=str(case.qec_part_number or ""),
+                case_part_number=str(getattr(case, "qec_part_number", None) or ""),
                 source_profile_id=case.component_profile_id,
                 project_profile_id=profile_id,
                 project_part_number=part_number,
