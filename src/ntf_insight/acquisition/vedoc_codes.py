@@ -3,7 +3,7 @@
 
 Basis: gesicherte VeDoc-HTML-Ansichten und VeDoc-Anleitung aus 'Vedoc Codes.zip'.
 Automatisiert die sichtbare VeDoc-Oberflaeche mit Playwright und Microsoft Edge.
-SSO/PING ID bleibt ausschliesslich in der Verantwortung der angemeldeten Person.
+Benutzerkennung/Passwort koennen aus dem OS-Tresor eingetragen werden; PING ID bleibt manuell.
 
 Hinweis: VeDoc-Fahrzeugcodes sind KEINE DTCs des CPC3-Steuergeraets.
 """
@@ -11,6 +11,7 @@ Hinweis: VeDoc-Fahrzeugcodes sind KEINE DTCs des CPC3-Steuergeraets.
 from __future__ import annotations
 
 import argparse
+import getpass
 import json
 import os
 import re
@@ -20,10 +21,15 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit
+
+from ntf_insight.acquisition.credentials import load_saved_credentials
 
 VEDOC_URL = "https://prod.core.public.vedoc.i.mercedes-benz.com/ui/VehicleArrangement.html"
 FIN_REGEX = re.compile(r"[A-HJ-NPR-Z0-9]{17}\Z")
 SCHEMA_VERSION = "1.0"
+SSO_HOST = 'login.mercedes-benz.com'
+VEDOC_HOST = urlsplit(VEDOC_URL).hostname
 
 # Exakt aus dem bereitgestellten VeDoc-HTML (keine wechselnden Angular-IDs).
 SUCHFELD = 'input[name="localSearch"]'
@@ -288,25 +294,133 @@ class Taktgeber:
         self.letzte_aktion = time.monotonic()
 
 
-def browser_bereit(context: Any, wartezeit: float) -> Any:
-    """Sichtbares Fenster fuer regulaere Anmeldung/PING ID verwenden."""
+def _sso_ist_vertrauenswuerdig(url: str) -> bool:
+    """Zugangsdaten ausschliesslich an den echten Mercedes-Login-Host senden."""
+    adresse = urlsplit(url)
+    return adresse.scheme == 'https' and adresse.hostname == SSO_HOST
+
+
+def _vedoc_ist_vertrauenswuerdig(url: str) -> bool:
+    adresse = urlsplit(url)
+    return adresse.scheme == 'https' and adresse.hostname == VEDOC_HOST
+
+
+def _zugangsdaten_fuer_lauf() -> tuple[str, str] | None:
+    """Bereits gespeicherte NTF-Insight-Daten verwenden oder einmalig abfragen.
+
+    Kein Klartext in Dateien, Umgebungsvariablen, URLs, Logs oder JSON.
+    """
+    try:
+        gespeicherte = load_saved_credentials()
+    except RuntimeError:
+        gespeicherte = None  # Tresor fehlt/gesperrt: niemals unsichere Ablage verwenden.
+    if gespeicherte is not None and gespeicherte.user_id and gespeicherte.password:
+        print('Mercedes-SSO: Zugangsdaten aus dem NTF-Insight-Windows-Tresor geladen.')
+        return gespeicherte.user_id, gespeicherte.password
+
+    if not sys.stdin.isatty():
+        print('Kein OS-Tresoreintrag und kein interaktives Terminal. '
+              'SSO bitte manuell im Edge-Fenster ausfuellen.')
+        return None
+
+    print('Keine gespeicherten NTF-Insight-SSO-Daten gefunden. '
+          'Benutzerkennung und Passwort werden nur fuer diesen Abruf erfragt.')
+    benutzer = input('Mercedes-Benz-Benutzerkennung: ').strip()
+    if not benutzer:
+        raise ValueError('Eine Benutzerkennung ist erforderlich (oder --login-manuell).')
+    passwort = getpass.getpass('Mercedes-SSO-Passwort (verdeckt): ')
+    if not passwort:
+        raise ValueError('Ein Passwort ist erforderlich (oder --login-manuell).')
+    return benutzer, passwort
+
+
+def _sso_ausfuellen(page: Any, zugang: tuple[str, str], gesendet: dict[str, bool]) -> None:
+    """SSO-Formular wie bei DCDC223 ausfuellen, nur auf verifiziertem HTTPS-Host."""
+    if not _sso_ist_vertrauenswuerdig(page.url):
+        return
+    cookie = page.locator('#c-s-bn')
+    if cookie.count() and cookie.is_visible():
+        cookie.click(timeout=3000)
+
+    benutzerfeld = page.locator('#userid')
+    if not gesendet['benutzer'] and benutzerfeld.count() and benutzerfeld.is_visible():
+        benutzerfeld.fill(zugang[0], timeout=10000)
+        page.locator('#next-btn').click(timeout=10000)
+        gesendet['benutzer'] = True
+        print('Mercedes-SSO: Benutzerkennung gesendet.')
+        return
+
+    passwortfeld = page.locator('#password')
+    if not gesendet['passwort'] and passwortfeld.count() and passwortfeld.is_visible():
+        passwortfeld.fill(zugang[1], timeout=10000)
+        page.locator('#loginSubmitButton').click(timeout=10000)
+        gesendet['passwort'] = True
+        print('Mercedes-SSO: Passwort gesendet. PING ID bei Bedarf selbst bestaetigen.')
+
+
+def browser_bereit(context: Any, wartezeit: float, *, auto_login: bool = True) -> Any:
+    """VeDoc-Suchseite nach regulaerem SSO/PING ID abwarten.
+
+    Die Anmeldung wird nur in der echten Mercedes-SSO-Domaene automatisiert.
+    Ein bereits authentifiziertes Edge-Profil braucht keine Passworteingabe.
+    """
     print('VeDoc wird in Microsoft Edge geoeffnet.')
-    print('Bitte bei Bedarf regulaer mit SSO anmelden und PING ID bestaetigen.')
-    print('Falls die Startseite erscheint: links auf "Fahrzeugdaten" klicken.')
+    print('PING ID bei Bedarf regulär auf dem Smartphone bestaetigen.')
+    if not auto_login:
+        print('Manueller Login: Benutzerkennung und Passwort direkt im Browser eingeben.')
     deadline = time.monotonic() + wartezeit
+    zugang: tuple[str, str] | None = None
+    zugang_geprueft = False
+    gesendet = {'benutzer': False, 'passwort': False}
+    sso_geklickt = False
+    fahrzeugdaten_geklickt = False
     while time.monotonic() < deadline:
-        for page in context.pages:
+        for page in reversed(list(context.pages)):
             if page.is_closed():
                 continue
             try:
-                feld = page.locator(SUCHFELD)
-                if feld.count() and feld.first.is_visible():
-                    return page
-            except Exception:
-                continue
-        time.sleep(0.7)
-    raise TimeoutError('VeDoc-Fahrzeugdatensuche nicht erreichbar. SSO/PING-ID oder Rechte pruefen.')
+                if _vedoc_ist_vertrauenswuerdig(page.url):
+                    feld = page.locator(SUCHFELD)
+                    if feld.count() and feld.first.is_visible():
+                        return page
 
+                    if not sso_geklickt:
+                        for role in ('button', 'link'):
+                            sso = page.get_by_role(role, name=re.compile(r'SSO|Single Sign.On', re.I))
+                            if sso.count() and sso.first.is_visible():
+                                sso.first.click(timeout=3000)
+                                sso_geklickt = True
+                                break
+                    if not fahrzeugdaten_geklickt:
+                        eintrag = page.locator('a[href*="VehicleArrangement.html"]')
+                        if eintrag.count() and eintrag.first.is_visible():
+                            eintrag.first.click(timeout=3000)
+                            fahrzeugdaten_geklickt = True
+                elif _sso_ist_vertrauenswuerdig(page.url):
+                    # Nach dem SSO-Redirect ggf. erneut "Fahrzeugdaten" oeffnen.
+                    fahrzeugdaten_geklickt = False
+                    if auto_login:
+                        benutzerfeld = page.locator('#userid')
+                        passwortfeld = page.locator('#password')
+                        anmeldefeld_sichtbar = (
+                            bool(benutzerfeld.count() and benutzerfeld.is_visible())
+                            or bool(passwortfeld.count() and passwortfeld.is_visible())
+                        )
+                        # Nur nach Zugangsdaten fragen, wenn tatsaechlich ein
+                        # Benutzer-/Passwortfeld sichtbar ist, nie bei PING ID.
+                        if anmeldefeld_sichtbar and not zugang_geprueft:
+                            zugang = _zugangsdaten_fuer_lauf()
+                            zugang_geprueft = True
+                        if anmeldefeld_sichtbar and zugang is not None:
+                            _sso_ausfuellen(page, zugang, gesendet)
+            except (KeyboardInterrupt, EOFError, ValueError):
+                raise
+            except Exception:
+                # Kurzlebige Redirects koennen Playwright-Locators invalidieren.
+                continue
+        time.sleep(0.4)
+    raise TimeoutError('VeDoc-Suche nach SSO/PING ID nicht erreichbar. '
+                       'Anmeldung oder Berechtigungen pruefen; ggf. --login-manuell verwenden.')
 
 def suche_fin(page: Any, fin: str, pacer: Taktgeber, timeout_ms: int) -> None:
     kategorie = page.locator(SUCHKATEGORIE)
@@ -395,15 +509,17 @@ def einlesen_alte_ergebnisse(path: Path) -> dict[str, dict[str, Any]]:
 
 
 def abrufen(args: argparse.Namespace) -> int:
-    if not args.fin_datei.is_file():
-        raise FileNotFoundError(f'FIN-Datei fehlt: {args.fin_datei}')
-    if args.ausgabe.resolve() == args.fin_datei.resolve():
-        raise ValueError('Ausgabedatei darf nicht die FIN-Eingabedatei ueberschreiben.')
-    if args.ausgabe.suffix.lower() != '.json':
-        raise ValueError('Die Ausgabe muss eine .json-Datei sein.')
+    nur_login = getattr(args, 'nur_login', False)
+    if not nur_login:
+        if not args.fin_datei.is_file():
+            raise FileNotFoundError(f'FIN-Datei fehlt: {args.fin_datei}')
+        if args.ausgabe.resolve() == args.fin_datei.resolve():
+            raise ValueError('Ausgabedatei darf nicht die FIN-Eingabedatei ueberschreiben.')
+        if args.ausgabe.suffix.lower() != '.json':
+            raise ValueError('Die Ausgabe muss eine .json-Datei sein.')
 
-    fins = lese_fins(args.fin_datei)
-    alte = {} if args.erneut else einlesen_alte_ergebnisse(args.ausgabe)
+    fins = [] if nur_login else lese_fins(args.fin_datei)
+    alte = {} if nur_login or args.erneut else einlesen_alte_ergebnisse(args.ausgabe)
     ergebnisse: dict[str, dict[str, Any]] = {}
     for fin in fins:
         prev = alte.get(fin)
@@ -422,11 +538,12 @@ def abrufen(args: argparse.Namespace) -> int:
         speichere_json_zuverlaessig(args.ausgabe, daten)
 
     rest = [fin for fin in fins if fin not in ergebnisse]
-    print(f'{len(fins)} eindeutige FINs, davon {len(rest)} abzufragen.')
-    if not rest:
-        persistieren()
-        print(f'Alle FINs bereits vorhanden: {args.ausgabe}')
-        return 0
+    if not nur_login:
+        print(f'{len(fins)} eindeutige FINs, davon {len(rest)} abzufragen.')
+        if not rest:
+            persistieren()
+            print(f'Alle FINs bereits vorhanden: {args.ausgabe}')
+            return 0
 
     # Diese Imports/Browserzugriffe erfolgen nur im echten Abruf.
     from playwright.sync_api import sync_playwright
@@ -450,7 +567,12 @@ def abrufen(args: argparse.Namespace) -> int:
                 # nicht vor Ablauf von --anmeldezeit beenden.
                 if type(exc).__name__ != 'TimeoutError':
                     raise
-            page = browser_bereit(context, args.anmeldezeit)
+            page = browser_bereit(context, args.anmeldezeit,
+                                   auto_login=not getattr(args, 'login_manuell', False))
+            if nur_login:
+                print('SSO/PING ID erfolgreich: VeDoc-Fahrzeugdaten erreichbar. '
+                      'Keine FIN abgefragt oder Ausgabedatei veraendert.')
+                return 0
             for idx, fin in enumerate(rest, start=1):
                 print(f'[{idx}/{len(rest)}] FIN {fin[:3]}...{fin[-4:]}')
                 try:
@@ -508,10 +630,14 @@ def kommandozeile(argv: list[str] | None = None) -> argparse.Namespace:
                         help='Mindestpause zwischen Browseraktionen in Sekunden (mind. 0.5)')
     parser.add_argument('--erneut', action='store_true',
                         help='Erfolgreich gespeicherte FINs erneut abrufen (sonst Fortsetzen)')
+    parser.add_argument('--login-manuell', action='store_true',
+                        help='OS-Tresor nicht lesen; SSO-Anmeldung vollstaendig im Browser')
+    parser.add_argument('--nur-login', action='store_true',
+                        help='Nur SSO/PING ID testen, keine FIN abfragen oder JSON schreiben')
     args = parser.parse_args(argv)
     if args.fin_datei is not None and args.eingabe is not None:
         parser.error('FIN-Datei entweder positional oder mit --eingabe angeben, nicht beides.')
-    if args.fin_datei is None and args.eingabe is None:
+    if args.fin_datei is None and args.eingabe is None and not args.nur_login:
         parser.error('FIN-Datei fehlt: bitte --eingabe oder Positionsargument verwenden.')
     if args.eingabe is not None:
         args.fin_datei = args.eingabe
@@ -522,9 +648,12 @@ def kommandozeile(argv: list[str] | None = None) -> argparse.Namespace:
 def main() -> int:
     try:
         return abrufen(kommandozeile())
-    except (OSError, ValueError, TimeoutError) as exc:
+    except (OSError, ValueError, TimeoutError, EOFError) as exc:
         print(f'Fehler: {exc}', file=sys.stderr)
         return 2
+    except KeyboardInterrupt:
+        print('Anmeldung bzw. Abruf abgebrochen.', file=sys.stderr)
+        return 130
 
 
 if __name__ == '__main__':
