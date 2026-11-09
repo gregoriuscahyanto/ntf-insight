@@ -319,3 +319,18 @@ def test_nur_login_schreibt_keine_fahrzeugdaten(monkeypatch, tmp_path):
                             "--profil", str(tmp_path / "profil")])
     assert m.abrufen(args) == 0
     assert not output.exists()
+
+
+
+def test_ping_id_seite_braucht_keinen_tresor_zugriff(monkeypatch):
+    clock = [0.0]
+    monkeypatch.setattr(m.time, "monotonic", lambda: clock[0])
+    monkeypatch.setattr(m.time, "sleep", lambda sekunden: clock.__setitem__(0, clock[0] + sekunden))
+    monkeypatch.setattr(
+        m, "load_saved_credentials",
+        lambda: pytest.fail("PING-ID-Seite darf keinen Tresorzugriff ausloesen"),
+    )
+    page = FakeSSOPage(stage="ping-id")
+    with pytest.raises(TimeoutError, match="VeDoc-Suche"):
+        m.browser_bereit(SimpleNamespace(pages=[page]), 1, auto_login=True)
+    assert all(action[0] != "fill" for action in page.aktionen)
