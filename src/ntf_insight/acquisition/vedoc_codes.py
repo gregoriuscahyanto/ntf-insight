@@ -396,12 +396,23 @@ def browser_bereit(context: Any, wartezeit: float, *, auto_login: bool = True) -
                         if eintrag.count() and eintrag.first.is_visible():
                             eintrag.first.click(timeout=3000)
                             fahrzeugdaten_geklickt = True
-                elif _sso_ist_vertrauenswuerdig(page.url) and auto_login:
-                    if not zugang_geprueft:
-                        zugang = _zugangsdaten_fuer_lauf()
-                        zugang_geprueft = True
-                    if zugang is not None:
-                        _sso_ausfuellen(page, zugang, gesendet)
+                elif _sso_ist_vertrauenswuerdig(page.url):
+                    # Nach dem SSO-Redirect ggf. erneut "Fahrzeugdaten" oeffnen.
+                    fahrzeugdaten_geklickt = False
+                    if auto_login:
+                        benutzerfeld = page.locator('#userid')
+                        passwortfeld = page.locator('#password')
+                        anmeldefeld_sichtbar = (
+                            bool(benutzerfeld.count() and benutzerfeld.is_visible())
+                            or bool(passwortfeld.count() and passwortfeld.is_visible())
+                        )
+                        # Nur nach Zugangsdaten fragen, wenn tatsaechlich ein
+                        # Benutzer-/Passwortfeld sichtbar ist, nie bei PING ID.
+                        if anmeldefeld_sichtbar and not zugang_geprueft:
+                            zugang = _zugangsdaten_fuer_lauf()
+                            zugang_geprueft = True
+                        if anmeldefeld_sichtbar and zugang is not None:
+                            _sso_ausfuellen(page, zugang, gesendet)
             except (KeyboardInterrupt, EOFError, ValueError):
                 raise
             except Exception:
