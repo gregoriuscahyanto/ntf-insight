@@ -336,7 +336,7 @@ def test_cluster_chart_displays_all_22_t_and_s_groups_and_last_is_filterable(
         assert page.llm_cluster_chart.height() == (
             page.llm_cluster_chart.sizeHint().height()
         )
-        assert page.chatgpt_cluster_scroll.isWidgetResizable()
+        assert page.chatgpt_cluster_scroll.widgetResizable()
 
         # Auch ein Cluster jenseits der frueheren Top 10 bleibt anwaehlbar.
         assert "T08" in [code for code, _title, _count in items[10:]]
