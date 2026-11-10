@@ -17,7 +17,7 @@ from ntf_insight.acquisition.diagnosis_viewer import (
     DiagnosisViewerDownloader,
     FinDownloadResult,
     parse_fins,
-    recently_attempted,
+    lokal_vorhandene_pdf,
 )
 
 STANDARD_AUSGABE = Path("data/processed/diagnosis_viewer_quicktests")
@@ -44,7 +44,7 @@ def erstelle_parser() -> argparse.ArgumentParser:
     parser.add_argument("--profil", type=Path, default=STANDARD_PROFIL,
                         help="Separates lokales Edge-Profil fuer die CLI")
     parser.add_argument("--erneut", action="store_true",
-                        help="24-Stunden-Abrufsperre fuer diesen Lauf uebergehen")
+                        help="Auch FINs mit bereits gespeicherter PDF erneut herunterladen"
     parser.add_argument("--login-manuell", action="store_true",
                         help="SSO-Anmeldedaten nicht aus dem Betriebssystem-Tresor laden")
     parser.add_argument("--passwort-abfragen", action="store_true",
@@ -119,9 +119,9 @@ def main(argv: list[str] | None = None) -> int:
         profil = args.profil.expanduser().resolve()
         if ausgabe.is_file():
             raise ValueError("--ausgabe muss ein Verzeichnis sein, keine Datei.")
-        # Nicht wegen einer lokalen 24h-Sperre unnoetig auf den Passwort-Tresor zugreifen.
+        # Nur lokale PDFs (nicht ein Abrufstatus ohne PDF) vermeiden neue SSO-Anmeldung.
         alles_aktuell = not args.erneut and all(
-            recently_attempted(ausgabe, fin) is not None for fin in fins
+            lokal_vorhandene_pdf(ausgabe, fin) is not None for fin in fins
         )
         login = None if alles_aktuell else _anmeldedaten(args)
         print(f"{len(fins)} FIN(s) | Ausgabe: {ausgabe}", flush=True)
@@ -132,6 +132,8 @@ def main(argv: list[str] | None = None) -> int:
             user_id=login.user_id if login else "",
             password=login.password if login else "",
             retry_recent=args.erneut,
+            nur_fehlende_pdfs=True,
+            serielle_sso=True,
             login_timeout_seconds=args.anmelde_timeout,
             kurz_fin_erlaubt=True,
         )
