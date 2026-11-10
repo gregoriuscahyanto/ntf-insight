@@ -5,6 +5,14 @@ bestimmst das **Objekt** und das **Attribut** aus dem VeDoc-Historienreiter
 selbst. Es werden nur Zeilen mit passendem vollständigem FIN-, Objekt- und
 Attributnamen übernommen.
 
+**Kurz-FINs:** Die CLI akzeptiert auch die 14-stellige Mercedes-
+Fahrzeugkennung (Baumuster + individuelle Kennung) ohne zusätzlichen WMI-Präfix.
+Der Browser sucht exakt diesen Wert. Angezeigte 17-stellige VeDoc-FINs
+werden anhand der letzten 14 Zeichen verglichen. Ist die Zuordnung
+mehrdeutig oder liefert VeDoc keine bestätigte FIN, wird das
+Ergebnis nicht als bestätigt ausgegeben. Andere Datenquellen sind
+hierdurch nicht automatisch für Kurz-FINs freigeschaltet.
+
 ## Einmal installieren
 
 Nach Aktualisierung des Repositorys in der aktiven Python-Umgebung:
