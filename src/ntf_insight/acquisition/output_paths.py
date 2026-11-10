@@ -49,14 +49,20 @@ def sicherer_listenname(eingabe: Path) -> str:
     return wert
 
 
-def standard_ausgabe(eingabe: Path, quelle: str) -> Path:
-    """Pfad im CWD: data/processed/<sicherer TXT-Stamm>/<Quelle>[/Datei.json]."""
+def ausgabe_in_gruppe(gruppe: Path, quelle: str) -> Path:
+    """Quelle immer unter einem eigenen Unterordner der Ausgabegruppe ablegen."""
     try:
         ordner, dateiname = _QUELLEN[quelle]
     except KeyError as exc:
         raise ValueError("Unbekannte Datenquelle.") from exc
-    basis = Path("data") / "processed" / sicherer_listenname(eingabe) / ordner
+    basis = Path(gruppe) / ordner
     return basis / dateiname if dateiname else basis
+
+
+def standard_ausgabe(eingabe: Path, quelle: str) -> Path:
+    """Pfad im CWD: data/processed/<sicherer TXT-Stamm>/<Quelle>[/Datei.json]."""
+    gruppe = Path("data") / "processed" / sicherer_listenname(eingabe)
+    return ausgabe_in_gruppe(gruppe, quelle)
 
 
 def quellennamen() -> tuple[str, ...]:
