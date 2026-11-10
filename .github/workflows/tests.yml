@@ -159,8 +159,20 @@ jobs:
           python -m pytest -q --tb=short tests/test_tips_writer_downloader.py tests/test_acquisition_portal_cli.py tests/test_acquisition_batch_cli.py tests/test_tips_matching_review.py tests/test_tips_transfer_guard.py tests/test_tips_case_gui.py tests/test_sechs_sso_quellen.py
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
+      # PR #82: QuickTests PDF->JSON lokal und im Sammelabruf, synthetische PDFs.
+      - name: Run focused QuickTest PDF to JSON gate for PR #82
+        if: ${{ github.event_name == 'pull_request' && github.event.pull_request.number == 82 }}
+        shell: pwsh
+        run: |
+          python -m compileall -q src tests/test_quicktest_json_cli.py
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python -m ruff check src tests ci
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python -m pytest -q --maxfail=1 --tb=short tests/test_quicktest_json_cli.py tests/test_diagnosis_viewer_quicktests_cli.py tests/test_acquisition_batch_cli.py tests/test_diagnosis_viewer_downloader.py tests/test_quicktest_structure_v3.py tests/test_quicktest_fin_import.py tests/test_failed_quicktest_retry.py tests/test_quicktest_download_gui.py
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
       - name: Run full portable quality gate
-        if: ${{ github.event_name != 'pull_request' || (github.event.pull_request.number != 72 && github.event.pull_request.number != 73 && github.event.pull_request.number != 74 && github.event.pull_request.number != 75 && github.event.pull_request.number != 76 && github.event.pull_request.number != 77 && github.event.pull_request.number != 78 && github.event.pull_request.number != 79 && github.event.pull_request.number != 80) }}
+        if: ${{ github.event_name != 'pull_request' || (github.event.pull_request.number != 72 && github.event.pull_request.number != 73 && github.event.pull_request.number != 74 && github.event.pull_request.number != 75 && github.event.pull_request.number != 76 && github.event.pull_request.number != 77 && github.event.pull_request.number != 78 && github.event.pull_request.number != 79 && github.event.pull_request.number != 80 && github.event.pull_request.number != 82) }}
         run: python ci/quality_gate.py
 
       - name: Build wheel
@@ -209,5 +221,14 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       # No artifacts uploaded to GitHub Actions: quota protection.
+      - name: Verify offline QuickTest JSON CLI in wheel for PR #82
+        if: ${{ github.event_name == 'pull_request' && github.event.pull_request.number == 82 }}
+        shell: pwsh
+        run: |
+          python -c "from pathlib import Path; from zipfile import ZipFile; wheel = next(Path('dist').glob('ntf_insight-*.whl')); names = set(ZipFile(wheel).namelist()); assert {'ntf_insight/acquisition/quicktest_json.py','ntf_insight/acquisition/diagnosis_viewer_cli.py','ntf_insight/acquisition/beschaffung_cli.py','ntf_insight/ingestion/quicktest_detailed.py'} <= names"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python -c "import importlib.metadata as m; entry = {e.name:e.value for e in m.distribution('ntf-insight').entry_points if e.group == 'console_scripts'}; assert entry['ntf-insight-quicktests-json'] == 'ntf_insight.acquisition.quicktest_json:main'"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
       # Test summaries remain in Actions logs, wheel built locally in job.
       # Explicitly never upload proprietary QEC/FIN/DTC data.
