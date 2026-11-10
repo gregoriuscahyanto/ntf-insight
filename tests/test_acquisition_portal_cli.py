@@ -80,7 +80,7 @@ def test_qec_standard_ordner_und_tresor_login(tmp_path, monkeypatch, capsys):
     aufrufe = _fake_qec(monkeypatch)
     assert portal_cli.qec_main(["--eingabe", str(_liste(tmp_path))]) == 0
     _, output, profile, kwargs = aufrufe[0]
-    assert output == (tmp_path / "data/processed/qec").resolve()
+    assert output == (tmp_path / "data/processed/fins/qec").resolve()
     assert profile == portal_cli.QEC_PROFIL.resolve()
     assert kwargs["pump_only"] is True
     assert kwargs["user_id"] == "synthetische-id"
@@ -108,7 +108,7 @@ def test_tips_fin_liste_ohne_duplikate_und_standardpfad(tmp_path, monkeypatch):
     aufrufe = _fake_tips(monkeypatch)
     eingabe = _liste(tmp_path, f"{FIN.lower()};{FIN}\n# Kommentar\n{FIN2}\n")
     assert portal_cli.tips_main(["--eingabe", str(eingabe)]) == 0
-    assert aufrufe[0][1] == (tmp_path / "data/processed/tips_writer").resolve()
+    assert aufrufe[0][1] == (tmp_path / "data/processed/fins/tips_writer").resolve()
     assert aufrufe[0][2] == portal_cli.TIPS_PROFIL.resolve()
     assert aufrufe[1][1] == [FIN, FIN2]
 
@@ -257,6 +257,7 @@ def test_alle_sechs_wheel_entrypoints_und_script_paket():
         "ntf-insight-quicktests",
         "ntf-insight-qec",
         "ntf-insight-tips",
+        "ntf-insight-beschaffung",
     } <= entrypoints.keys()
     assert entrypoints["ntf-insight-wem"] == "scripts.diagnosis_viewer_warn_error:main"
     assert entrypoints["ntf-insight-vedoc-dcdc223"] == "scripts.vedoc_dcdc223_seriennummern:main"
