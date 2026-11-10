@@ -320,6 +320,29 @@ def lokal_vorhandene_pdf(
     )
 
 
+def _quicktest_fin_vollstaendig(ordner: Path, fin: str) -> FinDownloadResult | None:
+    """Nur nachweislich vollstaendige FINs ohne neue Edge-Anmeldung ueberspringen.
+
+    Bei einem frueheren Abruf mit 1/14 PDFs muss die FIN erneut durchsucht
+    werden. Die eigentlichen, bereits vorhandenen PDFs werden pro Sitzung
+    zugeordnet und nicht nochmals aus dem Portal geladen.
+    """
+    lokal = lokal_vorhandene_pdf(ordner, fin)
+    if lokal is None:
+        return None
+    alt = read_last_attempt(ordner, fin)
+    if alt is None or alt.available == 0:
+        # Rueckwaertskompatibilitaet fuer Altbestaende ohne Sitzungszaehler.
+        # Die Vollstaendigkeit dieser Altbestaende ist nicht beweisbar.
+        return lokal
+    if (
+        alt.status == "Erfolgreich"
+        and len(lokal.files) + len(alt.no_quicktest_sessions) >= alt.available
+    ):
+        return lokal
+    return None
+
+
 def recently_attempted(
     folder: Path, fin: str, *, now: datetime | None = None
 ) -> FinDownloadResult | None:
@@ -883,7 +906,7 @@ class DiagnosisViewerDownloader:
         progress: Progress | None = None,
         cancel: Event | None = None,
     ) -> list[FinDownloadResult]:
-        """CLI ueberspringt nur vorhandene PDFs; GUI kann 24-h-Policy behalten."""
+        """CLI-Resume pro PDF-Sitzung; GUI behaelt die 24-h-Sperre."""
         validated = parse_fins("\n".join(fins), kurz_erlaubt=self.kurz_fin_erlaubt)
         progress = progress or (lambda message: None)
         cancel = cancel or Event()
@@ -894,7 +917,7 @@ class DiagnosisViewerDownloader:
             if self.retry_recent:
                 previous = None
             elif self.nur_fehlende_pdfs:
-                previous = lokal_vorhandene_pdf(self.output_dir, fin)
+                previous = _quicktest_fin_vollstaendig(self.output_dir, fin)
             else:
                 previous = recently_attempted(self.output_dir, fin)
             if previous is None:
@@ -902,12 +925,12 @@ class DiagnosisViewerDownloader:
             else:
                 results_by_fin[fin] = previous
                 if self.nur_fehlende_pdfs:
-                    progress(f"{fin}: PDF im FIN-Ordner vorhanden – uebersprungen.")
+                    progress(f"{fin}: QuickTest-PDFs laut bisherigem Stand vollstaendig – uebersprungen.")
                 else:
                     progress(f"{fin}: letzter Abruf < 24 Stunden – übersprungen.")
         if not pending:
             progress(
-                "Alle FINs besitzen bereits PDFs im Ausgabeordner."
+                "Alle FINs sind laut lokalem Abrufstand bereits vollstaendig."
                 if self.nur_fehlende_pdfs
                 else "Alle FINs wurden innerhalb der letzten 24 Stunden bereits abgerufen."
             )
@@ -918,34 +941,84 @@ class DiagnosisViewerDownloader:
         except ImportError as exc:
             raise RuntimeError("Playwright fehlt. Bitte die App mit Browser-Unterstützung installieren.") from exc
         with sync_playwright() as playwright:
-            try:
-                context = playwright.chromium.launch_persistent_context(
-                    user_data_dir=str(self.profile_dir),
-                    channel="msedge",
-                    headless=False,
-                    accept_downloads=True,
-                    no_viewport=True,
-                )
-            except Exception as exc:
-                raise RuntimeError(
-                    "Microsoft Edge konnte nicht gestartet werden. "
-                    "Edge muss installiert sein und das NTF-Browserprofil darf nicht von "
-                    "einem zweiten Programm verwendet werden. " + str(exc)
-                ) from exc
+            def starte_edge():
+                try:
+                    return playwright.chromium.launch_persistent_context(
+                        user_data_dir=str(self.profile_dir),
+                        channel="msedge",
+                        headless=False,
+                        accept_downloads=True,
+                        no_viewport=True,
+                    )
+                except Exception as exc:
+                    raise RuntimeError(
+                        "Microsoft Edge konnte nicht gestartet werden. "
+                        "Edge muss installiert sein und das NTF-Browserprofil darf "
+                        "nicht von einem zweiten Programm verwendet werden. "
+                        + str(exc)
+                    ) from exc
+
+            context = starte_edge()
+            neustarts = 0
             try:
                 page = context.pages[0] if context.pages else context.new_page()
                 for fin in pending:
                     if cancel.is_set():
                         break
-                    result, page = self._one_fin(context, page, fin, progress, cancel)
+                    while True:
+                        result, page = self._one_fin(
+                            context, page, fin, progress, cancel,
+                        )
+                        if (
+                            result.status != "Browser-Verbindung verloren"
+                            or neustarts >= 1 or cancel.is_set()
+                        ):
+                            break
+                        # Nur ein automatischer Neustart je Lauf. Bei erneutem
+                        # Absturz NICHT 13 weitere Sitzungen anklicken.
+                        neustarts += 1
+                        progress(
+                            f"{fin}: Edge-Verbindung verloren. Einmaliger "
+                            "Browserneustart; bereits gespeicherte PDFs bleiben erhalten. "
+                            "PING ID ggf. erneut bestaetigen."
+                        )
+                        try:
+                            context.close()
+                        except Exception:
+                            pass
+                        try:
+                            time.sleep(1)
+                            context = starte_edge()
+                            page = context.pages[0] if context.pages else context.new_page()
+                        except Exception as exc:
+                            result.status = "Fehler"
+                            result.errors.append(
+                                f"Automatischer Edge-Neustart fehlgeschlagen: {exc}"
+                            )
+                            _write_manifest(self.output_dir / fin, result)
+                            progress(
+                                f"{fin}: Edge-Neustart fehlgeschlagen. "
+                                "Abrufstand gespeichert; spaeter fortsetzen."
+                            )
+                            break
                     results_by_fin[fin] = result
                     progress(
                         f"FIN-Fortschritt: {len(results_by_fin)}/{len(validated)} "
                         f"bearbeitet · zuletzt {fin}: {result.status}"
                     )
-                    if result.status == "Abgebrochen":
+                    if result.status in (
+                        "Abgebrochen", "Browser-Verbindung verloren",
+                    ):
+                        break
+                    if (
+                        result.status == "Fehler"
+                        and any("Edge-Neustart fehlgeschlagen" in e for e in result.errors)
+                    ):
                         break
             finally:
-                context.close()
-                self.password = ""  # Best effort: no credential retained between runs.
+                try:
+                    context.close()
+                except Exception:
+                    pass
+                self.password = ""
         return [results_by_fin[fin] for fin in validated if fin in results_by_fin]
