@@ -225,6 +225,7 @@ def test_cli_komplett_offline_schreibt_objektbezogene_dateien(monkeypatch, tmp_p
     fake_api.sync_playwright = lambda: Manager()
     monkeypatch.setitem(sys.modules, "playwright.sync_api", fake_api)
     monkeypatch.setattr(m, "_anmelden", lambda *_args, **kwargs: seite)
+    monkeypatch.setattr(m, "_fahrzeugdaten_oeffnen", lambda *_args, **kwargs: None)
 
     def abrufen(page, fin, timeout, historie_timeout, *, objekt, attribut):
         aufrufe.append((objekt, attribut, fin))
