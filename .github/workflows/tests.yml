@@ -77,12 +77,34 @@ jobs:
           python -m pytest -q --maxfail=1 --tb=short tests/test_diagnosis_viewer_quicktests_cli.py tests/test_diagnosis_viewer_downloader.py tests/test_quicktest_s3_missing.py tests/test_quicktest_download_gui.py tests/test_case_table_quicktest.py
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
+      # PR #75: Nur die sechs Datenbeschaffungs-CLIs und ihre Downloader pruefen.
+      # Die uebergreifende GUI-Vollsuite haengt bereits auf main an einem Qt-Dialog.
+      - name: Run focused acquisition CLI gate for PR #75
+        if: ${{ github.event_name == 'pull_request' && github.event.pull_request.number == 75 }}
+        shell: pwsh
+        run: |
+          python -m compileall -q src scripts/diagnosis_viewer_warn_error.py scripts/vedoc_dcdc223_seriennummern.py
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python -m ruff check src tests ci
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python -m pytest -q --maxfail=1 --tb=short tests/test_acquisition_portal_cli.py tests/test_qec_tool_downloader.py tests/test_tips_writer_downloader.py tests/test_vedoc_dcdc223_seriennummern.py tests/test_diagnosis_viewer_warn_error.py tests/test_vedoc_codes_scraper.py tests/test_diagnosis_viewer_quicktests_cli.py tests/test_diagnosis_viewer_downloader.py
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python -c "import importlib.metadata as m; names = {e.name for e in m.distribution('ntf-insight').entry_points if e.group == 'console_scripts'}; assert {'ntf-insight-vedoc-dcdc223','ntf-insight-wem','ntf-insight-vedoc-codes','ntf-insight-quicktests','ntf-insight-qec','ntf-insight-tips'} <= names"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
       - name: Run full portable quality gate
-        if: ${{ github.event_name != 'pull_request' || (github.event.pull_request.number != 72 && github.event.pull_request.number != 73 && github.event.pull_request.number != 74) }}
+        if: ${{ github.event_name != 'pull_request' || (github.event.pull_request.number != 72 && github.event.pull_request.number != 73 && github.event.pull_request.number != 74 && github.event.pull_request.number != 75) }}
         run: python ci/quality_gate.py
 
       - name: Build wheel
         run: python -m build --wheel
+
+      - name: Verify packaged legacy and portal CLI modules for PR #75
+        if: ${{ github.event_name == 'pull_request' && github.event.pull_request.number == 75 }}
+        shell: pwsh
+        run: |
+          python -c "from pathlib import Path; from zipfile import ZipFile; wheel = next(Path('dist').glob('ntf_insight-*.whl')); names = set(ZipFile(wheel).namelist()); required = {'scripts/__init__.py', 'scripts/vedoc_dcdc223_seriennummern.py', 'scripts/diagnosis_viewer_warn_error.py', 'ntf_insight/acquisition/portal_cli.py'}; assert required.issubset(names), sorted(required - names)"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       # No artifacts uploaded to GitHub Actions: quota protection.
       # Test summaries remain in Actions logs, wheel built locally in job.
