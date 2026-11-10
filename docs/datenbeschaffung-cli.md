@@ -292,6 +292,34 @@ duerfen nicht ohne Pruefung einem QEC-Fall zugeschrieben werden.
 Die fuenf QEC-Abschnitte werden vollstaendig erfasst; vorhandene
 Anhaenge werden anhand ihrer IDs und Metadaten abgeglichen.
 
+## QuickTest-PDFs automatisch oder nachträglich in JSON konvertieren
+
+Im Sammelabruf ist die lokale **PDF-zu-JSON-Konvertierung für QuickTests
+standardmäßig aktiv**. Sobald die QuickTest-Quelle PDFs geladen oder lokal
+wiedergefunden hat, werden sie in
+`diagnosis_viewer_quicktests_json/<FIN>/<Originalname>.pdf.json` gespiegelt.
+Dieser Schritt verwendet den vorhandenen XENTRY-Parser und braucht
+**keine zusätzliche PING-ID-Bestätigung**.
+
+```powershell
+# QuickTests abrufen und automatisch als PDF + JSON speichern:
+ntf-insight-beschaffung --eingabe .\fins.txt --quellen quicktests,qec,tips --parallel 3
+
+# Bei Bedarf nur PDFs und sonstige Quellen herunterladen:
+ntf-insight-beschaffung --eingabe .\fins.txt --quellen alle --ohne-quicktest-json
+
+# Nachträglich: bereits vorhandene QuickTest-PDFs ohne Online-Abfrage konvertieren:
+ntf-insight-quicktests-json --ordner "data/processed/FIN Liste DCDC223 NTF PDF"
+```
+
+Der Offline-Befehl verarbeitet nur die lokalen PDFs direkt unter
+`diagnosis_viewer_quicktests/<FIN>/`. Er prüft die vollständige FIN
+im PDF, extrahiert ECU-/DTC-/Parameterstrukturen und überspringt nur
+bereits aktuelle JSONs mit identischer Prüfsumme. Originale bleiben
+erhalten; ungültige PDFs werden im
+`diagnosis_viewer_quicktests_json/konvertierungsstatus.json` mit Fehlern
+vermerkt. [Ausführliche Anleitung](quicktest-pdf-json.md).
+
 ## XENTRY TIPS: FINs oder Fallnummern als TXT
 
 Die TIPS-CLI kann neben **17-stelligen FINs** auch **rein numerische
