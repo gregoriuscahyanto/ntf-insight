@@ -29,7 +29,7 @@ API_HOST = "api.diagviewer.prod.gspp-eu.cloud.corpintra.net"
 LOGIN_HOST = "login.mercedes-benz.com"
 SOURCES = "XD,XD(AQT),TD,DAS"
 FIN_PATTERN = re.compile(r"[A-HJ-NPR-Z0-9]{17}\Z")
-ENDED = {"erfolgreich", "keine_meldungen", "abschnitt_fehlt"}
+ENDED = {"erfolgreich", "keine_meldungen", "abschnitt_fehlt", "ausgeschlossen"}
 SCHEMA_VERSION = 1
 
 
@@ -55,6 +55,24 @@ def read_fins(path: Path) -> list[str]:
     if invalid:
         raise ValueError("Ungueltige 17-stellige FIN(s): " + ", ".join(invalid[:5]))
     return list(dict.fromkeys(tokens))
+
+
+def ausschlussgruende(session: dict[str, Any]) -> list[str]:
+    """Sitzungen mit Source AKT oder fehlender Mileage nicht zum WEM-Abruf oeffnen.
+
+    Die Merkmale stammen aus der Suchliste und sind eine fachliche Heuristik,
+    kein Beweis, dass die Sitzung keine Warnungsmeldungen enthaelt.
+    """
+    gruende: list[str] = []
+    if str(session.get("quelle") or "").strip().upper() == "AKT":
+        gruende.append("source_akt")
+    mileage = session.get("laufleistung")
+    if mileage is None or str(mileage).strip().casefold() in {
+        "", "-", "--", "–", "—", "n/a", "n.a.", "na",
+        "null", "none", "nicht verfuegbar", "nicht verfügbar", "not available",
+    }:
+        gruende.append("mileage_fehlt")
+    return gruende
 
 
 def search_url(fin: str) -> str:
@@ -343,6 +361,15 @@ class Taktung:
         self.last = time.monotonic()
 
 
+def _restzeit_sitzung_ms(deadline: float) -> int:
+    """Alle Aktionen eines WEM-Abrufs teilen sich ein Zeitbudget."""
+    remaining = deadline - time.monotonic()
+    if remaining <= 0:
+        raise TimeoutError("WEM-Sitzungs-Timeout abgelaufen.")
+    # Sub-Millisekunden-Rest nicht versehentlich als abgelaufen behandeln.
+    return max(1, int(remaining * 1000))
+
+
 def format_duration(seconds: float) -> str:
     """Monotone Laufzeiten als lesbare Dauer; keine Uhrzeit/Deadline vorgaukeln."""
     seconds = max(0, round(seconds))
@@ -444,7 +471,7 @@ class DiagnosisViewerScraper:
     def __init__(
         self, output: Path, profile: Path, *, user_id: str = "", password: str = "",
         pacing: float = 0.0, login_timeout: float = 300, page_timeout: float = 70,
-        session_timeout: float = 25, missing_section_grace: float = 1.25,
+        session_timeout: float = 5, missing_section_grace: float = 1.25,
         gesamtdatei_am_ende: bool = True,
     ):
         self.output = output
@@ -628,20 +655,21 @@ class DiagnosisViewerScraper:
             return {ready, warning, busy, signature: headings.join('|')};
         }""")
 
-    def _read_api_section(self, page: Any, href: str) -> list[dict[str, Any]] | None:
+    def _read_api_section(self, page: Any, href: str, deadline: float | None = None) -> list[dict[str, Any]] | None:
         """Vom Browser bereits genutzte Leseschnittstelle, ausschliesslich section=warningEventMessages.
 
         SSO-Cookies bleiben im Edge-Profil. Eine API-/Login-Fehlantwort wird
         ignoriert und nicht als '0 Meldungen' interpretiert.
         """
         filename = view_filename(href)
-        response = page.evaluate("""async (filename) => {
+        timeout_ms = min(4000, _restzeit_sitzung_ms(deadline)) if deadline is not None else 4000
+        response = page.evaluate("""async ({filename, timeout_ms}) => {
             const endpoint = new URL('https://api.diagviewer.prod.gspp-eu.cloud.corpintra.net/view/section');
             endpoint.searchParams.set('filename', filename);
             endpoint.searchParams.set('section', 'warningEventMessages');
             // Eine haengende API-Anfrage darf den gesamten FIN-Lauf nie blockieren.
             const controller = new AbortController();
-            const timer = setTimeout(() => controller.abort(), 4000);
+            const timer = setTimeout(() => controller.abort(), timeout_ms);
             try {
                 const result = await fetch(endpoint.toString(), {
                     credentials: 'include', signal: controller.signal
@@ -657,14 +685,14 @@ class DiagnosisViewerScraper:
                 if (value?.type === 'url') return null; // ZIP -> DOM-Fallback
                 return value;
             } catch { return null; } finally { clearTimeout(timer); }
-        }""", filename)
+        }""", {"filename": filename, "timeout_ms": timeout_ms})
         return _raw_warnings(response)
 
-    def _read_dom_table(self, page: Any, button: Any) -> list[dict[str, Any]]:
+    def _read_dom_table(self, page: Any, button: Any, deadline: float | None = None) -> list[dict[str, Any]]:
         """Auch TanStack-virtualisierte Tabellen vollstaendig durchscrollen."""
         controls = button.get_attribute("aria-controls")
         scope = page.locator(f'[id="{controls}"]') if controls else page
-        deadline = time.monotonic() + self.page_timeout
+        deadline = deadline if deadline is not None else time.monotonic() + self.session_timeout
         while time.monotonic() < deadline:
             no_messages = scope.get_by_text("No warning or error messages", exact=False)
             if no_messages.count() and no_messages.first.is_visible():
@@ -672,7 +700,7 @@ class DiagnosisViewerScraper:
             tables = scope.locator("table")
             if tables.count():
                 break
-            page.wait_for_timeout(350)
+            page.wait_for_timeout(min(350, _restzeit_sitzung_ms(deadline)))
         else:
             raise TimeoutError("Die Warning-and-Error-Messages-Tabelle wurde nicht angezeigt.")
         table = scope.locator("table").first
@@ -709,7 +737,9 @@ class DiagnosisViewerScraper:
             if chunk["next"] == previous_scroll:
                 break
             previous_scroll = chunk["next"]
-            page.wait_for_timeout(100)
+            page.wait_for_timeout(min(100, _restzeit_sitzung_ms(deadline)))
+        if time.monotonic() >= deadline and (expected is None or len(collected) != expected):
+            raise TimeoutError("WEM-Tabelle nicht innerhalb des Sitzungs-Timeouts vollstaendig gelesen.")
         if expected is not None and len(collected) != expected:
             raise RuntimeError(f"Tabelle unvollstaendig: {len(collected)} von {expected} Meldungen sichtbar.")
         if not collected and expected != 0:
@@ -724,10 +754,10 @@ class DiagnosisViewerScraper:
         page.on("response", capture.observe)
         try:
             self.taktung.pause()
-            page.goto(href, wait_until="domcontentloaded",
-                      timeout=int(self.session_timeout * 1000))
-            button = page.get_by_role("button", name=re.compile("Warning and Error Messages", re.I))
             deadline = time.monotonic() + self.session_timeout
+            page.goto(href, wait_until="domcontentloaded",
+                      timeout=_restzeit_sitzung_ms(deadline))
+            button = page.get_by_role("button", name=re.compile("Warning and Error Messages", re.I))
             missing_since: float | None = None
             last_signature = ""
             while time.monotonic() < deadline:
@@ -754,21 +784,21 @@ class DiagnosisViewerScraper:
                 else:
                     missing_since = None
                     last_signature = ""
-                page.wait_for_timeout(160)
+                page.wait_for_timeout(min(160, _restzeit_sitzung_ms(deadline)))
             else:
                 # Unvollstaendig geladene Ansicht: nicht als 'Abschnitt fehlt'
                 # werten. Nach dem begrenzten Timeout mit Fehler weitergehen.
                 raise TimeoutError("Sitzungsansicht nicht vollstaendig geladen; Warnungsabschnitt ungeklärt.")
             if button.get_attribute("aria-expanded") != "true":
                 self.taktung.pause()
-                button.click(timeout=15000)
+                button.click(timeout=_restzeit_sitzung_ms(deadline))
             # Leseversuch bevorzugt die strukturierten Originalfelder statt einer UI-Teilansicht.
             records = capture.messages
             if records is None:
-                records = self._read_api_section(page, href)
+                records = self._read_api_section(page, href, deadline)
             if records is not None:
                 return [normalize_raw(row) for row in records], "datenstruktur"
-            return self._read_dom_table(page, button), "tabelle"
+            return self._read_dom_table(page, button, deadline), "tabelle"
         finally:
             page.remove_listener("response", capture.observe)
             page.close()
@@ -836,7 +866,27 @@ class DiagnosisViewerScraper:
                                 href = session["href"]
                                 key = session_key(href) if href else session_key(f"https://invalid.local/view/{session['quelle']}/{session['diagnosezeitpunkt']}?fin={fin}")
                                 entry = existing["sitzungen"].get(key, {})
-                                if entry.get("status") in ENDED and not redo:
+                                gruende = ausschlussgruende(session)
+                                if gruende:
+                                    # Bereits archivierte Meldungen nicht ueberschreiben.
+                                    if entry.get("status") not in {"erfolgreich", "keine_meldungen", "abschnitt_fehlt"}:
+                                        existing["sitzungen"][key] = {
+                                            **{k: v for k, v in session.items() if k != "href"},
+                                            "status": "ausgeschlossen", "ausschlussgruende": gruende,
+                                            "anzahl_meldungen": None, "meldungen": [],
+                                            "auslesemethode": None, "fehler": None,
+                                            "geprueft_utc": utc_now(),
+                                            "hinweis": "Kein WEM-Abruf: Source AKT und/oder Mileage fehlt.",
+                                        }
+                                        speicher.sitzung_speichern(fin, key, existing["sitzungen"][key])
+                                        speicher.fahrzeug_speichern(fin, existing)
+                                    fortschritt.sitzung_fertig(None)
+                                    self.log(
+                                        f"  [{current}/{len(sessions)}] WEM-Abruf ausgeschlossen "
+                                        f"({', '.join(gruende)}); kein Sitzungsaufruf | {fortschritt.text()}"
+                                    )
+                                    continue
+                                if entry.get("status") in ENDED and not redo and entry.get("status") != "ausgeschlossen":
                                     fortschritt.sitzung_fertig(None)
                                     self.log(f"  [{current}/{len(sessions)}] Bereits gespeichert | {fortschritt.text()}")
                                     continue
@@ -982,8 +1032,8 @@ def build_parser() -> argparse.ArgumentParser:
                         help="Passwort bei Bedarf maskiert im Terminal abfragen")
     parser.add_argument("--anmelde-timeout", type=float, default=300)
     parser.add_argument("--seiten-timeout", type=float, default=70)
-    parser.add_argument("--sitzungs-timeout", type=float, default=25,
-                        help="Maximale Wartezeit auf die Sitzungsansicht (Sekunden, Standard 25)")
+    parser.add_argument("--sitzungs-timeout", type=float, default=5,
+                        help="Maximale Zeit pro WEM-Sitzungsabruf (Sekunden, Standard 5)")
     parser.add_argument("--abschnitt-wartezeit", type=float, default=1.25,
                         help="Stabilitaetspruefung bei fehlendem Warnungsabschnitt (Sekunden)")
     parser.add_argument("--abstand", type=float, default=0.0,

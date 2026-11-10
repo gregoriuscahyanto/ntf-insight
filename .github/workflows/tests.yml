@@ -50,8 +50,21 @@ jobs:
           python -m pytest -q --maxfail=1 --tb=short tests/test_vedoc_codes_scraper.py tests/test_vedoc_dcdc223_seriennummern.py tests/test_diagnosis_viewer_downloader.py
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
+      # PR #72 changes the WEM scraper and reporting context.
+      # Use only the directly affected offline/regression test modules.
+      - name: Run focused WEM and reporting gate for PR #72
+        if: ${{ github.event_name == 'pull_request' && github.event.pull_request.number == 72 }}
+        shell: pwsh
+        run: |
+          python -m compileall -q src scripts/diagnosis_viewer_warn_error.py
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python -m ruff check src tests ci scripts/diagnosis_viewer_warn_error.py
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python -m pytest -q --maxfail=1 --tb=short tests/test_diagnosis_viewer_warn_error.py tests/test_diagnosis_viewer_downloader.py tests/test_cluster_evidence_context.py tests/test_llm2_two_level_and_same_day.py tests/test_llm_cluster_dashboard.py tests/test_vedoc_dcdc223_seriennummern.py
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
       - name: Run full portable quality gate
-        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.number != 73 }}
+        if: ${{ github.event_name != 'pull_request' || (github.event.pull_request.number != 72 && github.event.pull_request.number != 73) }}
         run: python ci/quality_gate.py
 
       - name: Build wheel
