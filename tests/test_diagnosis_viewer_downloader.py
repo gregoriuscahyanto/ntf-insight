@@ -291,3 +291,73 @@ def test_search_waits_for_rows_from_requested_fin(tmp_path):
     selected = downloader._wait_results(page, Event(), second)
     assert len(selected) == 1
     assert page.waits == 1
+
+
+
+KURZ_FIN = "1671061B000001"
+VOLL_FIN = "W1N" + KURZ_FIN
+
+
+def test_kurz_fin_ist_nur_auf_ausdruecklichen_opt_in_zulaessig():
+    assert parse_fins(KURZ_FIN, kurz_erlaubt=True) == [KURZ_FIN]
+    assert parse_fins(KURZ_FIN.lower() + ", " + KURZ_FIN, kurz_erlaubt=True) == [KURZ_FIN]
+    with pytest.raises(ValueError, match="17"):
+        parse_fins(KURZ_FIN)
+    with pytest.raises(ValueError, match="17"):
+        search_url(KURZ_FIN)
+    assert search_url(KURZ_FIN, kurz_erlaubt=True).startswith(
+        f"{DIAGNOSIS_VIEWER}?fin={KURZ_FIN}&"
+    )
+
+
+def test_kurz_fin_mit_vollfin_in_diagnoseergebnissen_vergleichen(tmp_path):
+    def spalten(fin):
+        return ["XD", "2026-10-12 12:00", "", fin, fin, "123", "3", "", "200", "", ""]
+    downloader = DiagnosisViewerDownloader(
+        tmp_path, tmp_path / "profile", kurz_fin_erlaubt=True,
+    )
+    angefragt = Page([
+        Row(spalten("W1N1671061B000002"), True),  # Anderes Fahrzeug
+        Row(spalten(VOLL_FIN), True),
+        Row(spalten("W1N1671061B000003"), True),
+    ])
+    ausgewaehlt = downloader._wait_results(angefragt, Event(), KURZ_FIN)
+    assert [row.position for row in ausgewaehlt] == [1]
+
+
+def test_kurz_fin_mehrdeutige_17stellige_treffer_abweisen(tmp_path):
+    def spalten(fin):
+        return ["XD", "2026-10-12 12:00", "", fin, fin, "123", "3", "", "200", "", ""]
+    downloader = DiagnosisViewerDownloader(
+        tmp_path, tmp_path / "profile", kurz_fin_erlaubt=True,
+    )
+    seite = Page([
+        Row(spalten(VOLL_FIN), True),
+        Row(spalten("WDD" + KURZ_FIN), True),
+    ])
+    with pytest.raises(ValueError, match="mehrdeutig"):
+        downloader._wait_results(seite, Event(), KURZ_FIN)
+
+
+def test_kurz_fin_im_lokalen_quicktest_bestand_sichtbar(tmp_path):
+    (tmp_path / KURZ_FIN).mkdir()
+    (tmp_path / KURZ_FIN / "quicktest.pdf").write_bytes(b"%PDF-1.7\nTest")
+    results = scan_local_quicktests(tmp_path)
+    assert [x.fin for x in results] == [KURZ_FIN]
+    assert len(results[0].files) == 1
+
+
+def test_downloader_run_kurz_fin_beharrt_auf_optin_ohne_browser(tmp_path):
+    with pytest.raises(ValueError, match="17"):
+        DiagnosisViewerDownloader(tmp_path, tmp_path / "edge").run([KURZ_FIN])
+    result = FinDownloadResult(
+        fin=KURZ_FIN,
+        status="Erfolgreich",
+        last_attempt_at=datetime.now(timezone.utc).isoformat(),
+    )
+    _write_manifest(tmp_path / KURZ_FIN, result)
+    daten = DiagnosisViewerDownloader(
+        tmp_path, tmp_path / "edge", kurz_fin_erlaubt=True,
+    ).run([KURZ_FIN])
+    assert daten[0].status.startswith("Übersprungen")
+    assert not (tmp_path / "edge").exists()
