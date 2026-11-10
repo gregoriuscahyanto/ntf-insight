@@ -44,7 +44,7 @@ def erstelle_parser() -> argparse.ArgumentParser:
     parser.add_argument("--profil", type=Path, default=STANDARD_PROFIL,
                         help="Separates lokales Edge-Profil fuer die CLI")
     parser.add_argument("--erneut", action="store_true",
-                        help="Auch FINs mit bereits gespeicherter PDF erneut herunterladen"
+                        help="Auch FINs mit bereits gespeicherter PDF erneut herunterladen")
     parser.add_argument("--login-manuell", action="store_true",
                         help="SSO-Anmeldedaten nicht aus dem Betriebssystem-Tresor laden")
     parser.add_argument("--passwort-abfragen", action="store_true",
