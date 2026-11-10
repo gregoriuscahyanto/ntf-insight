@@ -139,6 +139,7 @@ def _befehl(
     sachnummer: str | None = None, anhaenge: str | None = None,
     benennung: str | None = None,
     tips_eingabe: Path | None = None,
+    ohne_quicktest_json: bool = False,
 ) -> list[str]:
     modul, funktion = _EINSTIEGE[quelle]
     # -u gibt Fortschritt ohne Pufferung an den Sammelprozess weiter.
@@ -163,6 +164,8 @@ def _befehl(
             argv.extend(("--anhaenge", anhaenge))
         if benennung is not None:
             argv.extend(("--benennung", benennung))
+    if quelle == "quicktests" and ohne_quicktest_json:
+        argv.append("--ohne-json")
     if manuell:
         argv.append("--login-manuell")
     return argv
@@ -176,6 +179,7 @@ def _starte_quelle(
     sachnummer: str | None = None, anhaenge: str | None = None,
     benennung: str | None = None,
     tips_eingabe: Path | None = None,
+    ohne_quicktest_json: bool = False,
 ) -> int:
     if abbruch.is_set():
         return 130
@@ -183,7 +187,10 @@ def _starte_quelle(
     env = os.environ.copy()
     env["PYTHONIOENCODING"] = "utf-8"
     prozess = subprocess.Popen(
-        _befehl(quelle, eingabe, ausgabe, manuell, objekt, attribut, sachnummer, anhaenge, benennung, tips_eingabe),
+        _befehl(
+            quelle, eingabe, ausgabe, manuell, objekt, attribut,
+            sachnummer, anhaenge, benennung, tips_eingabe, ohne_quicktest_json,
+        ),
         stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
         bufsize=1, text=True, encoding="utf-8", errors="replace", env=env,
     )
@@ -207,6 +214,8 @@ def main(argv: list[str] | None = None) -> int:
     argumente = parser.parse_args(argv)
     try:
         auswahl = _quellen(argumente.quellen)
+        if argumente.ohne_quicktest_json and "quicktests" not in auswahl:
+            raise ValueError("--ohne-quicktest-json ist nur mit der Quelle quicktests erlaubt.")
         if (argumente.objekt is not None or argumente.attribut is not None) and "dcdc223" not in auswahl:
             raise ValueError("--objekt und --attribut sind nur mit der VeDoc-Historienquelle dcdc223 erlaubt.")
         if argumente.objekt is not None or argumente.attribut is not None:
@@ -296,6 +305,7 @@ def main(argv: list[str] | None = None) -> int:
                 argumente.objekt, argumente.attribut,
                 argumente.sachnummer, argumente.anhaenge, argumente.benennung,
                 tips_eingabe,
+                argumente.ohne_quicktest_json,
             ): quelle
             for quelle, ziel in arbeitsliste
         }
