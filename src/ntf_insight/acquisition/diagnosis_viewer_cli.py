@@ -18,7 +18,7 @@ from ntf_insight.acquisition.diagnosis_viewer import (
     DiagnosisViewerDownloader,
     FinDownloadResult,
     parse_fins,
-    lokal_vorhandene_pdf,
+    _quicktest_fin_vollstaendig,
 )
 
 STANDARD_AUSGABE = Path("data/processed/diagnosis_viewer_quicktests")
@@ -122,9 +122,10 @@ def main(argv: list[str] | None = None) -> int:
         profil = args.profil.expanduser().resolve()
         if ausgabe.is_file():
             raise ValueError("--ausgabe muss ein Verzeichnis sein, keine Datei.")
-        # Nur lokale PDFs (nicht ein Abrufstatus ohne PDF) vermeiden neue SSO-Anmeldung.
+        # Nur belegbar vollstaendige FINs vermeiden eine neue SSO-Anmeldung.
+        # Ein abgebrochener Abruf mit 1/14 PDFs muss erneut angemeldet werden.
         alles_aktuell = not args.erneut and all(
-            lokal_vorhandene_pdf(ausgabe, fin) is not None for fin in fins
+            _quicktest_fin_vollstaendig(ausgabe, fin) is not None for fin in fins
         )
         login = None if alles_aktuell else _anmeldedaten(args)
         print(f"{len(fins)} FIN(s) | Ausgabe: {ausgabe}", flush=True)
