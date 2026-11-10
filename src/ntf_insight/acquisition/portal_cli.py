@@ -13,7 +13,6 @@ import sys
 from pathlib import Path
 
 from ntf_insight.acquisition.credentials import LoginCredentials, load_saved_credentials
-from ntf_insight.acquisition.diagnosis_viewer import parse_fins
 from ntf_insight.acquisition.output_paths import standard_ausgabe
 from ntf_insight.acquisition.qec_tool import (
     QecDownloader, QecResult, QecTarget, parse_qec_targets, pruefe_sachnummer,
