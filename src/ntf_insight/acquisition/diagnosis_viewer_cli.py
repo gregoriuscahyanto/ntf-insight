@@ -13,6 +13,7 @@ from pathlib import Path
 
 from ntf_insight.acquisition.credentials import LoginCredentials, load_saved_credentials
 from ntf_insight.acquisition.output_paths import standard_ausgabe
+from ntf_insight.acquisition.quicktest_json import konvertiere_quicktests
 from ntf_insight.acquisition.diagnosis_viewer import (
     DiagnosisViewerDownloader,
     FinDownloadResult,
