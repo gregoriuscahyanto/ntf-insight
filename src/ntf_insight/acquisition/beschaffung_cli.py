@@ -59,6 +59,8 @@ def _parser() -> argparse.ArgumentParser:
                         help="QEC: Benennung enthaelt Text (z. B. DCDC), ohne Sachnummer moeglich")
     parser.add_argument("--anhaenge", choices=("referenz", "alle"),
                         help="QEC: referenz (Standard) oder alle Dateien aus Fall-Popups")
+    parser.add_argument("--ohne-quicktest-json", action="store_true",
+                        help="QuickTest-PDFs nicht automatisch in lokale JSONs konvertieren")
     parser.add_argument("--login-manuell", action="store_true",
                         help="Alle Quellen mit manueller Anmeldung im sichtbaren Edge starten")
     return parser
