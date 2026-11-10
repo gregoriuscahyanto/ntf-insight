@@ -23,6 +23,7 @@ from urllib.parse import parse_qs, quote, unquote, urljoin, urlsplit
 from lxml import html as lxml_html
 
 from ntf_insight.acquisition.qec_archive import case_folder
+from ntf_insight.acquisition.fin_format import fin_passt_zu_anfrage, ist_gueltige_fin
 from ntf_insight.acquisition.sso_login_gate import serielle_sso_anmeldung
 
 QEC_START = "https://qect.mo360cp.i.mercedes-benz.com/qec-access/supp/login.qec"
@@ -123,8 +124,13 @@ def parse_qec_targets(raw: str) -> list[QecTarget]:
         if len(columns) not in (1, 2):
             raise ValueError(f"Zeile {line_no}: FIN und optional eine Sachnummer eingeben.")
         fin = columns[0].upper()
-        if not _FIN.fullmatch(fin):
-            raise ValueError(f"Zeile {line_no}: FIN muss 17 gueltige Zeichen enthalten.")
+        if not ist_gueltige_fin(fin, kurz_erlaubt=True):
+            raise ValueError(f"Zeile {line_no}: FIN muss 14 oder 17 gueltige Zeichen enthalten.")
+        if len(fin) == 14 and (not fin[:3].isdigit() or not fin[-6:].isdigit()):
+            raise ValueError(
+                f"Zeile {line_no}: Bei 14-stelliger FIN muessen BR (erste 3) "
+                "und Endnummer (letzte 6) numerisch sein."
+            )
         try:
             part = pruefe_sachnummer(columns[1]) if len(columns) == 2 and columns[1] else ""
         except ValueError as exc:
@@ -138,8 +144,15 @@ def parse_qec_targets(raw: str) -> list[QecTarget]:
             seen.add(key)
             found.append(QecTarget(fin=fin, part_number=part))
     if not found:
-        raise ValueError("Bitte mindestens eine 17-stellige FIN eingeben.")
+        raise ValueError("Bitte mindestens eine 14- oder 17-stellige FIN eingeben.")
     return found
+
+
+def _qec_suchfelder(fin: str) -> tuple[str, str]:
+    """QEC sucht nach BR und Endnummer, nicht nach dem WMI-Praefix."""
+    if not ist_gueltige_fin(fin, kurz_erlaubt=True):
+        raise ValueError("QEC-Suche erwartet eine 14- oder 17-stellige FIN.")
+    return (fin[:3] if len(fin) == 14 else fin[3:6], fin[-6:])
 
 
 def _normalize_part(value: str) -> str:
@@ -165,12 +178,12 @@ def _qec_url(value: str, *, expected_path: str | None = None) -> str:
 
 def parse_search_hits(document: str, fin: str, *, part_number: str = "",
                       pump_only: bool = True, benennung: str = "") -> list[QecHit]:
-    """Nur vollstaendige FIN-Treffer aus der 39-spaltigen Schadteiltabelle.
+    """QEC-Zeilen nur bei eindeutiger Voll-FIN bzw. exaktem Kurz-FIN-Suffix.
 
-    Ein nur passendes BR-/Endnummer-Paar darf nicht zu einer falschen
-    Schadteilzuordnung fuehren. Exakt dieses Tabellenlayout liegt als HTML vor.
+    BR plus Endnummer dienen ausschliesslich der Suche. Fuer den Export muss
+    die 17-stellige FIN aus der Tabellenzeile bestaetigt vorliegen.
     """
-    if not _FIN.fullmatch(fin):
+    if not ist_gueltige_fin(fin, kurz_erlaubt=True):
         raise ValueError("Ungueltige FIN.")
     root = lxml_html.fromstring(document)
     hits: list[QecHit] = []
@@ -187,7 +200,7 @@ def parse_search_hits(document: str, fin: str, *, part_number: str = "",
         if len(cells) < 10:
             continue
         row_fin = "".join(cells[5:10]).replace(" ", "").upper()
-        if row_fin != fin:
+        if not _FIN.fullmatch(row_fin) or not fin_passt_zu_anfrage(fin, row_fin):
             continue
         reference = " ".join(link.text_content().split())
         sachnummer = cells[2]
@@ -220,10 +233,11 @@ def inspect_search_results(
     root = lxml_html.fromstring(document)
     br_fields = root.xpath('//input[@name="_finBR"]')
     end_fields = root.xpath('//input[@name="_finEndnummerFrom"]')
+    br, endnummer = _qec_suchfelder(target.fin)
     confirmed_filters = bool(
         br_fields and end_fields
-        and br_fields[0].get("value", "").strip() == target.fin[3:6]
-        and end_fields[0].get("value", "").strip() == target.fin[-6:]
+        and br_fields[0].get("value", "").strip() == br
+        and end_fields[0].get("value", "").strip() == endnummer
     )
     reported: int | None = None
     for node in root.xpath('//*[contains(concat(" ", normalize-space(@class), " "), " messageGreen ")]'):
@@ -257,6 +271,29 @@ def inspect_search_results(
         "pumpen": pump_matches,
         "sachnummer": final_matches,
     }
+
+
+def pruefe_kurzfin_treffer(
+    document: str, target: QecTarget, evidence: dict[str, int | bool | None],
+) -> None:
+    """14-stellig: niemals mehrere Voll-FINs oder unsichtbare Seiten vermischen."""
+    if len(target.fin) != 14:
+        return
+    reported = evidence.get("qec_trefferzahl")
+    visible = int(evidence.get("sichtbare_zeilen") or 0)
+    if reported is None or reported > visible:
+        raise ValueError(
+            "QEC-Kurz-FIN: Trefferliste nicht vollstaendig bestaetigt "
+            "(Trefferzahl/Paginierung). Keine Zuordnung ohne weitere Pruefung."
+        )
+    volle_fins = {
+        hit.fin for hit in parse_search_hits(document, target.fin, pump_only=False)
+    }
+    if len(volle_fins) > 1:
+        raise ValueError(
+            "QEC-Kurz-FIN mehrdeutig: mehrere verschiedene 17-stellige FINs "
+            "passen zum 14-stelligen Suffix. Bitte Voll-FIN verwenden."
+        )
 
 
 def parse_attachment_urls(document: str) -> list[tuple[str, str]]:
@@ -453,11 +490,23 @@ def _write_json(target: Path, payload: dict) -> None:
 
 
 def _write_result(folder: Path, result: QecResult) -> None:
+    # 14-stellige Suchanfragen besitzen einen eigenen Abrufstatus; die
+    # heruntergeladenen Schadteilfaelle liegen unter der bestaetigten Voll-FIN.
+    basis = folder.parent if len(result.fin) == 14 else folder
+
     def relative(path: Path) -> str:
-        # Stable POSIX separators in JSON, including on Windows.
-        return path.relative_to(folder).as_posix()
+        return path.relative_to(basis).as_posix()
+
+    bestaetigte = sorted({
+        path.relative_to(folder.parent).parts[0]
+        for path in [*result.files, *result.snapshots]
+        if path.is_relative_to(folder.parent)
+        and _FIN.fullmatch(path.relative_to(folder.parent).parts[0])
+    })
     _write_json(folder / "abrufstatus.json", {
         "fin": result.fin,
+        "pfade_relativ_zu": "qec_basisordner" if len(result.fin) == 14 else "fin_ordner",
+        "bestaetigte_voll_fins": bestaetigte,
         "stand_utc": result.attempted_at,
         "status": result.status,
         "referenzen": result.references,
@@ -759,8 +808,9 @@ class QecDownloader:
 
         page, form = self._search_form(context, cancel)
         progress("QEC: FIN-Suchfelder erkannt; BR und Endnummer eintragen ...")
-        form.locator('input[name="_finBR"]').fill(target.fin[3:6])
-        form.locator('input[name="_finEndnummerFrom"]').fill(target.fin[-6:])
+        br, endnummer = _qec_suchfelder(target.fin)
+        form.locator('input[name="_finBR"]').fill(br)
+        form.locator('input[name="_finEndnummerFrom"]').fill(endnummer)
         self._pause(cancel)
         progress("QEC: Filtern klicken ...")
         button = form.locator('input[type="submit"][value="Filtern"]')
@@ -984,7 +1034,10 @@ class QecDownloader:
 
     def _one_hit(self, context, page, target: QecTarget, hit: QecHit,
                  result: QecResult, progress: Progress, cancel: Event):
-        page, result_scope, result_html, _ = self._search(context, page, target, progress, cancel)
+        page, result_scope, result_html, evidence = self._search(
+            context, page, target, progress, cancel
+        )
+        pruefe_kurzfin_treffer(result_html, target, evidence)
         # Selection is by exact QEC ID from a verified full-FIN and reference match.
         hits = parse_search_hits(
             result_html, target.fin,
@@ -1004,7 +1057,7 @@ class QecDownloader:
         page.get_by_text("Schadteilmonitor", exact=False).first.wait_for(
             timeout=self.navigation_timeout_ms
         )
-        reference_folder = case_folder(self.output_dir, target.fin, hit.reference)
+        reference_folder = case_folder(self.output_dir, hit.fin, hit.reference)
         report_path = reference_folder / "qec.json"
         inventory: dict[str, dict] = {}
         previous_case: dict | None = None
@@ -1012,7 +1065,7 @@ class QecDownloader:
         if report_path.is_file():
             try:
                 previous = json.loads(report_path.read_text(encoding="utf-8"))
-                if (previous.get("fin") == target.fin
+                if (previous.get("fin") == hit.fin
                         and previous.get("referenznummer") == hit.reference):
                     previous_case = previous
                     inventory.update(_matching_previous_attachments(
@@ -1074,6 +1127,7 @@ class QecDownloader:
             report = {
                 "schema_version": 2,
                 "fin": hit.fin,
+                "such_fin": target.fin,
                 "referenznummer": hit.reference,
                 "sachnummer": hit.part_number,
                 "bezeichnung": hit.description,
@@ -1110,6 +1164,12 @@ class QecDownloader:
                 context, page, target, progress, cancel,
             )
             result.search_diagnostics = evidence
+            try:
+                pruefe_kurzfin_treffer(result_html, target, evidence)
+            except ValueError as exc:
+                result.status = "Ergebnispruefung erforderlich"
+                result.errors.append(str(exc))
+                return result, page
             hits = parse_search_hits(
                 result_html, target.fin, part_number=target.part_number,
                 pump_only=self.pump_only and not bool(target.part_number or self.benennung),
@@ -1129,7 +1189,7 @@ class QecDownloader:
                 else:
                     result.status = "Keine passenden Schadteile"
                     result.warnings.append(
-                        "QEC-Suche bestaetigt, aber kein eindeutiger Voll-FIN- / "
+                        "QEC-Suche bestaetigt, aber kein eindeutiger FIN- / "
                         "Pumpen- / Sachnummer-Treffer. Suchdiagnose im abrufstatus.json pruefen."
                     )
                 progress(

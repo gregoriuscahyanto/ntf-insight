@@ -302,7 +302,7 @@ def test_batch_kurz_fin_ve_doc_und_quicktests_gleichzeitig(tmp_path, monkeypatch
 
 
 @pytest.mark.parametrize("quellen", [
-    "alle", "qec,quicktests", "quicktests,wem", "sa-codes,vedoc-historie", "tips",
+    "alle", "quicktests,wem", "sa-codes,vedoc-historie", "tips",
 ])
 def test_batch_kurz_fin_unsupportierte_quellen_frueh_abweisen(
     tmp_path, monkeypatch, quellen, capsys,
@@ -464,5 +464,54 @@ def test_batch_ohne_quicktest_json_ohne_quicktests_unzulaessig(
     assert cli.main([
         "--eingabe", str(_eingabe(tmp_path)), "--quellen", "qec,tips",
         "--ohne-quicktest-json",
+    ]) == 2
+    assert not commands
+
+
+def test_batch_kurz_fin_qec_quicktests_separate_tips(tmp_path, monkeypatch):
+    commands, _ = _popen_simulieren(monkeypatch)
+    fin = tmp_path / "kurz.txt"
+    fin.write_text("1671061B000001\n", encoding="utf-8")
+    tips = tmp_path / "tips.txt"
+    tips.write_text("01234567\n", encoding="utf-8")
+    assert cli.main([
+        "--eingabe", str(fin),
+        "--tips-eingabe", str(tips),
+        "--quellen", "quicktests,qec,tips",
+        "--benennung", "DCDC223", "--anhaenge", "alle",
+        "--parallel", "3",
+    ]) == 0
+    assert len(commands) == 3
+    for args, _ in commands:
+        chosen = args[args.index("--eingabe") + 1]
+        if "tips_main" in args[3]:
+            assert chosen == str(tips)
+        else:
+            assert chosen == str(fin)
+
+
+def test_batch_kurz_fin_qec_ohne_tips_ist_erlaubt(tmp_path, monkeypatch):
+    commands, _ = _popen_simulieren(monkeypatch)
+    fin = tmp_path / "kurz.txt"
+    fin.write_text("1671061B000001\n", encoding="utf-8")
+    assert cli.main(["--eingabe", str(fin), "--quellen", "qec"]) == 0
+    assert len(commands) == 1
+
+
+def test_batch_tips_nur_mit_tips_eingabe_ohne_fin_liste(tmp_path, monkeypatch):
+    commands, _ = _popen_simulieren(monkeypatch)
+    tips = tmp_path / "tips.txt"
+    tips.write_text("01234567\n", encoding="utf-8")
+    assert cli.main(["--tips-eingabe", str(tips), "--quellen", "tips"]) == 0
+    assert len(commands) == 1
+    assert commands[0][0][commands[0][0].index("--eingabe") + 1] == str(tips)
+
+
+def test_batch_mischquellen_brauchen_weiterhin_fin_eingabe(tmp_path, monkeypatch):
+    commands, _ = _popen_simulieren(monkeypatch)
+    tips = tmp_path / "tips.txt"
+    tips.write_text("01234567\n", encoding="utf-8")
+    assert cli.main([
+        "--tips-eingabe", str(tips), "--quellen", "quicktests,qec,tips",
     ]) == 2
     assert not commands

@@ -20,8 +20,8 @@ seine Kommandozeileneinstiege **nicht automatisch** durch einen Git-Merge.
 
 ## 14-stellige Mercedes-Kurz-FINs
 
-Die **VeDoc-Historie** und **Diagnosis Viewer QuickTests** können in der CLI
-neben vollständigen 17-stelligen Fahrzeugkennungen auch 14-stellige
+Die **VeDoc-Historie**, **Diagnosis Viewer QuickTests** und **QEC** koennen in
+der CLI neben vollstaendigen 17-stelligen Fahrzeugkennungen auch 14-stellige
 Mercedes-Kurz-FINs als TXT-Eingabe verwenden. Synthetisches Beispiel:
 
 ```text
@@ -41,11 +41,16 @@ Zwei verschiedene 17-stellige Kennungen zur gleichen Kurz-FIN gelten als
 Ein Live-Test mit berechtigtem Zugriff bleibt erforderlich, da die
 serverseitige Suche nach Kurz-FINs von den Quellsystemen abhängt.
 
-Andere Datenquellen (**WEM, SA-Codes, QEC, TIPS**) verlangen vorerst
-vollständige 17-stellige FINs. Enthält die Liste eine Kurz-FIN, werden
-diese Quellen im Sammelabruf vor dem Start abgelehnt. Dafür `--quellen
-vedoc-historie,quicktests` wählen oder eine Liste mit Voll-FINs nutzen.
-Bei gemischter Kurz-/Voll-FIN-Liste gelten dieselben Einschränkungen.
+**QEC** leitet bei 14-stelligen FINs die BR aus den ersten 3 Zeichen und
+die Endnummer aus den letzten 6 Zeichen ab. QEC-Treffer werden nur dann
+heruntergeladen, wenn die vollstaendige 17-stellige FIN im Ergebnis bestaetigt
+und ihr 14-stelliges Suffix identisch ist. Mehrdeutige Voll-FINs und
+unvollstaendige Trefferlisten werden als Pruefbedarf protokolliert.
+Das QEC-Fallarchiv liegt unter der bestaetigten Voll-FIN.
+
+**WEM und SA-Codes** benoetigen weiterhin vollstaendige FINs. Mit
+`--tips-eingabe` verwendet TIPS ausschliesslich die separate Datei;
+die gemeinsame Kurz-FIN-Liste wird nur von den anderen Quellen genutzt.
 
 ## Die sechs Befehle
 
@@ -291,6 +296,22 @@ Popup-Anhaenge erhalten; sie werden im Fall-JSON gekennzeichnet und
 duerfen nicht ohne Pruefung einem QEC-Fall zugeschrieben werden.
 Die fuenf QEC-Abschnitte werden vollstaendig erfasst; vorhandene
 Anhaenge werden anhand ihrer IDs und Metadaten abgeglichen.
+
+## DCDC223: Kurz-FINs fuer QEC und separate TIPS-Fallnummern
+
+```powershell
+ntf-insight-beschaffung `
+  --eingabe ".\\FINs_DCDC223_14stellig.txt" `
+  --tips-eingabe ".\\TIPS_DCDC223.txt" `
+  --quellen quicktests,qec,tips `
+  --benennung DCDC223 --anhaenge alle --parallel 3
+```
+
+Beim ausschliesslichen TIPS-Abruf reicht `--tips-eingabe`:
+
+```powershell
+ntf-insight-beschaffung --quellen tips --tips-eingabe ".\\TIPS_DCDC223.txt"
+```
 
 ## QuickTest-PDFs automatisch oder nachträglich in JSON konvertieren
 
