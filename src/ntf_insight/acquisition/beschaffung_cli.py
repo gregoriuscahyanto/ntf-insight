@@ -212,8 +212,9 @@ def main(argv: list[str] | None = None) -> int:
         flush=True,
     )
     print(
-        "Eigenstaendige Edge-Fenster je Quelle; PING ID bei Bedarf jeweils "
-        "manuell bestaetigen. Mehrere gleichzeitige Anmeldungen sind moeglich.",
+        "Eigenstaendige Edge-Fenster je Quelle. VeDoc-Historie und QuickTests "
+        "melden sich nacheinander per PING ID an; nach erfolgreicher Anmeldung "
+        "laufen ihre FIN-Abrufe parallel. Smartphone-Freigaben nacheinander bestaetigen.",
         flush=True,
     )
     for quelle, ziel in arbeitsliste:
