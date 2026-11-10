@@ -280,7 +280,7 @@ def test_qec_globale_sachnummer_und_alle_anhaenge_fuer_mehrere_fins(tmp_path, mo
     ]
     assert calls[0][3]["attachment_policy"] == "alle"
     assert calls[0][3]["pump_only"] is True
-    assert "Zuordnung" in capsys.readouterr().out
+    assert "Referenzzuordnung" in capsys.readouterr().out
 
 
 def test_qec_sachnummer_in_txt_und_cli_darf_uebereinstimmen(tmp_path, monkeypatch):
