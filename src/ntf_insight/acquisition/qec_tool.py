@@ -339,19 +339,25 @@ def _matching_previous_attachments(
         columns = item.get("spalten", [])
         if not isinstance(columns, list):
             columns = []
+        # Dateinamen aus dem HTTP-Header oder dem lokalen Pfad sind KEIN
+        # Ersatz fuer die Referenznummer im sichtbar verifizierten Popup-Namen.
         filename = (
             str(item.get("dateiname") or "").strip()
             or _popup_attachment_filename(
                 [str(column) for column in columns],
                 str(item.get("linktext") or ""),
             )
-            or str(item.get("datei") or "")
         )
-        if attachment_matches_reference(filename, reference) or (
+        verified = attachment_matches_reference(filename, reference)
+        if (item.get("auswahlmodus") == "alle"
+                and item.get("referenz_im_dateinamen_bestaetigt") is False):
+            verified = False
+        from_same_popup = (
             include_unverified
             and item.get("auswahlmodus") == "alle"
             and item.get("sichtbar_bei_referenz") == reference
-        ):
+        )
+        if verified or from_same_popup:
             selected[identifier] = dict(item)
     return selected
 
