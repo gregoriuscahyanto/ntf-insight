@@ -351,3 +351,83 @@ def test_batch_benennung_vor_prozessstart_validieren(tmp_path, monkeypatch, more
     commands, _ = _popen_simulieren(monkeypatch)
     assert cli.main(["--eingabe", str(_eingabe(tmp_path)), *more]) == 2
     assert commands == []
+
+
+
+def test_batch_nur_tips_erlaubt_fallnummern_als_haupteingabe(tmp_path, monkeypatch):
+    calls, _ = _popen_simulieren(monkeypatch)
+    case_txt = tmp_path / "TIPS-Fallnummern.txt"
+    case_txt.write_text("01234567\n00001234\n", encoding="utf-8")
+    assert cli.main([
+        "--eingabe", str(case_txt), "--quellen", "tips",
+    ]) == 0
+    assert len(calls) == 1
+    cmd = calls[0][0]
+    assert "tips_main" in cmd[3]
+    assert cmd[cmd.index("--eingabe") + 1] == str(case_txt)
+
+
+def test_batch_sechs_quellen_getrennte_tips_fallnummern_liste(tmp_path, monkeypatch):
+    calls, gleichzeitig = _popen_simulieren(monkeypatch)
+    fin_list = _eingabe(tmp_path)
+    case_txt = tmp_path / "TIPS-Fallnummern.txt"
+    case_txt.write_text("01234567\n00001234\n", encoding="utf-8")
+    assert cli.main([
+        "--eingabe", str(fin_list),
+        "--tips-eingabe", str(case_txt),
+        "--quellen", "alle", "--parallel", "6",
+    ]) == 0
+    assert len(calls) == 6
+    assert gleichzeitig() >= 2
+    for cmd, _ in calls:
+        origin = cmd[cmd.index("--eingabe") + 1]
+        assert origin == str(case_txt if "tips_main" in cmd[3] else fin_list)
+
+
+@pytest.mark.parametrize("falltext", [
+    "", "00001A2Z\n", "123\n", "../01234567\n", "01234567\n00000ABC\n",
+])
+def test_batch_ungueltige_separate_tips_liste_vor_prozessstart_blockiert(
+    tmp_path, monkeypatch, falltext,
+):
+    calls, _ = _popen_simulieren(monkeypatch)
+    file = tmp_path / "faelle.txt"
+    file.write_text(falltext, encoding="utf-8")
+    assert cli.main([
+        "--eingabe", str(_eingabe(tmp_path)), "--quellen", "alle",
+        "--tips-eingabe", str(file),
+    ]) == 2
+    assert not calls
+
+
+def test_batch_fallnummern_als_gemeinsame_liste_bei_mehreren_quellen_unzulaessig(
+    tmp_path, monkeypatch,
+):
+    calls, _ = _popen_simulieren(monkeypatch)
+    fall = tmp_path / "faelle.txt"
+    fall.write_text("01234567\n", encoding="utf-8")
+    assert cli.main(["--eingabe", str(fall), "--quellen", "tips,quicktests"]) == 2
+    assert not calls
+
+
+def test_batch_tips_separat_aber_nicht_ausgewaehlt_ergibt_fehler(tmp_path, monkeypatch):
+    calls, _ = _popen_simulieren(monkeypatch)
+    file = tmp_path / "faelle.txt"
+    file.write_text("01234567\n", encoding="utf-8")
+    assert cli.main([
+        "--eingabe", str(_eingabe(tmp_path)), "--quellen", "wem,quicktests",
+        "--tips-eingabe", str(file),
+    ]) == 2
+    assert not calls
+
+
+
+def test_batch_14stellige_numerische_fallnummer_ist_keine_mercedes_kurz_fin(
+    tmp_path, monkeypatch,
+):
+    commands, _ = _popen_simulieren(monkeypatch)
+    datei = tmp_path / "TIPS-Fallnummern.txt"
+    datei.write_text("12345678901234\n", encoding="utf-8")
+    assert cli.main(["--eingabe", str(datei), "--quellen", "tips"]) == 0
+    assert len(commands) == 1
+    assert commands[0][0][commands[0][0].index("--eingabe") + 1] == str(datei)

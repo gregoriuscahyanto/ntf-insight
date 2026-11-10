@@ -292,6 +292,54 @@ duerfen nicht ohne Pruefung einem QEC-Fall zugeschrieben werden.
 Die fuenf QEC-Abschnitte werden vollstaendig erfasst; vorhandene
 Anhaenge werden anhand ihrer IDs und Metadaten abgeglichen.
 
+## XENTRY TIPS: FINs oder Fallnummern als TXT
+
+Die TIPS-CLI kann neben **17-stelligen FINs** auch **rein numerische
+TIPS-Fallnummern** (4-16 Ziffern) verarbeiten, auch gemischt in derselben
+TXT. Eine 14-stellige Kurz-FIN ist fuer TIPS **keine** FIN; fuer
+FIN-Abfragen bleiben exakt 17 Zeichen erforderlich. Fuehrende Nullen in
+Fallnummern bleiben erhalten. Eine Fallnummern-Datei sieht z. B. so aus:
+
+```text
+01234567
+00001234
+```
+
+```powershell
+# TIPS mit FIN-Liste, alle Faelle pro FIN:
+ntf-insight-tips --eingabe .\fins.txt
+
+# TIPS mit Fallnummern, exakt nur die angegebenen Faelle:
+ntf-insight-tips --eingabe ".\TIPS-Fallnummern.txt"
+
+# TIPS allein: Fallnummern als Haupteingabe erlaubt:
+ntf-insight-beschaffung --eingabe ".\TIPS-Fallnummern.txt" --quellen tips
+
+# Alle sechs Quellen: gemeinsame FIN-Liste plus eine separate TIPS-Fallnummernliste:
+ntf-insight-beschaffung --eingabe .\fins.txt --tips-eingabe ".\TIPS-Fallnummern.txt" --quellen alle --parallel 6
+```
+
+In der TIPS-Oberflaeche wird nach der Eingabe der Reiter
+**"Fälle"** aktiviert (nicht "Themen"/"TPRs"). Bei Fallnummern muss
+die Ergebniszeile die **exakt angefragte Fallnummer** und eine gueltige,
+vollstaendige **17-stellige FIN** enthalten. Vor dem Export wird der Fall
+ueber seine FIN erneut gesucht und die Kombination von Fallnummer + FIN
+auch im Kopf des geoeffneten Details geprueft. Bei fehlender FIN oder
+mehrdeutigen Fahrzeugen erfolgt **kein Fall-/Anhangdownload**. Ob die
+Portal-Gesamtsuche eine Fallnummer direkt akzeptiert, muss mit
+berechtigtem Zugang live geprueft werden.
+
+Die regulaeren Fallberichte landen wie zuvor unter
+`tips_writer/<FIN>/fall_<Fallnummer>/tips.json`.
+Zu jeder numerischen Fallnummer wird ein separater
+Abrufstatus `tips_writer/_fallnummern/fall_<Fallnummer>/abrufstatus.json`
+gefuehrt, auch wenn das Portal keine bestaetigte FIN liefern konnte.
+Die Originaldateien/Anhaenge bleiben fallbezogen unter der bestaetigten FIN.
+Im gemeinsamen Sammelabruf bekommt **nur TIPS** die Datei aus
+`--tips-eingabe`; alle anderen Tools arbeiten mit der normalen
+`--eingabe`. Alle sechs PING-ID-Anmeldungen bleiben nacheinander,
+die Datenabrufe laufen nach der Anmeldung weiterhin parallel.
+
 ## XENTRY-TIPS-Ablage
 
 ```text

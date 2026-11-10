@@ -14,7 +14,7 @@ from ntf_insight.acquisition.tips_archive import local_tips_cases
 from ntf_insight.acquisition.tips_writer import (
     TIPS_SECTIONS, TipsHit, TipsWriterDownloader, _section,
     _tips_url_valid, _unpack_attachment, parse_tips_attachment_rows,
-    parse_tips_search_hits,
+    parse_tips_search_hits, parse_tips_queries,
 )
 
 FIN = "WDD12345678901234"
@@ -365,3 +365,278 @@ def test_opening_tips_case_verifies_details_fin_and_case_id(tmp_path):
         downloader._open_case(
             SimpleNamespace(), wrong, hit, lambda _: None, Event()
         )
+
+
+
+
+def test_tips_query_liste_akzeptiert_vollfin_und_fallnummern_auch_gemischt():
+    assert parse_tips_queries(
+        "\ufeff# Synthetische Testwerte\n" + FIN.lower() +
+        "\n01234567\n00001234\n01234567 # doppelt\n" + OTHER_FIN
+    ) == [FIN, "01234567", "00001234", OTHER_FIN]
+    assert parse_tips_queries("01234567,88888888\n" + FIN) == [
+        "01234567", "88888888", FIN,
+    ]
+
+
+@pytest.mark.parametrize("wert", [
+    "", "# nichts\n", "123", "123456789012345678", "WDD1234567890123",
+    "WDD1234567890123I", "../01234567", "0123456O", "123A5678",
+    "TIPS-01234567",
+])
+def test_tips_query_liste_fehler_vor_login(wert):
+    with pytest.raises(ValueError, match="FIN oder TIPS-Fallnummer|FIN oder numerische"):
+        parse_tips_queries(wert)
+
+
+def test_tips_fallnummern_suchen_exakt_ohne_fremde_fin_zu_uebernehmen():
+    html = _case_table()
+    expected = parse_tips_search_hits(html, fallnummer="01234567")
+    assert len(expected) == 1
+    assert expected[0].fin == FIN
+    assert expected[0].case_id == "01234567"
+    assert expected[0].title == "Synthetische Pumpe"
+    assert parse_tips_search_hits(html, fallnummer="88888888") == [
+        TipsHit(fin=OTHER_FIN, case_id="88888888", title="Anderer Fall",
+                cells={
+                    "Fall Nummer": "88888888", "TPR Id": "", "FIN": OTHER_FIN,
+                    "Sprache": "de", "Titel": "Anderer Fall",
+                }),
+    ]
+    assert parse_tips_search_hits(html, fallnummer="99999999") == []
+    with pytest.raises(ValueError, match="Entweder"):
+        parse_tips_search_hits(html, FIN, fallnummer="01234567")
+
+
+def test_tips_fallnummer_mit_fehlender_vollfin_nicht_als_erfolg():
+    html = _case_table(fin="12345678901234", include_other=False)
+    with pytest.raises(ValueError, match="17-stellige FIN"):
+        parse_tips_search_hits(html, fallnummer="01234567")
+    # Eine FIN-Suche darf andere/kurze Kennungen ebenfalls nicht uebernehmen.
+    assert parse_tips_search_hits(html, fin=FIN) == []
+
+
+def test_tips_fallnummern_suche_klickt_auf_faelle_nicht_themen(tmp_path, monkeypatch):
+    from ntf_insight.acquisition import tips_writer as m
+
+    steps = []
+
+    class Locator:
+        @property
+        def first(self):
+            return self
+
+        def count(self):
+            return 1
+
+        def fill(self, text):
+            steps.append(("eingabe", text))
+
+        def locator(self, selector):
+            assert selector == "xpath=following-sibling::button"
+            return self
+
+        def click(self, **_kwargs):
+            steps.append(("suchen", None))
+
+    class Tab:
+        @property
+        def first(self):
+            return self
+
+        def wait_for(self, **_kwargs):
+            pass
+
+        def get_attribute(self, _name):
+            return "p-tab"  # Reiter war zuvor nicht aktiv.
+
+        def click(self, **_kwargs):
+            steps.append(("tab", "Fälle"))
+
+        def inner_text(self):
+            return "Fälle: 1"
+
+    class Page:
+        def goto(self, *_args, **_kwargs):
+            steps.append(("goto", None))
+
+        def locator(self, selector):
+            assert selector == "tn-c-search input.xy-c-search-input"
+            return Locator()
+
+        def get_by_role(self, role, name):
+            assert role == "tab"
+            assert name.search("Fälle: 1")
+            return Tab()
+
+        def content(self):
+            return _case_table(include_other=False)
+
+    downloader = m.TipsWriterDownloader(
+        tmp_path, tmp_path / "profile", click_delay_seconds=0,
+    )
+    page = Page()
+    monkeypatch.setattr(downloader, "_wait_login",
+                        lambda _ctx, _progress, _cancel: page)
+    monkeypatch.setattr(downloader, "_consent",
+                        lambda _page, _progress: None)
+    monkeypatch.setattr(downloader, "_all_pages",
+                        lambda _page, _wert, hits, *_args: hits)
+    hits_page, hits = downloader._search(
+        SimpleNamespace(), page, "01234567", lambda _: None, Event(),
+    )
+    assert hits_page is page
+    assert [h.case_id for h in hits] == ["01234567"]
+    assert steps == [
+        ("goto", None), ("eingabe", "01234567"),
+        ("suchen", None), ("tab", "Fälle"),
+    ]
+
+
+def test_tips_fallnummer_mehrdeutige_voll_fins_verhindert_download(tmp_path, monkeypatch):
+    from ntf_insight.acquisition import tips_writer as m
+
+    downloader = m.TipsWriterDownloader(
+        tmp_path, tmp_path / "profile", click_delay_seconds=0,
+    )
+    page = SimpleNamespace(
+        goto=lambda *_args, **_kwargs: None,
+        content=lambda: _case_table(include_other=False),
+        locator=lambda *_args: SimpleNamespace(
+            count=lambda: 1,
+            first=SimpleNamespace(
+                fill=lambda *_args: None,
+                locator=lambda *_args: SimpleNamespace(
+                    click=lambda **_kwargs: None,
+                ),
+            ),
+        ),
+        get_by_role=lambda *_args, **_kwargs: SimpleNamespace(
+            first=SimpleNamespace(
+                wait_for=lambda **_kwargs: None,
+                get_attribute=lambda *_args: "p-tab-active",
+            ),
+        ),
+    )
+    monkeypatch.setattr(downloader, "_wait_login",
+                        lambda _ctx, _progress, _cancel: page)
+    monkeypatch.setattr(downloader, "_consent",
+                        lambda _page, _progress: None)
+    monkeypatch.setattr(downloader, "_all_pages", lambda *_args: [
+        TipsHit(fin=FIN, case_id="01234567"),
+        TipsHit(fin=OTHER_FIN, case_id="01234567"),
+    ])
+    with pytest.raises(RuntimeError, match="mehrdeutig"):
+        downloader._search(
+            SimpleNamespace(), page, "01234567", lambda _: None, Event(),
+        )
+
+
+def test_tips_fallnummer_ausgabe_legt_bericht_unter_ermittelter_fin_ab(tmp_path, monkeypatch):
+    downloader = TipsWriterDownloader(
+        tmp_path / "tips", tmp_path / "edge", click_delay_seconds=0,
+    )
+    targets = {
+        "01234567": TipsHit(FIN, "01234567"),
+        "00001234": TipsHit(FIN, "00001234"),
+    }
+    monkeypatch.setattr(
+        downloader, "_search",
+        lambda ctx, page, nummer, progress, cancel: (page, [targets[nummer]]),
+    )
+
+    def one_case(context, page, hit, progress, cancel):
+        report = downloader.output_dir / hit.fin / f"fall_{hit.case_id}" / "tips.json"
+        report.parent.mkdir(parents=True, exist_ok=True)
+        report.write_text(json.dumps({
+            "fin": hit.fin, "fallnummer": hit.case_id,
+        }), encoding="utf-8")
+        return report, [], [], [], page
+
+    monkeypatch.setattr(downloader, "_one_case", one_case)
+    for case_id in targets:
+        result, _page = downloader._one_fallnummer(
+            SimpleNamespace(), object(), case_id, lambda _: None, Event(),
+        )
+        assert result.status == "Erfolgreich"
+        assert result.fin == FIN
+        assert result.cases == [case_id]
+        status = downloader.output_dir / "_fallnummern" / f"fall_{case_id}" / "abrufstatus.json"
+        gespeichert = json.loads(status.read_text("utf-8"))
+        assert gespeichert["fin"] == FIN
+        assert gespeichert["fallnummer"] == case_id
+        assert gespeichert["status"] == "Erfolgreich"
+
+    assert (tmp_path / "tips" / FIN / "fall_01234567" / "tips.json").is_file()
+    assert (tmp_path / "tips" / FIN / "fall_00001234" / "tips.json").is_file()
+
+
+def test_tips_fallnummer_ohne_treffer_erzeugt_nur_abfragestatus(tmp_path, monkeypatch):
+    downloader = TipsWriterDownloader(tmp_path / "tips", tmp_path / "edge")
+    monkeypatch.setattr(downloader, "_search",
+                        lambda _ctx, page, *_args: (page, []))
+    result, _ = downloader._one_fallnummer(
+        SimpleNamespace(), object(), "00001234", lambda _: None, Event(),
+    )
+    assert not result.fin and result.status == "Fehler"
+    assert "nicht gefunden" in result.errors[0]
+    status = tmp_path / "tips" / "_fallnummern" / "fall_00001234" / "abrufstatus.json"
+    assert json.loads(status.read_text("utf-8"))["fin"] is None
+    assert not list((tmp_path / "tips").glob("*/fall_00001234/tips.json"))
+
+
+
+def test_tips_downloader_run_routet_fin_und_fallnummer_separat(tmp_path, monkeypatch):
+    import sys
+    from types import ModuleType
+
+    from ntf_insight.acquisition.tips_writer import TipsResult
+
+    calls = []
+
+    class Context:
+        pages = [object()]
+
+        def close(self):
+            calls.append("close")
+
+    class Playwright:
+        def __enter__(self):
+            return SimpleNamespace(chromium=SimpleNamespace(
+                launch_persistent_context=lambda **kwargs: Context(),
+            ))
+
+        def __exit__(self, *_args):
+            return False
+
+    fake = ModuleType("playwright.sync_api")
+    fake.sync_playwright = lambda: Playwright()
+    monkeypatch.setitem(sys.modules, "playwright.sync_api", fake)
+
+    scraper = TipsWriterDownloader(
+        tmp_path / "export", tmp_path / "edge", click_delay_seconds=0,
+    )
+
+    def one_fin(ctx, page, fin, progress, cancel):
+        calls.append(("fin", fin))
+        return TipsResult(fin=fin, status="Keine TIPS-Faelle"), page
+
+    def one_case(ctx, page, nummer, progress, cancel):
+        calls.append(("fallnummer", nummer))
+        return TipsResult(
+            fin=FIN, status="Erfolgreich", suchwert=nummer, suchtyp="fallnummer",
+        ), page
+
+    monkeypatch.setattr(scraper, "_one_fin", one_fin)
+    monkeypatch.setattr(scraper, "_one_fallnummer", one_case)
+    results = scraper.run([FIN, "01234567", FIN, "00001234"])
+    assert calls == [
+        ("fin", FIN),
+        ("fallnummer", "01234567"),
+        ("fallnummer", "00001234"),
+        "close",
+    ]
+    assert len(results) == 3
+    assert results[0].fin == FIN
+    assert results[1].suchwert == "01234567"
+    assert results[2].suchwert == "00001234"

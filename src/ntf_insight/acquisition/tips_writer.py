@@ -23,7 +23,6 @@ from zipfile import ZipFile, is_zipfile
 
 from lxml import html as lxml_html
 
-from ntf_insight.acquisition.diagnosis_viewer import parse_fins
 from ntf_insight.acquisition.sso_login_gate import serielle_sso_anmeldung
 
 
@@ -75,6 +74,8 @@ class TipsResult:
     files: list[Path] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
     errors: list[str] = field(default_factory=list)
+    suchwert: str = ""
+    suchtyp: str = "fin"
 
 
 def _clean_text(value: str) -> str:
@@ -100,17 +101,50 @@ def _tips_url_valid(value: str) -> bool:
             and parsed.path.startswith("/tips-writer/"))
 
 
-def parse_tips_search_hits(document: str, fin: str) -> list[TipsHit]:
-    """Nur sichtbare Ergebnistabellen mit *vollstaendig identischer* FIN.
+def parse_tips_queries(raw: str) -> list[str]:
+    """17-stellige FIN oder numerische TIPS-Fallnummer je Zeile, auch gemischt.
 
-    PrimeNG 'p-datatable' hat dynamische IDs, die Zellen sind dagegen durch
-    die Beschriftungen Fall Nummer und FIN verifizierbar.
+    Die Fallnummer muss das bisher dokumentierte Format von 4 bis 16
+    Ziffern haben. Fuehrende Nullen bleiben erhalten.
     """
-    if not _FIN.fullmatch(fin):
+    targets: list[str] = []
+    seen: set[str] = set()
+    for zeilennummer, zeile in enumerate(raw.splitlines(), 1):
+        inhalt = zeile.lstrip("\ufeff").partition("#")[0].strip().upper()
+        if not inhalt:
+            continue
+        for wert in (v for v in re.split(r"[,;\s]+", inhalt) if v):
+            if not (_FIN.fullmatch(wert) or _CASE_ID.fullmatch(wert)):
+                raise ValueError(
+                    f"Zeile {zeilennummer}: 17-stellige FIN oder numerische "
+                    "TIPS-Fallnummer (4-16 Ziffern) erforderlich."
+                )
+            if wert not in seen:
+                seen.add(wert)
+                targets.append(wert)
+    if not targets:
+        raise ValueError("Bitte mindestens eine FIN oder TIPS-Fallnummer eingeben.")
+    return targets
+
+
+def parse_tips_search_hits(
+    document: str, fin: str = "", *, fallnummer: str = "",
+) -> list[TipsHit]:
+    """Nur Treffer mit bestaetigter Fallnummer und voller 17-stelliger FIN.
+
+    Bei FIN-Suche muss die FIN exakt stimmen. Bei Fallnummernsuche muss die
+    Fallnummer exakt stimmen; die FIN wird nur aus einer gueltigen
+    Ergebniszeile uebernommen. Keine partielle/unscharfe Fallzuordnung.
+    """
+    if bool(fin) == bool(fallnummer):
+        raise ValueError("Entweder FIN oder Fallnummer als TIPS-Suchziel angeben.")
+    if fin and not _FIN.fullmatch(fin):
         raise ValueError("Ungueltige FIN.")
+    if fallnummer and not _CASE_ID.fullmatch(fallnummer):
+        raise ValueError("Ungueltige TIPS-Fallnummer.")
     root = lxml_html.fromstring(document)
     results: list[TipsHit] = []
-    seen: set[str] = set()
+    seen: set[tuple[str, str]] = set()
     for table in root.xpath('//p-tabpanel[contains(@class,"p-tabpanel-active")]//table'):
         headings = [_clean_text("".join(th.itertext()))
                     for th in table.xpath(".//thead/tr[1]/th")]
@@ -125,16 +159,32 @@ def parse_tips_search_hits(document: str, fin: str) -> list[TipsHit]:
                 continue
             case_id = _clean_text(cells[case_index].text_content())
             found_fin = _clean_text(cells[fin_index].text_content()).upper()
-            if found_fin != fin or not _CASE_ID.fullmatch(case_id) or case_id in seen:
+            if not _CASE_ID.fullmatch(case_id):
                 continue
-            seen.add(case_id)
+            if fin and found_fin != fin:
+                continue
+            if fallnummer and case_id != fallnummer:
+                continue
+            # Ohne volle FIN keine vertrauenswuerdige Fahrzeug-/Fallablage.
+            if not _FIN.fullmatch(found_fin):
+                if fallnummer and case_id == fallnummer:
+                    raise ValueError(
+                        "TIPS-Fallnummer gefunden, aber die Ergebniszeile hat "
+                        "keine gueltige 17-stellige FIN."
+                    )
+                continue
+            key = (case_id, found_fin)
+            if key in seen:
+                continue
+            seen.add(key)
             values = {
                 name: _clean_text(cell.text_content())
                 for name, cell in zip(headings, cells)
                 if name
             }
             results.append(TipsHit(
-                fin=fin, case_id=case_id, title=values.get("Titel", ""), cells=values,
+                fin=found_fin, case_id=case_id, title=values.get("Titel", ""),
+                cells=values,
             ))
     return results
 
@@ -424,23 +474,30 @@ class TipsWriterDownloader:
             time.sleep(0.3)
         raise TimeoutError("TIPS: erste Ergebnisseite nicht bestätigt.")
 
-    def _all_pages(self, page, fin: str, first: list[TipsHit],
+    def _all_pages(self, page, suchwert: str, first: list[TipsHit],
                    progress: Progress, cancel: Event) -> list[TipsHit]:
         """Read all paginated matches and then return to the first page."""
-        by_case = {hit.case_id: hit for hit in first}
+        by_case = {(hit.case_id, hit.fin): hit for hit in first}
         for page_index in range(1, 76):
             if not self._advance_results(page, cancel):
                 self._reset_results(page, cancel)
                 return list(by_case.values())
-            additional = parse_tips_search_hits(page.content(), fin)
-            by_case.update({hit.case_id: hit for hit in additional})
+            additional = (
+                parse_tips_search_hits(page.content(), fin=suchwert)
+                if _FIN.fullmatch(suchwert)
+                else parse_tips_search_hits(page.content(), fallnummer=suchwert)
+            )
+            by_case.update({(hit.case_id, hit.fin): hit for hit in additional})
             progress(
                 f"TIPS: Ergebnisseite {page_index + 1} gelesen, "
                 f"{len(by_case)} passende Fälle."
             )
         raise RuntimeError("TIPS: Mehr als 75 Ergebnisseiten; Abruf wurde begrenzt.")
 
-    def _search(self, context, page, fin: str, progress: Progress, cancel: Event):
+    def _search(self, context, page, suchwert: str, progress: Progress, cancel: Event):
+        if not (_FIN.fullmatch(suchwert) or _CASE_ID.fullmatch(suchwert)):
+            raise ValueError("Ungueltiges TIPS-Suchziel.")
+        ist_fin_suche = bool(_FIN.fullmatch(suchwert))
         self._check(cancel)
         anmeldung = (
             serielle_sso_anmeldung(status=progress, abbruch=cancel)
@@ -454,8 +511,8 @@ class TipsWriterDownloader:
         self._pause(cancel)
         search = page.locator("tn-c-search input.xy-c-search-input")
         if search.count() == 0:
-            raise RuntimeError("TIPS: dokumentiertes FIN-Suchfeld fehlt.")
-        search.first.fill(fin)
+            raise RuntimeError("TIPS: dokumentiertes Suchfeld fehlt.")
+        search.first.fill(suchwert)
         self._pause(cancel)
         # Search button is a sibling of the documented input, not the header search icon.
         search.first.locator("xpath=following-sibling::button").click(
@@ -467,16 +524,32 @@ class TipsWriterDownloader:
         if "p-tab-active" not in (cases.first.get_attribute("class") or ""):
             cases.first.click(timeout=self.navigation_timeout_ms)
             self._pause(cancel)
-        progress("TIPS: Falltabelle wird nach FIN ausgewertet.")
+        progress(
+            "TIPS: Reiter 'Fälle' aktiv; " +
+            ("Suche nach 17-stelliger FIN." if ist_fin_suche
+             else "Suche nach exakter Fallnummer.")
+        )
         deadline = time.monotonic() + self.navigation_timeout_ms / 1000
         empty_since: float | None = None
         while time.monotonic() < deadline:
             self._check(cancel)
             html = page.content()
-            hits = parse_tips_search_hits(html, fin)
+            hits = (
+                parse_tips_search_hits(html, fin=suchwert)
+                if ist_fin_suche
+                else parse_tips_search_hits(html, fallnummer=suchwert)
+            )
             if hits:
-                hits = self._all_pages(page, fin, hits, progress, cancel)
-                progress(f"TIPS: {len(hits)} Falltreffer mit identischer FIN.")
+                hits = self._all_pages(page, suchwert, hits, progress, cancel)
+                if not ist_fin_suche and len({hit.fin for hit in hits}) != 1:
+                    raise RuntimeError(
+                        "TIPS-Fallnummer mehrdeutig: verschiedene volle FINs. "
+                        "Kein Abruf ohne eindeutig zugeordnetes Fahrzeug."
+                    )
+                progress(
+                    f"TIPS: {len(hits)} bestaetigte " +
+                    ("FIN-Falltreffer." if ist_fin_suche else "Fallnummerntreffer.")
+                )
                 return page, hits
             current = page.get_by_role("tab", name=re.compile(r"^Fälle\s*:"))
             text = current.first.inner_text() if current.count() else ""
@@ -489,7 +562,8 @@ class TipsWriterDownloader:
             time.sleep(0.4)
         raise TimeoutError(
             "TIPS-Suchergebnis nach 'Suchen' nicht eindeutig geladen. "
-            "Kein gepruefter Voll-FIN-Treffer; keine Fremdfaelle ausgewaehlt."
+            "Kein eindeutig gepruefter FIN-/Fallnummerntreffer; "
+            "keine Fremdfaelle ausgewaehlt."
         )
 
     def _open_case(self, context, page, hit: TipsHit,
@@ -682,6 +756,55 @@ class TipsWriterDownloader:
             _write_json(report_path, report)
         return report_path, files, warnings, errors, page
 
+    def _one_fallnummer(
+        self, context, page, fallnummer: str, progress: Progress, cancel: Event,
+    ):
+        """Fall ohne vorher bekannte FIN laden und unter seiner bestaetigten FIN ablegen."""
+        result = TipsResult(fin="", suchwert=fallnummer, suchtyp="fallnummer")
+        try:
+            page, hits = self._search(context, page, fallnummer, progress, cancel)
+            if not hits:
+                result.status = "Fehler"
+                result.errors.append(
+                    "TIPS-Fallnummer nicht gefunden oder nicht bestaetigt."
+                )
+            elif len(hits) != 1:
+                raise RuntimeError(
+                    "Fallnummer liefert mehr als einen eindeutigen Treffer."
+                )
+            else:
+                hit = hits[0]
+                result.fin = hit.fin
+                report, files, warnings, errors, page = self._one_case(
+                    context, page, hit, progress, cancel,
+                )
+                result.cases.append(hit.case_id)
+                result.reports.append(report)
+                result.files.extend(files)
+                result.warnings.extend(warnings)
+                result.errors.extend(errors)
+                result.status = "Erfolgreich" if not errors else "Teilweise erfolgreich"
+        except TipsCancelled:
+            result.status = "Abgebrochen"
+        except Exception as exc:
+            result.status = "Fehler"
+            result.errors.append(f"{type(exc).__name__}: {exc}")
+        finally:
+            # Separate Abfrage-Akte, auch wenn das Portal keine FIN geliefert hat.
+            # Die Fall-JSON selbst liegt immer unter <FIN>/fall_<Fallnummer>.
+            _write_json(self.output_dir / "_fallnummern" / f"fall_{fallnummer}"
+                        / "abrufstatus.json", {
+                "fallnummer": fallnummer,
+                "fin": result.fin or None,
+                "stand_utc": datetime.now(timezone.utc).isoformat(),
+                "status": result.status,
+                "fehler": result.errors,
+                "hinweise": result.warnings,
+                "berichte": [str(p.relative_to(self.output_dir)) for p in result.reports],
+                "dateien": [str(p.relative_to(self.output_dir)) for p in result.files],
+            })
+        return result, page
+
     def _one_fin(self, context, page, fin: str, progress: Progress, cancel: Event):
         result = TipsResult(fin)
         try:
@@ -731,9 +854,7 @@ class TipsWriterDownloader:
 
     def run(self, fins: list[str], *, progress: Progress | None = None,
             cancel: Event | None = None) -> list[TipsResult]:
-        targets = parse_fins("\n".join(fins))
-        if not targets:
-            raise ValueError("Mindestens eine 17-stellige FIN erforderlich.")
+        targets = parse_tips_queries("\n".join(fins))
         progress = progress or (lambda _message: None)
         cancel = cancel or Event()
         self.output_dir.mkdir(parents=True, exist_ok=True)
@@ -757,14 +878,21 @@ class TipsWriterDownloader:
                 ) from exc
             try:
                 page = context.pages[0] if context.pages else context.new_page()
-                for fin in targets:
+                for suchwert in targets:
                     if cancel.is_set():
                         break
-                    result, page = self._one_fin(context, page, fin, progress, cancel)
+                    if _FIN.fullmatch(suchwert):
+                        result, page = self._one_fin(
+                            context, page, suchwert, progress, cancel,
+                        )
+                    else:
+                        result, page = self._one_fallnummer(
+                            context, page, suchwert, progress, cancel,
+                        )
                     results.append(result)
                     progress(
-                        f"FIN-Fortschritt: {len(results)}/{len(targets)} "
-                        f"bearbeitet · zuletzt {fin}: {result.status}"
+                        f"TIPS-Fortschritt: {len(results)}/{len(targets)} "
+                        f"bearbeitet · zuletzt {suchwert}: {result.status}"
                     )
                     if result.status == "Abgebrochen":
                         break

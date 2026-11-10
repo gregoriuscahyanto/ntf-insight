@@ -13,13 +13,12 @@ import sys
 from pathlib import Path
 
 from ntf_insight.acquisition.credentials import LoginCredentials, load_saved_credentials
-from ntf_insight.acquisition.diagnosis_viewer import parse_fins
 from ntf_insight.acquisition.output_paths import standard_ausgabe
 from ntf_insight.acquisition.qec_tool import (
     QecDownloader, QecResult, QecTarget, parse_qec_targets, pruefe_sachnummer,
     pruefe_benennung,
 )
-from ntf_insight.acquisition.tips_writer import TipsResult, TipsWriterDownloader
+from ntf_insight.acquisition.tips_writer import TipsResult, TipsWriterDownloader, parse_tips_queries
 
 QEC_AUSGABE = Path("data/processed/qec")
 TIPS_AUSGABE = Path("data/processed/tips_writer")
@@ -115,8 +114,14 @@ def _auswertung(
             berichte = len(item.reports)
             anhaenge = len(item.files)
             extra = f"TIPS-JSONs: {berichte}"
+        identitaet = (
+            f"TIPS-Fall {item.suchwert}"
+            + (f" | FIN {item.fin}" if item.fin else "")
+            if quelle == "TIPS" and getattr(item, "suchtyp", "") == "fallnummer"
+            else item.fin
+        )
         print(
-            f"{item.fin}: {item.status} | {extra} | Anhaenge: {anhaenge} | "
+            f"{identitaet}: {item.status} | {extra} | Anhaenge: {anhaenge} | "
             f"Hinweise: {warnungen} | Fehler: {fehler}",
             flush=True,
         )
@@ -211,15 +216,27 @@ def qec_main(argv: list[str] | None = None) -> int:
 
 def tips_main(argv: list[str] | None = None) -> int:
     parser = _parser("XENTRY TIPS Writer", ausgabe=TIPS_AUSGABE, profil=TIPS_PROFIL)
+    parser.description = (
+        "XENTRY TIPS Writer: 17-stellige FINs oder numerische TIPS-Fallnummern "
+        "(4-16 Ziffern) aus einer TXT laden; auch gemischte Listen."
+    )
+    for option in parser._actions:
+        if option.dest == "eingabe":
+            option.help = (
+                "TXT mit vollstaendigen 17-stelligen FINs und/oder "
+                "numerischen TIPS-Fallnummern (4-16 Ziffern)"
+            )
+            break
     args = parser.parse_args(argv)
     try:
         if args.ausgabe is None:
             args.ausgabe = standard_ausgabe(args.eingabe, "tips")
         ausgabe, profil = _pruefe_argumente(args)
-        fins = parse_fins(lese_eingabe(args.eingabe))
+        ziele = parse_tips_queries(lese_eingabe(args.eingabe))
+        anzahl_fin = sum(len(wert) == 17 for wert in ziele)
         login = _lade_login(args)
         print(
-            f"TIPS: {len(fins)} FIN(s). "
+            f"TIPS: {anzahl_fin} FIN(s), {len(ziele) - anzahl_fin} Fallnummer(n). "
             "SSO/PING ID bei Aufforderung in Edge/auf dem Smartphone bestaetigen.",
             flush=True,
         )
@@ -231,8 +248,8 @@ def tips_main(argv: list[str] | None = None) -> int:
             password=login.password if login else "",
             click_delay_seconds=0.85,
         )
-        ergebnisse = downloader.run(fins, progress=lambda m: print(m, flush=True))
-        return _auswertung(ergebnisse, len(fins), "TIPS", ausgabe)
+        ergebnisse = downloader.run(ziele, progress=lambda m: print(m, flush=True))
+        return _auswertung(ergebnisse, len(ziele), "TIPS", ausgabe)
     except KeyboardInterrupt:
         print("\nTIPS unterbrochen. Bereits heruntergeladene Dateien bleiben erhalten.",
               file=sys.stderr)

@@ -37,7 +37,10 @@ def _parser() -> argparse.ArgumentParser:
         description="Mehrere NTF-Datenquellen parallel je FIN-Liste herunterladen."
     )
     parser.add_argument("--eingabe", type=Path, required=True,
-                        help="Gemeinsame TXT mit FINs (eine FIN pro Zeile)")
+                        help="Gemeinsame TXT mit FINs; bei ausschliesslich TIPS auch Fallnummern")
+    parser.add_argument("--tips-eingabe", type=Path,
+                        help="Optionale separate TXT fuer TIPS: FINs oder Fallnummern; "
+                             "andere Quellen erhalten weiterhin --eingabe")
     parser.add_argument("--ausgabe", type=Path,
                         help="Optionaler Basisordner fuer alle Quellen; Standard: "
                              "data/processed/<bereinigter TXT-Name>")
@@ -102,18 +105,48 @@ def _eingabe_pruefen(pfad: Path, quellen: list[str] | None = None) -> int:
     return len(fins)
 
 
+def _tips_eingabe_pruefen(pfad: Path) -> int:
+    """TIPS-Quellliste vor SSO pruefen: 17-stellige FIN oder Fallnummer."""
+    from ntf_insight.acquisition.fin_format import ist_gueltige_fin
+    from ntf_insight.acquisition.portal_cli import lese_eingabe
+    from ntf_insight.acquisition.tips_writer import parse_tips_queries
+
+    raw = lese_eingabe(pfad)
+    tokens = [
+        wert.upper()
+        for zeile in raw.splitlines()
+        for wert in zeile.replace(",", " ").replace(";", " ").split()
+    ]
+    if any(
+        len(wert) == 14
+        and any("A" <= zeichen <= "Z" for zeichen in wert)
+        and ist_gueltige_fin(wert, kurz_erlaubt=True)
+        for wert in tokens
+    ):
+        raise ValueError(
+            "Die FIN-Liste enthaelt 14-stellige Kurz-FINs. "
+            "TIPS unterstuetzt nur vollstaendige 17-stellige FINs "
+            "oder numerische TIPS-Fallnummern."
+        )
+    return len(parse_tips_queries(raw))
+
+
 def _befehl(
     quelle: str, eingabe: Path, ausgabe: Path, manuell: bool,
     objekt: str | None = None, attribut: str | None = None,
     sachnummer: str | None = None, anhaenge: str | None = None,
     benennung: str | None = None,
+    tips_eingabe: Path | None = None,
 ) -> list[str]:
     modul, funktion = _EINSTIEGE[quelle]
     # -u gibt Fortschritt ohne Pufferung an den Sammelprozess weiter.
     code = f"from {modul} import {funktion}; raise SystemExit({funktion}())"
+    quelle_eingabe = (
+        tips_eingabe if quelle == "tips" and tips_eingabe is not None else eingabe
+    )
     argv = [
         sys.executable, "-u", "-c", code,
-        "--eingabe", str(eingabe),
+        "--eingabe", str(quelle_eingabe),
         "--ausgabe", str(ausgabe),
     ]
     if quelle == "dcdc223":
@@ -140,6 +173,7 @@ def _starte_quelle(
     attribut: str | None = None,
     sachnummer: str | None = None, anhaenge: str | None = None,
     benennung: str | None = None,
+    tips_eingabe: Path | None = None,
 ) -> int:
     if abbruch.is_set():
         return 130
@@ -147,7 +181,7 @@ def _starte_quelle(
     env = os.environ.copy()
     env["PYTHONIOENCODING"] = "utf-8"
     prozess = subprocess.Popen(
-        _befehl(quelle, eingabe, ausgabe, manuell, objekt, attribut, sachnummer, anhaenge, benennung),
+        _befehl(quelle, eingabe, ausgabe, manuell, objekt, attribut, sachnummer, anhaenge, benennung, tips_eingabe),
         stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
         bufsize=1, text=True, encoding="utf-8", errors="replace", env=env,
     )
@@ -190,7 +224,16 @@ def main(argv: list[str] | None = None) -> int:
             argumente.benennung = pruefe_benennung(argumente.benennung)
         if not 1 <= argumente.parallel <= len(_EINSTIEGE):
             raise ValueError("--parallel muss zwischen 1 und 6 liegen.")
-        anzahl_fins = _eingabe_pruefen(argumente.eingabe, auswahl)
+        if argumente.tips_eingabe is not None and "tips" not in auswahl:
+            raise ValueError("--tips-eingabe ist nur mit der Quelle tips erlaubt.")
+        if auswahl == ["tips"] and argumente.tips_eingabe is None:
+            anzahl_fins = _tips_eingabe_pruefen(argumente.eingabe)
+        else:
+            anzahl_fins = _eingabe_pruefen(argumente.eingabe, auswahl)
+        if argumente.tips_eingabe is not None:
+            tips_anzahl = _tips_eingabe_pruefen(argumente.tips_eingabe)
+        else:
+            tips_anzahl = None
         gruppe = (
             argumente.ausgabe.expanduser()
             if argumente.ausgabe is not None
@@ -199,6 +242,10 @@ def main(argv: list[str] | None = None) -> int:
         if gruppe.is_file():
             raise ValueError("--ausgabe muss ein Verzeichnis sein.")
         eingabe = argumente.eingabe.expanduser().resolve()
+        tips_eingabe = (
+            argumente.tips_eingabe.expanduser().resolve()
+            if argumente.tips_eingabe is not None else None
+        )
         # Eine frei gewaehlte Hardware-Historie nutzt den neutralen Quellordner.
         generisch = (
             argumente.objekt is not None or argumente.attribut is not None
@@ -216,7 +263,7 @@ def main(argv: list[str] | None = None) -> int:
         return 2
 
     print(
-        f"FINs: {anzahl_fins} | Quellen: {len(arbeitsliste)} | "
+        f"Eingaben: {anzahl_fins} | Quellen: {len(arbeitsliste)} | "
         f"Parallel: {min(argumente.parallel, len(arbeitsliste))} | Basisordner: {gruppe}",
         flush=True,
     )
@@ -227,6 +274,12 @@ def main(argv: list[str] | None = None) -> int:
         flush=True,
     )
     for quelle, ziel in arbeitsliste:
+        if quelle == "tips" and tips_eingabe is not None:
+            print(
+                f"[tips] Separate TIPS-Liste: {tips_eingabe} "
+                f"({tips_anzahl} FIN-/Fallnummernziele).",
+                flush=True,
+            )
         print(f"[{quelle}] Ablage: {ziel}", flush=True)
 
     aktiv: dict[str, subprocess.Popen[str]] = {}
@@ -240,6 +293,7 @@ def main(argv: list[str] | None = None) -> int:
                 aktiv, sperre, abbruch,
                 argumente.objekt, argumente.attribut,
                 argumente.sachnummer, argumente.anhaenge, argumente.benennung,
+                tips_eingabe,
             ): quelle
             for quelle, ziel in arbeitsliste
         }

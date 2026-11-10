@@ -29,17 +29,61 @@ Anmeldung und dem sicheren Betriebssystem-Tresor. Es wird **kein weiteres
 Passwort** gespeichert. TIPS benutzt ein eigenes Edge-Profil und wartet
 auf eine gegebenenfalls erforderliche manuelle PING-ID-Bestätigung.
 
+## CLI: 17-stellige FIN oder TIPS-Fallnummer
+
+Die CLI `ntf-insight-tips` akzeptiert eine TXT mit einer Kennung
+pro Zeile. Erlaubt sind **vollständige 17-stellige FINs** oder
+**numerische TIPS-Fallnummern (4–16 Ziffern)**. Beides darf in einer
+Datei gemischt stehen. Die Unterscheidung erfolgt automatisch; führende
+Nullen bleiben unverändert:
+
+```text
+WDD12345678901234
+01234567
+00001234
+```
+
+```powershell
+ntf-insight-tips --eingabe ".\FIN-Liste.txt"
+ntf-insight-tips --eingabe ".\TIPS-Fallnummern.txt"
+```
+
+Beim direkten Abruf über eine **Fallnummer** sucht der Downloader
+ebenfalls über die TIPS-Suchleiste, aktiviert den Reiter **„Fälle“** und
+nimmt ausschließlich die Ergebniszeile mit **exakt dieser Fallnummer**.
+Er benötigt eine gültige 17-stellige FIN in der Trefferzeile und
+verifiziert nach dem Öffnen des Falls **Fallnummer und FIN erneut**
+im Detailkopf. Eine fehlende, andere oder mehrdeutige FIN ist ein
+Abruffehler; der Downloader legt keinen Bericht unter einer geratenen
+FIN ab. Die reguläre Fall-JSON liegt unter
+`tips_writer/<FIN>/fall_<Fallnummer>/tips.json`; für
+Fallnummern-Suchen wird zusätzlich
+`tips_writer/_fallnummern/fall_<Fallnummer>/abrufstatus.json`
+geschrieben. Die GUI arbeitet weiterhin mit FINs und bleibt unverändert.
+
+Im parallelen Sammelabruf kann TIPS eine *eigene* Fallnummern-TXT erhalten,
+während die anderen fünf Quellen die Haupt-FIN-Liste verwenden:
+
+```powershell
+ntf-insight-beschaffung --eingabe ".\FIN-Liste.txt" --tips-eingabe ".\TIPS-Fallnummern.txt" --quellen alle --parallel 6
+```
+
+Bei `--quellen tips` darf die Hauptdatei unter
+`--eingabe` auch eine reine Fallnummernliste sein.
+
 ## Automatisierter Ablauf
 
 1. TIPS Writer im sichtbaren Microsoft Edge öffnen; SSO/PING ID abwarten.
 2. Den laut Anleitung gegebenenfalls erscheinenden Dialog
    „Alles akzeptieren“ bestätigen.
-3. Die vollständige 17-stellige FIN in die Suche mit dem CSS-Selektor
-   tn-c-search input.xy-c-search-input eingeben und den direkt benachbarten
-   Knopf **Suchen** betätigen.
+3. Die vollständige **17-stellige FIN** (GUI/CLI) oder eine
+   **numerische TIPS-Fallnummer** (nur CLI) in die Suche mit dem
+   CSS-Selektor tn-c-search input.xy-c-search-input eingeben und den
+   direkt benachbarten Knopf **Suchen** betätigen.
 4. Den **Fälle**-Registerreiter aktivieren, nicht Themen/TPRs.
-5. Alle Ergebniszeilen einschließlich Folgeseiten auswerten; nur volle
-   FIN-Gleichheit und numerische TIPS-Fallnummern zulassen.
+5. Alle Ergebniszeilen einschließlich Folgeseiten auswerten; bei einer
+   FIN-Suche nur volle FIN-Gleichheit, bei einer Fallnummern-Suche nur
+   **exakt gleiche Fallnummern mit gültiger 17-stelliger FIN** zulassen.
 6. Jede geprüfte Fallzeile in Edge anklicken (gegebenenfalls doppelt).
    **Keine spekulative interne Fall-URL** konstruieren.
 7. Fallkopf und die zehn dokumentierten Registerkarten erfassen:
@@ -100,6 +144,10 @@ FIN-ZIP aufgenommen.
   eine Offline-HTML-Sicherung, in der die Fallzeile nicht mehr reagiert.
   Ob die echte Angular-Zeile per einfachem oder Doppelklick geöffnet
   werden kann, muss im berechtigten Unternehmensnetz bestätigt werden.
+- Ob die TIPS-Gesamtsuche **numerische Fallnummern** serverseitig akzeptiert
+  und die korrekte Falltabelle liefert, ist ebenfalls erst im berechtigten
+  Unternehmensnetz überprüfbar. Die Offline-Tests bestätigen nur die
+  exakte und FIN-sichere Auswertung der gerenderten Ergebnisse.
 - Auch das tatsächliche Downloadformat der Anhang-Schaltfläche ist in
   der Anleitung nicht eindeutig belegt; der Code behandelt Browser-
   Downloads und ZIP-Archive. Bei Problemen bitte nur **anonymisierte**
