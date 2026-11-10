@@ -36,8 +36,8 @@ def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="Mehrere NTF-Datenquellen parallel je FIN-Liste herunterladen."
     )
-    parser.add_argument("--eingabe", type=Path, required=True,
-                        help="Gemeinsame TXT mit FINs; bei ausschliesslich TIPS auch Fallnummern")
+    parser.add_argument("--eingabe", type=Path,
+                        help="Gemeinsame FIN-TXT; bei ausschliesslich TIPS alternativ --tips-eingabe")
     parser.add_argument("--tips-eingabe", type=Path,
                         help="Optionale separate TXT fuer TIPS: FINs oder Fallnummern; "
                              "andere Quellen erhalten weiterhin --eingabe")
@@ -243,8 +243,14 @@ def main(argv: list[str] | None = None) -> int:
             raise ValueError("--parallel muss zwischen 1 und 6 liegen.")
         if argumente.tips_eingabe is not None and "tips" not in auswahl:
             raise ValueError("--tips-eingabe ist nur mit der Quelle tips erlaubt.")
-        if auswahl == ["tips"] and argumente.tips_eingabe is None:
-            anzahl_fins = _tips_eingabe_pruefen(argumente.eingabe)
+        if argumente.eingabe is None:
+            if auswahl != ["tips"] or argumente.tips_eingabe is None:
+                raise ValueError("--eingabe ist fuer diese Quellen erforderlich.")
+            argumente.eingabe = argumente.tips_eingabe
+        if auswahl == ["tips"]:
+            anzahl_fins = _tips_eingabe_pruefen(
+                argumente.tips_eingabe or argumente.eingabe
+            )
         else:
             anzahl_fins = _eingabe_pruefen(
                 argumente.eingabe, auswahl,
