@@ -699,3 +699,51 @@ def test_unknown_reference_does_not_download_other_case(tmp_path):
     )
     assert result.status == "Keine passenden Schadteile"
     assert not result.references
+
+
+
+def test_exakte_sachnummer_findet_auch_nicht_pumpen_fall(tmp_path):
+    """Eine explizite Sachnummer darf nicht am alten Pumpennamen scheitern."""
+    target = QecTarget(FIN, SACHNUMMER)
+    document = _search_html(rows=[
+        _row("900000625", description="DCDC223", part=SACHNUMMER, identifier="5001"),
+        _row("900000517", description="KUEHLMITTELPUMPE",
+             part="A 111 222 33 44", identifier="5002"),
+        _row("900000754", description="DCDC223",
+             part="A 111 222 33 44", identifier="5003"),
+    ], total=3)
+    assert parse_search_hits(document, FIN, part_number=SACHNUMMER) == []
+    assert [hit.reference for hit in parse_search_hits(
+        document, FIN, part_number=SACHNUMMER, pump_only=False,
+    )] == ["900000625"]
+    downloader = QecDownloader(tmp_path, tmp_path / "profile", pump_only=True,
+                               click_delay_seconds=0)
+    page = object()
+    downloader._search = lambda *_args: (
+        page, page, document,
+        inspect_search_results(document, target, pump_only=False),
+    )
+    selected = []
+
+    def select(_context, current_page, _target, hit, result, *_args):
+        selected.append((hit.reference, hit.part_number))
+        result.references.append(hit.reference)
+        return current_page
+
+    downloader._one_hit = select
+    result, _ = downloader._one_target(
+        SimpleNamespace(), page, target, lambda _: None, Event()
+    )
+    assert selected == [("900000625", SACHNUMMER)]
+    assert result.status == "Erfolgreich"
+
+    # Ohne Sachnummer gilt weiterhin der Pumpen-Standardfilter.
+    all_target = QecTarget(FIN)
+    downloader._search = lambda *_args: (
+        page, page, document, inspect_search_results(document, all_target),
+    )
+    selected.clear()
+    result, _ = downloader._one_target(
+        SimpleNamespace(), page, all_target, lambda _: None, Event()
+    )
+    assert selected == [("900000517", "A 111 222 33 44")]
