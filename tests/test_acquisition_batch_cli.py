@@ -178,3 +178,35 @@ def test_genau_sechs_quellen_in_vordefinierter_reihenfolge():
     assert tuple(cli._EINSTIEGE) == cli.quellennamen()
     assert cli._quellen("alle") == list(cli.quellennamen())
     assert cli._quellen(" QEC , TIPS ") == ["qec", "tips"]
+
+
+
+def test_qec_sachnummer_und_anhangmodus_nur_an_qec_prozess(tmp_path, monkeypatch):
+    cmds, _ = _popen_simulieren(monkeypatch)
+    fin = _eingabe(tmp_path)
+    assert cli.main([
+        "--eingabe", str(fin),
+        "--quellen", "qec,quicktests,wem", "--parallel", "3",
+        "--sachnummer", "A 111 222 33 44", "--anhaenge", "alle",
+    ]) == 0
+    assert len(cmds) == 3
+    qec = next(argv for argv, _ in cmds if "portal_cli" in argv[3])
+    assert qec[qec.index("--sachnummer") + 1] == "A 111 222 33 44"
+    assert qec[qec.index("--anhaenge") + 1] == "alle"
+    for argv, _ in cmds:
+        if argv is not qec:
+            assert "--sachnummer" not in argv and "--anhaenge" not in argv
+
+
+@pytest.mark.parametrize("extra", [
+    ["--quellen", "wem,quicktests", "--sachnummer", "A 111 222 33 44"],
+    ["--quellen", "wem", "--anhaenge", "alle"],
+    ["--quellen", "qec", "--sachnummer", "INVALID/../"],
+    ["--quellen", "qec", "--sachnummer", ""],
+])
+def test_batch_ungueltige_qec_parameter_starten_keinen_prozess(
+    tmp_path, monkeypatch, extra,
+):
+    cmds, _ = _popen_simulieren(monkeypatch)
+    assert cli.main(["--eingabe", str(_eingabe(tmp_path)), *extra]) == 2
+    assert cmds == []
