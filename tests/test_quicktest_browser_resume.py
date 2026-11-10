@@ -11,11 +11,10 @@ from pathlib import Path
 from threading import Event
 from types import ModuleType, SimpleNamespace
 
-import pytest
 
 from ntf_insight.acquisition import diagnosis_viewer as backend
 from ntf_insight.acquisition.diagnosis_viewer import (
-    DIAGNOSIS_VIEWER, BrowserSessionLost, DiagnosisViewerDownloader, DownloadRow,
+    DIAGNOSIS_VIEWER, DiagnosisViewerDownloader, DownloadRow,
     FinDownloadResult, _quicktest_fin_vollstaendig, _save_pdf,
     _vorhandene_sitzungs_pdf, _write_manifest,
 )
@@ -301,3 +300,59 @@ def test_zweiter_browserabsturz_stoppt_ohne_weitere_fins(
     assert len(contexts) == 2
     assert len(results) == 1
     assert results[0].status == "Browser-Verbindung verloren"
+
+
+def test_ssologin_laedet_unvollstaendige_viewer_seite_einmal_neu(
+    tmp_path, monkeypatch,
+):
+    zaehler = {"t": 0}
+
+    def schnelle_zeit():
+        zaehler["t"] += 20
+        return zaehler["t"]
+
+    monkeypatch.setattr(backend.time, "monotonic", schnelle_zeit)
+    page = FakePage()
+    page.field.visible = False
+    page.frames = ()
+    page.reload_count = 0
+    page.is_closed = lambda: False
+
+    def neu_laden(**_kwargs):
+        page.reload_count += 1
+        page.field.visible = True
+
+    page.reload = neu_laden
+    downloader = DiagnosisViewerDownloader(
+        tmp_path / "pdfs", tmp_path / "edge",
+        login_timeout_seconds=300, action_interval_seconds=0,
+    )
+    messages = []
+    result = downloader._login(
+        SimpleNamespace(pages=[page]), page, messages.append, Event(),
+    )
+    assert result is page
+    assert page.reload_count == 1
+    assert any("einmal neu geladen" in msg for msg in messages)
+
+
+def test_nach_browserabsturz_bleibt_bisheriger_sitzungszaehler_erhalten(
+    tmp_path, monkeypatch,
+):
+    downloader, page = _one_fin_downloader(tmp_path, monkeypatch)
+    folder = tmp_path / "pdfs" / FIN
+    pdf = _save_pdf(PdfDownload(), folder, ROWS[0])
+    _write_manifest(folder, FinDownloadResult(
+        fin=FIN, files=[pdf], available=14, status="Browser-Verbindung verloren",
+    ))
+    page.goto = lambda *args, **kwargs: (_ for _ in ()).throw(
+        RuntimeError("Target page, context or browser has been closed")
+    )
+    result, _ = downloader._one_fin(
+        SimpleNamespace(), page, FIN, lambda _m: None, Event(),
+    )
+    assert result.status == "Browser-Verbindung verloren"
+    status = json.loads((folder / "abrufstatus.json").read_text("utf-8"))
+    assert status["verfuegbare_sitzungen"] == 14
+    assert status["pdf_dateien"] == [pdf.name]
+    assert _quicktest_fin_vollstaendig(tmp_path / "pdfs", FIN) is None
