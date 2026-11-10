@@ -1076,6 +1076,7 @@ class QecDownloader:
                 "referenznummer": hit.reference,
                 "sachnummer": hit.part_number,
                 "bezeichnung": hit.description,
+                "benennung_suchfilter": self.benennung,
                 "schadteil_id": hit.schadteil_id,
                 "anhang_downloadmodus": self.attachment_policy,
                 "anhaenge_ohne_referenzbestaetigung": sum(
