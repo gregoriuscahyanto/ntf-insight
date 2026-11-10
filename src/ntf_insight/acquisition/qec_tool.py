@@ -1065,7 +1065,7 @@ class QecDownloader:
         if report_path.is_file():
             try:
                 previous = json.loads(report_path.read_text(encoding="utf-8"))
-                if (previous.get("fin") == target.fin
+                if (previous.get("fin") == hit.fin
                         and previous.get("referenznummer") == hit.reference):
                     previous_case = previous
                     inventory.update(_matching_previous_attachments(
