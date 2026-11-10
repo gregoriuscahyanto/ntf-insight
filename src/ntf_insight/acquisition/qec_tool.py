@@ -490,11 +490,23 @@ def _write_json(target: Path, payload: dict) -> None:
 
 
 def _write_result(folder: Path, result: QecResult) -> None:
+    # 14-stellige Suchanfragen besitzen einen eigenen Abrufstatus; die
+    # heruntergeladenen Schadteilfaelle liegen unter der bestaetigten Voll-FIN.
+    basis = folder.parent if len(result.fin) == 14 else folder
+
     def relative(path: Path) -> str:
-        # Stable POSIX separators in JSON, including on Windows.
-        return path.relative_to(folder).as_posix()
+        return path.relative_to(basis).as_posix()
+
+    bestaetigte = sorted({
+        path.relative_to(folder.parent).parts[0]
+        for path in [*result.files, *result.snapshots]
+        if path.is_relative_to(folder.parent)
+        and _FIN.fullmatch(path.relative_to(folder.parent).parts[0])
+    })
     _write_json(folder / "abrufstatus.json", {
         "fin": result.fin,
+        "pfade_relativ_zu": "qec_basisordner" if len(result.fin) == 14 else "fin_ordner",
+        "bestaetigte_voll_fins": bestaetigte,
         "stand_utc": result.attempted_at,
         "status": result.status,
         "referenzen": result.references,
@@ -796,8 +808,9 @@ class QecDownloader:
 
         page, form = self._search_form(context, cancel)
         progress("QEC: FIN-Suchfelder erkannt; BR und Endnummer eintragen ...")
-        form.locator('input[name="_finBR"]').fill(target.fin[3:6])
-        form.locator('input[name="_finEndnummerFrom"]').fill(target.fin[-6:])
+        br, endnummer = _qec_suchfelder(target.fin)
+        form.locator('input[name="_finBR"]').fill(br)
+        form.locator('input[name="_finEndnummerFrom"]').fill(endnummer)
         self._pause(cancel)
         progress("QEC: Filtern klicken ...")
         button = form.locator('input[type="submit"][value="Filtern"]')
@@ -1021,7 +1034,10 @@ class QecDownloader:
 
     def _one_hit(self, context, page, target: QecTarget, hit: QecHit,
                  result: QecResult, progress: Progress, cancel: Event):
-        page, result_scope, result_html, _ = self._search(context, page, target, progress, cancel)
+        page, result_scope, result_html, evidence = self._search(
+            context, page, target, progress, cancel
+        )
+        pruefe_kurzfin_treffer(result_html, target, evidence)
         # Selection is by exact QEC ID from a verified full-FIN and reference match.
         hits = parse_search_hits(
             result_html, target.fin,
@@ -1041,7 +1057,7 @@ class QecDownloader:
         page.get_by_text("Schadteilmonitor", exact=False).first.wait_for(
             timeout=self.navigation_timeout_ms
         )
-        reference_folder = case_folder(self.output_dir, target.fin, hit.reference)
+        reference_folder = case_folder(self.output_dir, hit.fin, hit.reference)
         report_path = reference_folder / "qec.json"
         inventory: dict[str, dict] = {}
         previous_case: dict | None = None
@@ -1111,6 +1127,7 @@ class QecDownloader:
             report = {
                 "schema_version": 2,
                 "fin": hit.fin,
+                "such_fin": target.fin,
                 "referenznummer": hit.reference,
                 "sachnummer": hit.part_number,
                 "bezeichnung": hit.description,
@@ -1147,6 +1164,12 @@ class QecDownloader:
                 context, page, target, progress, cancel,
             )
             result.search_diagnostics = evidence
+            try:
+                pruefe_kurzfin_treffer(result_html, target, evidence)
+            except ValueError as exc:
+                result.status = "Ergebnispruefung erforderlich"
+                result.errors.append(str(exc))
+                return result, page
             hits = parse_search_hits(
                 result_html, target.fin, part_number=target.part_number,
                 pump_only=self.pump_only and not bool(target.part_number or self.benennung),
@@ -1166,7 +1189,7 @@ class QecDownloader:
                 else:
                     result.status = "Keine passenden Schadteile"
                     result.warnings.append(
-                        "QEC-Suche bestaetigt, aber kein eindeutiger Voll-FIN- / "
+                        "QEC-Suche bestaetigt, aber kein eindeutiger FIN- / "
                         "Pumpen- / Sachnummer-Treffer. Suchdiagnose im abrufstatus.json pruefen."
                     )
                 progress(
