@@ -297,6 +297,9 @@ def test_vedoc_kurz_fin_ui_pruefung_akzeptiert_17stellige_anzeige(monkeypatch):
         def fill(self, wert):
             self.wert = wert
 
+        def is_visible(self):
+            return True
+
         def click(self, **kwargs):
             pass
 
@@ -314,6 +317,9 @@ def test_vedoc_kurz_fin_ui_pruefung_akzeptiert_17stellige_anzeige(monkeypatch):
         def wait_for_function(self, js, *, arg, timeout):
             self.js = js
             assert arg == KURZ_FIN
+
+        def wait_for_timeout(self, milliseconds):
+            pass
 
     seite = Seite()
     monkeypatch.setattr(m, "_fahrzeugdaten_oeffnen", lambda *args, **kwargs: None)
