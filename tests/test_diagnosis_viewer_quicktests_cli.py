@@ -9,6 +9,7 @@ import pytest
 from ntf_insight.acquisition import diagnosis_viewer_cli as cli
 from ntf_insight.acquisition.credentials import LoginCredentials
 from ntf_insight.acquisition.diagnosis_viewer import FinDownloadResult
+from ntf_insight.acquisition.quicktest_json import KonvertierungsErgebnis
 
 FIN = "WDD12345678901234"
 FIN_ZWEI = "WDD12345678901235"
@@ -35,6 +36,10 @@ def _fake_downloader(monkeypatch, ergebnisse=None):
             ]
 
     monkeypatch.setattr(cli, "DiagnosisViewerDownloader", Downloader)
+    monkeypatch.setattr(
+        cli, "konvertiere_quicktests",
+        lambda *_args, **_kwargs: KonvertierungsErgebnis(),
+    )
     return aufrufe
 
 
@@ -200,3 +205,64 @@ def test_kurz_fin_als_cli_eingabe_und_downloader_opt_in(tmp_path, monkeypatch):
     assert cli.main(["--eingabe", str(datei)]) == 0
     assert aufrufe[1] == [kurz]
     assert aufrufe[0][2]["kurz_fin_erlaubt"] is True
+
+
+
+def test_quicktest_cli_konvertiert_auch_bei_pdf_skip_json_standardmaessig(
+    tmp_path, monkeypatch,
+):
+    """JSON-Konvertierung laeuft ohne weitere PING ID auch bei alten PDFs."""
+    source = tmp_path / "alte-downloads"
+    pdf = source / FIN / "test.pdf"
+    pdf.parent.mkdir(parents=True)
+    pdf.write_bytes(b"%PDF-1.7\nSynthetisch")
+    monkeypatch.setattr(
+        cli, "load_saved_credentials",
+        lambda: pytest.fail("Bei vorhandenen PDFs kein SSO-Tresor"),
+    )
+    _fake_downloader(monkeypatch, [
+        FinDownloadResult(fin=FIN, status="Übersprungen (PDF bereits vorhanden)"),
+        FinDownloadResult(fin=FIN_ZWEI, status="Keine Quicktests"),
+    ])
+    converter_calls = []
+
+    def convert(ordner, **options):
+        converter_calls.append((ordner, options))
+        return KonvertierungsErgebnis(
+            gefunden=1, konvertiert=1,
+            statusdatei=ordner.parent / "diagnosis_viewer_quicktests_json/konvertierungsstatus.json",
+        )
+
+    monkeypatch.setattr(cli, "konvertiere_quicktests", convert)
+    # 2. FIN hat kein PDF; fuer dieses Beispiel Login-Zugriff simulieren.
+    monkeypatch.setattr(cli, "load_saved_credentials", lambda: None)
+    assert cli.main([
+        "--eingabe", str(_eingabe(tmp_path)), "--ausgabe", str(source),
+    ]) == 0
+    assert len(converter_calls) == 1
+    assert converter_calls[0][0] == source
+    assert converter_calls[0][1]["erlaubte_fins"] == {FIN, FIN_ZWEI}
+
+
+def test_quicktest_cli_ohne_json_bewahrt_alten_pdf_ablauf(tmp_path, monkeypatch):
+    _fake_downloader(monkeypatch)
+    monkeypatch.setattr(
+        cli, "konvertiere_quicktests",
+        lambda *_args, **_kwargs: pytest.fail("Mit --ohne-json keine Konvertierung."),
+    )
+    monkeypatch.setattr(cli, "load_saved_credentials", lambda: None)
+    assert cli.main([
+        "--eingabe", str(_eingabe(tmp_path)), "--ohne-json",
+    ]) == 0
+
+
+def test_quicktest_cli_json_fehler_ist_nicht_stillschweigend_erfolgreich(
+    tmp_path, monkeypatch,
+):
+    _fake_downloader(monkeypatch)
+    monkeypatch.setattr(cli, "load_saved_credentials", lambda: None)
+    monkeypatch.setattr(
+        cli, "konvertiere_quicktests",
+        lambda *_args, **_kwargs: KonvertierungsErgebnis(fehler=1, gefunden=2),
+    )
+    assert cli.main(["--eingabe", str(_eingabe(tmp_path))]) == 1
