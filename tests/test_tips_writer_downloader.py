@@ -583,3 +583,60 @@ def test_tips_fallnummer_ohne_treffer_erzeugt_nur_abfragestatus(tmp_path, monkey
     status = tmp_path / "tips" / "_fallnummern" / "fall_00001234" / "abrufstatus.json"
     assert json.loads(status.read_text("utf-8"))["fin"] is None
     assert not list((tmp_path / "tips").glob("*/fall_00001234/tips.json"))
+
+
+
+def test_tips_downloader_run_routet_fin_und_fallnummer_separat(tmp_path, monkeypatch):
+    import sys
+    from types import ModuleType
+
+    from ntf_insight.acquisition.tips_writer import TipsResult
+
+    calls = []
+
+    class Context:
+        pages = [object()]
+
+        def close(self):
+            calls.append("close")
+
+    class Playwright:
+        def __enter__(self):
+            return SimpleNamespace(chromium=SimpleNamespace(
+                launch_persistent_context=lambda **kwargs: Context(),
+            ))
+
+        def __exit__(self, *_args):
+            return False
+
+    fake = ModuleType("playwright.sync_api")
+    fake.sync_playwright = lambda: Playwright()
+    monkeypatch.setitem(sys.modules, "playwright.sync_api", fake)
+
+    scraper = TipsWriterDownloader(
+        tmp_path / "export", tmp_path / "edge", click_delay_seconds=0,
+    )
+
+    def one_fin(ctx, page, fin, progress, cancel):
+        calls.append(("fin", fin))
+        return TipsResult(fin=fin, status="Keine TIPS-Faelle"), page
+
+    def one_case(ctx, page, nummer, progress, cancel):
+        calls.append(("fallnummer", nummer))
+        return TipsResult(
+            fin=FIN, status="Erfolgreich", suchwert=nummer, suchtyp="fallnummer",
+        ), page
+
+    monkeypatch.setattr(scraper, "_one_fin", one_fin)
+    monkeypatch.setattr(scraper, "_one_fallnummer", one_case)
+    results = scraper.run([FIN, "01234567", FIN, "00001234"])
+    assert calls == [
+        ("fin", FIN),
+        ("fallnummer", "01234567"),
+        ("fallnummer", "00001234"),
+        "close",
+    ]
+    assert len(results) == 3
+    assert results[0].fin == FIN
+    assert results[1].suchwert == "01234567"
+    assert results[2].suchwert == "00001234"
