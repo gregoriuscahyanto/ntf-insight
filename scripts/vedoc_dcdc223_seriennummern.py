@@ -280,8 +280,10 @@ def _warte_auf_historieneintraege(
     if (letzte_anzahl > 0 and unveraendert_seit is not None
             and (time.monotonic() - unveraendert_seit) >= 1.0
             and not fehlerhafte_fins):
+        status = ("keine_seriennummer_aenderung" if attribut.casefold() ==
+                  _STANDARD_ATTRIBUT.casefold() else "keine_attributaenderung")
         return _ergebnis(
-            fin, "keine_seriennummer_aenderung",
+            fin, status,
             hinweis="Nach Wartezeit auch ungefiltert keine passende Objekt-/Attributaenderung gefunden.",
             objekt=objekt, attribut=attribut,
         )
@@ -299,7 +301,9 @@ def _bewerte_historie(
     """Letzten dokumentierten neuen Wert ableiten, nicht den aktuellen Einbau behaupten."""
     ziel = {"objekt": objekt, "attribut": attribut}
     if not eintraege:
-        return _ergebnis(fin, "keine_seriennummer_aenderung",
+        status = ("keine_seriennummer_aenderung" if attribut.casefold() ==
+                  _STANDARD_ATTRIBUT.casefold() else "keine_attributaenderung")
+        return _ergebnis(fin, status,
                          hinweis="Keine passende Objekt-/Attributaenderung in der Historie.", **ziel)
     try:
         sortiert = sorted(eintraege, key=lambda x: datetime.strptime(
@@ -318,7 +322,9 @@ def _bewerte_historie(
                          aenderungen=tuple(sortiert), **ziel)
     wert = next(iter(letzte_werte))
     if not wert:
-        return _ergebnis(fin, "seriennummer_fehlt",
+        status = ("seriennummer_fehlt" if attribut.casefold() ==
+                  _STANDARD_ATTRIBUT.casefold() else "neuer_wert_fehlt")
+        return _ergebnis(fin, status,
                          hinweis="Der letzte Historieneintrag enthaelt keinen neuen Wert.",
                          aenderungen=tuple(sortiert), **ziel)
     return _ergebnis(fin, "gefunden", seriennummer=wert,
