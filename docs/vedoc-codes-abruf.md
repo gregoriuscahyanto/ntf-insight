@@ -32,7 +32,7 @@ Auch durch Leerzeichen, `,` oder `;` getrennte FINs sind zulässig. Kommentare b
 ntf-insight-vedoc-codes --eingabe .\fins.txt --ausgabe .\daten\vedoc_codes.json
 ```
 
-Ohne `--ausgabe` schreibt der Scraper automatisch nach **`data/processed/vedoc_codes.json`** (relativ zum aktuellen Arbeitsverzeichnis, normalerweise das Repository-Hauptverzeichnis). Der Ordner wird automatisch erstellt. Mit `--ausgabe` lässt sich ein anderer JSON-Zielpfad angeben.
+Ohne `--ausgabe` schreibt der Scraper nach **`data/processed/<bereinigter TXT-Name>/vedoc_codes/vedoc_codes.json`** (relativ zum aktuellen Arbeitsverzeichnis). Beispielsweise wird `FIN-Liste DCDC223 SensorIssue.txt` zu `data/processed/FIN-Liste DCDC223 SensorIssue/vedoc_codes/vedoc_codes.json`. Mit `--ausgabe` lässt sich weiterhin ein beliebiger anderer JSON-Zielpfad angeben. Bisherige Dateien werden nicht verschoben.
 
 ```powershell
 ntf-insight-vedoc-codes --eingabe .\fins.txt
