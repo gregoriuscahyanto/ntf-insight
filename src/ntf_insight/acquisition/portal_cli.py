@@ -14,6 +14,7 @@ from pathlib import Path
 
 from ntf_insight.acquisition.credentials import LoginCredentials, load_saved_credentials
 from ntf_insight.acquisition.diagnosis_viewer import parse_fins
+from ntf_insight.acquisition.output_paths import standard_ausgabe
 from ntf_insight.acquisition.qec_tool import QecDownloader, QecResult, parse_qec_targets
 from ntf_insight.acquisition.tips_writer import TipsResult, TipsWriterDownloader
 
@@ -38,8 +39,8 @@ def _parser(quelle: str, *, ausgabe: Path, profil: Path) -> argparse.ArgumentPar
     )
     parser.add_argument("--eingabe", type=Path, required=True,
                         help="TXT mit FINs, eine FIN pro Zeile (QEC: optional ; Sachnummer)")
-    parser.add_argument("--ausgabe", type=Path, default=ausgabe,
-                        help=f"Lokales Zielverzeichnis (Standard: {ausgabe})")
+    parser.add_argument("--ausgabe", type=Path, default=None,
+                        help=f"Lokales Zielverzeichnis (Standard unter data/processed/<TXT-Name>; bisher {ausgabe})")
     parser.add_argument("--profil", type=Path, default=profil,
                         help="Eigenes, dauerhaftes Microsoft-Edge-CLI-Profil")
     parser.add_argument("--anmelde-timeout", type=int, default=300,
@@ -133,6 +134,8 @@ def qec_main(argv: list[str] | None = None) -> int:
                         help="QEC nicht nur nach Kuehlmittelpumpen filtern")
     args = parser.parse_args(argv)
     try:
+        if args.ausgabe is None:
+            args.ausgabe = standard_ausgabe(args.eingabe, "qec")
         ausgabe, profil = _pruefe_argumente(args)
         ziele = parse_qec_targets(lese_eingabe(args.eingabe))
         login = _lade_login(args)
@@ -164,6 +167,8 @@ def tips_main(argv: list[str] | None = None) -> int:
     parser = _parser("XENTRY TIPS Writer", ausgabe=TIPS_AUSGABE, profil=TIPS_PROFIL)
     args = parser.parse_args(argv)
     try:
+        if args.ausgabe is None:
+            args.ausgabe = standard_ausgabe(args.eingabe, "tips")
         ausgabe, profil = _pruefe_argumente(args)
         fins = parse_fins(lese_eingabe(args.eingabe))
         login = _lade_login(args)
