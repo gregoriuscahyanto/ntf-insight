@@ -87,9 +87,9 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           python -m ruff check src tests ci
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          python -m pytest -q --maxfail=1 --tb=short tests/test_acquisition_portal_cli.py tests/test_qec_tool_downloader.py tests/test_tips_writer_downloader.py tests/test_vedoc_dcdc223_seriennummern.py tests/test_diagnosis_viewer_warn_error.py tests/test_vedoc_codes_scraper.py tests/test_diagnosis_viewer_quicktests_cli.py tests/test_diagnosis_viewer_downloader.py
+          python -m pytest -q --maxfail=1 --tb=short tests/test_acquisition_portal_cli.py tests/test_acquisition_output_paths.py tests/test_acquisition_batch_cli.py tests/test_qec_tool_downloader.py tests/test_tips_writer_downloader.py tests/test_vedoc_dcdc223_seriennummern.py tests/test_diagnosis_viewer_warn_error.py tests/test_vedoc_codes_scraper.py tests/test_diagnosis_viewer_quicktests_cli.py tests/test_diagnosis_viewer_downloader.py
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          python -c "import importlib.metadata as m; names = {e.name for e in m.distribution('ntf-insight').entry_points if e.group == 'console_scripts'}; assert {'ntf-insight-vedoc-dcdc223','ntf-insight-wem','ntf-insight-vedoc-codes','ntf-insight-quicktests','ntf-insight-qec','ntf-insight-tips'} <= names"
+          python -c "import importlib.metadata as m; names = {e.name for e in m.distribution('ntf-insight').entry_points if e.group == 'console_scripts'}; assert {'ntf-insight-vedoc-dcdc223','ntf-insight-wem','ntf-insight-vedoc-codes','ntf-insight-quicktests','ntf-insight-qec','ntf-insight-tips','ntf-insight-beschaffung'} <= names"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Run full portable quality gate
@@ -103,7 +103,7 @@ jobs:
         if: ${{ github.event_name == 'pull_request' && github.event.pull_request.number == 75 }}
         shell: pwsh
         run: |
-          python -c "from pathlib import Path; from zipfile import ZipFile; wheel = next(Path('dist').glob('ntf_insight-*.whl')); names = set(ZipFile(wheel).namelist()); required = {'scripts/__init__.py', 'scripts/vedoc_dcdc223_seriennummern.py', 'scripts/diagnosis_viewer_warn_error.py', 'ntf_insight/acquisition/portal_cli.py'}; assert required.issubset(names), sorted(required - names)"
+          python -c "from pathlib import Path; from zipfile import ZipFile; wheel = next(Path('dist').glob('ntf_insight-*.whl')); names = set(ZipFile(wheel).namelist()); required = {'scripts/__init__.py', 'scripts/vedoc_dcdc223_seriennummern.py', 'scripts/diagnosis_viewer_warn_error.py', 'ntf_insight/acquisition/portal_cli.py', 'ntf_insight/acquisition/output_paths.py', 'ntf_insight/acquisition/beschaffung_cli.py'}; assert required.issubset(names), sorted(required - names)"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       # No artifacts uploaded to GitHub Actions: quota protection.
