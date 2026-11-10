@@ -686,13 +686,17 @@ def _schreibe_excel(
     temporaer.replace(pfad)
 
 
-def main(argv: list[str] | None = None) -> int:
+def main(argv: list[str] | None = None, *, allgemeine_historie: bool = False) -> int:
     parser = argparse.ArgumentParser(
-        description="Exportiert die DCDC223-Seriennummernhistorie je FIN als JSON und Excel."
+        description="Exportiert die VeDoc-Seriennummern- oder Attributhistorie fuer ein frei waehlbares Hardware-Objekt."
     )
     parser.add_argument("--eingabe", type=Path, help="TXT mit einer FIN pro Zeile")
+    parser.add_argument("--objekt", "--steuergeraet", dest="objekt", default=_STEUERGERAET,
+                        help="Exakter VeDoc-Objektname (Standard: DCDC223)")
+    parser.add_argument("--attribut", default=_STANDARD_ATTRIBUT,
+                        help="Exakter Attributname im VeDoc-Historienreiter (Standard: Seriennummer)")
     parser.add_argument("--ausgabe", type=Path, default=None,
-                        help="Zielordner (Standard: data/processed/<TXT-Name>/vedoc_dcdc223)")
+                        help="Zielordner unter data/processed/<TXT-Name>/vedoc_historie (Legacy: vedoc_dcdc223)")
     parser.add_argument("--url", default=os.getenv("VEDOC_URL", VEDOC_START),
                         help="VeDoc-Startadresse (Standard bereits im Skript hinterlegt)")
     parser.add_argument("--browser", choices=["edge", "chromium"], default="edge")
@@ -706,11 +710,17 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--nur-login", action="store_true",
                         help="Nur den SSO/PING-ID-Login testen, ohne FIN-Abfrage oder Export")
     argumente = parser.parse_args(argv)
-    if argumente.ausgabe is None:
-        argumente.ausgabe = (standard_ausgabe(argumente.eingabe, "dcdc223")
-                            if argumente.eingabe is not None
-                            else Path("data/processed/vedoc_dcdc223"))
     try:
+        argumente.objekt = pruefe_historienziel(argumente.objekt, feld="--objekt")
+        argumente.attribut = pruefe_historienziel(argumente.attribut, feld="--attribut")
+        if argumente.ausgabe is None:
+            quelle = ("vedoc-historie" if allgemeine_historie
+                      or argumente.objekt != _STEUERGERAET
+                      or argumente.attribut != _STANDARD_ATTRIBUT else "dcdc223")
+            argumente.ausgabe = (standard_ausgabe(argumente.eingabe, quelle)
+                                if argumente.eingabe is not None
+                                else Path("data/processed/vedoc_historie" if allgemeine_historie
+                                          else "data/processed/vedoc_dcdc223"))
         if not argumente.nur_login and argumente.eingabe is None:
             raise ValueError("--eingabe ist fuer FIN-Exporte erforderlich.")
         fins = [] if argumente.nur_login else lade_fins(argumente.eingabe)
@@ -726,8 +736,9 @@ def main(argv: list[str] | None = None) -> int:
 
     if not argumente.nur_login:
         argumente.ausgabe.mkdir(parents=True, exist_ok=True)
-    json_pfad = argumente.ausgabe / "dcdc223_seriennummern.json"
-    excel_pfad = argumente.ausgabe / "dcdc223_seriennummern.xlsx"
+    dateistamm = _dateistamm(argumente.objekt, argumente.attribut)
+    json_pfad = argumente.ausgabe / f"{dateistamm}.json"
+    excel_pfad = argumente.ausgabe / f"{dateistamm}.xlsx"
     ergebnisse: list[Ergebnis] = []
     try:
         from playwright.sync_api import TimeoutError as PlaywrightTimeout, sync_playwright
@@ -769,6 +780,7 @@ def main(argv: list[str] | None = None) -> int:
                             ergebnis = _abfrage(
                                 seite, fin, argumente.timeout * 1000,
                                 argumente.historie_wartezeit * 1000,
+                                objekt=argumente.objekt, attribut=argumente.attribut,
                             )
                         except Exception as fehler:
                             if _browserfehler(fehler) or not _kontext_hat_seiten(kontext):
@@ -776,9 +788,11 @@ def main(argv: list[str] | None = None) -> int:
                                     "Browser waehrend der FIN-Abfrage geschlossen oder abgestuerzt."
                                 ) from None
                             # Keine internen Browserfehlermeldungen mit FIN/URLs ausgeben.
-                            ergebnis = _ergebnis(fin, "fehler", hinweis="VeDoc-Abfrage fehlgeschlagen.")
+                            ergebnis = _ergebnis(fin, "fehler", hinweis="VeDoc-Abfrage fehlgeschlagen.",
+                                                    objekt=argumente.objekt, attribut=argumente.attribut)
                         ergebnisse.append(ergebnis)
-                        _schreibe_json(json_pfad, ergebnisse)  # Zwischenstand nach jeder FIN.
+                        _schreibe_json(json_pfad, ergebnisse, objekt=argumente.objekt,
+                                        attribut=argumente.attribut)  # Zwischenstand nach jeder FIN.
                         print(f"[{nummer}/{len(fins)}] {_gekuerzte_fin(fin)}: {ergebnis.status}")
             finally:
                 try:
@@ -806,12 +820,19 @@ def main(argv: list[str] | None = None) -> int:
         if argumente.nur_login:
             pass  # Login-Probe erzeugt und ueberschreibt keine Exportdateien.
         elif ergebnisse:
-            _schreibe_json(json_pfad, ergebnisse)
-            _schreibe_excel(excel_pfad, ergebnisse)
+            _schreibe_json(json_pfad, ergebnisse, objekt=argumente.objekt,
+                            attribut=argumente.attribut)
+            _schreibe_excel(excel_pfad, ergebnisse, objekt=argumente.objekt,
+                             attribut=argumente.attribut)
             print(f"JSON: {json_pfad}\nExcel: {excel_pfad}")
         else:
             print("Keine FIN verarbeitet; vorhandene Exporte bleiben unveraendert.", flush=True)
     return returncode
+
+
+def historie_main(argv: list[str] | None = None) -> int:
+    """Neuer neutral benannter CLI-Einstieg fuer beliebige VeDoc-Objekte."""
+    return main(argv, allgemeine_historie=True)
 
 
 if __name__ == "__main__":
