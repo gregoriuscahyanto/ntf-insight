@@ -24,6 +24,8 @@ Mit `FIN-Liste DCDC223 SensorIssue.txt` als Eingabe:
 
 ```powershell
 ntf-insight-vedoc-dcdc223 --eingabe ".\FIN-Liste DCDC223 SensorIssue.txt"
+# Alternativ: beliebiges VeDoc-Hardwareobjekt / Hardwareattribut
+ntf-insight-vedoc-historie --eingabe ".\FIN-Liste DCDC223 SensorIssue.txt" --objekt CPC3 --attribut Seriennummer
 ntf-insight-wem --eingabe ".\FIN-Liste DCDC223 SensorIssue.txt"
 ntf-insight-vedoc-codes --eingabe ".\FIN-Liste DCDC223 SensorIssue.txt"
 ntf-insight-quicktests --eingabe ".\FIN-Liste DCDC223 SensorIssue.txt"
@@ -73,6 +75,45 @@ Beispiele:
 ntf-insight-wem --eingabe .\fins.txt --ausgabe "D:\NTF\wem.json"
 ntf-insight-qec --eingabe .\fins.txt --ausgabe "D:\NTF\qec"
 ```
+
+## Frei waehlbare VeDoc-Hardwarehistorie
+
+Die bisher fest auf DCDC223 eingestellte VeDoc-Historie kann jetzt jedes
+**exakt im VeDoc-Historienreiter auftauchende Objekt** abfragen. Mit
+`--objekt` wird das Objekt, mit `--attribut` das genaue Feld gewaehlt.
+Beide sind reine Suchtexte und werden nicht als Code ausgefuehrt.
+
+```powershell
+ntf-insight-vedoc-historie --eingabe .\fins.txt --objekt CPC3
+ntf-insight-vedoc-historie --eingabe .\fins.txt --objekt CPC3 --attribut Hardwarestand
+ntf-insight-vedoc-dcdc223 --eingabe .\fins.txt      # Legacy-Standard DCDC223/Seriennummer
+```
+
+Das neue Kommando `ntf-insight-vedoc-historie` speichert standardmaessig
+unter `data/processed/<TXT-Name>/vedoc_historie/` und verwendet je
+Objekt/Attribut sichere, unterschiedliche Dateinamen (z. B.
+`cpc3_seriennummern.json` und `cpc3_hardwarestand.xlsx`).
+Der DCDC223-Legacy-Aufruf ohne zusaetzliche Optionen verwendet weiter
+`vedoc_dcdc223/dcdc223_seriennummern.{json,xlsx}`. Ein letzter
+neuer Wert ist nur ein **dokumentierter Historienwert**, kein Nachweis des
+aktuell verbauten Hardwarezustands.
+
+Auch im Sammelabruf sind `--objekt` und `--attribut` moeglich,
+wenn die VeDoc-Historie selektiert ist:
+
+```powershell
+ntf-insight-beschaffung --eingabe .\fins.txt --quellen vedoc-historie,quicktests --objekt CPC3 --attribut Hardwarestand --parallel 2
+ntf-insight-beschaffung --eingabe .\fins.txt --quellen dcdc223,wem --objekt CPC3 --parallel 2
+```
+
+`vedoc-historie` ist ein lesbarer Alias fuer die historische Quellen-ID
+`dcdc223`. Wird eines der neuen Argumente gesetzt, schreibt der Sammelabruf
+in `vedoc_historie/`; andere Datenquellen erhalten diese Optionen **nicht**.
+Einen gleichzeitigen Abruf mehrerer verschiedener Hardwareobjekte in
+denselben Exportdateien bitte nicht verwenden: Fuer unterschiedliche Objekte
+werden getrennte JSON-/XLSX-Dateinamen erzeugt, die Prozesse einer Quelle
+laufen jedoch weiterhin nacheinander. Weitere Hinweise:
+[VeDoc-Hardwarehistorie](vedoc-hardware-historie.md).
 
 ## Alle Quellen parallel abrufen
 
