@@ -75,7 +75,7 @@ def test_unbekannte_datenquelle_ist_fehler():
 
 
 def test_sonderzeichen_generieren_keine_pfadspruenge():
-    p = standard_ausgabe(Path("A:B?C.txt"), "tips")
+    p = standard_ausgabe(Path("FIN:A?B.txt"), "tips")
     assert p.parts[:2] == ("data", "processed")
     assert len(p.parts) == 4
-    assert p.parts[2] == "A_B_C"
+    assert p.parts[2] == "FIN_A_B"
