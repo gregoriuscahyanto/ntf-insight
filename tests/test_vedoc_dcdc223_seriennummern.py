@@ -2,6 +2,7 @@
 
 import importlib.util
 import json
+import sys
 from pathlib import Path
 
 import pytest
@@ -10,7 +11,6 @@ from openpyxl import load_workbook
 SCRIPT = Path(__file__).resolve().parents[1] / "scripts" / "vedoc_dcdc223_seriennummern.py"
 spezifikation = importlib.util.spec_from_file_location("vedoc_export", SCRIPT)
 modul = importlib.util.module_from_spec(spezifikation)
-import sys
 sys.modules[spezifikation.name] = modul
 spezifikation.loader.exec_module(modul)
 FIN_1 = "WDD12345678901234"
@@ -31,12 +31,12 @@ def html_zeile(
 
 
 def html_tabelle(*zeilen: str) -> str:
-    return '<table id="historyTable"><tbody>' + ''.join(zeilen) + '</tbody></table>
+    return '<table id="historyTable"><tbody>' + ''.join(zeilen) + '</tbody></table>'
 
 
 def test_lade_fins_bom_kommentare_doppelte(tmp_path):
     quelle = tmp_path / "fins.txt"
-    quelle.write_text("\ufeff# intern\n" + FIN_1.lower() + "\n\n" + FIN_1 + "\n" + FIN_2)
+    quelle.write_text("\ufeff# intern\n" + FIN_1.lower() + "\n\n" + FIN_1 + "\n" + FIN_2, encoding="utf-8")
     assert modul.lade_fins(quelle) == [FIN_1, FIN_2]
 
 

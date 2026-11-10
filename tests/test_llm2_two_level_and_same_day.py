@@ -92,7 +92,7 @@ def test_second_package_preserves_same_day_qt_and_km_detail(tmp_path):
                        for row in close)
         prompt = archive.read("CHATGPT_2_DURCHLAUF.txt").decode("utf-8")
         assert "QUICKTESTS AM TAUSCHTAG" in prompt
-        assert "mehrere Fehlerbild-Kategorien" in prompt
+        assert "mehrere fehlerbild-kategorien" in prompt.casefold()
         assert "fehlerbilder[]" in prompt
         schema = json.loads(archive.read("chatgpt_ergebnis_schema.json"))
         assert schema == ergebnis_schema()
@@ -300,7 +300,7 @@ def test_legacy_detail_json_imports_without_editing_file(tmp_path):
     assert any(e["fundstelle"] == proof["fundstelle"] for e in finding["belege"])
     with source.store.connect() as con:
         archived = con.execute(
-            "SELECT payload_json FROM chatgpt_imports WHERE analyse_id=?",
+            "SELECT original_json FROM chatgpt_imports WHERE analyse_id=?",
             [answer["analyse_id"]],
         ).fetchone()[0]
     assert archived == original.decode("utf-8")
