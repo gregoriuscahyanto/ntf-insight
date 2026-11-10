@@ -85,9 +85,27 @@ bezeichnet und müssen später fachlich bzw. in der ChatGPT-Auswertung
 geprüft werden. Die Herkunft des Popups ist nur ein Kontextsignal.
 SSO, PING ID, URL- und Dateisicherheitsprüfungen bleiben unverändert.
 
-Der parallele Sammelbefehl kann `--sachnummer` und
-`--anhaenge` ebenfalls an die Quelle `qec` weiterreichen; andere
-Datenquellen erhalten diese Parameter nicht.
+**Keine Sachnummer vorhanden:** Der CLI-Parameter `--benennung DCDC`
+filtert alle QEC-Schadteilzeilen, deren Spalte `Benennung` den Text
+`DCDC` enthaelt (ohne Beachtung der Gross-/Kleinschreibung). Es werden
+auch unterschiedliche DCDC-Sachnummern innerhalb der ausgewählten FINs
+erfasst. Mehrere alternative Stichwoerter sind als
+`--benennung "DCDC,DC/DC"` moeglich (ODER); mit zusaetzlicher
+`--sachnummer` gilt UND. **Ohne** Sachnummer/Benennung bleibt der
+bisherige Pumpenfilter aktiv. Die originale QEC-Referenznummer und die
+exakt passende 17-stellige FIN bleiben weiterhin verbindlich.
+
+```powershell
+ntf-insight-qec --eingabe .\fins.txt --benennung DCDC --anhaenge alle
+ntf-insight-beschaffung --eingabe .\fins.txt --quellen alle --parallel 6 --benennung DCDC --anhaenge alle
+```
+
+Der parallele Sammelbefehl reicht `--sachnummer`, `--benennung` und
+`--anhaenge` ausschließlich an die Quelle `qec` weiter.
+Alle sechs CLI-Quellen verwenden dieselbe Betriebssystem-Sperre fuer
+die nacheinander erfolgenden SSO-/PING-ID-Anmeldungen; die Downloads
+bleiben parallel. Andere Quellen werden durch die QEC-Filter nicht
+eingeschraenkt.
 
 ## Neues Speicherformat (lokal)
 
