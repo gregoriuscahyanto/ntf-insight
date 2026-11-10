@@ -10,7 +10,7 @@ Die sechs Datenquellen lassen sich mit einer **FIN-TXT-Datei** gemeinsam oder ei
 python -m pip install -e .
 ```
 
-**Eingabe:** `--eingabe` ist der Pfad zu einer `.txt`-Datei mit Fahrzeugkennungen (**eine FIN pro Zeile**). Alle sechs Quellen unterstützen vollständige, 17-stellige FINs. **Für VeDoc-Historie und QuickTests sind zusätzlich 14-stellige Mercedes-Kurz-FINs möglich.** Beispiel `FIN-Liste DCDC223 SensorIssue.txt`:
+**Eingabe:** `--eingabe` ist der Pfad zu einer `.txt`-Datei mit Fahrzeugkennungen (**eine FIN pro Zeile**). Alle sechs Quellen unterstützen vollständige, 17-stellige FINs. **Für VeDoc-Historie und QuickTests sind zusätzlich 14-stellige Mercedes-Kurz-FINs möglich.** **TIPS** akzeptiert alternativ numerische **TIPS-Fallnummern** aus einer eigenen TXT-Datei. Beispiel `FIN-Liste DCDC223 SensorIssue.txt`:
 
 ```text
 WDD12345678901234
@@ -50,6 +50,28 @@ ntf-insight-vedoc-historie --eingabe ".\FIN-Liste DCDC223 SensorIssue.txt" --obj
 ```powershell
 ntf-insight-beschaffung --eingabe ".\FIN-Liste DCDC223 SensorIssue.txt" --quellen vedoc-historie,quicktests --objekt CPC3 --parallel 2
 ```
+
+**TIPS Writer: direkt nach 17-stelliger FIN oder TIPS-Fallnummer suchen** (Fallnummern ohne führende Nullen zu verlieren):
+
+```powershell
+ntf-insight-tips --eingabe ".\FIN-Liste DCDC223 SensorIssue.txt"
+ntf-insight-tips --eingabe ".\TIPS-Fallnummern.txt"
+```
+
+Beispielinhalt für `TIPS-Fallnummern.txt` (rein synthetisch):
+
+```text
+01234567
+00001234
+```
+
+**Alle sechs Quellen parallel mit separater TIPS-Fallnummernliste:**
+
+```powershell
+ntf-insight-beschaffung --eingabe ".\FIN-Liste DCDC223 SensorIssue.txt" --tips-eingabe ".\TIPS-Fallnummern.txt" --quellen alle --parallel 6
+```
+
+TIPS aktiviert den Reiter **„Fälle“**, prüft die **exakte Fallnummer** und liest die zugehörige 17-stellige FIN aus dem Treffer. Berichte landen unter `tips_writer/<FIN>/fall_<Fallnummer>/`. **Bei `--quellen tips` darf `--eingabe` auch direkt die Fallnummern-TXT sein.**
 
 **QEC nur für eine Sachnummer inklusive aller angezeigten Anhänge** (auch ohne QEC-Referenz im Dateinamen):
 
@@ -93,7 +115,8 @@ ntf-insight-beschaffung --eingabe ".\FIN-Liste DCDC223 SensorIssue.txt" --quelle
 
 | Parameter | Eingabe / Standard | Bedeutung |
 | --- | --- | --- |
-| `--eingabe` | **Erforderlich:** `pfad\FIN-Liste.txt` | Textdatei mit den abzufragenden FINs; bei Leerzeichen Pfad in Anführungszeichen setzen. |
+| `--eingabe` | **Erforderlich:** `pfad\FIN-Liste.txt` | Gemeinsame FIN-Liste (17-stellig; Kurz-FIN nur für VeDoc-Historie/QuickTests). Bei `--quellen tips` auch Fallnummernliste möglich. | 
+| `--tips-eingabe` | Optional: `"TIPS-Fallnummern.txt"` | **Nur TIPS:** separate TXT mit numerischen Fallnummern (4–16 Ziffern), 17-stelligen FINs oder beidem. Bei mehreren Quellen bleiben die übrigen FIN-Listen unverändert. |
 | `--quellen` | `alle` (Standard) oder kommagetrennte IDs | Nur die genannten Datenquellen abrufen, z. B. `qec,quicktests,wem`. Jede Quelle höchstens einmal angeben. |
 | `--parallel` | Ganze Zahl von **1 bis 6**, Standard **2** | Maximale Zahl gleichzeitig laufender **Datenquellen** (nicht FINs). Innerhalb einer Quelle werden FINs nacheinander abgearbeitet. |
 | `--ausgabe` | Optional: Ziel-**Basisordner** | Ohne Angabe: `data/processed/<bereinigter TXT-Dateiname>/`. |
@@ -111,7 +134,7 @@ ntf-insight-beschaffung --eingabe ".\FIN-Liste DCDC223 SensorIssue.txt" --quelle
 | `sa-codes` | VeDoc – Fahrzeugcodes | Fahrzeug-/SA-Codes (JSON) |
 | `quicktests` | Diagnosis Viewer – QuickTests | Kurztest-PDFs |
 | `qec` | QEC | Befundungsfälle und Anhänge |
-| `tips` | XENTRY TIPS Writer | Fälle und Anhänge |
+| `tips` | XENTRY TIPS Writer | Fälle und Anhänge; Suche nach 17-stelliger FIN oder numerischer Fallnummer |
 
 **Unterschiedliche Hardwareobjekte:** Die neue Direkt-CLI heißt `ntf-insight-vedoc-historie`. Der alte Befehl `ntf-insight-vedoc-dcdc223` bleibt erhalten und kann ebenfalls `--objekt` und `--attribut` verwenden. Ein benutzerdefiniertes Ziel wird nach `vedoc_historie/` exportiert, nicht mit DCDC223-Ergebnissen vermischt. Die Auswahl muss dem **tatsächlich in VeDoc angezeigten Objekt-/Attributnamen** entsprechen; der Scraper prüft beide exakt und bestätigt die vollständige FIN.
 
