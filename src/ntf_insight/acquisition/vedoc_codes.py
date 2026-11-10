@@ -23,6 +23,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit
 
+from ntf_insight.acquisition.output_paths import standard_ausgabe
 from ntf_insight.acquisition.credentials import load_saved_credentials
 
 VEDOC_URL = "https://prod.core.public.vedoc.i.mercedes-benz.com/ui/VehicleArrangement.html"
@@ -617,8 +618,8 @@ def kommandozeile(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument('-i', '--eingabe', type=Path,
                         help='TXT-Datei mit FINs (alternativ als Positionsargument)')
     parser.add_argument('-o', '--ausgabe', type=Path,
-                        default=Path('data/processed/vedoc_codes.json'),
-                        help='Ausgabe-JSON (Standard: data/processed/vedoc_codes.json)')
+                        default=None,
+                        help='Ausgabe-JSON (Standard: data/processed/<TXT-Name>/vedoc_codes/vedoc_codes.json)')
     parser.add_argument('--profil', type=Path,
                         default=Path.home() / '.ntf-insight' / 'vedoc-edge-profile',
                         help='Lokales separates Edge-Profil fuer VeDoc-SSO')
@@ -642,6 +643,9 @@ def kommandozeile(argv: list[str] | None = None) -> argparse.Namespace:
     if args.eingabe is not None:
         args.fin_datei = args.eingabe
     del args.eingabe
+    if args.ausgabe is None:
+        args.ausgabe = (standard_ausgabe(args.fin_datei, "sa-codes") if args.fin_datei
+                        else Path("data/processed/vedoc_codes.json"))
     return args
 
 

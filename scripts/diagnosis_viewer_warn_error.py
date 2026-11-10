@@ -23,6 +23,8 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs, quote, unquote, urlsplit
 
+from ntf_insight.acquisition.output_paths import standard_ausgabe
+
 SEARCH_URL = "https://app.diagviewer.prod.gspp-eu.cloud.corpintra.net/search"
 VIEWER_HOST = urlsplit(SEARCH_URL).hostname
 API_HOST = "api.diagviewer.prod.gspp-eu.cloud.corpintra.net"
@@ -1006,8 +1008,8 @@ def build_parser() -> argparse.ArgumentParser:
                         help="Optional: FIN-TXT als Positionsargument")
     parser.add_argument("--eingabe", type=Path, help="TXT mit FINs (eine FIN pro Zeile)")
     parser.add_argument("--ausgabe", type=Path,
-                        default=Path("data/processed/diagnosis_viewer_warn_error/warnings_errors.json"),
-                        help="JSON-Ausgabedatei; erneute Laeufe setzen diesen Stand fort")
+                        default=None,
+                        help="JSON-Ausgabedatei (Standard: data/processed/<TXT-Name>/diagnosis_viewer_warn_error/warnings_errors.json)")
     parser.add_argument("--profil", type=Path,
                         default=Path.home() / ".ntf-insight" / "edge-diagnosis-warnungen")
     parser.add_argument("--browser", choices=("edge", "chromium"), default="edge")
@@ -1052,6 +1054,9 @@ def main(argv: list[str] | None = None) -> int:
         if args.eingabe and args.fin_datei and args.eingabe != args.fin_datei:
             raise ValueError("Bitte nur eine Eingabedatei angeben.")
         input_path = args.eingabe or args.fin_datei
+        if args.ausgabe is None:
+            args.ausgabe = (standard_ausgabe(input_path, "wem") if input_path is not None
+                            else Path("data/processed/diagnosis_viewer_warn_error/warnings_errors.json"))
         offline = args.nur_zusammenfassen or args.nur_aufteilen
         if sum((args.nur_login, args.nur_zusammenfassen, args.nur_aufteilen)) > 1:
             raise ValueError("--nur-login, --nur-aufteilen und --nur-zusammenfassen sind alternativ.")

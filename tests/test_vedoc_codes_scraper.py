@@ -122,7 +122,7 @@ def test_cli_eingabe_und_ausgabe():
 
 
 def test_cli_standardpfad_und_positionsargument():
-    expected = Path("data/processed/vedoc_codes.json")
+    expected = Path("data/processed/fins/vedoc_codes/vedoc_codes.json")
     assert m.kommandozeile(["--eingabe", "fins.txt"]).ausgabe == expected
     assert m.kommandozeile(["fins.txt"]).ausgabe == expected
 
@@ -140,7 +140,7 @@ def test_standardpfad_legt_data_processed_an(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     eingabe = tmp_path / "fins.txt"
     eingabe.write_text(FIN1 + "\n", encoding="utf-8")
-    ausgabe = tmp_path / "data" / "processed" / "vedoc_codes.json"
+    ausgabe = tmp_path / "data" / "processed" / "fins" / "vedoc_codes" / "vedoc_codes.json"
     m.speichere_json_zuverlaessig(ausgabe, {
         "schema_version": "1.0",
         "fahrzeuge": [{"fin": FIN1, "status": "erfolgreich", "codes": [{"code": "01U"}]}],
@@ -313,7 +313,7 @@ def test_nur_login_schreibt_keine_fahrzeugdaten(monkeypatch, tmp_path):
         m, "load_saved_credentials",
         lambda: pytest.fail("Keine Tresor-Abfrage ohne Login noetig"),
     )
-    output = tmp_path / "data" / "processed" / "vedoc_codes.json"
+    output = tmp_path / "data" / "processed" / "fins" / "vedoc_codes" / "vedoc_codes.json"
     args = m.kommandozeile(["--nur-login", "--ausgabe", str(output),
                             "--profil", str(tmp_path / "profil")])
     assert m.abrufen(args) == 0

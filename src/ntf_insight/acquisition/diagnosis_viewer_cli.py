@@ -12,6 +12,7 @@ import sys
 from pathlib import Path
 
 from ntf_insight.acquisition.credentials import LoginCredentials, load_saved_credentials
+from ntf_insight.acquisition.output_paths import standard_ausgabe
 from ntf_insight.acquisition.diagnosis_viewer import (
     DiagnosisViewerDownloader,
     FinDownloadResult,
@@ -38,8 +39,8 @@ def erstelle_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--eingabe", type=Path, required=True,
                         help="TXT-Datei mit FINs (eine pro Zeile)")
-    parser.add_argument("--ausgabe", type=Path, default=STANDARD_AUSGABE,
-                        help="Zielordner (Standard: data/processed/diagnosis_viewer_quicktests)")
+    parser.add_argument("--ausgabe", type=Path, default=None,
+                        help="Zielordner (Standard: data/processed/<TXT-Name>/diagnosis_viewer_quicktests)")
     parser.add_argument("--profil", type=Path, default=STANDARD_PROFIL,
                         help="Separates lokales Edge-Profil fuer die CLI")
     parser.add_argument("--erneut", action="store_true",
@@ -113,7 +114,8 @@ def main(argv: list[str] | None = None) -> int:
         if not 30 <= args.anmelde_timeout <= 900:
             raise ValueError("--anmelde-timeout muss zwischen 30 und 900 Sekunden liegen.")
         fins = lade_fins(args.eingabe)
-        ausgabe = args.ausgabe.expanduser().resolve()
+        ausgabe = (args.ausgabe if args.ausgabe is not None
+                   else standard_ausgabe(args.eingabe, "quicktests")).expanduser().resolve()
         profil = args.profil.expanduser().resolve()
         if ausgabe.is_file():
             raise ValueError("--ausgabe muss ein Verzeichnis sein, keine Datei.")

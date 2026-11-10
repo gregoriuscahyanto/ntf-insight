@@ -36,8 +36,9 @@ Standardmaessig relativ zum aktuellen Arbeitsverzeichnis:
 \`\`\`text
 data/
   processed/
-    diagnosis_viewer_quicktests/
-      <FIN-1>/
+    <bereinigter TXT-Name>/
+      diagnosis_viewer_quicktests/
+        <FIN-1>/
         <Datum_Quelle_Quicktest>.pdf
         abrufstatus.json
       <FIN-2>/
