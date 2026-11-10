@@ -591,8 +591,19 @@ def _abfrage(
             timeout=timeout_ms,
         )
     except PlaywrightTimeout:
-        return _ergebnis(fin, "fin_nicht_bestaetigt", hinweis="FIN-Wechsel nicht bestaetigt.",
-                         objekt=objekt, attribut=attribut)
+        hinweis = (
+            "VeDoc hat nach der Suche keine passende Fahrzeugkennung angezeigt. "
+            + (
+                "Bei 14-stelliger Kurz-FIN kann eine vollstaendige 17-stellige FIN "
+                "fuer die serverseitige Suche erforderlich sein; ggf. --timeout 60 testen."
+                if len(fin) == 14
+                else "SSO-/Fahrzeugauswahl pruefen; ggf. --timeout 60 testen."
+            )
+        )
+        return _ergebnis(
+            fin, "fin_nicht_bestaetigt", hinweis=hinweis,
+            objekt=objekt, attribut=attribut,
+        )
 
     try:
         seite.locator(_TAB).click(timeout=timeout_ms)
