@@ -363,3 +363,50 @@ def test_tips_sso_prozesssperre_fuer_sechs_quellen_aktiv(tmp_path, monkeypatch):
     calls = _fake_tips(monkeypatch)
     assert portal_cli.tips_main(["--eingabe", str(_liste(tmp_path))]) == 0
     assert calls[0][3]["serielle_sso"] is True
+
+
+
+def test_tips_cli_laed_fallnummern_txt_ohne_fin_vor_login(tmp_path, monkeypatch, capsys):
+    monkeypatch.setattr(portal_cli, "load_saved_credentials", lambda: None)
+    calls = _fake_tips(monkeypatch, [
+        TipsResult(
+            fin=FIN, status="Erfolgreich", suchwert="01234567", suchtyp="fallnummer",
+        ),
+        TipsResult(
+            fin=FIN2, status="Erfolgreich", suchwert="00001234", suchtyp="fallnummer",
+        ),
+    ])
+    file = _liste(tmp_path, "01234567\n00001234\n01234567 # Duplikat\n")
+    assert portal_cli.tips_main(["--eingabe", str(file)]) == 0
+    assert calls[1][1] == ["01234567", "00001234"]
+    assert calls[0][3]["serielle_sso"] is True
+    output = capsys.readouterr().out
+    assert "2 Fallnummer(n)" in output
+    assert "TIPS-Fall 01234567 | FIN" in output
+    assert "TIPS-Fall 00001234 | FIN" in output
+
+
+def test_tips_cli_unterstuetzt_gemischte_fin_und_fallnummer_liste(tmp_path, monkeypatch):
+    monkeypatch.setattr(portal_cli, "load_saved_credentials", lambda: None)
+    calls = _fake_tips(monkeypatch)
+    input_file = _liste(tmp_path, FIN + "\n00001234\n" + FIN2 + "\n01234567")
+    assert portal_cli.tips_main(["--eingabe", str(input_file)]) == 0
+    assert calls[1][1] == [FIN, "00001234", FIN2, "01234567"]
+
+
+@pytest.mark.parametrize("text", [
+    "123\n", "WDD1234567890123\n", "0123456O\n", "../01234567\n",
+    "01234567\n01234567-foo\n", "TIPS123456\n",
+])
+def test_tips_cli_ungueltige_fallnummern_vor_sso_abweisen(
+    tmp_path, monkeypatch, text,
+):
+    monkeypatch.setattr(
+        portal_cli, "load_saved_credentials",
+        lambda: pytest.fail("SSO darf nicht vor TIPS-Validierung beginnen"),
+    )
+    calls = _fake_tips(monkeypatch)
+    assert portal_cli.tips_main([
+        "--eingabe", str(_liste(tmp_path, text)),
+    ]) == 2
+    assert not calls
