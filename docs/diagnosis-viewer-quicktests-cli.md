@@ -78,8 +78,9 @@ Mercedes-SSO-HTTPS-Domain eingegeben. Die PING-ID-Freigabe erfolgt stets
 **manuell auf dem Smartphone**. Der Scraper wartet bis zur erfolgreichen
 Weiterleitung; keine Automatisierung oder Umgehung der PING-ID.
 
-Die QuickTest-CLI teilt eine OS-Dateisperre mit der VeDoc-Historien-CLI
-unter `%USERPROFILE%\.ntf-insight\sso-anmeldung.lock`. Damit beginnt
+Die QuickTest-CLI teilt eine OS-Dateisperre mit **allen sechs
+NTF-Datenbeschaffungs-CLIs** unter
+`%USERPROFILE%\.ntf-insight\sso-anmeldung.lock`. Damit beginnt
 immer nur **eine** PING-ID-Anmeldung gleichzeitig. **Nach dem Login**
 werden die Datenabrufe dennoch parallel ausgefuehrt. Die Datei enthaelt
 keine FINs, Login-Daten oder Cookies; ein Prozessende gibt den Lock frei.
