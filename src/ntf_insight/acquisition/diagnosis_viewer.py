@@ -453,25 +453,71 @@ class DiagnosisViewerDownloader:
             submitted["password"] = True
             progress("Anmeldung gesendet. Bitte PING ID auf dem Smartphone bestätigen …")
 
+    @staticmethod
+    def _fin_suchbereich(page):
+        """FIN-Suchfeld auf der Hauptseite oder in einem eingebetteten Frame finden.
+
+        Die Bereitschaft wird nicht allein aus der URL oder dem PING-ID-Dialog
+        abgeleitet. Fuer den anschliessenden Suchklick denselben Scope nutzen.
+        """
+        for scope in [page, *getattr(page, "frames", [])]:
+            try:
+                feld = scope.locator('input[name="finVin"]')
+                if feld.count() and feld.is_visible():
+                    return scope
+            except Exception as exc:
+                if _browser_verloren(exc):
+                    raise BrowserSessionLost(
+                        "Edge-Verbindung waehrend der SSO-Erkennung verloren."
+                    ) from exc
+                # Ein Frame kann gerade navigieren; die naechste Runde versucht es erneut.
+                continue
+        return None
+
     def _login(self, context, page, progress: Progress, cancel: Event):
         deadline = time.monotonic() + self.login_timeout_seconds
         clicked_sso = False
         submitted = {"user": False, "password": False}
+        viewer_aufgerufen: dict[int, float] = {}
+        viewer_neu_geladen: set[int] = set()
+        naechster_hinweis = time.monotonic() + 20
         progress("Edge: SSO öffnen. Benutzer-ID und Passwort werden bei Verfügbarkeit eingetragen.")
         while time.monotonic() < deadline:
             self._check_cancel(cancel)
-            for candidate in context.pages:
-                if candidate.is_closed():
-                    continue
+            try:
+                candidates = list(context.pages)
+            except Exception as exc:
+                if _browser_verloren(exc):
+                    raise BrowserSessionLost("Edge-Verbindung waehrend der Anmeldung verloren.") from exc
+                raise
+            for candidate in candidates:
                 try:
-                    fin_field = candidate.locator('input[name="finVin"]')
-                    if (
-                        urlsplit(candidate.url).scheme == "https"
-                        and urlsplit(candidate.url).hostname == VIEWER_HOST
-                        and fin_field.count() and fin_field.is_visible()
-                    ):
-                        progress("PING ID abgeschlossen. Diagnosis Viewer ist bereit.")
-                        return candidate
+                    if candidate.is_closed():
+                        continue
+                    hostname = urlsplit(candidate.url).hostname
+                    if hostname == VIEWER_HOST:
+                        if self._fin_suchbereich(candidate) is not None:
+                            progress("PING ID abgeschlossen. Diagnosis Viewer ist bereit.")
+                            return candidate
+                        # Der authentifizierte Viewer kann nach einem Redirect ein
+                        # unvollstaendiges Suchformular zeigen. Maximal einmal
+                        # kontrolliert neu laden, niemals PING ID umgehen.
+                        identitaet = id(candidate)
+                        jetzt = time.monotonic()
+                        viewer_aufgerufen.setdefault(identitaet, jetzt)
+                        if (
+                            identitaet not in viewer_neu_geladen
+                            and jetzt - viewer_aufgerufen[identitaet] >= 15
+                        ):
+                            viewer_neu_geladen.add(identitaet)
+                            progress(
+                                "Diagnosis Viewer ist geöffnet, aber das FIN-Suchfeld "
+                                "fehlt noch. Die Viewer-Seite wird einmal neu geladen."
+                            )
+                            candidate.reload(
+                                wait_until="domcontentloaded", timeout=15000
+                            )
+                            continue
                     if self._is_login_host(candidate.url):
                         self._enter_credentials(candidate, submitted, progress, cancel)
                         continue
@@ -486,15 +532,28 @@ class DiagnosisViewerDownloader:
                                 clicked_sso = True
                                 progress("SSO gestartet. PING ID nach der Passwort-Anmeldung bestätigen.")
                                 break
-                except DownloadCancelled:
+                except (DownloadCancelled, BrowserSessionLost):
                     raise
-                except Exception:
-                    # Login redirects can invalidate the page during a polling cycle.
+                except Exception as exc:
+                    if _browser_verloren(exc):
+                        raise BrowserSessionLost(
+                            "Edge-Verbindung waehrend der SSO-Anmeldung verloren."
+                        ) from exc
+                    # Login-Redirects koennen waehrend der Abfrage navigieren.
                     continue
-            time.sleep(0.7)
+            if time.monotonic() >= naechster_hinweis:
+                progress(
+                    "SSO: warte auf das sichtbare FIN-Suchfeld im Diagnosis Viewer. "
+                    "Falls die Seite bereits offen ist, ihren Ladezustand prüfen."
+                )
+                naechster_hinweis = time.monotonic() + 20
+            # Auch waehrend der Wartezeit ist der Abbruch unmittelbar wirksam.
+            if cancel.wait(0.7):
+                self._check_cancel(cancel)
         raise TimeoutError(
-            "SSO-/PING-ID-Anmeldung nicht rechtzeitig abgeschlossen. "
-            "Bitte Benutzer-ID, Passwort und die PING-ID-Freigabe in Edge prüfen."
+            "SSO-/PING-ID-Anmeldung nicht rechtzeitig abgeschlossen oder "
+            "FIN-Suchfeld im Diagnosis Viewer nicht sichtbar. "
+            "Bitte die Browserseite und die PING-ID-Freigabe prüfen."
         )
 
     def _wait_results(self, page, cancel: Event, fin: str):
