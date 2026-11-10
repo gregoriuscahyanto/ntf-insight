@@ -69,13 +69,13 @@ class TipsHit:
 class TipsResult:
     fin: str
     status: str = "Nicht gestartet"
-    suchwert: str = ""
-    suchtyp: str = "fin"
     cases: list[str] = field(default_factory=list)
     reports: list[Path] = field(default_factory=list)
     files: list[Path] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
     errors: list[str] = field(default_factory=list)
+    suchwert: str = ""
+    suchtyp: str = "fin"
 
 
 def _clean_text(value: str) -> str:
@@ -764,7 +764,10 @@ class TipsWriterDownloader:
         try:
             page, hits = self._search(context, page, fallnummer, progress, cancel)
             if not hits:
-                result.status = "Keine TIPS-Faelle"
+                result.status = "Fehler"
+                result.errors.append(
+                    "TIPS-Fallnummer nicht gefunden oder nicht bestaetigt."
+                )
             elif len(hits) != 1:
                 raise RuntimeError(
                     "Fallnummer liefert mehr als einen eindeutigen Treffer."
