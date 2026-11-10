@@ -178,3 +178,45 @@ def test_genau_sechs_quellen_in_vordefinierter_reihenfolge():
     assert tuple(cli._EINSTIEGE) == cli.quellennamen()
     assert cli._quellen("alle") == list(cli.quellennamen())
     assert cli._quellen(" QEC , TIPS ") == ["qec", "tips"]
+
+
+
+def test_freies_hardwareobjekt_nur_an_vedoc_weiterreichen(monkeypatch, tmp_path):
+    commands, _ = _popen_simulieren(monkeypatch)
+    root = tmp_path / "Ergebnisse"
+    assert cli.main([
+        "--eingabe", str(_eingabe(tmp_path)), "--ausgabe", str(root),
+        "--quellen", "vedoc-historie,wem", "--parallel", "2",
+        "--objekt", "CPC3", "--attribut", "Hardwarestand",
+    ]) == 0
+    assert len(commands) == 2
+    ven = next(args for args, _ in commands if "vedoc_dcdc223_seriennummern" in args[3])
+    wem = next(args for args, _ in commands if "diagnosis_viewer_warn_error" in args[3])
+    assert ven[ven.index("--objekt") + 1] == "CPC3"
+    assert ven[ven.index("--attribut") + 1] == "Hardwarestand"
+    assert ven[ven.index("--ausgabe") + 1] == str(root / "vedoc_historie")
+    assert "--objekt" not in wem and "--attribut" not in wem
+    assert cli._quellen("vedoc-historie,wem") == ["dcdc223", "wem"]
+
+
+def test_freie_vedoc_historie_bei_alle_ohne_andere_quellen_zu_aendern(monkeypatch, tmp_path):
+    commands, _ = _popen_simulieren(monkeypatch)
+    assert cli.main([
+        "--eingabe", str(_eingabe(tmp_path)), "--quellen", "alle",
+        "--objekt", "Pumpensteuergeraet",
+    ]) == 0
+    assert len(commands) == 6
+    v = next(argv for argv, _ in commands if "vedoc_dcdc223_seriennummern" in argv[3])
+    assert Path(v[v.index("--ausgabe") + 1]).name == "vedoc_historie"
+
+
+def test_unzulaessige_doppelte_vedoc_aliasse_oder_andere_quellen(monkeypatch, tmp_path):
+    commands, _ = _popen_simulieren(monkeypatch)
+    fin = _eingabe(tmp_path)
+    assert cli.main([
+        "--eingabe", str(fin), "--quellen", "dcdc223,vedoc-historie",
+    ]) == 2
+    assert cli.main([
+        "--eingabe", str(fin), "--quellen", "qec,tips", "--objekt", "CPC3",
+    ]) == 2
+    assert commands == []
