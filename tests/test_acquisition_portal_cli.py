@@ -315,3 +315,51 @@ def test_qec_ungueltige_sachnummer_vor_login_und_browser_stoppen(
         "--eingabe", str(_liste(tmp_path, text)), "--sachnummer", sachnummer,
     ]) == 2
     assert not calls
+
+
+
+def test_qec_keyword_ohne_sachnummer_ist_als_cli_parameter_erlaubt(tmp_path, monkeypatch):
+    monkeypatch.setattr(portal_cli, "load_saved_credentials", lambda: None)
+    calls = _fake_qec(monkeypatch)
+    assert portal_cli.qec_main([
+        "--eingabe", str(_liste(tmp_path)), "--benennung", "DCDC",
+        "--anhaenge", "alle",
+    ]) == 0
+    assert calls[1][1] == [QecTarget(FIN), QecTarget(FIN2)]
+    options = calls[0][3]
+    assert options["benennung"] == "DCDC"
+    assert options["pump_only"] is True  # Scraper uebersteuert Pumpenfilter nur fuer Keyword.
+    assert options["attachment_policy"] == "alle"
+    assert options["serielle_sso"] is True
+
+
+def test_qec_keyword_alias_und_sachnummer_gemeinsam(tmp_path, monkeypatch):
+    monkeypatch.setattr(portal_cli, "load_saved_credentials", lambda: None)
+    calls = _fake_qec(monkeypatch)
+    assert portal_cli.qec_main([
+        "--eingabe", str(_liste(tmp_path)),
+        "--sachnummer", "A1234567890",
+        "--keyword", "dcdc,DC/DC",
+    ]) == 0
+    assert calls[0][3]["benennung"] == "dcdc,DC/DC"
+    assert calls[1][1][0].part_number == "A1234567890"
+
+
+@pytest.mark.parametrize("invalid", ["DCDC,", "D", "../verzeichnis", "DCDC|.*"])
+def test_qec_invalides_keyword_stoppt_vor_login(tmp_path, monkeypatch, invalid):
+    monkeypatch.setattr(
+        portal_cli, "load_saved_credentials",
+        lambda: pytest.fail("Unzulaessige Benennung darf keine Anmeldung starten."),
+    )
+    calls = _fake_qec(monkeypatch)
+    assert portal_cli.qec_main([
+        "--eingabe", str(_liste(tmp_path)), "--benennung", invalid,
+    ]) == 2
+    assert not calls
+
+
+def test_tips_sso_prozesssperre_fuer_sechs_quellen_aktiv(tmp_path, monkeypatch):
+    monkeypatch.setattr(portal_cli, "load_saved_credentials", lambda: None)
+    calls = _fake_tips(monkeypatch)
+    assert portal_cli.tips_main(["--eingabe", str(_liste(tmp_path))]) == 0
+    assert calls[0][3]["serielle_sso"] is True
