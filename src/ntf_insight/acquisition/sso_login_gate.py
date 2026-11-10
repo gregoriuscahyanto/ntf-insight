@@ -61,7 +61,7 @@ def serielle_sso_anmeldung(
     status: Callable[[str], None] | None = None,
     abbruch: Event | None = None,
     sperrdatei: Path | None = None,
-    wartezeit_s: float = 1200,
+    wartezeit_s: float = 3600,
 ) -> Iterator[None]:
     """Eine PING-ID-Bestaetigung zur Zeit, danach parallel weiterarbeiten.
 
