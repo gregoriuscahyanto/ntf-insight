@@ -74,16 +74,28 @@ def _quellen(text: str) -> list[str]:
     return auswahl
 
 
-def _eingabe_pruefen(pfad: Path) -> int:
+def _eingabe_pruefen(pfad: Path, quellen: list[str] | None = None) -> int:
+    """Kurz-FIN nur erlauben, wenn alle ausgewaehlten Quellen sie verarbeiten."""
     if pfad.suffix.lower() != ".txt":
         raise ValueError("--eingabe muss eine .txt-Datei sein.")
     zeilen = [
         zeile.partition("#")[0]
         for zeile in pfad.expanduser().read_text(encoding="utf-8-sig").splitlines()
     ]
-    fins = parse_fins("\n".join(zeilen))
-    if not fins:
-        raise ValueError("Die FIN-Liste enthaelt keine gueltige FIN.")
+    fins = parse_fins("\n".join(zeilen), kurz_erlaubt=True)
+    # Andere Quellen haben eigene strengere 17-Zeichen-Validierung.
+    # Keine halben Batch-Ergebnisse erzeugen, deren Ursache bereits feststeht.
+    if any(len(fin) == 14 for fin in fins):
+        ungeeignet = sorted(set(quellen or ()) - {"dcdc223", "quicktests"})
+        if ungeeignet:
+            raise ValueError(
+                "Die FIN-Liste enthaelt 14-stellige Kurz-FINs. "
+                "Fuer diese werden derzeit nur 'vedoc-historie'/'dcdc223' "
+                "und 'quicktests' unterstuetzt; nicht: "
+                + ", ".join(ungeeignet)
+                + ". Bitte --quellen vedoc-historie,quicktests verwenden "
+                "oder fuer weitere Quellen vollstaendige 17-stellige FINs bereitstellen."
+            )
     # QEC-Sachnummern gehoeren nur in den einzelnen QEC-CLI-Lauf.
     return len(fins)
 
@@ -169,7 +181,7 @@ def main(argv: list[str] | None = None) -> int:
             argumente.sachnummer = pruefe_sachnummer(argumente.sachnummer)
         if not 1 <= argumente.parallel <= len(_EINSTIEGE):
             raise ValueError("--parallel muss zwischen 1 und 6 liegen.")
-        anzahl_fins = _eingabe_pruefen(argumente.eingabe)
+        anzahl_fins = _eingabe_pruefen(argumente.eingabe, auswahl)
         gruppe = (
             argumente.ausgabe.expanduser()
             if argumente.ausgabe is not None
