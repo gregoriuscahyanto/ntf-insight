@@ -33,6 +33,7 @@ ntf-insight-vedoc-dcdc223 = "scripts.vedoc_dcdc223_seriennummern:main"
 ntf-insight-wem = "scripts.diagnosis_viewer_warn_error:main"
 ntf-insight-qec = "ntf_insight.acquisition.portal_cli:qec_main"
 ntf-insight-tips = "ntf_insight.acquisition.portal_cli:tips_main"
+ntf-insight-beschaffung = "ntf_insight.acquisition.beschaffung_cli:main"
 
 [tool.setuptools]
 package-dir = {"" = "src", "scripts" = "scripts"}
