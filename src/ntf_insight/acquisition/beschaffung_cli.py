@@ -107,10 +107,28 @@ def _eingabe_pruefen(pfad: Path, quellen: list[str] | None = None) -> int:
 
 def _tips_eingabe_pruefen(pfad: Path) -> int:
     """TIPS-Quellliste vor SSO pruefen: 17-stellige FIN oder Fallnummer."""
+    from ntf_insight.acquisition.fin_format import ist_gueltige_fin
     from ntf_insight.acquisition.portal_cli import lese_eingabe
     from ntf_insight.acquisition.tips_writer import parse_tips_queries
 
-    return len(parse_tips_queries(lese_eingabe(pfad)))
+    raw = lese_eingabe(pfad)
+    tokens = [
+        wert.upper()
+        for zeile in raw.splitlines()
+        for wert in zeile.replace(",", " ").replace(";", " ").split()
+    ]
+    if any(
+        len(wert) == 14
+        and any("A" <= zeichen <= "Z" for zeichen in wert)
+        and ist_gueltige_fin(wert, kurz_erlaubt=True)
+        for wert in tokens
+    ):
+        raise ValueError(
+            "Die FIN-Liste enthaelt 14-stellige Kurz-FINs. "
+            "TIPS unterstuetzt nur vollstaendige 17-stellige FINs "
+            "oder numerische TIPS-Fallnummern."
+        )
+    return len(parse_tips_queries(raw))
 
 
 def _befehl(
