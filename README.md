@@ -19,6 +19,54 @@ WDD12345678901235
 
 *Die FINs hier sind fiktive Testwerte. Leere Zeilen und mit `#` beginnende Kommentare sind erlaubt. Echte FIN-Dateien nur lokal speichern, nicht ins Repository hochladen.*
 
+### Pflichtangaben und optionale Zusätze je Datenquelle
+
+**Bei jedem Einzelbefehl erforderlich:** `--eingabe "Datei.txt"` mit einer lokalen TXT-Liste. Die weiteren fachlichen Filter sind technisch optional. Für **DCDC223** sind vor allem die QEC-Filter und der Anhangmodus relevant:
+
+| Quelle (Einzel-CLI) | Erforderliche Eingabe | Optionale Parameter / Standard |
+| --- | --- | --- |
+| **VeDoc-Hardwarehistorie** (`ntf-insight-vedoc-historie` bzw. `ntf-insight-vedoc-dcdc223`) | `--eingabe`: 14- oder 17-stellige FINs | `--objekt` (Standard **DCDC223**), `--attribut` (Standard **Seriennummer**). Für die DCDC223-Seriennummernhistorie sind **keine** weiteren Angaben nötig. |
+| **Diagnosis Viewer – WEM** (`ntf-insight-wem`) | `--eingabe`: **17-stellige FINs** | `--aktualisieren` (neue Sitzungen), `--erneut` (bereits bearbeitete Sitzungen erneut), nur bei der Einzel-CLI. |
+| **VeDoc – SA-/Fahrzeugcodes** (`ntf-insight-vedoc-codes`) | `--eingabe`: **17-stellige FINs** | `--erneut` für bereits gespeicherte FINs, nur bei der Einzel-CLI. Keine DCDC223-Zusatzangabe nötig. |
+| **Diagnosis Viewer – QuickTests** (`ntf-insight-quicktests`) | `--eingabe`: 14- oder 17-stellige FINs | `--erneut`, um auch bei vorhandener PDF neu herunterzuladen. Sonst wird nur übersprungen, wenn eine PDF im entsprechenden FIN-Ordner vorhanden ist; **keine 24-h-Sperre**. |
+| **QEC – Befundungsberichte und Anhänge** (`ntf-insight-qec`) | `--eingabe`: **17-stellige FINs** | `--sachnummer` (exakte Sachnummer, auch ohne Leerzeichen), `--benennung`/`--keyword` (Text in „Benennung“), `--anhaenge referenz` (**Standard**) oder `--anhaenge alle`. `--alle-bauteile` nur bei der Einzel-CLI. Für DCDC223 **empfohlen:** `--benennung DCDC223 --anhaenge alle`, wenn die Sachnummer unbekannt ist. |
+| **XENTRY TIPS Writer – Fälle** (`ntf-insight-tips`) | `--eingabe`: **17-stellige FINs** oder numerische **TIPS-Fallnummern (4–16 Ziffern)**, auch gemischt | Kein zusätzlicher fachlicher Parameter nötig. Im **Sammelabruf** optional `--tips-eingabe`, damit TIPS eine eigene Fallnummern-TXT erhält. |
+
+**Für alle Einzel-CLIs optional:** `--ausgabe` und `--login-manuell`. Bei QuickTests, QEC und TIPS zusätzlich `--profil`, `--anmelde-timeout` (Standard: 300 Sekunden) und `--passwort-abfragen` mit optionaler `--benutzer-id`. Weitere Zeit-/Wiederholungsoptionen stehen in `--help`. Der **Sammelbefehl** `ntf-insight-beschaffung` benötigt ebenfalls `--eingabe`; `--quellen` (Standard: **alle sechs**), `--parallel` (Standard: **2**, erlaubt 1–6), `--ausgabe`, `--login-manuell` und quellenbezogene Zusatzparameter sind optional. Im Sammelbefehl bezeichnet `--ausgabe` einen **Basisordner**, bei den Einzelbefehlen für WEM/SA-Codes dagegen einen **JSON-Dateipfad**.
+
+**QEC-Filter:** Ohne Sachnummer oder Benennungsfilter wird standardmäßig nach **Kühlmittelpumpen** gesucht, nicht automatisch nach DCDC223. `--benennung DCDC` umfasst mehr Varianten als `--benennung DCDC223`. Eine zusätzliche `--sachnummer` muss **ebenfalls** passen (UND). Bei `--anhaenge alle` werden auch Anhänge heruntergeladen, deren Dateiname keine QEC-Referenz enthält; diese Zuordnung ist für die spätere Auswertung **nicht automatisch bestätigt**.
+
+### Drei Einzelbefehle für DCDC223
+
+Die drei Befehle kannst du in **PowerShell** ausführen. Für den gemeinsamen FIN-Bestand von QEC und TIPS müssen die FINs **17-stellig** sein:
+
+```powershell
+$FinListe = ".\FIN-Liste DCDC223 SensorIssue.txt"
+
+# 1. Diagnosis Viewer: QuickTest-PDFs
+ntf-insight-quicktests --eingabe $FinListe
+
+# 2. QEC: DCDC223-Befundungsberichte und alle sichtbaren Anhänge
+ntf-insight-qec --eingabe $FinListe --benennung DCDC223 --anhaenge alle
+
+# 3. TIPS Writer: TIPS-Fälle anhand vollständiger FINs
+ntf-insight-tips --eingabe $FinListe
+```
+
+**TIPS alternativ über eine Fallnummern-TXT** (z. B. `01234567` und `00001234`, jeweils eigene Zeile):
+
+```powershell
+ntf-insight-tips --eingabe ".\TIPS-Fallnummern.txt"
+```
+
+**Die drei Quellen parallel**, aber mit separater Fallnummernliste für TIPS:
+
+```powershell
+ntf-insight-beschaffung --eingabe ".\FIN-Liste DCDC223 SensorIssue.txt" --tips-eingabe ".\TIPS-Fallnummern.txt" --quellen quicktests,qec,tips --benennung DCDC223 --anhaenge alle --parallel 3
+```
+
+Ohne eigene TIPS-Datei `--tips-eingabe` weglassen; dann verwendet TIPS ebenfalls die normale FIN-Liste. Die **PING-ID-Anmeldungen** erfolgen auch bei parallelen Downloads **nacheinander**. Der Live-Test der direkten TIPS-Fallnummernsuche im Unternehmensportal steht noch aus.
+
 **Alle sechs Quellen abrufen** (standardmäßig maximal zwei gleichzeitig):
 
 ```powershell
