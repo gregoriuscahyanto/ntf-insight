@@ -52,6 +52,8 @@ def _parser() -> argparse.ArgumentParser:
                         help="VeDoc-Historienattribut fuer dcdc223, Standard: Seriennummer")
     parser.add_argument("--sachnummer",
                         help="QEC: exakte Sachnummer fuer alle FINs, z. B. A 123 456 78 90")
+    parser.add_argument("--benennung", "--keyword", dest="benennung",
+                        help="QEC: Benennung enthaelt Text (z. B. DCDC), ohne Sachnummer moeglich")
     parser.add_argument("--anhaenge", choices=("referenz", "alle"),
                         help="QEC: referenz (Standard) oder alle Dateien aus Fall-Popups")
     parser.add_argument("--login-manuell", action="store_true",
@@ -104,6 +106,7 @@ def _befehl(
     quelle: str, eingabe: Path, ausgabe: Path, manuell: bool,
     objekt: str | None = None, attribut: str | None = None,
     sachnummer: str | None = None, anhaenge: str | None = None,
+    benennung: str | None = None,
 ) -> list[str]:
     modul, funktion = _EINSTIEGE[quelle]
     # -u gibt Fortschritt ohne Pufferung an den Sammelprozess weiter.
@@ -123,6 +126,8 @@ def _befehl(
             argv.extend(("--sachnummer", sachnummer))
         if anhaenge is not None:
             argv.extend(("--anhaenge", anhaenge))
+        if benennung is not None:
+            argv.extend(("--benennung", benennung))
     if manuell:
         argv.append("--login-manuell")
     return argv
@@ -134,6 +139,7 @@ def _starte_quelle(
     abbruch: threading.Event, objekt: str | None = None,
     attribut: str | None = None,
     sachnummer: str | None = None, anhaenge: str | None = None,
+    benennung: str | None = None,
 ) -> int:
     if abbruch.is_set():
         return 130
@@ -141,7 +147,7 @@ def _starte_quelle(
     env = os.environ.copy()
     env["PYTHONIOENCODING"] = "utf-8"
     prozess = subprocess.Popen(
-        _befehl(quelle, eingabe, ausgabe, manuell, objekt, attribut, sachnummer, anhaenge),
+        _befehl(quelle, eingabe, ausgabe, manuell, objekt, attribut, sachnummer, anhaenge, benennung),
         stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
         bufsize=1, text=True, encoding="utf-8", errors="replace", env=env,
     )
@@ -174,11 +180,14 @@ def main(argv: list[str] | None = None) -> int:
             if argumente.attribut is not None:
                 argumente.attribut = pruefe_historienziel(argumente.attribut, feld="--attribut")
         if (argumente.sachnummer is not None or argumente.anhaenge is not None
-                ) and "qec" not in auswahl:
-            raise ValueError("--sachnummer und --anhaenge sind nur mit der Quelle qec erlaubt.")
+                or argumente.benennung is not None) and "qec" not in auswahl:
+            raise ValueError("--sachnummer, --benennung und --anhaenge sind nur mit der Quelle qec erlaubt.")
         if argumente.sachnummer is not None:
             from ntf_insight.acquisition.qec_tool import pruefe_sachnummer
             argumente.sachnummer = pruefe_sachnummer(argumente.sachnummer)
+        if argumente.benennung is not None:
+            from ntf_insight.acquisition.qec_tool import pruefe_benennung
+            argumente.benennung = pruefe_benennung(argumente.benennung)
         if not 1 <= argumente.parallel <= len(_EINSTIEGE):
             raise ValueError("--parallel muss zwischen 1 und 6 liegen.")
         anzahl_fins = _eingabe_pruefen(argumente.eingabe, auswahl)
@@ -212,9 +221,9 @@ def main(argv: list[str] | None = None) -> int:
         flush=True,
     )
     print(
-        "Eigenstaendige Edge-Fenster je Quelle. VeDoc-Historie und QuickTests "
-        "melden sich nacheinander per PING ID an; nach erfolgreicher Anmeldung "
-        "laufen ihre FIN-Abrufe parallel. Smartphone-Freigaben nacheinander bestaetigen.",
+        "Eigenstaendige Edge-Fenster je Quelle. Alle sechs CLI-Quellen "
+        "melden sich nacheinander per SSO/PING ID an; nach erfolgreicher Anmeldung "
+        "laufen ihre FIN-Abrufe parallel. Smartphone-Freigaben einzeln bestaetigen.",
         flush=True,
     )
     for quelle, ziel in arbeitsliste:
@@ -230,7 +239,7 @@ def main(argv: list[str] | None = None) -> int:
                 _starte_quelle, quelle, eingabe, ziel, argumente.login_manuell,
                 aktiv, sperre, abbruch,
                 argumente.objekt, argumente.attribut,
-                argumente.sachnummer, argumente.anhaenge,
+                argumente.sachnummer, argumente.anhaenge, argumente.benennung,
             ): quelle
             for quelle, ziel in arbeitsliste
         }
