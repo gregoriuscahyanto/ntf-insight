@@ -552,7 +552,10 @@ def _fahrzeugdaten_oeffnen(seite, timeout_ms: int) -> None:
     feld.wait_for(state="visible", timeout=timeout_ms)
 
 
-def _abfrage(seite, fin: str, timeout_ms: int, historie_wartezeit_ms: int = 20000) -> Ergebnis:
+def _abfrage(
+    seite, fin: str, timeout_ms: int, historie_wartezeit_ms: int = 20000, *,
+    objekt: str = _STEUERGERAET, attribut: str = _STANDARD_ATTRIBUT,
+) -> Ergebnis:
     """Historie nach bestaetigtem FIN-Wechsel laden und auf Ergebnisse warten."""
     from playwright.sync_api import TimeoutError as PlaywrightTimeout
 
@@ -569,7 +572,8 @@ def _abfrage(seite, fin: str, timeout_ms: int, historie_wartezeit_ms: int = 2000
             timeout=timeout_ms,
         )
     except PlaywrightTimeout:
-        return _ergebnis(fin, "fin_nicht_bestaetigt", hinweis="FIN-Wechsel nicht bestaetigt.")
+        return _ergebnis(fin, "fin_nicht_bestaetigt", hinweis="FIN-Wechsel nicht bestaetigt.",
+                         objekt=objekt, attribut=attribut)
 
     try:
         seite.locator(_TAB).click(timeout=timeout_ms)
@@ -581,21 +585,37 @@ def _abfrage(seite, fin: str, timeout_ms: int, historie_wartezeit_ms: int = 2000
         # Alter Filter kann noch zur vorherigen FIN gehoeren.
         filter_feld.fill("")
         seite.wait_for_timeout(350)
-        filter_feld.fill(_STEUERGERAET)
+        filter_feld.fill(objekt)
         return _warte_auf_historieneintraege(
             seite, fin, filter_feld, historie_wartezeit_ms,
+            objekt=objekt, attribut=attribut,
         )
     except PlaywrightTimeout:
         return _ergebnis(fin, "zeitueberschreitung",
-                         hinweis="Historienreiter oder Filter nicht bereit.")
+                         hinweis="Historienreiter oder Filter nicht bereit.",
+                         objekt=objekt, attribut=attribut)
     except ValueError:
         return _ergebnis(fin, "historie_nicht_bestaetigt",
-                         hinweis="Historie ist nicht eindeutig dieser FIN zuzuordnen.")
+                         hinweis="Historie ist nicht eindeutig dieser FIN zuzuordnen.",
+                         objekt=objekt, attribut=attribut)
 
 
-def _schreibe_json(pfad: Path, ergebnisse: list[Ergebnis]) -> None:
-    daten = {"quelle": "VeDoc/Historie", "steuergeraet": _STEUERGERAET,
-             "anzahl": len(ergebnisse), "fahrzeuge": [asdict(x) for x in ergebnisse]}
+def _schreibe_json(
+    pfad: Path, ergebnisse: list[Ergebnis], *,
+    objekt: str = _STEUERGERAET, attribut: str = _STANDARD_ATTRIBUT,
+) -> None:
+    fahrzeuge = []
+    for eintrag in ergebnisse:
+        datenreihe = asdict(eintrag)
+        datenreihe["objekt"] = eintrag.objekt
+        datenreihe["letzter_neuer_wert"] = eintrag.letzter_neuer_wert
+        # Seriennummer ist ein Legacy-Feld: niemals fremde Attribute als solche ausgeben.
+        if eintrag.attribut.casefold() != _STANDARD_ATTRIBUT.casefold():
+            datenreihe["seriennummer"] = None
+        fahrzeuge.append(datenreihe)
+    daten = {"quelle": "VeDoc/Historie", "steuergeraet": objekt,
+             "objekt": objekt, "attribut": attribut,
+             "anzahl": len(ergebnisse), "fahrzeuge": fahrzeuge}
     temporaer = pfad.with_suffix(pfad.suffix + ".tmp")
     temporaer.write_text(json.dumps(daten, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     temporaer.replace(pfad)
@@ -619,11 +639,11 @@ def _tabelle_formatieren(ws, spalten: list[str], zeilen: list[list[str]]) -> Non
         ws.row_dimensions[ws.max_row].height = 23
     ws.freeze_panes = "A2"
     for nummer, breite in enumerate(([24, 17, 39, 21, 30, 68, 29]
-                                    if ws.title == "DCDC223" else
+                                    if ws.title != "Historie" else
                                     [24, 17, 20, 25, 39, 39, 27]), 1):
         ws.column_dimensions[get_column_letter(nummer)].width = breite
     if zeilen:
-        tabelle = Table(displayName="VeDoc" + ws.title, ref=f"A1:G{len(zeilen) + 1}")
+        tabelle = Table(displayName="VeDocHistorie" if ws.title == "Historie" else "VeDocUebersicht", ref=f"A1:G{len(zeilen) + 1}")
         tabelle.tableStyleInfo = TableStyleInfo(
             name="TableStyleMedium2", showFirstColumn=False,
             showLastColumn=False, showRowStripes=True, showColumnStripes=False
@@ -631,29 +651,33 @@ def _tabelle_formatieren(ws, spalten: list[str], zeilen: list[list[str]]) -> Non
         ws.add_table(tabelle)
 
 
-def _schreibe_excel(pfad: Path, ergebnisse: list[Ergebnis]) -> None:
+def _schreibe_excel(
+    pfad: Path, ergebnisse: list[Ergebnis], *,
+    objekt: str = _STEUERGERAET, attribut: str = _STANDARD_ATTRIBUT,
+) -> None:
     wb = Workbook()
     uebersicht = wb.active
-    uebersicht.title = "DCDC223"
+    uebersicht.title = ("DCDC223" if objekt == _STEUERGERAET
+                        and attribut == _STANDARD_ATTRIBUT else "Uebersicht")
     _tabelle_formatieren(
         uebersicht,
-        ["FIN", "Steuergerät", "Letzter neuer Wert (Historie)", "Änderungen", "Status",
+        ["FIN", "VeDoc-Objekt", "Letzter neuer Wert (Historie)", "Änderungen", "Status",
          "Hinweis", "Abfragezeit (UTC)"],
         [
-            [e.fin, e.steuergeraet, e.seriennummer or "", str(len(e.aenderungen)),
+            [e.fin, e.objekt, e.letzter_neuer_wert or "", str(len(e.aenderungen)),
              e.status, e.hinweis, e.abgefragt_am_utc]
             for e in ergebnisse
         ],
     )
     historie = wb.create_sheet("Historie")
     zeilen = [
-        [e.fin, e.steuergeraet, "Seriennummer", a.aenderungszeitpunkt,
+        [e.fin, e.objekt, e.attribut, a.aenderungszeitpunkt,
          a.alter_wert or "", a.neuer_wert or "", e.status]
         for e in ergebnisse for a in e.aenderungen
     ]
     _tabelle_formatieren(
         historie,
-        ["FIN", "Steuergerät", "Attributname", "Änderungszeitpunkt (VeDoc)",
+        ["FIN", "VeDoc-Objekt", "Attributname", "Änderungszeitpunkt (VeDoc)",
          "Alter Wert", "Neuer Wert", "FIN-Status"],
         zeilen,
     )
