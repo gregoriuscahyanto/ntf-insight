@@ -324,3 +324,30 @@ def test_batch_gemischte_14_und_17stellige_fins_fuer_zwei_quellen(tmp_path, monk
         "--parallel", "2",
     ]) == 0
     assert len(commands) == 2
+
+
+
+def test_batch_sechs_parallel_mit_qec_keyword_nur_an_qec_prozess(tmp_path, monkeypatch):
+    commands, gleichzeitig = _popen_simulieren(monkeypatch)
+    fin = _eingabe(tmp_path)
+    assert cli.main([
+        "--eingabe", str(fin), "--quellen", "alle", "--parallel", "6",
+        "--benennung", "DCDC", "--anhaenge", "alle",
+    ]) == 0
+    assert len(commands) == 6
+    assert gleichzeitig() >= 2
+    qec = next(cmd for cmd, _ in commands if "qec_main" in cmd[3])
+    assert qec[qec.index("--benennung") + 1] == "DCDC"
+    assert qec[qec.index("--anhaenge") + 1] == "alle"
+    assert all("--benennung" not in cmd for cmd, _ in commands if cmd is not qec)
+
+
+@pytest.mark.parametrize("more", [
+    ["--quellen", "wem,quicktests", "--benennung", "DCDC"],
+    ["--quellen", "qec", "--benennung", "X"],
+    ["--quellen", "qec", "--benennung", "DCDC,"],
+])
+def test_batch_benennung_vor_prozessstart_validieren(tmp_path, monkeypatch, more):
+    commands, _ = _popen_simulieren(monkeypatch)
+    assert cli.main(["--eingabe", str(_eingabe(tmp_path)), *more]) == 2
+    assert commands == []
