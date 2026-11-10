@@ -4,6 +4,8 @@ Das eigenstaendige Skript [`scripts/diagnosis_viewer_warn_error.py`](../scripts/
 
 ## Voraussetzungen und Installation
 
+**Standardablage bei `--eingabe` ohne `--ausgabe`:** `data/processed/<bereinigter TXT-Name>/diagnosis_viewer_warn_error/warnings_errors.json`. Der Dateiname wird Windows-sicher bereinigt. Der separate `start_diagnosis_viewer_warn_error.cmd`-Starter nutzt weiterhin ausdrücklich seinen bisherigen festen Ausgabeort. Mit `--ausgabe` ist der bisherige Pfad unverändert nutzbar.
+
 - Windows mit installiertem Microsoft Edge, berechtigter Diagnosis-Viewer-Zugang im Unternehmensnetz/VPN.
 - Python 3.11+ und die beiden Skriptabhaengigkeiten (keine App-Installation erforderlich):
 
