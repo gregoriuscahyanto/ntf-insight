@@ -252,3 +252,84 @@ def test_cli_komplett_offline_schreibt_objektbezogene_dateien(monkeypatch, tmp_p
     assert (pfad / "dcdc223_seriennummern.json").exists()
     assert (pfad / "cpc3_hardwarestand.json").exists()
     assert aufrufe[1] == ("DCDC223", "Seriennummer", FIN)
+
+
+
+KURZ_FIN = "1671061B000001"
+VOLL_FIN = "W1N" + KURZ_FIN
+
+
+def test_vedoc_kurz_fin_aus_txt_unveraendert_laden(tmp_path):
+    txt = tmp_path / "kurzliste.txt"
+    txt.write_text(KURZ_FIN + "\n" + VOLL_FIN + "\n" + KURZ_FIN, encoding="utf-8")
+    assert m.lade_fins(txt) == [KURZ_FIN, VOLL_FIN]
+
+
+def test_vedoc_historie_bestaetigt_kurz_fin_bei_17stelliger_anzeige():
+    quelltext = _html(
+        _zeile(fin=VOLL_FIN, nachher="HW02"),
+        _zeile(fin=KURZ_FIN, nachher="HW03"),
+    )
+    aenderungen, anzahl, bestaetigt = m._historienmoment(
+        quelltext, KURZ_FIN, "CPC3", "Seriennummer",
+    )
+    assert bestaetigt is True
+    assert anzahl == 2
+    assert [row.neuer_wert for row in aenderungen] == ["HW02", "HW03"]
+
+
+def test_vedoc_kurz_fin_verwirft_fremde_und_mehrdeutige_voll_fins():
+    fremd = _html(_zeile(fin="W1N1671061B000002"))
+    with pytest.raises(ValueError, match="anderen FIN"):
+        m.lese_historie_aus_html(fremd, KURZ_FIN, "CPC3")
+    zweideutig = _html(
+        _zeile(fin=VOLL_FIN), _zeile(fin="WDD" + KURZ_FIN),
+    )
+    with pytest.raises(ValueError, match="mehrdeutig"):
+        m._historienmoment(zweideutig, KURZ_FIN, "CPC3", "Seriennummer")
+
+
+def test_vedoc_kurz_fin_ui_pruefung_akzeptiert_17stellige_anzeige(monkeypatch):
+    class Feld:
+        def __init__(self):
+            self.wert = None
+
+        def fill(self, wert):
+            self.wert = wert
+
+        def is_visible(self):
+            return True
+
+        def click(self, **kwargs):
+            pass
+
+        def wait_for(self, **kwargs):
+            pass
+
+    class Seite:
+        def __init__(self):
+            self.felder = {}
+            self.js = ""
+
+        def locator(self, name):
+            return self.felder.setdefault(name, Feld())
+
+        def wait_for_function(self, js, *, arg, timeout):
+            self.js = js
+            assert arg == KURZ_FIN
+
+        def wait_for_timeout(self, milliseconds):
+            pass
+
+    seite = Seite()
+    monkeypatch.setattr(m, "_fahrzeugdaten_oeffnen", lambda *args, **kwargs: None)
+    monkeypatch.setattr(
+        m, "_warte_auf_historieneintraege",
+        lambda seite, fin, filter_feld, wartezeit_ms, *, objekt, attribut:
+            m._ergebnis(fin, "gefunden", "000111", objekt=objekt, attribut=attribut),
+    )
+    result = m._abfrage(seite, KURZ_FIN, 1000, objekt="CPC3")
+    assert result.fin == KURZ_FIN
+    assert seite.locator(m._FIN_EINGABE).wert == KURZ_FIN
+    assert "wert.slice(3) === fin" in seite.js
+    assert seite.locator(m._FILTER).wert == "CPC3"

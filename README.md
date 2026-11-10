@@ -10,7 +10,7 @@ Die sechs Datenquellen lassen sich mit einer **FIN-TXT-Datei** gemeinsam oder ei
 python -m pip install -e .
 ```
 
-**Eingabe:** `--eingabe` ist der Pfad zu einer `.txt`-Datei mit vollständigen, 17-stelligen FINs (**eine FIN pro Zeile**). Beispiel `FIN-Liste DCDC223 SensorIssue.txt`:
+**Eingabe:** `--eingabe` ist der Pfad zu einer `.txt`-Datei mit Fahrzeugkennungen (**eine FIN pro Zeile**). Alle sechs Quellen unterstützen vollständige, 17-stellige FINs. **Für VeDoc-Historie und QuickTests sind zusätzlich 14-stellige Mercedes-Kurz-FINs möglich.** Beispiel `FIN-Liste DCDC223 SensorIssue.txt`:
 
 ```text
 WDD12345678901234
@@ -24,6 +24,19 @@ WDD12345678901235
 ```powershell
 ntf-insight-beschaffung --eingabe ".\FIN-Liste DCDC223 SensorIssue.txt"
 ```
+
+**14-stellige Kurz-FINs für VeDoc-Historie und QuickTests parallel** (mit fiktiven Testwerten, nicht mit echten Fahrzeugdaten):
+
+```text
+1671061B000001
+1671061B000002
+```
+
+```powershell
+ntf-insight-beschaffung --eingabe ".\\FIN-Liste DCDC223 SensorIssue.txt" --quellen vedoc-historie,quicktests --objekt DCDC223 --attribut Seriennummer --parallel 2
+```
+
+Dabei bleiben die 14 Zeichen unverändert; es wird **kein unbekannter 3-stelliger Herstellerpräfix ergänzt**. Ein vom Portal angezeigter 17-stelliger Wert wird nur akzeptiert, wenn seine letzten 14 Zeichen genau übereinstimmen. Bei mehrdeutigen Treffern wird der Abruf abgelehnt. `--quellen alle` und die vier anderen Quellen setzen für diese Version weiterhin 17-stellige FINs voraus.
 
 **VeDoc-Hardwarehistorie für ein selbst gewähltes Objekt** (statt fest DCDC223):
 

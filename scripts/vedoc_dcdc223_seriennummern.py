@@ -24,10 +24,11 @@ from ntf_insight.acquisition.output_paths import standard_ausgabe
 from lxml import html
 from openpyxl import Workbook
 from openpyxl.styles import Alignment, Font, PatternFill
+from ntf_insight.acquisition.fin_format import fin_passt_zu_anfrage, ist_gueltige_fin
+
 from openpyxl.utils import get_column_letter
 from openpyxl.worksheet.table import Table, TableStyleInfo
 
-_FIN = re.compile(r"[A-HJ-NPR-Z0-9]{17}\Z")
 _STEUERGERAET = "DCDC223"  # Bisheriger Standard fuer Legacy-Aufruf
 _STANDARD_ATTRIBUT = "Seriennummer"
 VEDOC_START = "https://prod.core.public.vedoc.i.mercedes-benz.com/ui/homepage.html"
@@ -98,7 +99,7 @@ def _dateistamm(objekt: str, attribut: str) -> str:
 
 
 def lade_fins(pfad: Path) -> list[str]:
-    """Eine 17-stellige FIN pro Zeile; leere Zeilen und # Kommentare ignorieren."""
+    """14-stellige Mercedes-Kurz-FIN oder 17-stellige FIN je Zeile."""
     if pfad.suffix.lower() != ".txt":
         raise ValueError("Die Eingabedatei muss eine .txt-Datei sein.")
     fin_liste: list[str] = []
@@ -107,8 +108,8 @@ def lade_fins(pfad: Path) -> list[str]:
         fin = zeile.strip().upper()
         if not fin or fin.startswith("#"):
             continue
-        if not _FIN.fullmatch(fin):
-            raise ValueError(f"Zeile {nummer}: FIN muss 17 Zeichen A-Z/0-9 ohne I, O, Q haben.")
+        if not ist_gueltige_fin(fin, kurz_erlaubt=True):
+            raise ValueError(f"Zeile {nummer}: FIN muss 14 oder 17 Zeichen A-Z/0-9 ohne I, O, Q haben.")
         if fin not in gesehen:
             gesehen.add(fin)
             fin_liste.append(fin)
@@ -155,13 +156,13 @@ def lese_historie_aus_html(
         pfad = _history_feld(zeile, "pathToAttribute")
         # FIN-Praefix in VeDoc, z.B. '<FIN> / DCDC223'.
         anfang = pfad.split("/", 1)[0].strip().upper()
-        if _FIN.fullmatch(anfang) and anfang != fin:
+        if ist_gueltige_fin(anfang, kurz_erlaubt=True) and not fin_passt_zu_anfrage(fin, anfang):
             raise ValueError("Historie gehoert noch zu einer anderen FIN.")
         if " ".join(_history_feld(zeile, "parentObjectIdentifier").split()).casefold() != objekt.casefold():
             continue
         if " ".join(_history_feld(zeile, "attributeName").split()).casefold() != attribut.casefold():
             continue
-        if anfang != fin:
+        if not fin_passt_zu_anfrage(fin, anfang):
             raise ValueError("Historienzeile zum ausgewaehlten Objekt hat keine bestaetigte Voll-FIN.")
         zeit = _history_feld(zeile, "date")
         alt = _history_feld(zeile, "oldValue")
@@ -184,13 +185,21 @@ def _historienmoment(
         raise ValueError("Historientabelle noch nicht eindeutig verfuegbar.")
     zeilen = tabellen[0].xpath('./tbody/tr')
     bestaetigte_fin = False
+    vollfin_funde: set[str] = set()
     for zeile in zeilen:
         pfad = _history_feld(zeile, "pathToAttribute")
         moegliche_fin = pfad.split("/", 1)[0].strip().upper()
-        if _FIN.fullmatch(moegliche_fin):
-            if moegliche_fin != fin:
+        if ist_gueltige_fin(moegliche_fin, kurz_erlaubt=True):
+            if not fin_passt_zu_anfrage(fin, moegliche_fin):
                 raise ValueError("Historie zeigt noch Eintraege einer anderen FIN.")
             bestaetigte_fin = True
+            if len(fin) == 14 and len(moegliche_fin) == 17:
+                vollfin_funde.add(moegliche_fin)
+    if len(vollfin_funde) > 1:
+        raise ValueError(
+            "Kurz-FIN mehrdeutig: VeDoc-Historie enthaelt verschiedene Voll-FINs. "
+            "Bitte vollstaendige FIN verwenden."
+        )
     return lese_historie_aus_html(quelltext, fin, objekt, attribut), len(zeilen), bestaetigte_fin
 
 
@@ -572,7 +581,10 @@ def _abfrage(
         seite.wait_for_function(
             """fin => {
                 const anzeige = document.querySelector('span[data-ng-bind="viewControl.globalFin"]');
-                return !!anzeige && anzeige.textContent.replace(/[\\s-]/g, '').toUpperCase() === fin;
+                if (!anzeige) return false;
+                const wert = anzeige.textContent.replace(/[\\s-]/g, '').toUpperCase();
+                return wert === fin || (fin.length === 14
+                    && wert.length === 17 && wert.slice(3) === fin);
             }""",
             arg=fin,
             timeout=timeout_ms,
@@ -696,7 +708,7 @@ def main(argv: list[str] | None = None, *, allgemeine_historie: bool = False) ->
     parser = argparse.ArgumentParser(
         description="Exportiert die VeDoc-Seriennummern- oder Attributhistorie fuer ein frei waehlbares Hardware-Objekt."
     )
-    parser.add_argument("--eingabe", type=Path, help="TXT mit einer FIN pro Zeile")
+    parser.add_argument("--eingabe", type=Path, help="TXT mit 14-stelliger Kurz-FIN oder 17-stelliger FIN pro Zeile")
     parser.add_argument("--objekt", "--steuergeraet", dest="objekt", default=_STEUERGERAET,
                         help="Exakter VeDoc-Objektname (Standard: DCDC223)")
     parser.add_argument("--attribut", default=_STANDARD_ATTRIBUT,
