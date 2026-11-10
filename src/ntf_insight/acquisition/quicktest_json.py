@@ -188,7 +188,8 @@ def konvertiere_quicktests(
                         f"{len(parsed['ecus'])} ECU-Eintraege, "
                         f"{parsed['observed_dtc_count']} DTCs."
                     )
-            except (OSError, ValueError, TypeError, KeyError) as exc:
+            except Exception as exc:
+                # Fehlerhafte/verschluesselte PDFs duerfen weitere Dateien nicht blockieren.
                 fehler += 1
                 eintrag["status"] = "Fehler"
                 eintrag["fehler"] = f"{type(exc).__name__}: {exc}"
