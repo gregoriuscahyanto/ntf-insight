@@ -12,6 +12,7 @@ import json
 import re
 import tempfile
 import time
+from contextlib import nullcontext
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
@@ -23,6 +24,7 @@ from zipfile import ZipFile, is_zipfile
 from lxml import html as lxml_html
 
 from ntf_insight.acquisition.diagnosis_viewer import parse_fins
+from ntf_insight.acquisition.sso_login_gate import serielle_sso_anmeldung
 
 
 TIPS_START = "https://xentry.mercedes-benz.com/tips-writer/home/topics/search"
@@ -295,11 +297,13 @@ class TipsWriterDownloader:
         navigation_timeout_ms: int = 45000,
         download_timeout_ms: int = 90000,
         click_delay_seconds: float = 0.8,
+        serielle_sso: bool = False,
     ) -> None:
         self.output_dir = Path(output_dir)
         self.profile_dir = Path(profile_dir)
         self.user_id = user_id
         self.password = password
+        self.serielle_sso = serielle_sso
         self.login_timeout_seconds = login_timeout_seconds
         self.navigation_timeout_ms = navigation_timeout_ms
         self.download_timeout_ms = download_timeout_ms
@@ -438,8 +442,14 @@ class TipsWriterDownloader:
 
     def _search(self, context, page, fin: str, progress: Progress, cancel: Event):
         self._check(cancel)
-        page.goto(TIPS_START, wait_until="domcontentloaded", timeout=self.navigation_timeout_ms)
-        page = self._wait_login(context, progress, cancel)
+        anmeldung = (
+            serielle_sso_anmeldung(status=progress, abbruch=cancel)
+            if self.serielle_sso else nullcontext()
+        )
+        # Sperre vor dem Redirect aufnehmen, nach bestaetigter Sitzung freigeben.
+        with anmeldung:
+            page.goto(TIPS_START, wait_until="domcontentloaded", timeout=self.navigation_timeout_ms)
+            page = self._wait_login(context, progress, cancel)
         self._consent(page, progress)
         self._pause(cancel)
         search = page.locator("tn-c-search input.xy-c-search-input")
