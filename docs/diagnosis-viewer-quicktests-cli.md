@@ -7,6 +7,15 @@ die Statusdateien und die SSO-/PING-ID-Wartelogik. Die GUI selbst bleibt unverae
 
 ## Aufruf
 
+**14-stellige Mercedes-Kurz-FINs:** Dieser CLI-Einstieg akzeptiert neben
+17-stelligen FINs auch 14-stellige Fahrzeugkennungen. Er erfindet keinen
+Herstellerpräfix. Wenn Diagnosis Viewer eine 17-stellige FIN anzeigt, muss
+deren 14-stelliger Fahrzeugteil exakt der Eingabe entsprechen; sonst
+werden keine fremden QuickTests übernommen. Ob das Portal die Kurz-FIN
+serverseitig als Suchanfrage unterstützt, ist intern zu prüfen.
+Der GUI-Standard bleibt zunächst auf die bisherige 17-stellige Eingabe
+beschränkt.
+
 Nach \`python -m pip install -e .\` im Projektverzeichnis:
 
 \`\`\`powershell
