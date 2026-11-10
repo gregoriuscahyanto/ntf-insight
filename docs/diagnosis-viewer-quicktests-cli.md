@@ -112,7 +112,6 @@ erforderlich; Offline-Tests pruefen keine reale SSO-/PING-ID-Sitzung.
 - \`2\`: ungueltige Eingaben, lokale Fehler oder ein nicht startbarer Browser.
 - \`130\`: durch Strg+C abgebrochen.
 
-VeDoc-Historie und QuickTests koordinieren ihre Anmeldungen mit einer
-prozessuebergreifenden Sperre, auch aus getrennten Terminals. Beide
-Tools verwenden weiterhin getrennte Edge-Profile und Ausgabeordner.
-Andere Datenquellen sind noch nicht in diese Sperre eingebunden.
+Alle sechs Datenquellen koordinieren ihre SSO-Anmeldungen mit einer
+prozessuebergreifenden Sperre, auch aus getrennten Terminals. Jedes
+Tool verwendet weiterhin sein eigenes Edge-Profil und Ausgabeordner.
