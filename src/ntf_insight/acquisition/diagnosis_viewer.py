@@ -925,7 +925,7 @@ class DiagnosisViewerDownloader:
             else:
                 results_by_fin[fin] = previous
                 if self.nur_fehlende_pdfs:
-                    progress(f"{fin}: QuickTest-PDFs laut bisherigem Stand vollstaendig – uebersprungen.")
+                    progress(f"{fin}: PDF im FIN-Ordner vorhanden und Abrufstand vollstaendig – uebersprungen.")
                 else:
                     progress(f"{fin}: letzter Abruf < 24 Stunden – übersprungen.")
         if not pending:
