@@ -1,4 +1,4 @@
-"""Prozessuebergreifende PING-ID-/SSO-Sperre fuer VeDoc und QuickTest-CLI.
+"""Prozessuebergreifende PING-ID-/SSO-Sperre fuer alle sechs Beschaffungs-CLIs.
 
 Die Sperrdatei enthaelt keine Login-, FIN- oder Cookie-Daten. Der Betriebssystem-
 Dateilock wird bei normalem Verlassen oder Prozessabsturz automatisch frei.
