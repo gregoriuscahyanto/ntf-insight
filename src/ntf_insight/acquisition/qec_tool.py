@@ -1033,7 +1033,7 @@ class QecDownloader:
                 "schadteil_id": hit.schadteil_id,
                 "anhang_downloadmodus": self.attachment_policy,
                 "anhaenge_ohne_referenzbestaetigung": sum(
-                    not item.get("referenz_im_dateinamen_bestaetigt", False)
+                    item.get("zuordnung") == "nur_im_popup_gesehen_nicht_verifiziert"
                     for item in inventory.values()
                 ),
                 "abgerufen_am_utc": datetime.now(timezone.utc).isoformat(),
