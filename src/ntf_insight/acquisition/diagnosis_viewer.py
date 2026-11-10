@@ -508,6 +508,11 @@ class DiagnosisViewerDownloader:
         while time.monotonic() < deadline:
             self._check_cancel(cancel)
             try:
+                browser = getattr(context, "browser", None)
+                if browser is not None and not browser.is_connected():
+                    raise BrowserSessionLost(
+                        "Edge-Browser ist waehrend der SSO-Anmeldung abgestuerzt."
+                    )
                 candidates = list(context.pages)
             except Exception as exc:
                 if _browser_verloren(exc):
