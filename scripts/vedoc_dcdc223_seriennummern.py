@@ -17,6 +17,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import urlsplit
 
+from ntf_insight.acquisition.output_paths import standard_ausgabe
+
 from lxml import html
 from openpyxl import Workbook
 from openpyxl.styles import Alignment, Font, PatternFill
@@ -609,8 +611,8 @@ def main(argv: list[str] | None = None) -> int:
         description="Exportiert die DCDC223-Seriennummernhistorie je FIN als JSON und Excel."
     )
     parser.add_argument("--eingabe", type=Path, help="TXT mit einer FIN pro Zeile")
-    parser.add_argument("--ausgabe", type=Path, default=Path("data/processed/vedoc_dcdc223"),
-                        help="Lokales Zielverzeichnis (wird ueberschrieben)")
+    parser.add_argument("--ausgabe", type=Path, default=None,
+                        help="Zielordner (Standard: data/processed/<TXT-Name>/vedoc_dcdc223)")
     parser.add_argument("--url", default=os.getenv("VEDOC_URL", VEDOC_START),
                         help="VeDoc-Startadresse (Standard bereits im Skript hinterlegt)")
     parser.add_argument("--browser", choices=["edge", "chromium"], default="edge")
@@ -624,6 +626,10 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--nur-login", action="store_true",
                         help="Nur den SSO/PING-ID-Login testen, ohne FIN-Abfrage oder Export")
     argumente = parser.parse_args(argv)
+    if argumente.ausgabe is None:
+        argumente.ausgabe = (standard_ausgabe(argumente.eingabe, "dcdc223")
+                            if argumente.eingabe is not None
+                            else Path("data/processed/vedoc_dcdc223"))
     try:
         if not argumente.nur_login and argumente.eingabe is None:
             raise ValueError("--eingabe ist fuer FIN-Exporte erforderlich.")
