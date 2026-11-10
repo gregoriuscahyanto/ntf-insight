@@ -30,7 +30,7 @@ def lade_fins(pfad: Path) -> list[str]:
         raise ValueError("--eingabe muss auf eine .txt-Datei mit FINs zeigen.")
     inhalt = pfad.expanduser().read_text(encoding="utf-8-sig")
     zeilen = [zeile.partition("#")[0] for zeile in inhalt.splitlines()]
-    return parse_fins("\n".join(zeilen))
+    return parse_fins("\n".join(zeilen), kurz_erlaubt=True)
 
 
 def erstelle_parser() -> argparse.ArgumentParser:
@@ -38,7 +38,7 @@ def erstelle_parser() -> argparse.ArgumentParser:
         description="QuickTest-PDFs je FIN aus dem Mercedes-Benz Diagnosis Viewer herunterladen."
     )
     parser.add_argument("--eingabe", type=Path, required=True,
-                        help="TXT-Datei mit FINs (eine pro Zeile)")
+                        help="TXT-Datei mit 14-stelligen Mercedes-Kurz-FINs oder 17-stelligen FINs")
     parser.add_argument("--ausgabe", type=Path, default=None,
                         help="Zielordner (Standard: data/processed/<TXT-Name>/diagnosis_viewer_quicktests)")
     parser.add_argument("--profil", type=Path, default=STANDARD_PROFIL,
@@ -133,6 +133,7 @@ def main(argv: list[str] | None = None) -> int:
             password=login.password if login else "",
             retry_recent=args.erneut,
             login_timeout_seconds=args.anmelde_timeout,
+            kurz_fin_erlaubt=True,
         )
         ergebnisse = downloader.run(fins, progress=lambda meldung: print(meldung, flush=True))
         return _bericht(ergebnisse, len(fins), ausgabe)
