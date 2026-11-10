@@ -419,3 +419,15 @@ def test_batch_tips_separat_aber_nicht_ausgewaehlt_ergibt_fehler(tmp_path, monke
         "--tips-eingabe", str(file),
     ]) == 2
     assert not calls
+
+
+
+def test_batch_14stellige_numerische_fallnummer_ist_keine_mercedes_kurz_fin(
+    tmp_path, monkeypatch,
+):
+    commands, _ = _popen_simulieren(monkeypatch)
+    datei = tmp_path / "TIPS-Fallnummern.txt"
+    datei.write_text("12345678901234\n", encoding="utf-8")
+    assert cli.main(["--eingabe", str(datei), "--quellen", "tips"]) == 0
+    assert len(commands) == 1
+    assert commands[0][0][commands[0][0].index("--eingabe") + 1] == str(datei)
