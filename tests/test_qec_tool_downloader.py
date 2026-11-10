@@ -10,7 +10,7 @@ import pytest
 from ntf_insight.acquisition.qec_tool import (
     QEC_SECTIONS, QEC_START, QecDownloader, QecHit, QecResult, QecTarget,
     _qec_url, _snapshot_data, _store_attachment, _write_result,
-    parse_attachment_urls, parse_qec_targets, parse_search_hits,
+    parse_attachment_urls, parse_qec_targets, parse_search_hits, pruefe_benennung,
     inspect_search_results, parse_attachment_listing, _validate_attachment_response_url,
 )
 
@@ -747,3 +747,89 @@ def test_exakte_sachnummer_findet_auch_nicht_pumpen_fall(tmp_path):
         SimpleNamespace(), page, all_target, lambda _: None, Event()
     )
     assert selected == [("900000517", "A 111 222 33 44")]
+
+
+
+
+def test_qec_keyword_filter_in_benennung_ohne_sachnummer():
+    """DCDC soll auch ohne Pumpenwort/Sachnummer alle passenden FIN-Faelle finden."""
+    fremde_fin = "WDD98745678901234"
+    document = _search_html(rows=[
+        _row("900000625", description="DCDC223 Hardware", part="A 100 111 22 33",
+             identifier="5001"),
+        _row("900000626", description="DC/DC Wandler", part="A 100 111 22 34",
+             identifier="5002"),
+        _row("900000627", description="KUEHLMITTELPUMPE", part="A 100 111 22 35",
+             identifier="5003"),
+        _row("900000628", fin=fremde_fin, description="DCDC223 Fremdfahrzeug",
+             identifier="5004"),
+        _row("900000629", description="dcdc225 Stromwandler",
+             identifier="5005"),
+    ], total=5)
+    # Standard ohne keyword bleibt ausschließlich die Pumpenbenennung.
+    assert [x.reference for x in parse_search_hits(document, FIN)] == ["900000627"]
+    assert [x.reference for x in parse_search_hits(
+        document, FIN, pump_only=False, benennung="DCDC",
+    )] == ["900000625", "900000629"]
+    assert [x.reference for x in parse_search_hits(
+        document, FIN, pump_only=False, benennung="dcdc,DC/DC",
+    )] == ["900000625", "900000626", "900000629"]
+    assert parse_search_hits(document, fremde_fin, pump_only=False, benennung="XYZ") == []
+    target = QecTarget(FIN)
+    evidence = inspect_search_results(
+        document, target, pump_only=False, benennung="DCDC",
+    )
+    assert evidence["bestaetigt"] is True
+    assert evidence["fin_identisch"] == 4
+    assert evidence["sachnummer"] == 2
+
+
+def test_qec_keyword_und_exakte_sachnummer_mit_und_verknuepft():
+    document = _search_html(rows=[
+        _row("900000625", description="DCDC223", part=SACHNUMMER, identifier="5001"),
+        _row("900000626", description="DCDC223", part="A 100 111 22 33",
+             identifier="5002"),
+        _row("900000627", description="KUEHLMITTELPUMPE", part=SACHNUMMER,
+             identifier="5003"),
+    ], total=3)
+    assert [x.reference for x in parse_search_hits(
+        document, FIN, pump_only=False, part_number=SACHNUMMER, benennung="dcdc",
+    )] == ["900000625"]
+
+
+@pytest.mark.parametrize("invalid", [
+    "", " ", "D", "DCDC,", ",DCDC", "DCDC,,DC", "DCDC|.*",
+    "DCDC;DROP", "../foo", "a"*81,
+])
+def test_qec_ungueltige_keywordfilter_stoppen_vor_browser(invalid):
+    with pytest.raises(ValueError, match="Benennung"):
+        pruefe_benennung(invalid)
+
+
+def test_qec_download_waehlt_nur_keywordpassende_referenzen(tmp_path):
+    from types import SimpleNamespace
+
+    target = QecTarget(FIN)
+    document = _search_html(rows=[
+        _row("900000625", description="DCDC223", identifier="5001"),
+        _row("900000626", description="KUEHLMITTELPUMPE", identifier="5002"),
+    ], total=2)
+    downloader = QecDownloader(
+        tmp_path, tmp_path / "profile", benennung="DCDC", click_delay_seconds=0,
+    )
+    evidence = inspect_search_results(document, target, pump_only=False, benennung="DCDC")
+    page = object()
+    downloader._search = lambda *_args: (page, page, document, evidence)
+    selected = []
+
+    def one_case(_ctx, current_page, _target, hit, result, *_args):
+        selected.append(hit.reference)
+        result.references.append(hit.reference)
+        return current_page
+
+    downloader._one_hit = one_case
+    result, _ = downloader._one_target(
+        SimpleNamespace(), page, target, lambda _: None, Event(),
+    )
+    assert result.status == "Erfolgreich"
+    assert selected == ["900000625"]
