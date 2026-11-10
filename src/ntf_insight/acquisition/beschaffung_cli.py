@@ -81,8 +81,11 @@ def _quellen(text: str) -> list[str]:
     return auswahl
 
 
-def _eingabe_pruefen(pfad: Path, quellen: list[str] | None = None) -> int:
-    """Kurz-FIN nur erlauben, wenn alle ausgewaehlten Quellen sie verarbeiten."""
+def _eingabe_pruefen(
+    pfad: Path, quellen: list[str] | None = None, *,
+    tips_separat: bool = False,
+) -> int:
+    """Kurz-FIN je tatsaechlichem Eingabe-Verbraucher validieren."""
     if pfad.suffix.lower() != ".txt":
         raise ValueError("--eingabe muss eine .txt-Datei sein.")
     zeilen = [
@@ -93,15 +96,18 @@ def _eingabe_pruefen(pfad: Path, quellen: list[str] | None = None) -> int:
     # Andere Quellen haben eigene strengere 17-Zeichen-Validierung.
     # Keine halben Batch-Ergebnisse erzeugen, deren Ursache bereits feststeht.
     if any(len(fin) == 14 for fin in fins):
-        ungeeignet = sorted(set(quellen or ()) - {"dcdc223", "quicktests"})
+        verbraucher = set(quellen or ())
+        if tips_separat:
+            verbraucher.discard("tips")
+        ungeeignet = sorted(verbraucher - {"dcdc223", "quicktests", "qec"})
         if ungeeignet:
             raise ValueError(
                 "Die FIN-Liste enthaelt 14-stellige Kurz-FINs. "
-                "Fuer diese werden derzeit nur 'vedoc-historie'/'dcdc223' "
-                "und 'quicktests' unterstuetzt; nicht: "
+                "Fuer diese sind 'vedoc-historie'/'dcdc223', 'quicktests' "
+                "und 'qec' vorgesehen; nicht: "
                 + ", ".join(ungeeignet)
-                + ". Bitte --quellen vedoc-historie,quicktests verwenden "
-                "oder fuer weitere Quellen vollstaendige 17-stellige FINs bereitstellen."
+                + ". Fuer TIPS eine separate --tips-eingabe angeben, "
+                "fuer WEM/SA-Codes eine vollstaendige 17-stellige FIN-Liste."
             )
     # QEC-Sachnummern gehoeren nur in den einzelnen QEC-CLI-Lauf.
     return len(fins)
@@ -240,7 +246,10 @@ def main(argv: list[str] | None = None) -> int:
         if auswahl == ["tips"] and argumente.tips_eingabe is None:
             anzahl_fins = _tips_eingabe_pruefen(argumente.eingabe)
         else:
-            anzahl_fins = _eingabe_pruefen(argumente.eingabe, auswahl)
+            anzahl_fins = _eingabe_pruefen(
+                argumente.eingabe, auswahl,
+                tips_separat=argumente.tips_eingabe is not None,
+            )
         if argumente.tips_eingabe is not None:
             tips_anzahl = _tips_eingabe_pruefen(argumente.tips_eingabe)
         else:
