@@ -104,7 +104,9 @@ ntf-insight-beschaffung --eingabe ".\FIN-Liste DCDC223 SensorIssue.txt" --quelle
 
 **Standardablage:** Bei `FIN-Liste DCDC223 SensorIssue.txt` entsteht `data/processed/FIN-Liste DCDC223 SensorIssue/` mit sechs getrennten Quell-Unterordnern, z. B. `qec/`, `diagnosis_viewer_quicktests/` und `vedoc_codes/`. Ungültige Windows-Zeichen im TXT-Dateinamen werden ersetzt; vorhandene ältere Downloads werden nicht automatisch verschoben. `--ausgabe` überschreibt die automatische Basisordnerwahl.
 
-**Parallele Anmeldung:** Für jede Quelle wird ein eigener Edge-Prozess bzw. ein getrenntes Browserprofil genutzt. Das kann mehrere SSO- und PING-ID-Bestätigungen erfordern; `--parallel 6` ist bei hoher Browser- oder Serverlast nicht unbedingt schneller. Für den Anfang sind **2–3** parallele Quellen sinnvoll.
+**Parallele Anmeldung:** VeDoc-Historie (`dcdc223`) und QuickTests verwenden getrennte Edge-Profile, aber **eine gemeinsame, betriebssystemseitige SSO-Sperre**: Die erste Quelle bestätigt ihre PING ID, erst danach startet die Anmeldung der zweiten. Anschließend laufen die **Downloads weiterhin parallel**. Die PING-ID-Freigabe bleibt manuell. Die übrigen Quellen (WEM, SA-Codes, QEC, TIPS) sind noch nicht in diese Sperre eingebunden.
+
+**QuickTest-Wiederaufnahme:** Die QuickTest-CLI **ignoriert die frühere 24-Stunden-Sperre**. Sie überspringt eine FIN nur bei bereits vorhandener, lesbarer PDF in genau `diagnosis_viewer_quicktests/<FIN>/`. Fehlt eine PDF, wird selbst nach einem fehlgeschlagenen oder als „Keine Quicktests“ protokollierten Abruf neu angefragt. `ntf-insight-quicktests --erneut` lädt auch FINs mit bereits vorhandenen PDFs nochmals. Die GUI behält ihre separate bisherige Wiederholungsregel.
 
 **Einzelabrufe:** Alternativ `ntf-insight-qec --eingabe .\fins.txt`, `ntf-insight-quicktests --eingabe .\fins.txt` usw. starten. Die vollständige Anleitung mit allen sechs Einzelbefehlen, Unterordnern und Optionen steht in [Datenbeschaffung per CLI](docs/datenbeschaffung-cli.md). Die Details zu frei gewählten Hardwarehistorien findest du unter [VeDoc-Hardwarehistorie](docs/vedoc-hardware-historie.md).
 
