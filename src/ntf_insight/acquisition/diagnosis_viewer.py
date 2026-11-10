@@ -258,7 +258,7 @@ def lokal_vorhandene_pdf(
     return FinDownloadResult(
         fin=fin, files=sorted(pdfs),
         available=alt.available if alt else 0,
-        status="Uebersprungen (PDF bereits vorhanden)",
+        status="Übersprungen (PDF bereits vorhanden)",
         last_attempt_at=alt.last_attempt_at if alt else "",
     )
 
@@ -699,7 +699,7 @@ class DiagnosisViewerDownloader:
                 f"{len(result.errors)} Fehler."
             )
             return result, page
-        except DownloadCancelled:
+        except (DownloadCancelled, InterruptedError):
             result.status = "Abgebrochen"
             return result, page
         except Exception as exc:
