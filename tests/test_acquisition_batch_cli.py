@@ -276,3 +276,51 @@ def test_kombinierter_hardware_und_qec_sammelabruf(tmp_path, monkeypatch):
     assert "--objekt" not in quicktests and "--sachnummer" not in quicktests
     assert vedoc[vedoc.index("--ausgabe") + 1].endswith("vedoc_historie")
     assert qec[qec.index("--ausgabe") + 1].endswith("qec")
+
+
+
+def test_batch_kurz_fin_ve_doc_und_quicktests_gleichzeitig(tmp_path, monkeypatch):
+    """Regression: 14-stellige Kurz-FINs duerfen die zwei Quellen starten."""
+    commands, zugleich = _popen_simulieren(monkeypatch)
+    fin = tmp_path / "FIN-Liste DCDC223 SensorIssue.txt"
+    fin.write_text(
+        "1671061B000001\n1671061B000002\n1671061B000003\n",
+        encoding="utf-8",
+    )
+    assert cli.main([
+        "--eingabe", str(fin), "--quellen", "vedoc-historie,quicktests",
+        "--objekt", "DCDC223", "--attribut", "Seriennummer",
+        "--parallel", "2",
+    ]) == 0
+    assert len(commands) == 2
+    assert 1 <= zugleich() <= 2
+    assert all(str(fin) == argv[argv.index("--eingabe") + 1] for argv, _ in commands)
+    zielordner = {
+        Path(argv[argv.index("--ausgabe") + 1]).name for argv, _ in commands
+    }
+    assert zielordner == {"vedoc_historie", "diagnosis_viewer_quicktests"}
+
+
+@pytest.mark.parametrize("quellen", [
+    "alle", "qec,quicktests", "quicktests,wem", "sa-codes,vedoc-historie", "tips",
+])
+def test_batch_kurz_fin_unsupportierte_quellen_frueh_abweisen(
+    tmp_path, monkeypatch, quellen, capsys,
+):
+    commands, _ = _popen_simulieren(monkeypatch)
+    fin = tmp_path / "kurz.txt"
+    fin.write_text("1671061B000001\n", encoding="utf-8")
+    assert cli.main(["--eingabe", str(fin), "--quellen", quellen]) == 2
+    assert not commands
+    assert "14-stellige Kurz-FINs" in capsys.readouterr().err
+
+
+def test_batch_gemischte_14_und_17stellige_fins_fuer_zwei_quellen(tmp_path, monkeypatch):
+    commands, _ = _popen_simulieren(monkeypatch)
+    fin = tmp_path / "gemischt.txt"
+    fin.write_text("1671061B000001\nWDD12345678901234\n", encoding="utf-8")
+    assert cli.main([
+        "--eingabe", str(fin), "--quellen", "dcdc223,quicktests",
+        "--parallel", "2",
+    ]) == 0
+    assert len(commands) == 2
