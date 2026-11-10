@@ -128,8 +128,8 @@ def test_vorhandene_pdf_vermeiden_login_unabhaengig_von_24h(tmp_path, monkeypatc
         ziel.mkdir(parents=True)
         (ziel / "test.pdf").write_bytes(b"%PDF-1.7\\nOffline-Test")
     monkeypatch.setattr(cli, "load_saved_credentials", lambda: pytest.fail("Nicht benoetigt"))
-    ergebnisse = [FinDownloadResult(fin=FIN, status="Uebersprungen (PDF bereits vorhanden)"),
-                  FinDownloadResult(fin=FIN_ZWEI, status="Uebersprungen (PDF bereits vorhanden)")]
+    ergebnisse = [FinDownloadResult(fin=FIN, status="Übersprungen (PDF bereits vorhanden)"),
+                  FinDownloadResult(fin=FIN_ZWEI, status="Übersprungen (PDF bereits vorhanden)")]
     aufrufe = _fake_downloader(monkeypatch, ergebnisse)
     assert cli.main(["--eingabe", str(_eingabe(tmp_path))]) == 0
     assert aufrufe[0][2]["password"] == ""
