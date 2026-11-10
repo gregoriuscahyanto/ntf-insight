@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from contextlib import nullcontext
 import re
 import tempfile
 import time
@@ -20,6 +21,7 @@ from typing import Callable
 from urllib.parse import quote, urlsplit
 
 from ntf_insight.acquisition.fin_format import fin_passt_zu_anfrage, ist_gueltige_fin
+from ntf_insight.acquisition.sso_login_gate import serielle_sso_anmeldung
 
 DIAGNOSIS_VIEWER = "https://app.diagviewer.prod.gspp-eu.cloud.corpintra.net/search"
 LOGIN_HOST = "login.mercedes-benz.com"
@@ -228,6 +230,39 @@ def scan_local_quicktests(folder: Path) -> list[FinDownloadResult]:
     return sorted(entries, key=lambda result: result.fin)
 
 
+def lokal_vorhandene_pdf(
+    ordner: Path, fin: str,
+) -> FinDownloadResult | None:
+    """CLI: Nur eine echte PDF im eigenen FIN-Ordner erlaubt das Ueberspringen.
+
+    Ein 24-h-Abrufstatus ohne PDF, auch 'Keine Quicktests' oder 'Fehler',
+    ist *kein* Grund, eine weitere Abfrage zu unterdruecken. Ebenso zaehlen
+    fremde FIN-Ordner, symlinks, defekte PDF-Dateien und JSON nicht.
+    """
+    fin_ordner = Path(ordner) / fin
+    if not fin_ordner.is_dir() or fin_ordner.is_symlink():
+        return None
+    pdfs: list[Path] = []
+    for pfad in fin_ordner.iterdir():
+        if not pfad.is_file() or pfad.is_symlink() or pfad.suffix.lower() != ".pdf":
+            continue
+        try:
+            with pfad.open("rb") as datei:
+                if datei.read(5) == b"%PDF-":
+                    pdfs.append(pfad)
+        except OSError:
+            continue
+    if not pdfs:
+        return None
+    alt = read_last_attempt(ordner, fin)
+    return FinDownloadResult(
+        fin=fin, files=sorted(pdfs),
+        available=alt.available if alt else 0,
+        status="Übersprungen (PDF bereits vorhanden)",
+        last_attempt_at=alt.last_attempt_at if alt else "",
+    )
+
+
 def recently_attempted(
     folder: Path, fin: str, *, now: datetime | None = None
 ) -> FinDownloadResult | None:
@@ -272,6 +307,8 @@ class DiagnosisViewerDownloader:
         retry_recent: bool = False,
         action_interval_seconds: float = 1.5,
         kurz_fin_erlaubt: bool = False,
+        nur_fehlende_pdfs: bool = False,
+        serielle_sso: bool = False,
     ) -> None:
         self.output_dir = Path(output_dir)
         self.profile_dir = Path(profile_dir)
@@ -282,6 +319,8 @@ class DiagnosisViewerDownloader:
         self.password = password
         self.retry_recent = retry_recent
         self.kurz_fin_erlaubt = kurz_fin_erlaubt
+        self.nur_fehlende_pdfs = nur_fehlende_pdfs
+        self.serielle_sso = serielle_sso
         # Fixed, conservative pacing to limit request rate and avoid overloading the service.
         self.action_interval_seconds = max(0.0, float(action_interval_seconds))
         self._last_action_at: float | None = None
@@ -583,13 +622,22 @@ class DiagnosisViewerDownloader:
         try:
             self._check_cancel(cancel)
             progress(f"{fin}: Diagnosis Viewer öffnen …")
-            try:
-                self._pace(cancel)
-                page.goto(search_url(fin, kurz_erlaubt=self.kurz_fin_erlaubt), wait_until="domcontentloaded", timeout=45000)
-            except Exception:
-                # An interactive SSO redirect may exceed the navigation timeout.
-                pass
-            page = self._login(context, page, progress, cancel)
+            anmeldung = (
+                serielle_sso_anmeldung(status=progress, abbruch=cancel)
+                if self.serielle_sso else nullcontext()
+            )
+            # Lock before navigation: page.goto can already start PING ID.
+            # Release immediately after authenticated page is confirmed.
+            with anmeldung:
+                try:
+                    self._pace(cancel)
+                    page.goto(search_url(fin, kurz_erlaubt=self.kurz_fin_erlaubt), wait_until="domcontentloaded", timeout=45000)
+                except DownloadCancelled:
+                    raise
+                except Exception:
+                    # An interactive SSO redirect may exceed the navigation timeout.
+                    pass
+                page = self._login(context, page, progress, cancel)
             field = page.locator('input[name="finVin"]')
             self._pace(cancel)
             field.fill(fin)
@@ -651,7 +699,7 @@ class DiagnosisViewerDownloader:
                 f"{len(result.errors)} Fehler."
             )
             return result, page
-        except DownloadCancelled:
+        except (DownloadCancelled, InterruptedError):
             result.status = "Abgebrochen"
             return result, page
         except Exception as exc:
@@ -668,7 +716,7 @@ class DiagnosisViewerDownloader:
         progress: Progress | None = None,
         cancel: Event | None = None,
     ) -> list[FinDownloadResult]:
-        """Use the installed Edge for new requests; skip FINs attempted within 24h."""
+        """CLI ueberspringt nur vorhandene PDFs; GUI kann 24-h-Policy behalten."""
         validated = parse_fins("\n".join(fins), kurz_erlaubt=self.kurz_fin_erlaubt)
         progress = progress or (lambda message: None)
         cancel = cancel or Event()
@@ -676,14 +724,26 @@ class DiagnosisViewerDownloader:
         results_by_fin: dict[str, FinDownloadResult] = {}
         pending: list[str] = []
         for fin in validated:
-            previous = None if self.retry_recent else recently_attempted(self.output_dir, fin)
+            if self.retry_recent:
+                previous = None
+            elif self.nur_fehlende_pdfs:
+                previous = lokal_vorhandene_pdf(self.output_dir, fin)
+            else:
+                previous = recently_attempted(self.output_dir, fin)
             if previous is None:
                 pending.append(fin)
             else:
                 results_by_fin[fin] = previous
-                progress(f"{fin}: letzter Abruf < 24 Stunden – übersprungen.")
+                if self.nur_fehlende_pdfs:
+                    progress(f"{fin}: PDF im FIN-Ordner vorhanden – uebersprungen.")
+                else:
+                    progress(f"{fin}: letzter Abruf < 24 Stunden – übersprungen.")
         if not pending:
-            progress("Alle FINs wurden innerhalb der letzten 24 Stunden bereits abgerufen.")
+            progress(
+                "Alle FINs besitzen bereits PDFs im Ausgabeordner."
+                if self.nur_fehlende_pdfs
+                else "Alle FINs wurden innerhalb der letzten 24 Stunden bereits abgerufen."
+            )
             return [results_by_fin[fin] for fin in validated]
         self.profile_dir.mkdir(parents=True, exist_ok=True)
         try:

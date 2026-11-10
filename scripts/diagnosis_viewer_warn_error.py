@@ -18,12 +18,14 @@ import sys
 import tempfile
 import time
 from collections import deque
+from contextlib import nullcontext
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs, quote, unquote, urlsplit
 
 from ntf_insight.acquisition.output_paths import standard_ausgabe
+from ntf_insight.acquisition.sso_login_gate import serielle_sso_anmeldung
 
 SEARCH_URL = "https://app.diagviewer.prod.gspp-eu.cloud.corpintra.net/search"
 VIEWER_HOST = urlsplit(SEARCH_URL).hostname
@@ -475,6 +477,7 @@ class DiagnosisViewerScraper:
         pacing: float = 0.0, login_timeout: float = 300, page_timeout: float = 70,
         session_timeout: float = 5, missing_section_grace: float = 1.25,
         gesamtdatei_am_ende: bool = True,
+        serielle_sso: bool = False,
     ):
         self.output = output
         self.profile = profile
@@ -486,6 +489,7 @@ class DiagnosisViewerScraper:
         self.session_timeout = session_timeout
         self.missing_section_grace = missing_section_grace
         self.gesamtdatei_am_ende = gesamtdatei_am_ende
+        self.serielle_sso = serielle_sso
         self.stopped = False
 
     @staticmethod
@@ -548,8 +552,13 @@ class DiagnosisViewerScraper:
 
     def _search(self, context: Any, page: Any, fin: str) -> tuple[Any, list[dict[str, str]]]:
         self.taktung.pause()
-        page.goto(search_url(fin), wait_until="domcontentloaded", timeout=45000)
-        page = self._login(context)
+        anmeldung = (
+            serielle_sso_anmeldung(status=self.log)
+            if self.serielle_sso else nullcontext()
+        )
+        with anmeldung:
+            page.goto(search_url(fin), wait_until="domcontentloaded", timeout=45000)
+            page = self._login(context)
         field = page.locator('input[name="finVin"]')
         self.taktung.pause()
         field.fill(fin)
@@ -845,8 +854,13 @@ class DiagnosisViewerScraper:
                     page = context.pages[0] if context.pages else context.new_page()
                     if login_only:
                         self.taktung.pause()
-                        page.goto(SEARCH_URL, wait_until="domcontentloaded", timeout=45000)
-                        self._login(context)
+                        anmeldung = (
+                            serielle_sso_anmeldung(status=self.log)
+                            if self.serielle_sso else nullcontext()
+                        )
+                        with anmeldung:
+                            page.goto(SEARCH_URL, wait_until="domcontentloaded", timeout=45000)
+                            self._login(context)
                         self.log("SSO/PING ID erfolgreich: Diagnosis Viewer ist erreichbar. Keine FIN abgefragt.")
                         return 0
                     for fin_index, fin in enumerate(todo, 1):
@@ -1114,6 +1128,7 @@ def main(argv: list[str] | None = None) -> int:
             page_timeout=args.seiten_timeout, session_timeout=args.sitzungs_timeout,
             missing_section_grace=args.abschnitt_wartezeit,
             gesamtdatei_am_ende=not args.ohne_gesamtdatei,
+            serielle_sso=True,
         )
         if not args.nur_login:
             scraper.log(f"FINs: {len(fins)} | Teildateien: {teile_verzeichnis(output)}")

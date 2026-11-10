@@ -14,7 +14,7 @@ from ntf_insight.acquisition.diagnosis_viewer import (
     DIAGNOSIS_VIEWER, DownloadRow, FinDownloadResult,
     _save_pdf, _visible_rows, _write_manifest, parse_fins, search_url,
     DiagnosisViewerDownloader, DownloadCancelled, format_last_attempt,
-    read_last_attempt, recently_attempted, scan_local_quicktests,
+    read_last_attempt, recently_attempted, scan_local_quicktests, lokal_vorhandene_pdf,
 )
 
 from ntf_insight.acquisition.credentials import (
@@ -361,3 +361,167 @@ def test_downloader_run_kurz_fin_beharrt_auf_optin_ohne_browser(tmp_path):
     ).run([KURZ_FIN])
     assert daten[0].status.startswith("Übersprungen")
     assert not (tmp_path / "edge").exists()
+
+
+
+def test_cli_ueberspringt_nur_pdf_in_exaktem_fin_ordner(tmp_path):
+    fin_dir = tmp_path / FIN
+    fin_dir.mkdir()
+    status = FinDownloadResult(
+        fin=FIN, status="Fehler",
+        last_attempt_at=datetime.now(timezone.utc).isoformat(),
+    )
+    _write_manifest(fin_dir, status)
+    assert recently_attempted(tmp_path, FIN) is not None  # Alte GUI-Regel weiterhin aktiv
+    assert lokal_vorhandene_pdf(tmp_path, FIN) is None  # CLI startet erneut
+    (fin_dir / "dummy.pdf").write_bytes(b"<html>SSO abgelaufen</html>")
+    assert lokal_vorhandene_pdf(tmp_path, FIN) is None
+    (fin_dir / "partial.pdf").write_bytes(b"")
+    assert lokal_vorhandene_pdf(tmp_path, FIN) is None
+    (tmp_path / "andere-fahrzeuge").mkdir()
+    (tmp_path / "andere-fahrzeuge" / "fremd.pdf").write_bytes(b"%PDF-1.7\nTest")
+    assert lokal_vorhandene_pdf(tmp_path, FIN) is None
+    original = fin_dir / "quicktest.pdf"
+    original.write_bytes(b"%PDF-1.7\nOffline-Test")
+    gefunden = lokal_vorhandene_pdf(tmp_path, FIN)
+    assert gefunden is not None
+    assert gefunden.files == [original]
+    assert "PDF bereits vorhanden" in gefunden.status
+    assert lokal_vorhandene_pdf(tmp_path, "WDD12345678901235") is None
+
+
+def test_cli_ueberspringt_vorhandene_pdf_auch_nach_mehr_als_24_stunden(tmp_path):
+    fin_dir = tmp_path / FIN
+    alt = datetime.now(timezone.utc) - timedelta(days=7)
+    _write_manifest(
+        fin_dir,
+        FinDownloadResult(fin=FIN, status="Fehler", last_attempt_at=alt.isoformat()),
+    )
+    (fin_dir / "diagnose.PDF").write_bytes(b"%PDF-1.7\nPDF-Test")
+    assert recently_attempted(tmp_path, FIN) is None
+    aufrufe = []
+    downloader = DiagnosisViewerDownloader(
+        tmp_path, tmp_path / "edge", nur_fehlende_pdfs=True,
+    )
+    result = downloader.run([FIN], progress=aufrufe.append)
+    assert result[0].files == [fin_dir / "diagnose.PDF"]
+    assert "PDF bereits vorhanden" in result[0].status
+    assert not (tmp_path / "edge").exists()
+    assert any("PDF im FIN-Ordner vorhanden" in s for s in aufrufe)
+
+
+def test_cli_versucht_neu_bei_24h_status_ohne_pdf_ohne_echten_browser(
+    tmp_path, monkeypatch,
+):
+    import sys
+    from types import ModuleType
+
+    status = FinDownloadResult(
+        fin=FIN, status="Fehler",
+        last_attempt_at=datetime.now(timezone.utc).isoformat(),
+    )
+    _write_manifest(tmp_path / FIN, status)
+    called = []
+
+    class Kontext:
+        pages = [object()]
+
+        def close(self):
+            pass
+
+    class Manager:
+        def __enter__(self):
+            return SimpleNamespace(chromium=SimpleNamespace(
+                launch_persistent_context=lambda **kwargs: Kontext(),
+            ))
+
+        def __exit__(self, *_args):
+            return False
+
+    sync_api = ModuleType("playwright.sync_api")
+    sync_api.sync_playwright = lambda: Manager()
+    monkeypatch.setitem(sys.modules, "playwright.sync_api", sync_api)
+    downloader = DiagnosisViewerDownloader(
+        tmp_path, tmp_path / "edge", nur_fehlende_pdfs=True,
+    )
+
+    def one_fin(context, page, fin, progress, cancel):
+        called.append(fin)
+        return FinDownloadResult(fin=fin, status="Keine Quicktests"), page
+
+    monkeypatch.setattr(downloader, "_one_fin", one_fin)
+    results = downloader.run([FIN])
+    assert called == [FIN]
+    assert len(results) == 1
+    assert results[0].status == "Keine Quicktests"
+
+
+def test_pdf_check_schliesst_symlinks_aus(tmp_path):
+    ziel = tmp_path / "source.pdf"
+    ziel.write_bytes(b"%PDF-1.7\nTest")
+    folder = tmp_path / FIN
+    folder.mkdir()
+    try:
+        (folder / "alias.pdf").symlink_to(ziel)
+    except (NotImplementedError, OSError):
+        pytest.skip("Windows-Testsystem erlaubt keine Symlinks")
+    assert lokal_vorhandene_pdf(tmp_path, FIN) is None
+
+
+
+def test_quicktest_ping_sperre_vor_portal_navigation_und_nicht_waehrend_download(
+    tmp_path, monkeypatch,
+):
+    from contextlib import contextmanager
+
+    import ntf_insight.acquisition.diagnosis_viewer as backend
+
+    reihenfolge = []
+
+    @contextmanager
+    def gate(*, status, abbruch):
+        reihenfolge.append("sso-lock")
+        yield
+        reihenfolge.append("sso-unlock")
+
+    class FakeField:
+        def fill(self, value):
+            reihenfolge.append("fin-suchfeld")
+
+        def click(self, **kwargs):
+            reihenfolge.append("search")
+
+    class FakePage:
+        def goto(self, url, **kwargs):
+            reihenfolge.append("goto")
+
+        def locator(self, selector):
+            return FakeField()
+
+        def get_by_role(self, *args, **kwargs):
+            return FakeField()
+
+    monkeypatch.setattr(backend, "serielle_sso_anmeldung", gate)
+    downloader = DiagnosisViewerDownloader(
+        tmp_path, tmp_path / "profile", serielle_sso=True, action_interval_seconds=0,
+    )
+    page = FakePage()
+
+    def login(context, seite, progress, cancel):
+        reihenfolge.append("login")
+        return seite
+
+    def results(seite, cancel, fin):
+        reihenfolge.append("results")
+        return []
+
+    monkeypatch.setattr(downloader, "_login", login)
+    monkeypatch.setattr(downloader, "_wait_results", results)
+    result, _ = downloader._one_fin(
+        SimpleNamespace(), page, FIN, lambda _: None, Event(),
+    )
+    assert result.status == "Keine Quicktests"
+    assert reihenfolge == [
+        "sso-lock", "goto", "login", "sso-unlock",
+        "fin-suchfeld", "search", "results",
+    ]

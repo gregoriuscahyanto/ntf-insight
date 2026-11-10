@@ -20,6 +20,7 @@ from pathlib import Path
 from urllib.parse import urlsplit
 
 from ntf_insight.acquisition.output_paths import standard_ausgabe
+from ntf_insight.acquisition.sso_login_gate import serielle_sso_anmeldung
 
 from lxml import html
 from openpyxl import Workbook
@@ -590,8 +591,19 @@ def _abfrage(
             timeout=timeout_ms,
         )
     except PlaywrightTimeout:
-        return _ergebnis(fin, "fin_nicht_bestaetigt", hinweis="FIN-Wechsel nicht bestaetigt.",
-                         objekt=objekt, attribut=attribut)
+        hinweis = (
+            "VeDoc hat nach der Suche keine passende Fahrzeugkennung angezeigt. "
+            + (
+                "Bei 14-stelliger Kurz-FIN kann eine vollstaendige 17-stellige FIN "
+                "fuer die serverseitige Suche erforderlich sein; ggf. --timeout 60 testen."
+                if len(fin) == 14
+                else "SSO-/Fahrzeugauswahl pruefen; ggf. --timeout 60 testen."
+            )
+        )
+        return _ergebnis(
+            fin, "fin_nicht_bestaetigt", hinweis=hinweis,
+            objekt=objekt, attribut=attribut,
+        )
 
     try:
         seite.locator(_TAB).click(timeout=timeout_ms)
@@ -775,20 +787,28 @@ def main(argv: list[str] | None = None, *, allgemeine_historie: bool = False) ->
             kontext = playwright.chromium.launch_persistent_context(**start_parameter)
             try:
                 seite = kontext.pages[0] if kontext.pages else kontext.new_page()
-                try:
-                    seite.goto(url, wait_until="domcontentloaded", timeout=60_000)
-                except PlaywrightTimeout:
-                    # Ein SSO-Redirect kann einen Navigationstimeout ausloesen.
-                    pass
-                except Exception as fehler:
-                    if _browserfehler(fehler) or not _kontext_hat_seiten(kontext):
-                        raise VeDocBrowserFehler("Browser waehrend der VeDoc-Navigation verloren.") from None
-                    raise
-                seite = _anmelden(
-                    kontext, vedoc_host=urlsplit(url).hostname or "",
-                    login_timeout_s=argumente.login_timeout,
-                    auto_login=not argumente.login_manuell,
-                )
+                # Gemeinsamer OS-Lock mit QuickTest-CLI: PING ID nie parallel.
+                # Vor der Navigation sperren, da bereits goto einen SSO-Redirect
+                # ausloesen kann; nach erfolgreichem Login sofort freigeben.
+                with serielle_sso_anmeldung(
+                    status=lambda meldung: print(meldung, flush=True),
+                ):
+                    try:
+                        seite.goto(url, wait_until="domcontentloaded", timeout=60_000)
+                    except PlaywrightTimeout:
+                        # Ein SSO-Redirect kann einen Navigationstimeout ausloesen.
+                        pass
+                    except Exception as fehler:
+                        if _browserfehler(fehler) or not _kontext_hat_seiten(kontext):
+                            raise VeDocBrowserFehler(
+                                "Browser waehrend der VeDoc-Navigation verloren."
+                            ) from None
+                        raise
+                    seite = _anmelden(
+                        kontext, vedoc_host=urlsplit(url).hostname or "",
+                        login_timeout_s=argumente.login_timeout,
+                        auto_login=not argumente.login_manuell,
+                    )
                 if argumente.nur_login:
                     print("SSO/PING ID erfolgreich: VeDoc ist erreichbar. Keine FIN abgefragt.", flush=True)
                 else:

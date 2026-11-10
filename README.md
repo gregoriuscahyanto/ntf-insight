@@ -57,7 +57,19 @@ ntf-insight-beschaffung --eingabe ".\FIN-Liste DCDC223 SensorIssue.txt" --quelle
 ntf-insight-qec --eingabe ".\FIN-Liste DCDC223 SensorIssue.txt" --sachnummer "A 123 456 78 90" --anhaenge alle
 ```
 
-**QEC mit QuickTests und WEM parallel** (Sachnummer und Anhangmodus gelten ausschließlich für QEC):
+**QEC ohne Sachnummer: per Benennung filtern** (z. B. DCDC-Varianten):
+
+```powershell
+ntf-insight-qec --eingabe ".\FIN-Liste DCDC223 SensorIssue.txt" --benennung DCDC --anhaenge alle
+```
+
+**Alle sechs Datenquellen parallel, QEC mit Benennungsfilter** (nur mit 17-stelligen Voll-FINs):
+
+```powershell
+ntf-insight-beschaffung --eingabe ".\FIN-Liste DCDC223 SensorIssue.txt" --quellen alle --parallel 6 --benennung DCDC --anhaenge alle
+```
+
+**QEC mit QuickTests und WEM parallel** (Sachnummer, Benennung und Anhangmodus gelten ausschließlich für QEC):
 
 ```powershell
 ntf-insight-beschaffung --eingabe ".\FIN-Liste DCDC223 SensorIssue.txt" --quellen qec,quicktests,wem --sachnummer "A 123 456 78 90" --anhaenge alle --parallel 3
@@ -88,6 +100,7 @@ ntf-insight-beschaffung --eingabe ".\FIN-Liste DCDC223 SensorIssue.txt" --quelle
 | `--objekt` | Optional, z. B. `CPC3`; Standard `DCDC223` | Exakter Name des VeDoc-Hardwareobjekts im Historienreiter. Gilt nur für die Quelle `dcdc223` bzw. `vedoc-historie`. |
 | `--attribut` | Optional, z. B. `Hardwarestand`; Standard `Seriennummer` | Exakter Name des VeDoc-Historienattributs. Gilt nur für VeDoc-Historie. |
 | `--sachnummer` | Optional, z. B. `"A 123 456 78 90"` | **Nur QEC:** Exakte Sachnummer für alle FINs der TXT; damit werden auch Bauteile ohne Pumpenbezeichnung gesucht. |
+| `--benennung` | Optional, z. B. `DCDC` | **Nur QEC:** Textsuche in „Benennung“, ohne Sachnummer möglich; Groß-/Kleinschreibung egal, Kommas trennen alternative Suchbegriffe (ODER). Mit `--sachnummer` kombiniert gilt UND. Alias: `--keyword`. |
 | `--anhaenge` | `referenz` (Standard) oder `alle` | **Nur QEC:** Strikter Referenzabgleich am Dateinamen oder Download sämtlicher im QEC-Fall-Popup sichtbarer Dateien mit ungeprüfter Zuordnung. |
 | `--login-manuell` | Optionaler Schalter | Automatisches Ausfüllen der SSO-Anmeldedaten deaktivieren; die PING-ID-Freigabe bleibt immer manuell. |
 
@@ -104,7 +117,9 @@ ntf-insight-beschaffung --eingabe ".\FIN-Liste DCDC223 SensorIssue.txt" --quelle
 
 **Standardablage:** Bei `FIN-Liste DCDC223 SensorIssue.txt` entsteht `data/processed/FIN-Liste DCDC223 SensorIssue/` mit sechs getrennten Quell-Unterordnern, z. B. `qec/`, `diagnosis_viewer_quicktests/` und `vedoc_codes/`. Ungültige Windows-Zeichen im TXT-Dateinamen werden ersetzt; vorhandene ältere Downloads werden nicht automatisch verschoben. `--ausgabe` überschreibt die automatische Basisordnerwahl.
 
-**Parallele Anmeldung:** Für jede Quelle wird ein eigener Edge-Prozess bzw. ein getrenntes Browserprofil genutzt. Das kann mehrere SSO- und PING-ID-Bestätigungen erfordern; `--parallel 6` ist bei hoher Browser- oder Serverlast nicht unbedingt schneller. Für den Anfang sind **2–3** parallele Quellen sinnvoll.
+**Parallele Anmeldung:** **Alle sechs CLI-Datenquellen** nutzen die gemeinsame betriebssystemseitige SSO-/PING-ID-Sperre: Die erste Quelle meldet sich an und erhält bei Bedarf ihre **manuell** bestätigte PING ID, dann startet die Anmeldung der nächsten Quelle. Nach erfolgreichem Login laufen die Datenabrufe **parallel** weiter. Die sechs Edge-Profile bleiben getrennt. Auch ein später erforderlicher erneuter Login wird über die Sperre koordiniert. `--parallel 6` setzt für alle Quellen 17-stellige FINs voraus.
+
+**QuickTest-Wiederaufnahme:** Die QuickTest-CLI **ignoriert die frühere 24-Stunden-Sperre**. Sie überspringt eine FIN nur bei bereits vorhandener, lesbarer PDF in genau `diagnosis_viewer_quicktests/<FIN>/`. Fehlt eine PDF, wird selbst nach einem fehlgeschlagenen oder als „Keine Quicktests“ protokollierten Abruf neu angefragt. `ntf-insight-quicktests --erneut` lädt auch FINs mit bereits vorhandenen PDFs nochmals. Die GUI behält ihre separate bisherige Wiederholungsregel.
 
 **Einzelabrufe:** Alternativ `ntf-insight-qec --eingabe .\fins.txt`, `ntf-insight-quicktests --eingabe .\fins.txt` usw. starten. Die vollständige Anleitung mit allen sechs Einzelbefehlen, Unterordnern und Optionen steht in [Datenbeschaffung per CLI](docs/datenbeschaffung-cli.md). Die Details zu frei gewählten Hardwarehistorien findest du unter [VeDoc-Hardwarehistorie](docs/vedoc-hardware-historie.md).
 

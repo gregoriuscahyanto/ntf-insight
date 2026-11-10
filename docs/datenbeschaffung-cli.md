@@ -173,7 +173,20 @@ Mit `--ausgabe` beim Sammelbefehl wird **der Basisordner** angegeben
 ergänzt die spezifischen Quellunterordner und JSON-Dateinamen automatisch.
 
 Alle sechs Datenquellen können unterschiedliche Edge-Fenster gleichzeitig
-öffnen und eigene SSO-/PING-ID-Freigaben benötigen. Mit
+öffnen und eigene SSO-/PING-ID-Freigaben benötigen. **Alle sechs CLI-Quellen** haben eine gemeinsame prozessuebergreifende
+SSO-Sperre: PING-ID-Anmeldungen finden **nacheinander** statt, die
+FIN-Abfragen laufen danach weiterhin **parallel**. Jeweils die angezeigte
+PING ID am Smartphone bestaetigen, erst danach erfolgt die naechste
+Anmeldung. Die Quelle, die sich zuerst anmeldet, ist nicht festgelegt.
+Unter %USERPROFILE%\.ntf-insight\sso-anmeldung.lock liegen keine
+persoenlichen Daten; der Betriebssystem-Lock wird beim Prozessende
+freigegeben. Auch eine spaetere erneute Login-Anmeldung einer Quelle
+wird mit dieser Sperre koordiniert.
+
+Die QuickTest-**CLI** ueberspringt nur FINs mit bereits vorhandener
+lesbarer PDF im passenden FIN-Unterordner. Ein alter oder juengster
+Abrufversuch ohne PDF wird wiederholt; --erneut erzwingt den Abruf
+auch bei bereits vorhandenen PDFs. Mit
 `--login-manuell` wird bei allen die Anmeldung manuell durchgeführt.
 **PING ID bleibt in jedem Fall manuell.** Der Standard von zwei parallelen
 Diensten reduziert Browser-/Serverlast; `--parallel 6` ist optional
@@ -212,6 +225,12 @@ ntf-insight-qec --eingabe .\fins.txt --sachnummer "A 123 456 78 90"
 # Alle Dateianhaenge aus den Fall-Popups mitnehmen:
 ntf-insight-qec --eingabe .\fins.txt --sachnummer "A 123 456 78 90" --anhaenge alle
 
+# Keine Sachnummer vorhanden: QEC-Benennung nach DCDC filtern:
+ntf-insight-qec --eingabe .\fins.txt --benennung DCDC --anhaenge alle
+
+# Alle sechs Quellen parallel, SSO/PING ID aber nacheinander:
+ntf-insight-beschaffung --eingabe .\fins.txt --quellen alle --parallel 6 --benennung DCDC --anhaenge alle
+
 # Parallel mit anderen Quellen (Sachnummer/Anhangmodus nur fuer QEC):
 ntf-insight-beschaffung --eingabe .\fins.txt --quellen qec,quicktests,wem --sachnummer "A 123 456 78 90" --anhaenge alle --parallel 3
 ```
@@ -220,9 +239,16 @@ ntf-insight-beschaffung --eingabe .\fins.txt --quellen qec,quicktests,wem --sach
 `FIN;Sachnummer` enthaelt, muss sie mit dem CLI-Wert uebereinstimmen,
 andernfalls wird der Abruf vor dem Login abgelehnt. Eine **explizite
 Sachnummer** nimmt den alten Pumpenbezeichnungsfilter fuer diese FIN
-zurueck und prueft die Sachnummer genau; ohne Sachnummer bleibt der
-Kuehlmittelpumpenfilter aktiv. `--alle-bauteile` ist weiterhin die
-bewusste Auswahl saemtlicher Schadteilarten ohne Sachnummerfilter.
+zurueck und prueft die Sachnummer genau. Alternativ kann `--benennung DCDC`
+ohne Sachnummer genutzt werden: Die QEC-Spalte `Benennung` muss das
+Wort (Gross-/Kleinschreibung egal) enthalten. Mehrere durch Komma
+getrennte Suchbegriffe wie `DCDC,DC/DC` bedeuten ODER; eine zusaetzlich
+angegebene `--sachnummer` muss ebenfalls passen (UND). Ohne
+Sachnummer oder Benennung bleibt der bisherige Kuehlmittelpumpenfilter
+aktiv. `--alle-bauteile` zeigt weiterhin alle Arten ohne speziellen
+Sachnummer- oder Benennungsfilter. Jede Trefferzeile muss weiterhin die
+**exakte vollstaendige 17-stellige FIN** enthalten; QEC-Referenzen
+und Anhaenge werden fallbezogen archiviert.
 
 **Anhaenge:** Standard `--anhaenge referenz`: Nur Dateien, deren
 sichtbarer Name die exakte QEC-Referenz enthaelt. `--anhaenge alle`:
@@ -235,6 +261,11 @@ Referenzzuordnung. In der `anhaenge`-Liste der jeweiligen `qec.json` werden
 `referenz_im_dateinamen_bestaetigt` sowie `zuordnung` dokumentiert.
 Erst im spaeteren fachlichen bzw. ChatGPT-Schritt darf die Zugehoerigkeit
 bewertet werden.
+
+Mit `--benennung DCDC` lassen sich so mehrere DCDC-Varianten und
+Sachnummern erfassen, **ohne** andere Fahrzeuge zu vermischen. Der
+verwendete Filter steht im QEC-Fall-JSON unter `benennung_suchfilter`.
+Die Anzahl und Zuordnung der Treffer sind spaeter fachlich zu pruefen.
 
 Bei einer erweiterten Suche nur im freigegebenen Umfang abrufen.
 

@@ -17,6 +17,7 @@ from ntf_insight.acquisition.diagnosis_viewer import parse_fins
 from ntf_insight.acquisition.output_paths import standard_ausgabe
 from ntf_insight.acquisition.qec_tool import (
     QecDownloader, QecResult, QecTarget, parse_qec_targets, pruefe_sachnummer,
+    pruefe_benennung,
 )
 from ntf_insight.acquisition.tips_writer import TipsResult, TipsWriterDownloader
 
@@ -158,6 +159,9 @@ def qec_main(argv: list[str] | None = None) -> int:
                         help="Ohne Sachnummer nicht nur nach Kuehlmittelpumpen filtern")
     parser.add_argument("--sachnummer", metavar="NUMMER",
                         help="Exakte Sachnummer fuer alle FINs; Alternative zu FIN;Sachnummer in der TXT")
+    parser.add_argument("--benennung", "--keyword", dest="benennung", metavar="TEXT",
+                        help="QEC-Benennung enthaelt TEXT (ohne Sachnummer moeglich); "
+                             "Gross-/Kleinschreibung egal, mehrere Begriffe mit Komma = ODER")
     parser.add_argument("--anhaenge", choices=("referenz", "alle"), default="referenz",
                         help="referenz: nur Referenz im Dateinamen (Standard); "
                              "alle: alle im Fall-Popup sichtbaren Anhaenge, Zuordnung ungeprueft")
@@ -167,10 +171,12 @@ def qec_main(argv: list[str] | None = None) -> int:
             args.ausgabe = standard_ausgabe(args.eingabe, "qec")
         ausgabe, profil = _pruefe_argumente(args)
         ziele = _qec_ziele(lese_eingabe(args.eingabe), args.sachnummer)
+        args.benennung = pruefe_benennung(args.benennung) if args.benennung is not None else ""
         login = _lade_login(args)
         print(
             f"QEC: {len(ziele)} FIN-/Sachnummernziel(e), "
             f"Anhangmodus: {args.anhaenge}. "
+            f"Benennung: {args.benennung or 'Pumpenfilter/Sachnummer'}. "
             "SSO/PING ID bei Aufforderung in Edge/auf dem Smartphone bestaetigen.",
             flush=True,
         )
@@ -187,6 +193,8 @@ def qec_main(argv: list[str] | None = None) -> int:
             user_id=login.user_id if login else "",
             password=login.password if login else "",
             pump_only=not args.alle_bauteile,
+            benennung=args.benennung,
+            serielle_sso=True,
             attachment_policy=args.anhaenge,
             click_delay_seconds=0.85,
         )
@@ -217,6 +225,7 @@ def tips_main(argv: list[str] | None = None) -> int:
         )
         downloader = TipsWriterDownloader(
             ausgabe, profil,
+            serielle_sso=True,
             login_timeout_seconds=args.anmelde_timeout,
             user_id=login.user_id if login else "",
             password=login.password if login else "",

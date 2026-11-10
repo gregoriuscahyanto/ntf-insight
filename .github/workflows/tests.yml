@@ -133,8 +133,21 @@ jobs:
           python -m pytest -q --maxfail=1 --tb=short tests/test_fin_format.py tests/test_acquisition_batch_cli.py tests/test_diagnosis_viewer_downloader.py tests/test_diagnosis_viewer_quicktests_cli.py tests/test_vedoc_dcdc223_seriennummern.py tests/test_vedoc_hardware_historie.py tests/test_quicktest_download_gui.py tests/test_quicktest_s3_missing.py
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
+      # PR #79: QuickTests laden fehlende PDFs erneut; sechs PING-ID-Anmeldungen
+      # ueber gemeinsame OS-Sperre nacheinander, QEC-Keywordfilter.
+      - name: Run focused QuickTest retry and PING ID gate for PR #79
+        if: ${{ github.event_name == 'pull_request' && github.event.pull_request.number == 79 }}
+        shell: pwsh
+        run: |
+          python -m compileall -q src scripts tests/test_sso_login_gate.py
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python -m ruff check src tests ci scripts/vedoc_dcdc223_seriennummern.py
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python -m pytest -q --tb=short tests/test_sso_login_gate.py tests/test_diagnosis_viewer_quicktests_cli.py tests/test_diagnosis_viewer_downloader.py tests/test_vedoc_hardware_historie.py tests/test_vedoc_dcdc223_seriennummern.py tests/test_acquisition_batch_cli.py tests/test_quicktest_s3_missing.py tests/test_quicktest_download_gui.py tests/test_fin_format.py tests/test_sechs_sso_quellen.py tests/test_qec_tool_downloader.py tests/test_qec_attachment_reference.py tests/test_acquisition_portal_cli.py tests/test_tips_writer_downloader.py tests/test_vedoc_codes_scraper.py tests/test_diagnosis_viewer_warn_error.py
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
       - name: Run full portable quality gate
-        if: ${{ github.event_name != 'pull_request' || (github.event.pull_request.number != 72 && github.event.pull_request.number != 73 && github.event.pull_request.number != 74 && github.event.pull_request.number != 75 && github.event.pull_request.number != 76 && github.event.pull_request.number != 77 && github.event.pull_request.number != 78) }}
+        if: ${{ github.event_name != 'pull_request' || (github.event.pull_request.number != 72 && github.event.pull_request.number != 73 && github.event.pull_request.number != 74 && github.event.pull_request.number != 75 && github.event.pull_request.number != 76 && github.event.pull_request.number != 77 && github.event.pull_request.number != 78 && github.event.pull_request.number != 79) }}
         run: python ci/quality_gate.py
 
       - name: Build wheel
@@ -166,6 +179,13 @@ jobs:
         shell: pwsh
         run: |
           python -c "from pathlib import Path; from zipfile import ZipFile; wheel = next(Path('dist').glob('ntf_insight-*.whl')); names = set(ZipFile(wheel).namelist()); assert {'ntf_insight/acquisition/fin_format.py','ntf_insight/acquisition/diagnosis_viewer_cli.py','ntf_insight/acquisition/diagnosis_viewer.py','ntf_insight/acquisition/beschaffung_cli.py','scripts/vedoc_dcdc223_seriennummern.py'} <= names"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Verify SSO gate and QuickTest modules in wheel for PR #79
+        if: ${{ github.event_name == 'pull_request' && github.event.pull_request.number == 79 }}
+        shell: pwsh
+        run: |
+          python -c "from pathlib import Path; from zipfile import ZipFile; wheel = next(Path('dist').glob('ntf_insight-*.whl')); names = set(ZipFile(wheel).namelist()); assert {'ntf_insight/acquisition/sso_login_gate.py','ntf_insight/acquisition/diagnosis_viewer_cli.py','ntf_insight/acquisition/diagnosis_viewer.py','ntf_insight/acquisition/beschaffung_cli.py','scripts/vedoc_dcdc223_seriennummern.py','scripts/diagnosis_viewer_warn_error.py','ntf_insight/acquisition/portal_cli.py','ntf_insight/acquisition/qec_tool.py','ntf_insight/acquisition/tips_writer.py','ntf_insight/acquisition/vedoc_codes.py'} <= names"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       # No artifacts uploaded to GitHub Actions: quota protection.

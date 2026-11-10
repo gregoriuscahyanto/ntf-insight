@@ -100,7 +100,15 @@ nachgewiesener aktueller Hardware-Einbauzustand. Keine gefundene Änderung
 bedeutet nicht, dass die Hardware nicht verbaut ist. Die vorhandenen
 Warte-/Nachprüfungsregeln schützen vor vorschnellen Negativbefunden.
 SSO und PING ID bleiben unverändert; die PING-ID-Freigabe erfolgt
-weiterhin manuell über das berechtigte Verfahren.
+weiterhin manuell über das berechtigte Verfahren. Beim parallelen
+CLI-Abruf mit einer oder mehreren der **sechs Datenquellen** werden
+alle SSO-/PING-ID-Anmeldungen **nacheinander** ausgefuehrt; danach
+laufen die eigentlichen FIN-Abfragen parallel.
+Der Status fin_nicht_bestaetigt bedeutet, dass VeDoc **nach der
+Anmeldung** die gesuchte Fahrzeugkennung nicht bestaetigt hat.
+Bei 14-stelliger FIN kann eine fehlende Unterstuetzung dieser Kurzsuche
+die Ursache sein; ggf. eine vollstaendige 17-stellige FIN testen oder
+das Such-Timeout erhoehen.
 
 Keine realen FINs, VeDoc-Ergebnisse oder SSO-Daten in GitHub einchecken.
 Ein echter Live-Test eines anderen Objekts als DCDC223 muss im

@@ -24,6 +24,7 @@ from typing import Any
 from urllib.parse import urlsplit
 
 from ntf_insight.acquisition.output_paths import standard_ausgabe
+from ntf_insight.acquisition.sso_login_gate import serielle_sso_anmeldung
 from ntf_insight.acquisition.credentials import load_saved_credentials
 
 VEDOC_URL = "https://prod.core.public.vedoc.i.mercedes-benz.com/ui/VehicleArrangement.html"
@@ -561,15 +562,19 @@ def abrufen(args: argparse.Namespace) -> int:
         )
         try:
             page = context.pages[0] if context.pages else context.new_page()
-            try:
-                page.goto(VEDOC_URL, wait_until='domcontentloaded', timeout=60_000)
-            except Exception as exc:
-                # Ein langsamer SSO-Redirect darf die manuelle PING-ID-Freigabe
-                # nicht vor Ablauf von --anmeldezeit beenden.
-                if type(exc).__name__ != 'TimeoutError':
-                    raise
-            page = browser_bereit(context, args.anmeldezeit,
-                                   auto_login=not getattr(args, 'login_manuell', False))
+            # PING-ID-Sperre mit den anderen fuenf CLI-Quellen teilen.
+            # Datenabrufe beginnen erst nach SSO-Freigabe und laufen parallel.
+            with serielle_sso_anmeldung(status=lambda m: print(m, flush=True)):
+                try:
+                    page.goto(VEDOC_URL, wait_until='domcontentloaded', timeout=60_000)
+                except Exception as exc:
+                    # SSO-Redirect darf eine manuelle PING-ID-Freigabe nicht abbrechen.
+                    if type(exc).__name__ != 'TimeoutError':
+                        raise
+                page = browser_bereit(
+                    context, args.anmeldezeit,
+                    auto_login=not getattr(args, 'login_manuell', False),
+                )
             if nur_login:
                 print('SSO/PING ID erfolgreich: VeDoc-Fahrzeugdaten erreichbar. '
                       'Keine FIN abgefragt oder Ausgabedatei veraendert.')

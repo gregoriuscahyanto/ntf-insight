@@ -2,8 +2,10 @@
 
 Die CLI ist eine zusaetzliche Oberflaeche fuer den **bereits vorhandenen GUI-Scraper**
 \`ntf_insight.acquisition.diagnosis_viewer.DiagnosisViewerDownloader\`.
-Sie verwendet die gleichen PDF-Pruefungen, die FIN-Validierung, die 24-Stunden-Sperre,
-die Statusdateien und die SSO-/PING-ID-Wartelogik. Die GUI selbst bleibt unveraendert.
+Sie verwendet die gleichen PDF-Pruefungen, FIN-Validierung und Statusdateien.
+Die **CLI** ueberspringt eine FIN nur, wenn im FIN-Ausgabeordner bereits
+eine lesbare PDF liegt; die **GUI** behaelt ihre bisherige 24-Stunden-Regel.
+Bei parallelem VeDoc-/QuickTest-Abruf erfolgt die PING-ID-Anmeldung seriell.
 
 ## Aufruf
 
@@ -34,7 +36,7 @@ Mit eigenem Ausgabeordner:
 ntf-insight-quicktests --eingabe .\fins.txt --ausgabe "D:\NTF\quicktests"
 \`\`\`
 
-Eine FIN pro Zeile in \`fins.txt\` (17 Zeichen, ohne I/O/Q). Leerzeilen,
+Eine FIN pro Zeile in der TXT-Datei (14 oder 17 Zeichen, ohne I/O/Q). Leerzeilen,
 mit \`#\` kommentierte Zeilen, Komma-/Semikolon-Trennzeichen und Duplikate
 werden unterstuetzt. Ungueltige FINs stoppen den Abruf vor dem Browserstart.
 
@@ -59,9 +61,11 @@ Das gilt ausschliesslich fuer die neue CLI. Die GUI behält ihre bisherige
 Ablage \`%USERPROFILE%\.ntf-insight\quicktests\<FIN>\`.
 PDFs werden nicht ueberschrieben; identische Downloads werden anhand SHA-256
 erkannt. \`abrufstatus.json\` haelt den letzten FIN-Abrufversuch, den Status,
-PDF-Dateinamen, Fehler und Sitzungen ohne QuickTest fest. Wiederholte Aufrufe
-ueberspringen FINs, deren letzter Versuch weniger als 24 Stunden zurueckliegt.
-Mit \`--erneut\` kann diese Sperre gezielt aufgehoben werden.
+PDF-Dateinamen, Fehler und Sitzungen ohne QuickTest fest. Wiederholte CLI-Aufrufe ueberspringen eine FIN **nur**, wenn eine gueltige
+PDF-Datei im entsprechenden FIN-Unterordner vorhanden ist. Die PDF muss
+mit der Kennung %PDF- beginnen. Ein `abrufstatus.json` mit Status Fehler,
+Keine Quicktests oder gerade erfolgt ohne PDF wird *nicht* uebersprungen.
+Mit `--erneut` werden auch FINs mit vorhandenen PDFs nochmals geladen.
 
 ## SSO / PING ID
 
@@ -74,6 +78,13 @@ Mercedes-SSO-HTTPS-Domain eingegeben. Die PING-ID-Freigabe erfolgt stets
 **manuell auf dem Smartphone**. Der Scraper wartet bis zur erfolgreichen
 Weiterleitung; keine Automatisierung oder Umgehung der PING-ID.
 
+Die QuickTest-CLI teilt eine OS-Dateisperre mit **allen sechs
+NTF-Datenbeschaffungs-CLIs** unter
+`%USERPROFILE%\.ntf-insight\sso-anmeldung.lock`. Damit beginnt
+immer nur **eine** PING-ID-Anmeldung gleichzeitig. **Nach dem Login**
+werden die Datenabrufe dennoch parallel ausgefuehrt. Die Datei enthaelt
+keine FINs, Login-Daten oder Cookies; ein Prozessende gibt den Lock frei.
+
 Falls keine sicheren Zugangsdaten vorhanden sind, kann die Anmeldung
 interaktiv in Edge erfolgen. Weitere Optionen:
 
@@ -85,7 +96,7 @@ interaktiv in Edge erfolgen. Weitere Optionen:
 - \`--anmelde-timeout 600\`: mehr Zeit fuer SSO/PING ID einraeumen
   (Standard: 300 Sekunden).
 - \`--profil PFAD\`: unabhaengiges lokales Edge-Profil waehlen.
-- \`--erneut\`: den lokalen 24h-Schutz fuer diesen Lauf uebergehen.
+- `--erneut`: auch FINs mit bereits vorhandener PDF erneut herunterladen.
 
 **Wichtig:** Die CLI greift auf interne Unternehmenssysteme nur mit
 bestehender Berechtigung zu. Nie reale FINs, QuickTests, Passwoerter oder
@@ -101,7 +112,6 @@ erforderlich; Offline-Tests pruefen keine reale SSO-/PING-ID-Sitzung.
 - \`2\`: ungueltige Eingaben, lokale Fehler oder ein nicht startbarer Browser.
 - \`130\`: durch Strg+C abgebrochen.
 
-Die parallelen CLI-Skripte fuer VeDoc-DCDC223, VeDoc-Fahrzeugcodes und
-Diagnosis-Viewer-WEM bleiben unabhaengig. Alle Dienste koennen die
-gleiche FIN-TXT-Datei verwenden; fuer gleichzeitig laufende Browser
-sollte jedes Skript sein eigenes Profil verwenden.
+Alle sechs Datenquellen koordinieren ihre SSO-Anmeldungen mit einer
+prozessuebergreifenden Sperre, auch aus getrennten Terminals. Jedes
+Tool verwendet weiterhin sein eigenes Edge-Profil und Ausgabeordner.
