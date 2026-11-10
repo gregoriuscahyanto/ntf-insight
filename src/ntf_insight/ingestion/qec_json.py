@@ -231,6 +231,13 @@ class QECJsonParser:
                 "datei": self._text(item.get("datei")),
                 "linktext": self._text(item.get("linktext")),
                 "spalten": item.get("spalten") if isinstance(item.get("spalten"), list) else [],
+                "auswahlmodus": self._text(item.get("auswahlmodus"))
+                or self._text(payload.get("anhang_downloadmodus")) or "unbekannt",
+                "sichtbar_bei_referenz": self._text(item.get("sichtbar_bei_referenz")),
+                "referenz_im_dateinamen_bestaetigt": (
+                    item.get("referenz_im_dateinamen_bestaetigt") is True
+                ),
+                "zuordnung": self._text(item.get("zuordnung")) or "nicht_dokumentiert",
             })
 
         missing = [name for name in QEC_SECTIONS if name not in seen]
@@ -262,6 +269,13 @@ class QECJsonParser:
             "values": values_total,
             "table_rows": table_rows_total,
             "attachments": sum(isinstance(item, dict) for item in attachments),
+            "anhang_downloadmodus": self._text(payload.get("anhang_downloadmodus"))
+            or "unbekannt",
+            "anhaenge_ohne_referenzbestaetigung": sum(
+                isinstance(item, dict)
+                and item.get("zuordnung") == "nur_im_popup_gesehen_nicht_verifiziert"
+                for item in attachments
+            ),
             "download_errors": len(payload.get("fehler") or []),
         }
         return result

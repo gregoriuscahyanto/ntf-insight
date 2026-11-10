@@ -345,12 +345,26 @@ def export_qec_first_package(
                         original = json.dumps(
                             data.get("zellen") or [], ensure_ascii=False
                         )
-                    else:
-                        literal = ""
+                    elif category == "qec_attachment":
+                        # Der genaue Anhangname ist Freitext und bleibt Opt-in.
+                        # Der Referenz-Pruefstatus ist auch ohne Freitextfreigabe
+                        # fuer die KI-Auswertung als Datenluecke relevant.
+                        if data.get("referenz_im_dateinamen_bestaetigt") is True:
+                            literal = "Referenz im Dateinamen bestaetigt"
+                        elif data.get("auswahlmodus") == "alle":
+                            literal = "Nur im QEC-Popup sichtbar; Fallzuordnung nicht verifiziert"
+                        else:
+                            literal = "Anhangzuordnung nicht nachgewiesen"
                         original = json.dumps({
                             "dateiname": data.get("dateiname", ""),
                             "linktext": data.get("linktext", ""),
+                            "auswahlmodus": data.get("auswahlmodus", ""),
+                            "sichtbar_bei_referenz": data.get("sichtbar_bei_referenz", ""),
+                            "zuordnung": data.get("zuordnung", ""),
                         }, ensure_ascii=False)
+                    else:
+                        literal = ""
+                        original = ""
                     evidence_rows.append({
                         "qec_bericht_id": report_alias[sha],
                         "feld_id": f"QF{row_count:07d}",
@@ -387,6 +401,7 @@ def export_qec_first_package(
             {"thema": "NTF", "regel": "QEC-SSL-Endbefunde und Lieferantenaussagen sind nachgelagerte Bewertungen, kein Beweis fuer die Ursache und keine Clustermerkmale."},
             {"thema": "Erstentscheidung", "regel": "Nur pro Fall eine vorlaeufige NTF-Einstufung und einen begruendeten moeglichen Verursachungsbereich abgeben. KEINE Clusterbildung."},
             {"thema": "Datenluecken", "regel": "Nicht vorhandene QEC-Reiter, vorangegangene Abrufe, unanalysierte Anhaenge und fehlende Freitextfreigabe je Fall beruecksichtigen."},
+            {"thema": "QEC-Anhangzuordnung", "regel": "Bei Modus alle sind Anhaenge ohne exakte Referenz im Dateinamen nur als im QEC-Popup sichtbar belegt; Zugehoerigkeit zum Schadenfall nicht behaupten, separat pruefen."},
             {"thema": "Fachtexte", "regel": "QEC-Freitexte nur nach gesondertem Opt-in enthalten; sie sind NICHT anonymisiert. Standardexport kann eine NTF-Hypothese nicht fuer jeden Fall absichern."},
             {"thema": "Zweite Runde", "regel": "Erst nach dieser ersten QEC-Auswertung die Zusatzquellen aus Schritt 04 in Schritt 05 gesondert interpretieren."},
         ]),
@@ -470,6 +485,11 @@ def export_qec_first_package(
         "Vollfahrzeugdiagnose oder technische Cluster ableiten. "
         "Diese Aufgaben erfolgen erst in LLM-DURCHLAUF 2 (Schritt 05) "
         "mit den zusaetzlichen Unterlagen aus Schritt 04.\n"
+        "QEC-ANHAENGE: In qec_felder.csv bei belegart=anhang unbedingt "
+        "wert_strukturiert beachten. 'Nur im QEC-Popup sichtbar' ist "
+        "KEIN Nachweis, dass die Datei zum Schadenfall gehoert. "
+        "Die ungepruefte Zuordnung in pruefungen_grenzen nennen und "
+        "erst nach dokumentierter Pruefung einen Anhang als Fallbeleg verwenden.\n"
         "Alle Hinweise in qec_datenluecken.csv beruecksichtigen, "
         "insbesondere fehlende oder alte Reiter und nicht freigegebene "
         "Fachtexte. Sind QEC-Fachtexte nicht freigegeben, "

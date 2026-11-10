@@ -214,3 +214,28 @@ def test_ein_datei_transfer_enthaelt_qec_struktur_und_unveraenderte_anhaenge(tmp
     transferred = store.qec_report_for_case(FIN, "123456")
     assert transferred["status"] == "Vollständig"
     assert any(r["category"] == "qec_field" for r in transferred["records"])
+
+
+
+def test_anhang_aus_alle_popup_bleibt_beim_qec_import_ungeprueft(tmp_path):
+    payload = report()
+    payload["anhang_downloadmodus"] = "alle"
+    payload["anhaenge_ohne_referenzbestaetigung"] = 1
+    payload["anhaenge"] = [{
+        "anhang_id": "12", "dateiname": "DCDC223_HW03.pdf",
+        "datei": "12_DCDC223_HW03.pdf", "auswahlmodus": "alle",
+        "sichtbar_bei_referenz": "123456",
+        "referenz_im_dateinamen_bestaetigt": False,
+        "zuordnung": "nur_im_popup_gesehen_nicht_verifiziert",
+    }]
+    result = QECJsonParser().parse(write_report(tmp_path / "qec.json", payload))
+    assert result.metadata["anhang_downloadmodus"] == "alle"
+    assert result.metadata["anhaenge_ohne_referenzbestaetigung"] == 1
+    attached = [row for row in result.records if row["category"] == "qec_attachment"]
+    assert len(attached) == 1
+    data = attached[0]["data"]
+    assert data["auswahlmodus"] == "alle"
+    assert data["sichtbar_bei_referenz"] == "123456"
+    assert data["referenz_im_dateinamen_bestaetigt"] is False
+    assert data["zuordnung"] == "nur_im_popup_gesehen_nicht_verifiziert"
+    assert not (tmp_path / "12_DCDC223_HW03.pdf").exists()

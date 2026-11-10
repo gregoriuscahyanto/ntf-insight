@@ -50,6 +50,10 @@ def _parser() -> argparse.ArgumentParser:
                         help="VeDoc-Hardwareobjekt fuer die Quelle dcdc223, z. B. CPC3")
     parser.add_argument("--attribut",
                         help="VeDoc-Historienattribut fuer dcdc223, Standard: Seriennummer")
+    parser.add_argument("--sachnummer",
+                        help="QEC: exakte Sachnummer fuer alle FINs, z. B. A 123 456 78 90")
+    parser.add_argument("--anhaenge", choices=("referenz", "alle"),
+                        help="QEC: referenz (Standard) oder alle Dateien aus Fall-Popups")
     parser.add_argument("--login-manuell", action="store_true",
                         help="Alle Quellen mit manueller Anmeldung im sichtbaren Edge starten")
     return parser
@@ -87,6 +91,7 @@ def _eingabe_pruefen(pfad: Path) -> int:
 def _befehl(
     quelle: str, eingabe: Path, ausgabe: Path, manuell: bool,
     objekt: str | None = None, attribut: str | None = None,
+    sachnummer: str | None = None, anhaenge: str | None = None,
 ) -> list[str]:
     modul, funktion = _EINSTIEGE[quelle]
     # -u gibt Fortschritt ohne Pufferung an den Sammelprozess weiter.
@@ -101,6 +106,11 @@ def _befehl(
             argv.extend(("--objekt", objekt))
         if attribut is not None:
             argv.extend(("--attribut", attribut))
+    if quelle == "qec":
+        if sachnummer is not None:
+            argv.extend(("--sachnummer", sachnummer))
+        if anhaenge is not None:
+            argv.extend(("--anhaenge", anhaenge))
     if manuell:
         argv.append("--login-manuell")
     return argv
@@ -111,6 +121,7 @@ def _starte_quelle(
     aktiv: dict[str, subprocess.Popen[str]], sperre: threading.Lock,
     abbruch: threading.Event, objekt: str | None = None,
     attribut: str | None = None,
+    sachnummer: str | None = None, anhaenge: str | None = None,
 ) -> int:
     if abbruch.is_set():
         return 130
@@ -118,7 +129,7 @@ def _starte_quelle(
     env = os.environ.copy()
     env["PYTHONIOENCODING"] = "utf-8"
     prozess = subprocess.Popen(
-        _befehl(quelle, eingabe, ausgabe, manuell, objekt, attribut),
+        _befehl(quelle, eingabe, ausgabe, manuell, objekt, attribut, sachnummer, anhaenge),
         stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
         bufsize=1, text=True, encoding="utf-8", errors="replace", env=env,
     )
@@ -150,6 +161,12 @@ def main(argv: list[str] | None = None) -> int:
                 argumente.objekt = pruefe_historienziel(argumente.objekt, feld="--objekt")
             if argumente.attribut is not None:
                 argumente.attribut = pruefe_historienziel(argumente.attribut, feld="--attribut")
+        if (argumente.sachnummer is not None or argumente.anhaenge is not None
+                ) and "qec" not in auswahl:
+            raise ValueError("--sachnummer und --anhaenge sind nur mit der Quelle qec erlaubt.")
+        if argumente.sachnummer is not None:
+            from ntf_insight.acquisition.qec_tool import pruefe_sachnummer
+            argumente.sachnummer = pruefe_sachnummer(argumente.sachnummer)
         if not 1 <= argumente.parallel <= len(_EINSTIEGE):
             raise ValueError("--parallel muss zwischen 1 und 6 liegen.")
         anzahl_fins = _eingabe_pruefen(argumente.eingabe)
@@ -200,6 +217,7 @@ def main(argv: list[str] | None = None) -> int:
                 _starte_quelle, quelle, eingabe, ziel, argumente.login_manuell,
                 aktiv, sperre, abbruch,
                 argumente.objekt, argumente.attribut,
+                argumente.sachnummer, argumente.anhaenge,
             ): quelle
             for quelle, ziel in arbeitsliste
         }

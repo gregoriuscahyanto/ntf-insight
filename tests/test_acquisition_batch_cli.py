@@ -220,3 +220,59 @@ def test_unzulaessige_doppelte_vedoc_aliasse_oder_andere_quellen(monkeypatch, tm
         "--eingabe", str(fin), "--quellen", "qec,tips", "--objekt", "CPC3",
     ]) == 2
     assert commands == []
+
+
+def test_qec_sachnummer_und_anhangmodus_nur_an_qec_prozess(tmp_path, monkeypatch):
+    cmds, _ = _popen_simulieren(monkeypatch)
+    fin = _eingabe(tmp_path)
+    assert cli.main([
+        "--eingabe", str(fin),
+        "--quellen", "qec,quicktests,wem", "--parallel", "3",
+        "--sachnummer", "A 111 222 33 44", "--anhaenge", "alle",
+    ]) == 0
+    assert len(cmds) == 3
+    qec = next(argv for argv, _ in cmds if "portal_cli" in argv[3])
+    assert qec[qec.index("--sachnummer") + 1] == "A 111 222 33 44"
+    assert qec[qec.index("--anhaenge") + 1] == "alle"
+    for argv, _ in cmds:
+        if argv is not qec:
+            assert "--sachnummer" not in argv and "--anhaenge" not in argv
+
+
+@pytest.mark.parametrize("extra", [
+    ["--quellen", "wem,quicktests", "--sachnummer", "A 111 222 33 44"],
+    ["--quellen", "wem", "--anhaenge", "alle"],
+    ["--quellen", "qec", "--sachnummer", "INVALID/../"],
+    ["--quellen", "qec", "--sachnummer", ""],
+])
+def test_batch_ungueltige_qec_parameter_starten_keinen_prozess(
+    tmp_path, monkeypatch, extra,
+):
+    cmds, _ = _popen_simulieren(monkeypatch)
+    assert cli.main(["--eingabe", str(_eingabe(tmp_path)), *extra]) == 2
+    assert cmds == []
+
+def test_kombinierter_hardware_und_qec_sammelabruf(tmp_path, monkeypatch):
+    """VeDoc-Objekt und QEC-Sachnummer bleiben auch im selben Batch getrennt."""
+    commands, _ = _popen_simulieren(monkeypatch)
+    fin = _eingabe(tmp_path)
+    assert cli.main([
+        "--eingabe", str(fin),
+        "--quellen", "vedoc-historie,qec,quicktests",
+        "--objekt", "CPC3", "--attribut", "Hardwarestand",
+        "--sachnummer", "A 111 222 33 44", "--anhaenge", "alle",
+        "--parallel", "3",
+    ]) == 0
+    assert len(commands) == 3
+    vedoc = next(args for args, _ in commands if "vedoc_dcdc223_seriennummern" in args[3])
+    qec = next(args for args, _ in commands if "portal_cli" in args[3])
+    quicktests = next(args for args, _ in commands if "diagnosis_viewer_cli" in args[3])
+    assert vedoc[vedoc.index("--objekt") + 1] == "CPC3"
+    assert vedoc[vedoc.index("--attribut") + 1] == "Hardwarestand"
+    assert "--sachnummer" not in vedoc and "--anhaenge" not in vedoc
+    assert qec[qec.index("--sachnummer") + 1] == "A 111 222 33 44"
+    assert qec[qec.index("--anhaenge") + 1] == "alle"
+    assert "--objekt" not in qec and "--attribut" not in qec
+    assert "--objekt" not in quicktests and "--sachnummer" not in quicktests
+    assert vedoc[vedoc.index("--ausgabe") + 1].endswith("vedoc_historie")
+    assert qec[qec.index("--ausgabe") + 1].endswith("qec")

@@ -78,6 +78,14 @@ class QecResult:
     search_diagnostics: dict[str, int | bool | None] = field(default_factory=dict)
 
 
+def pruefe_sachnummer(value: str) -> str:
+    """Einheitliche Normalisierung und Validierung fuer CLI und FIN-TXT."""
+    part = str(value).strip().upper()
+    if not re.fullmatch(r"[A-Z0-9 \-]{6,24}", part):
+        raise ValueError("Ungueltige Sachnummer (6-24 Zeichen: Buchstaben, Ziffern, Leerzeichen, '-').")
+    return part
+
+
 def parse_qec_targets(raw: str) -> list[QecTarget]:
     """FIN pro Zeile, optional '; Sachnummer'. Keine echten FINs in Git einchecken."""
     found: list[QecTarget] = []
@@ -92,9 +100,10 @@ def parse_qec_targets(raw: str) -> list[QecTarget]:
         fin = columns[0].upper()
         if not _FIN.fullmatch(fin):
             raise ValueError(f"Zeile {line_no}: FIN muss 17 gueltige Zeichen enthalten.")
-        part = columns[1].upper() if len(columns) == 2 else ""
-        if part and not re.fullmatch(r"[A-Z0-9 \-]{6,24}", part):
-            raise ValueError(f"Zeile {line_no}: ungueltige Sachnummer.")
+        try:
+            part = pruefe_sachnummer(columns[1]) if len(columns) == 2 and columns[1] else ""
+        except ValueError as exc:
+            raise ValueError(f"Zeile {line_no}: ungueltige Sachnummer.") from exc
         key = (fin, _normalize_part(part))
         if fin in seen_fin and seen_fin[fin] != key[1]:
             raise ValueError(f"Zeile {line_no}: FIN mehrfach mit abweichender Sachnummer. "
@@ -310,12 +319,13 @@ def attachment_matches_reference(filename: str, reference: str) -> bool:
 
 
 def _matching_previous_attachments(
-    previous: object, reference: str,
+    previous: object, reference: str, *, include_unverified: bool = False,
 ) -> dict[str, dict]:
-    """Do not re-associate foreign legacy attachments with this QEC case.
+    """Restore only provably matching or explicitly popup-sourced attachments.
 
-    Old downloads remain on disk (no destructive migration), but are not
-    advertised in the current case JSON/manifest without reference evidence.
+    In reference mode, legacy/foreign files are never claimed for a case.
+    In all mode, unverified files are only restored if the *previous case*
+    explicitly captured them in this reference's popup with that mode.
     """
     selected: dict[str, dict] = {}
     if not isinstance(previous, list):
@@ -329,15 +339,25 @@ def _matching_previous_attachments(
         columns = item.get("spalten", [])
         if not isinstance(columns, list):
             columns = []
+        # Dateinamen aus dem HTTP-Header oder dem lokalen Pfad sind KEIN
+        # Ersatz fuer die Referenznummer im sichtbar verifizierten Popup-Namen.
         filename = (
             str(item.get("dateiname") or "").strip()
             or _popup_attachment_filename(
                 [str(column) for column in columns],
                 str(item.get("linktext") or ""),
             )
-            or str(item.get("datei") or "")
         )
-        if attachment_matches_reference(filename, reference):
+        verified = attachment_matches_reference(filename, reference)
+        if (item.get("auswahlmodus") == "alle"
+                and item.get("referenz_im_dateinamen_bestaetigt") is False):
+            verified = False
+        from_same_popup = (
+            include_unverified
+            and item.get("auswahlmodus") == "alle"
+            and item.get("sichtbar_bei_referenz") == reference
+        )
+        if verified or from_same_popup:
             selected[identifier] = dict(item)
     return selected
 
@@ -479,6 +499,7 @@ class QecDownloader:
     def __init__(self, output_dir: Path, profile_dir: Path, *,
                  login_timeout_seconds: int = 240, navigation_timeout_ms: int = 45000,
                  attachment_timeout_ms: int = 90000, pump_only: bool = True,
+                 attachment_policy: str = "referenz",
                  user_id: str = "", password: str = "",
                  click_delay_seconds: float = 0.65) -> None:
         self.output_dir = Path(output_dir)
@@ -487,6 +508,9 @@ class QecDownloader:
         self.navigation_timeout_ms = navigation_timeout_ms
         self.attachment_timeout_ms = attachment_timeout_ms
         self.pump_only = pump_only
+        if attachment_policy not in {"referenz", "alle"}:
+            raise ValueError("Anhangmodus muss 'referenz' oder 'alle' sein.")
+        self.attachment_policy = attachment_policy
         self.user_id = user_id
         self.password = password
         self.click_delay_seconds = min(4.0, max(0.0, float(click_delay_seconds)))
@@ -628,7 +652,8 @@ class QecDownloader:
                     try:
                         document = scope.content()
                         evidence = inspect_search_results(
-                            document, target, pump_only=self.pump_only,
+                            document, target,
+                            pump_only=self.pump_only and not bool(target.part_number),
                         )
                     except (QecCancelled, KeyboardInterrupt):
                         raise
@@ -786,9 +811,9 @@ class QecDownloader:
 
     def _save_popups(self, context, page, folder: Path, result: QecResult,
                      progress: Progress, cancel: Event,
-                     inventory: dict[str, dict[str, str]], *,
+                     inventory: dict[str, dict], *,
                      reference: str) -> None:
-        """Download only popup files matching the selected QEC case reference."""
+        """Strict reference match by default; optional all popup files as unverified evidence."""
         buttons = page.locator('input[type="button"][value="Dateianhänge"], button:has-text("Dateianhänge")')
         for index in range(buttons.count()):
             self._check_cancel(cancel)
@@ -806,37 +831,59 @@ class QecDownloader:
                     document = popup.content()
                     attachments = parse_attachment_urls(document)
                     listing = parse_attachment_listing(document)
-                    matching = {
-                        item["anhang_id"]: item for item in listing
-                        if attachment_matches_reference(
-                            item.get("dateiname", ""), reference
-                        )
-                    }
-                    # The QEC popup may list PDFs for several references.
-                    # All foreign/unnamed items are rejected before even
-                    # issuing an authenticated HTTP request or Edge click.
+                    listed_by_id = {item["anhang_id"]: item for item in listing}
+                    # The popup can expose files belonging to other references.
+                    # "alle" is an explicit evidence-collection choice, NOT proof
+                    # that each visible attachment belongs to this QEC case.
                     selected = [
                         (identifier, url) for identifier, url in attachments
-                        if identifier in matching
+                        if self.attachment_policy == "alle"
+                        or attachment_matches_reference(
+                            listed_by_id.get(identifier, {}).get("dateiname", ""), reference
+                        )
                     ]
-                    for item in matching.values():
-                        inventory.setdefault(item["anhang_id"], {}).update({
+                    for identifier, _url in selected:
+                        item = listed_by_id.get(identifier, {})
+                        name = item.get("dateiname", "")
+                        verified = attachment_matches_reference(name, reference)
+                        entry = inventory.setdefault(identifier, {"anhang_id": identifier})
+                        entry.update({
                             key: value for key, value in item.items()
                             if key in {"anhang_id", "linktext", "spalten", "dateiname"}
                         })
-                    skipped = len(attachments) - len(selected)
-                    if skipped:
-                        progress(
-                            f"{result.fin}: Referenz {reference}: {skipped} "
-                            "fremde oder nicht zuordenbare Anhaenge uebersprungen."
+                        entry.update({
+                            "auswahlmodus": self.attachment_policy,
+                            "sichtbar_bei_referenz": reference,
+                            "referenz_im_dateinamen_bestaetigt": verified,
+                            "zuordnung": (
+                                "referenz_im_dateinamen_bestaetigt"
+                                if verified else "nur_im_popup_gesehen_nicht_verifiziert"
+                            ),
+                        })
+                    if self.attachment_policy == "referenz":
+                        skipped = len(attachments) - len(selected)
+                        if skipped:
+                            progress(
+                                f"{result.fin}: Referenz {reference}: {skipped} "
+                                "fremde oder nicht zuordenbare Anhaenge uebersprungen."
+                            )
+                    else:
+                        unverified = sum(
+                            not inventory[identifier]["referenz_im_dateinamen_bestaetigt"]
+                            for identifier, _url in selected
                         )
+                        if unverified:
+                            progress(
+                                f"{result.fin}: Referenz {reference}: {unverified} Anhaenge "
+                                "ohne Dateinamen-Referenzbeleg: geladen, Zuordnung spaeter pruefen."
+                            )
                     if not attachments:
                         result.warnings.append("Anhang-Fenster ohne erkennbare Dateien.")
                     for number, (attachment_id, url) in enumerate(selected, 1):
                         self._check_cancel(cancel)
                         progress(
                             f"{result.fin}: Referenz {reference}: "
-                            f"passender Anhang {number}/{len(selected)} wird geladen …"
+                            f"Anhang {number}/{len(selected)} wird geladen …"
                         )
                         entry = inventory.setdefault(attachment_id, {"anhang_id": attachment_id})
                         existing = next(
@@ -901,7 +948,8 @@ class QecDownloader:
         # Selection is by exact QEC ID from a verified full-FIN and reference match.
         hits = parse_search_hits(
             result_html, target.fin,
-            part_number=target.part_number, pump_only=self.pump_only,
+            part_number=target.part_number,
+            pump_only=self.pump_only and not bool(target.part_number),
         )
         if target.reference:
             hits = [entry for entry in hits if entry.reference == target.reference]
@@ -917,7 +965,7 @@ class QecDownloader:
         )
         reference_folder = case_folder(self.output_dir, target.fin, hit.reference)
         report_path = reference_folder / "qec.json"
-        inventory: dict[str, dict[str, str]] = {}
+        inventory: dict[str, dict] = {}
         previous_case: dict | None = None
         # A repeated download must not silently lose existing attachment evidence.
         if report_path.is_file():
@@ -928,6 +976,10 @@ class QecDownloader:
                     previous_case = previous
                     inventory.update(_matching_previous_attachments(
                         previous.get("anhaenge", []), hit.reference,
+                        include_unverified=(
+                            self.attachment_policy == "alle"
+                            and previous.get("anhang_downloadmodus") == "alle"
+                        ),
                     ))
             except (OSError, ValueError, TypeError, AttributeError):
                 result.warnings.append(
@@ -985,6 +1037,11 @@ class QecDownloader:
                 "sachnummer": hit.part_number,
                 "bezeichnung": hit.description,
                 "schadteil_id": hit.schadteil_id,
+                "anhang_downloadmodus": self.attachment_policy,
+                "anhaenge_ohne_referenzbestaetigung": sum(
+                    item.get("zuordnung") == "nur_im_popup_gesehen_nicht_verifiziert"
+                    for item in inventory.values()
+                ),
                 "abgerufen_am_utc": datetime.now(timezone.utc).isoformat(),
                 "abschnitte": sections,
                 "vollstaendige_reiter": len(freshly_captured) == len(QEC_SECTIONS),
@@ -1013,7 +1070,7 @@ class QecDownloader:
             result.search_diagnostics = evidence
             hits = parse_search_hits(
                 result_html, target.fin, part_number=target.part_number,
-                pump_only=self.pump_only,
+                pump_only=self.pump_only and not bool(target.part_number),
             )
             if target.reference:
                 hits = [hit for hit in hits if hit.reference == target.reference]

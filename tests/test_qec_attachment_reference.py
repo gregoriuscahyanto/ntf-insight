@@ -186,3 +186,100 @@ def test_legacy_metadata_with_foreign_reference_is_not_preserved():
         {"anhang_id": "3", "datei": "3_bericht.pdf", "status": "Gespeichert"},
     ]
     assert list(_matching_previous_attachments(previous, REF)) == ["2"]
+
+
+
+def test_alle_anhaenge_auch_ohne_referenznummer_laden_und_als_unsicher_markieren(tmp_path):
+    names = (
+        "900000517_anderer_fall.pdf",
+        "DCDC223_HW_Review.pdf",
+        "900000625_bericht.pdf",
+        "ohne_dateiname",
+    )
+    page = _Page(_listing(*names))
+    downloader = QecDownloader(
+        tmp_path, tmp_path / "profile", click_delay_seconds=0, attachment_policy="alle",
+    )
+    visited = []
+
+    def download(_context, _popup, identifier, _url, folder):
+        visited.append(identifier)
+        return _store_attachment(
+            folder, identifier,
+            {"content-disposition": f'attachment; filename="anhang_{identifier}.pdf"'},
+            b"%PDF-1.7\nSynthetischer QEC-Anhang",
+        )
+
+    downloader._download_attachment_api = download
+    downloader._download_attachment_browser = lambda *_args: pytest.fail("No Edge fallback")
+    result = QecResult(FIN)
+    inventory = {}
+    folder = tmp_path / "ref_900000625" / "anhaenge"
+    messages = []
+    downloader._save_popups(
+        SimpleNamespace(), page, folder, result, messages.append,
+        Event(), inventory, reference=REF,
+    )
+    assert visited == ["1", "2", "3", "4"]
+    assert len(result.files) == 4
+    assert all(path.is_file() for path in result.files)
+    assert set(inventory) == {"1", "2", "3", "4"}
+    assert inventory["3"]["referenz_im_dateinamen_bestaetigt"] is True
+    assert inventory["3"]["zuordnung"] == "referenz_im_dateinamen_bestaetigt"
+    assert all(
+        inventory[key]["zuordnung"] == "nur_im_popup_gesehen_nicht_verifiziert"
+        for key in ("1", "2", "4")
+    )
+    assert all(i["sichtbar_bei_referenz"] == REF for i in inventory.values())
+    assert all(i["auswahlmodus"] == "alle" for i in inventory.values())
+    assert any("Zuordnung spaeter pruefen" in msg for msg in messages)
+    assert not result.errors
+
+    downloader._save_popups(
+        SimpleNamespace(), page, folder, result, messages.append,
+        Event(), inventory, reference=REF,
+    )
+    assert visited == ["1", "2", "3", "4"]
+    assert len(result.files) == 4
+
+
+def test_alle_anhaenge_fruehere_ungepruefte_nur_bei_gleicher_referenz_wiederverwenden():
+    previous = [
+        {"anhang_id": "10", "dateiname": "DCDC223_bericht.pdf",
+         "auswahlmodus": "alle", "sichtbar_bei_referenz": REF,
+         "zuordnung": "nur_im_popup_gesehen_nicht_verifiziert",
+         "status": "Gespeichert"},
+        {"anhang_id": "11", "dateiname": "anderer_bericht.pdf",
+         "auswahlmodus": "alle", "sichtbar_bei_referenz": "900000517",
+         "status": "Gespeichert"},
+        {"anhang_id": "12", "dateiname": "900000625_protokoll.pdf",
+         "status": "Gespeichert"},
+        {"anhang_id": "13", "dateiname": "bericht.pdf", "status": "Gespeichert"},
+    ]
+    assert list(_matching_previous_attachments(previous, REF)) == ["12"]
+    assert list(_matching_previous_attachments(
+        previous, REF, include_unverified=True,
+    )) == ["10", "12"]
+
+
+def test_ungueltigen_anhangmodus_ablehnen(tmp_path):
+    with pytest.raises(ValueError, match="Anhangmodus"):
+        QecDownloader(tmp_path, tmp_path / "profile", attachment_policy="irgendwas")
+
+
+
+def test_reiner_http_dateiname_macht_ungeprueften_anhang_nicht_referenzbestaetigt():
+    prior = [{
+        "anhang_id": "101",
+        "dateiname": "",
+        "linktext": "101",
+        "datei": "101_900000625_angeblich_passend.pdf",
+        "auswahlmodus": "alle",
+        "sichtbar_bei_referenz": REF,
+        "referenz_im_dateinamen_bestaetigt": False,
+        "zuordnung": "nur_im_popup_gesehen_nicht_verifiziert",
+    }]
+    assert _matching_previous_attachments(prior, REF) == {}
+    assert list(_matching_previous_attachments(
+        prior, REF, include_unverified=True,
+    )) == ["101"]

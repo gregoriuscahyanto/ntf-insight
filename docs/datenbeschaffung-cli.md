@@ -174,9 +174,40 @@ WDD12345678901234; A 123 456 78 90
 
 Fuer einen gemeinsamen FIN-Bestand mit allen sechs Tools **keine
 Sachnummer anhaengen**, da die anderen Scraper einfache FINs lesen.
-QEC filtert standardmaessig auf Kuehlmittelpumpen; `--alle-bauteile`
-erweitert die Suche ausdruecklich auf alle QEC-Schadteile zur FIN.
-Bei einer solchen erweiterten Suche nur im freigegebenen Umfang abrufen.
+Stattdessen kann eine Sachnummer fuer alle FINs direkt uebergeben werden:
+
+```powershell
+# Nur QEC-Faelle mit exakt dieser Sachnummer, auch ohne Pumpenbezeichnung:
+ntf-insight-qec --eingabe .\fins.txt --sachnummer "A 123 456 78 90"
+
+# Alle Dateianhaenge aus den Fall-Popups mitnehmen:
+ntf-insight-qec --eingabe .\fins.txt --sachnummer "A 123 456 78 90" --anhaenge alle
+
+# Parallel mit anderen Quellen (Sachnummer/Anhangmodus nur fuer QEC):
+ntf-insight-beschaffung --eingabe .\fins.txt --quellen qec,quicktests,wem --sachnummer "A 123 456 78 90" --anhaenge alle --parallel 3
+```
+
+`--sachnummer` gilt fuer alle FINs der Eingabe. Falls eine Zeile bereits
+`FIN;Sachnummer` enthaelt, muss sie mit dem CLI-Wert uebereinstimmen,
+andernfalls wird der Abruf vor dem Login abgelehnt. Eine **explizite
+Sachnummer** nimmt den alten Pumpenbezeichnungsfilter fuer diese FIN
+zurueck und prueft die Sachnummer genau; ohne Sachnummer bleibt der
+Kuehlmittelpumpenfilter aktiv. `--alle-bauteile` ist weiterhin die
+bewusste Auswahl saemtlicher Schadteilarten ohne Sachnummerfilter.
+
+**Anhaenge:** Standard `--anhaenge referenz`: Nur Dateien, deren
+sichtbarer Name die exakte QEC-Referenz enthaelt. `--anhaenge alle`:
+**alle im Popup der ausgewaehlten QEC-Faelle sichtbaren Dateien**
+herunterladen, selbst wenn ihr Dateiname keine Referenznummer enthaelt.
+Dies kann **fremde QEC-Fallanhaenge** einschliessen. Dateien sind daher
+nur als im Popup gesichtete Belege nachgewiesen, nicht als gepruefte
+Referenzzuordnung. In der `anhaenge`-Liste der jeweiligen `qec.json` werden
+`sichtbar_bei_referenz`, `auswahlmodus` und
+`referenz_im_dateinamen_bestaetigt` sowie `zuordnung` dokumentiert.
+Erst im spaeteren fachlichen bzw. ChatGPT-Schritt darf die Zugehoerigkeit
+bewertet werden.
+
+Bei einer erweiterten Suche nur im freigegebenen Umfang abrufen.
 
 ## QEC-Ablage
 
@@ -190,11 +221,16 @@ data/processed/<TXT-Name>/qec/
         <Originalanhaenge>
 ```
 
-Ein Fahrzeug kann mehrere QEC-Referenzen haben. Der Downloader ordnet
-Anhänge weiterhin **referenzgenau** zu und ueberschreibt keine vorhandenen
-Fremdfalldaten. Die fünf vorhandenen QEC-Abschnitte werden in der
-Fall-JSON erfasst. Bereits vorhandene Anhänge werden anhand ihrer
-bestehenden Metadaten abgeglichen.
+Ein Fahrzeug kann mehrere QEC-Referenzen haben. Die Auswahl der
+QEC-Schadteilfaelle erfolgt mit **exakter Voll-FIN und optional exakter
+Sachnummer**. Jeder ausgewaehlte QEC-Fall bleibt in seinem eigenen
+`ref_<QEC-Referenz>`-Ordner. Ohne `--anhaenge alle` bleibt die
+Referenznummer im Dateinamen die Voraussetzung fuer jeden Anhang.
+Im erweiterten Anhangmodus bleiben auch **nicht bestaetigte**
+Popup-Anhaenge erhalten; sie werden im Fall-JSON gekennzeichnet und
+duerfen nicht ohne Pruefung einem QEC-Fall zugeschrieben werden.
+Die fuenf QEC-Abschnitte werden vollstaendig erfasst; vorhandene
+Anhaenge werden anhand ihrer IDs und Metadaten abgeglichen.
 
 ## XENTRY-TIPS-Ablage
 
