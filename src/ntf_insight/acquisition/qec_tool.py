@@ -12,6 +12,7 @@ import json
 import re
 import tempfile
 import time
+from contextlib import nullcontext
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -22,6 +23,7 @@ from urllib.parse import parse_qs, quote, unquote, urljoin, urlsplit
 from lxml import html as lxml_html
 
 from ntf_insight.acquisition.qec_archive import case_folder
+from ntf_insight.acquisition.sso_login_gate import serielle_sso_anmeldung
 
 QEC_START = "https://qect.mo360cp.i.mercedes-benz.com/qec-access/supp/login.qec"
 QEC_HOST = urlsplit(QEC_START).hostname
@@ -86,6 +88,28 @@ def pruefe_sachnummer(value: str) -> str:
     return part
 
 
+def pruefe_benennung(value: str) -> str:
+    """Benennungs-Suchtext, optional mehrere Kommata-getrennte Teiltexte (ODER)."""
+    raw = str(value).strip()
+    begriffe = [teil.strip() for teil in raw.split(",")]
+    if (not begriffe or any(not 2 <= len(teil) <= 80 for teil in begriffe)
+            or len(begriffe) > 8
+            or not all(re.fullmatch(r"[\w\s./()+\-]+", teil) for teil in begriffe)):
+        raise ValueError(
+            "Ungueltige QEC-Benennung (2-80 Zeichen je Begriff, max. 8; "
+            "Buchstaben/Ziffern und Leerzeichen, . / ( ) + - erlaubt)."
+        )
+    return ",".join(begriffe)
+
+
+def _benennung_passt(bezeichnung: str, filter_text: str) -> bool:
+    """Gross-/Kleinschreibung ignorieren, keine RegEx aus Nutzerdaten."""
+    if not filter_text:
+        return True
+    wort = bezeichnung.casefold()
+    return any(teil.strip().casefold() in wort for teil in filter_text.split(","))
+
+
 def parse_qec_targets(raw: str) -> list[QecTarget]:
     """FIN pro Zeile, optional '; Sachnummer'. Keine echten FINs in Git einchecken."""
     found: list[QecTarget] = []
@@ -139,7 +163,7 @@ def _qec_url(value: str, *, expected_path: str | None = None) -> str:
 
 
 def parse_search_hits(document: str, fin: str, *, part_number: str = "",
-                      pump_only: bool = True) -> list[QecHit]:
+                      pump_only: bool = True, benennung: str = "") -> list[QecHit]:
     """Nur vollstaendige FIN-Treffer aus der 39-spaltigen Schadteiltabelle.
 
     Ein nur passendes BR-/Endnummer-Paar darf nicht zu einer falschen
@@ -171,6 +195,8 @@ def parse_search_hits(document: str, fin: str, *, part_number: str = "",
             continue
         if part_number and _normalize_part(sachnummer) != _normalize_part(part_number):
             continue
+        if benennung and not _benennung_passt(description, benennung):
+            continue
         identifier = match.group(1)
         if identifier in seen:
             continue
@@ -180,7 +206,10 @@ def parse_search_hits(document: str, fin: str, *, part_number: str = "",
     return hits
 
 
-def inspect_search_results(document: str, target: QecTarget, *, pump_only: bool = True) -> dict[str, int | bool | None]:
+def inspect_search_results(
+    document: str, target: QecTarget, *, pump_only: bool = True,
+    benennung: str = "",
+) -> dict[str, int | bool | None]:
     """Check server-rendered filter values before trusting any QEC result rows.
 
     Form .fill() changes the DOM property, not the original HTML value
@@ -217,6 +246,7 @@ def inspect_search_results(document: str, target: QecTarget, *, pump_only: bool 
     pump_matches = len(parse_search_hits(document, target.fin, pump_only=True))
     final_matches = len(parse_search_hits(
         document, target.fin, pump_only=pump_only, part_number=target.part_number,
+        benennung=benennung,
     ))
     return {
         "bestaetigt": True,
@@ -500,6 +530,7 @@ class QecDownloader:
                  login_timeout_seconds: int = 240, navigation_timeout_ms: int = 45000,
                  attachment_timeout_ms: int = 90000, pump_only: bool = True,
                  attachment_policy: str = "referenz",
+                 benennung: str = "", serielle_sso: bool = False,
                  user_id: str = "", password: str = "",
                  click_delay_seconds: float = 0.65) -> None:
         self.output_dir = Path(output_dir)
@@ -511,6 +542,8 @@ class QecDownloader:
         if attachment_policy not in {"referenz", "alle"}:
             raise ValueError("Anhangmodus muss 'referenz' oder 'alle' sein.")
         self.attachment_policy = attachment_policy
+        self.benennung = pruefe_benennung(benennung) if benennung else ""
+        self.serielle_sso = serielle_sso
         self.user_id = user_id
         self.password = password
         self.click_delay_seconds = min(4.0, max(0.0, float(click_delay_seconds)))
@@ -653,7 +686,8 @@ class QecDownloader:
                         document = scope.content()
                         evidence = inspect_search_results(
                             document, target,
-                            pump_only=self.pump_only and not bool(target.part_number),
+                            pump_only=self.pump_only and not bool(target.part_number or self.benennung),
+                            benennung=self.benennung,
                         )
                     except (QecCancelled, KeyboardInterrupt):
                         raise
@@ -684,12 +718,17 @@ class QecDownloader:
         # The QEC instructions require a fresh start for each FIN/reference.
         self._check_cancel(cancel)
         progress("QEC: Hauptansicht neu oeffnen ...")
-        try:
-            page.goto(QEC_START, wait_until="domcontentloaded", timeout=self.navigation_timeout_ms)
-        except Exception:
-            # Interactive SSO may interrupt the initial navigation.
-            progress("QEC: Weiterleitung zur Anmeldung; warte auf QEC-Hauptansicht ...")
-        page = self._wait_for_login(context, progress, cancel)
+        anmeldung = (
+            serielle_sso_anmeldung(status=progress, abbruch=cancel)
+            if self.serielle_sso else nullcontext()
+        )
+        with anmeldung:
+            try:
+                page.goto(QEC_START, wait_until="domcontentloaded", timeout=self.navigation_timeout_ms)
+            except Exception:
+                # Interactive SSO may interrupt the initial navigation.
+                progress("QEC: Weiterleitung zur Anmeldung; warte auf QEC-Hauptansicht ...")
+            page = self._wait_for_login(context, progress, cancel)
         self._pause(cancel)
 
         nav = None
@@ -949,7 +988,8 @@ class QecDownloader:
         hits = parse_search_hits(
             result_html, target.fin,
             part_number=target.part_number,
-            pump_only=self.pump_only and not bool(target.part_number),
+            pump_only=self.pump_only and not bool(target.part_number or self.benennung),
+            benennung=self.benennung,
         )
         if target.reference:
             hits = [entry for entry in hits if entry.reference == target.reference]
@@ -1070,7 +1110,8 @@ class QecDownloader:
             result.search_diagnostics = evidence
             hits = parse_search_hits(
                 result_html, target.fin, part_number=target.part_number,
-                pump_only=self.pump_only and not bool(target.part_number),
+                pump_only=self.pump_only and not bool(target.part_number or self.benennung),
+                benennung=self.benennung,
             )
             if target.reference:
                 hits = [hit for hit in hits if hit.reference == target.reference]
