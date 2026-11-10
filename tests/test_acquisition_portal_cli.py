@@ -263,3 +263,54 @@ def test_alle_sechs_wheel_entrypoints_und_script_paket():
     assert entrypoints["ntf-insight-vedoc-dcdc223"] == "scripts.vedoc_dcdc223_seriennummern:main"
     assert (ROOT / "scripts" / "__init__.py").is_file()
     assert config["tool"]["setuptools"]["package-dir"]["scripts"] == "scripts"
+
+
+
+def test_qec_globale_sachnummer_und_alle_anhaenge_fuer_mehrere_fins(tmp_path, monkeypatch, capsys):
+    monkeypatch.setattr(portal_cli, "load_saved_credentials", lambda: None)
+    calls = _fake_qec(monkeypatch)
+    number = "a 111 222 33 44"
+    assert portal_cli.qec_main([
+        "--eingabe", str(_liste(tmp_path)),
+        "--sachnummer", number, "--anhaenge", "alle",
+    ]) == 0
+    assert calls[1][1] == [
+        QecTarget(FIN, "A 111 222 33 44"),
+        QecTarget(FIN2, "A 111 222 33 44"),
+    ]
+    assert calls[0][3]["attachment_policy"] == "alle"
+    assert calls[0][3]["pump_only"] is True
+    assert "Zuordnung" in capsys.readouterr().out
+
+
+def test_qec_sachnummer_in_txt_und_cli_darf_uebereinstimmen(tmp_path, monkeypatch):
+    monkeypatch.setattr(portal_cli, "load_saved_credentials", lambda: None)
+    calls = _fake_qec(monkeypatch)
+    txt = _liste(tmp_path, f"{FIN}; A 111 222 33 44\n{FIN2}\n")
+    assert portal_cli.qec_main([
+        "--eingabe", str(txt), "--sachnummer", "A1112223344",
+    ]) == 0
+    assert calls[1][1] == [
+        QecTarget(FIN, "A 111 222 33 44"),
+        QecTarget(FIN2, "A1112223344"),
+    ]
+    assert calls[0][3]["attachment_policy"] == "referenz"
+
+
+@pytest.mark.parametrize(("sachnummer", "text"), [
+    ("A 111 222 33 44", f"{FIN};A 999 999 99 99\n"),
+    ("ungueltig$!", f"{FIN}\n"),
+    (" ", f"{FIN}\n"),
+])
+def test_qec_ungueltige_sachnummer_vor_login_und_browser_stoppen(
+    tmp_path, monkeypatch, sachnummer, text,
+):
+    monkeypatch.setattr(
+        portal_cli, "load_saved_credentials",
+        lambda: pytest.fail("Kein Login mit widerspruechlicher Sachnummer."),
+    )
+    calls = _fake_qec(monkeypatch)
+    assert portal_cli.qec_main([
+        "--eingabe", str(_liste(tmp_path, text)), "--sachnummer", sachnummer,
+    ]) == 2
+    assert not calls
