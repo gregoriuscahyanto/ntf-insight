@@ -101,8 +101,9 @@ bedeutet nicht, dass die Hardware nicht verbaut ist. Die vorhandenen
 Warte-/Nachprüfungsregeln schützen vor vorschnellen Negativbefunden.
 SSO und PING ID bleiben unverändert; die PING-ID-Freigabe erfolgt
 weiterhin manuell über das berechtigte Verfahren. Beim parallelen
-CLI-Abruf mit QuickTests werden beide SSO-Anmeldungen **nacheinander**
-ausgefuehrt; danach laufen die eigentlichen FIN-Abfragen parallel.
+CLI-Abruf mit einer oder mehreren der **sechs Datenquellen** werden
+alle SSO-/PING-ID-Anmeldungen **nacheinander** ausgefuehrt; danach
+laufen die eigentlichen FIN-Abfragen parallel.
 Der Status fin_nicht_bestaetigt bedeutet, dass VeDoc **nach der
 Anmeldung** die gesuchte Fahrzeugkennung nicht bestaetigt hat.
 Bei 14-stelliger FIN kann eine fehlende Unterstuetzung dieser Kurzsuche
