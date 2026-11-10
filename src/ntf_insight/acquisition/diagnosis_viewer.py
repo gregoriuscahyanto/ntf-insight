@@ -19,12 +19,13 @@ from threading import Event
 from typing import Callable
 from urllib.parse import quote, urlsplit
 
+from ntf_insight.acquisition.fin_format import fin_passt_zu_anfrage, ist_gueltige_fin
+
 DIAGNOSIS_VIEWER = "https://app.diagviewer.prod.gspp-eu.cloud.corpintra.net/search"
 LOGIN_HOST = "login.mercedes-benz.com"
 VIEWER_HOST = urlsplit(DIAGNOSIS_VIEWER).hostname
 SOURCES = "XD,XD(AQT),TD,DAS"
 NO_QUICKTEST_DATA_MESSAGE = "Diagnosis payload loaded from S3 does not contain quicktest data"
-_FIN = re.compile(r"[A-HJ-NPR-Z0-9]{17}\Z")
 _ILLEGAL_FILENAME = re.compile(r"[^A-Za-z0-9._-]+")
 Progress = Callable[[str], None]
 
@@ -55,20 +56,30 @@ class FinDownloadResult:
     last_attempt_at: str = ""
 
 
-def parse_fins(text: str) -> list[str]:
-    """Read a copy/pasted FIN list, rejecting invalid input before network access."""
+def parse_fins(text: str, *, kurz_erlaubt: bool = False) -> list[str]:
+    """FIN-Listen pruefen; Kurz-FINs nur bei expliziter CLI-Freigabe zulassen."""
     tokens = [s.strip().upper() for s in re.split(r"[\s,;]+", text) if s.strip()]
     if not tokens:
-        raise ValueError("Bitte mindestens eine 17-stellige FIN eingeben.")
-    invalid = [s for s in tokens if not _FIN.fullmatch(s)]
+        raise ValueError(
+            "Bitte mindestens eine 14- oder 17-stellige FIN eingeben."
+            if kurz_erlaubt else "Bitte mindestens eine 17-stellige FIN eingeben."
+        )
+    invalid = [s for s in tokens if not ist_gueltige_fin(s, kurz_erlaubt=kurz_erlaubt)]
     if invalid:
-        raise ValueError("Ungültige FIN (17 Zeichen A–Z/0–9 ohne I, O, Q): " + ", ".join(invalid[:3]))
+        erlaubte_laengen = "14 oder 17" if kurz_erlaubt else "17"
+        raise ValueError(
+            f"Ungueltige FIN ({erlaubte_laengen} Zeichen A-Z/0-9 ohne I, O, Q): "
+            + ", ".join(invalid[:3])
+        )
     return list(dict.fromkeys(tokens))
 
 
-def search_url(fin: str) -> str:
-    if not _FIN.fullmatch(fin):
-        raise ValueError("FIN muss 17 gültige Zeichen enthalten.")
+def search_url(fin: str, *, kurz_erlaubt: bool = False) -> str:
+    if not ist_gueltige_fin(fin, kurz_erlaubt=kurz_erlaubt):
+        raise ValueError(
+            "FIN muss 14 oder 17 gueltige Zeichen enthalten."
+            if kurz_erlaubt else "FIN muss 17 gueltige Zeichen enthalten."
+        )
     return f"{DIAGNOSIS_VIEWER}?fin={fin}&sources={quote(SOURCES, safe='')}"
 
 
@@ -198,7 +209,7 @@ def scan_local_quicktests(folder: Path) -> list[FinDownloadResult]:
         if (
             not fin_folder.is_dir()
             or fin_folder.is_symlink()
-            or not _FIN.fullmatch(fin_folder.name)
+            or not ist_gueltige_fin(fin_folder.name, kurz_erlaubt=True)
         ):
             continue
         pdfs = sorted(
@@ -260,6 +271,7 @@ class DiagnosisViewerDownloader:
         password: str = "",
         retry_recent: bool = False,
         action_interval_seconds: float = 1.5,
+        kurz_fin_erlaubt: bool = False,
     ) -> None:
         self.output_dir = Path(output_dir)
         self.profile_dir = Path(profile_dir)
@@ -269,6 +281,7 @@ class DiagnosisViewerDownloader:
         self.user_id = user_id
         self.password = password
         self.retry_recent = retry_recent
+        self.kurz_fin_erlaubt = kurz_fin_erlaubt
         # Fixed, conservative pacing to limit request rate and avoid overloading the service.
         self.action_interval_seconds = max(0.0, float(action_interval_seconds))
         self._last_action_at: float | None = None
@@ -402,15 +415,29 @@ class DiagnosisViewerDownloader:
                 return []
             rows = page.locator("tbody tr")
             matching = set()
+            moegliche_vollfin: set[str] = set()
             for index in range(rows.count()):
                 cells = rows.nth(index).locator("td")
                 if cells.count() < 11:
                     continue
-                if fin in (
+                angezeigte_fins = [
                     cells.nth(3).inner_text().strip().upper(),
                     cells.nth(4).inner_text().strip().upper(),
-                ):
+                ]
+                for angezeigt in angezeigte_fins:
+                    if not fin_passt_zu_anfrage(fin, angezeigt):
+                        continue
                     matching.add(index)
+                    bereinigt = re.sub(r"[\s-]+", "", angezeigt)
+                    if len(fin) == 14 and len(bereinigt) == 17:
+                        moegliche_vollfin.add(bereinigt)
+            # Zwei verschiedene Voll-FINs mit gleicher Kurz-FIN duerfen
+            # niemals als ein Fahrzeug zusammengefasst werden.
+            if len(moegliche_vollfin) > 1:
+                raise ValueError(
+                    "Kurz-FIN mehrdeutig: Diagnosis Viewer zeigt unterschiedliche "
+                    "17-stellige Fahrzeugkennungen. Bitte vollstaendige FIN verwenden."
+                )
             if matching:
                 # Rows with Quicktest Count=0 have no clickable PDF icon.
                 return [row for row in candidates if row.position in matching]
@@ -558,7 +585,7 @@ class DiagnosisViewerDownloader:
             progress(f"{fin}: Diagnosis Viewer öffnen …")
             try:
                 self._pace(cancel)
-                page.goto(search_url(fin), wait_until="domcontentloaded", timeout=45000)
+                page.goto(search_url(fin, kurz_erlaubt=self.kurz_fin_erlaubt), wait_until="domcontentloaded", timeout=45000)
             except Exception:
                 # An interactive SSO redirect may exceed the navigation timeout.
                 pass
@@ -642,7 +669,7 @@ class DiagnosisViewerDownloader:
         cancel: Event | None = None,
     ) -> list[FinDownloadResult]:
         """Use the installed Edge for new requests; skip FINs attempted within 24h."""
-        validated = parse_fins("\n".join(fins))
+        validated = parse_fins("\n".join(fins), kurz_erlaubt=self.kurz_fin_erlaubt)
         progress = progress or (lambda message: None)
         cancel = cancel or Event()
         self.output_dir.mkdir(parents=True, exist_ok=True)
