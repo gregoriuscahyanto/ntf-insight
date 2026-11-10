@@ -1,4 +1,4 @@
-"""Eigenstaendiger, lesender VeDoc-Export: FIN-TXT -> DCDC223-Seriennummernhistorie (JSON/XLSX).
+"""VeDoc-Hardwarehistorie fuer frei waehlbares Objekt/Attribut (JSON/XLSX).
 
 Die Anmeldung nutzt den bestehenden NTF-Insight-Schluesselbund oder fragt in PowerShell.
 Weder Zugangsdaten noch HTML-Snapshots oder Browser-Profile werden gespeichert.
@@ -8,7 +8,9 @@ from __future__ import annotations
 
 import argparse
 import getpass
+import hashlib
 import json
+import unicodedata
 import os
 import re
 import time
@@ -26,7 +28,8 @@ from openpyxl.utils import get_column_letter
 from openpyxl.worksheet.table import Table, TableStyleInfo
 
 _FIN = re.compile(r"[A-HJ-NPR-Z0-9]{17}\Z")
-_STEUERGERAET = "DCDC223"
+_STEUERGERAET = "DCDC223"  # Bisheriger Standard fuer Legacy-Aufruf
+_STANDARD_ATTRIBUT = "Seriennummer"
 VEDOC_START = "https://prod.core.public.vedoc.i.mercedes-benz.com/ui/homepage.html"
 _SSO_HOST = "login.mercedes-benz.com"
 _FIN_EINGABE = 'input[data-ng-model="viewDataObject.vehicleSearchValue"]'
@@ -53,6 +56,45 @@ class Ergebnis:
     hinweis: str
     abgefragt_am_utc: str
     aenderungen: tuple[SeriennummerAenderung, ...] = ()
+    attribut: str = _STANDARD_ATTRIBUT
+
+    @property
+    def objekt(self) -> str:
+        """Neutrales Alias zum historischen Feld `steuergeraet`."""
+        return self.steuergeraet
+
+    @property
+    def letzter_neuer_wert(self) -> str | None:
+        """Der letzte dokumentierte, zeitlich eindeutige neue Attributwert."""
+        return self.seriennummer
+
+
+def pruefe_historienziel(wert: str, *, feld: str) -> str:
+    """Freien VeDoc-Text vor Browser/Export validieren; keine Steuerzeichen."""
+    text = " ".join(str(wert).split())
+    if (not text or len(text) > 120 or any(
+        unicodedata.category(zeichen).startswith("C") for zeichen in str(wert)
+    )):
+        raise ValueError(f"{feld} muss 1-120 lesbare Zeichen ohne Steuerzeichen enthalten.")
+    return text
+
+
+def _dateiteil(wert: str) -> str:
+    """Kollisionsarme, Windows-sichere Exporte fuer frei waehlbare Namen."""
+    ascii_text = unicodedata.normalize("NFKD", wert).encode("ascii", "ignore").decode("ascii")
+    roh = re.sub(r"[^a-z0-9_-]+", "_", ascii_text.casefold()).strip("_")
+    teil = (roh or "objekt")[:48].rstrip("_")
+    if teil != wert.casefold():
+        teil = teil[:39] + "_" + hashlib.sha256(wert.encode("utf-8")).hexdigest()[:8]
+    return teil
+
+
+def _dateistamm(objekt: str, attribut: str) -> str:
+    if objekt == _STEUERGERAET and attribut == _STANDARD_ATTRIBUT:
+        return "dcdc223_seriennummern"
+    suffix = ("seriennummern" if attribut.casefold() == _STANDARD_ATTRIBUT.casefold()
+              else _dateiteil(attribut))
+    return f"{_dateiteil(objekt)}_{suffix}"
 
 
 def lade_fins(pfad: Path) -> list[str]:
@@ -95,11 +137,14 @@ def _history_feld(zeile, feld: str) -> str:
     return elemente[0].text_content().strip() if elemente else ""
 
 
-def lese_historie_aus_html(quelltext: str, fin: str) -> tuple[SeriennummerAenderung, ...]:
-    """Nur Seriennummer-Aenderungen von DCDC223 fuer die volle FIN.
+def lese_historie_aus_html(
+    quelltext: str, fin: str, objekt: str = _STEUERGERAET,
+    attribut: str = _STANDARD_ATTRIBUT,
+) -> tuple[SeriennummerAenderung, ...]:
+    """Nur exakte Objekt-/Attributtreffer mit bestaetigter FIN auswerten.
 
-    Die VeDoc-Historie enthaelt auch andere Attribute, z.B. das Datum des
-    ersten Zugriffs. Alte DOM-Zeilen der vorherigen FIN werden abgewiesen.
+    Keine unscharfen Teiltreffer: DCDC223 darf z.B. nicht DCDC223A oder
+    einen fremden Hardwarestand einschliessen.
     """
     dokument = html.fromstring(quelltext)
     tabellen = dokument.xpath('//table[@id="historyTable"]')
@@ -112,12 +157,12 @@ def lese_historie_aus_html(quelltext: str, fin: str) -> tuple[SeriennummerAender
         anfang = pfad.split("/", 1)[0].strip().upper()
         if _FIN.fullmatch(anfang) and anfang != fin:
             raise ValueError("Historie gehoert noch zu einer anderen FIN.")
-        if _history_feld(zeile, "parentObjectIdentifier").upper() != _STEUERGERAET:
+        if " ".join(_history_feld(zeile, "parentObjectIdentifier").split()).casefold() != objekt.casefold():
             continue
-        if _history_feld(zeile, "attributeName").casefold() != "seriennummer":
+        if " ".join(_history_feld(zeile, "attributeName").split()).casefold() != attribut.casefold():
             continue
         if anfang != fin:
-            raise ValueError("DCDC223-Historienzeile hat keine bestaetigte Voll-FIN.")
+            raise ValueError("Historienzeile zum ausgewaehlten Objekt hat keine bestaetigte Voll-FIN.")
         zeit = _history_feld(zeile, "date")
         alt = _history_feld(zeile, "oldValue")
         neu = _history_feld(zeile, "newValue")
@@ -125,7 +170,10 @@ def lese_historie_aus_html(quelltext: str, fin: str) -> tuple[SeriennummerAender
     return tuple(eintraege)
 
 
-def _historienmoment(quelltext: str, fin: str) -> tuple[tuple[SeriennummerAenderung, ...], int, bool]:
+def _historienmoment(
+    quelltext: str, fin: str, objekt: str = _STEUERGERAET,
+    attribut: str = _STANDARD_ATTRIBUT,
+) -> tuple[tuple[SeriennummerAenderung, ...], int, bool]:
     """Aus einem DOM-Snapshot Historienentries und FIN-Zuordnung ableiten.
 
     Eine leere oder alte Tabelle ist kein Nachweis, dass es keine Aenderung gibt.
@@ -143,7 +191,7 @@ def _historienmoment(quelltext: str, fin: str) -> tuple[tuple[SeriennummerAender
             if moegliche_fin != fin:
                 raise ValueError("Historie zeigt noch Eintraege einer anderen FIN.")
             bestaetigte_fin = True
-    return lese_historie_aus_html(quelltext, fin), len(zeilen), bestaetigte_fin
+    return lese_historie_aus_html(quelltext, fin, objekt, attribut), len(zeilen), bestaetigte_fin
 
 
 def _warte_auf_historieneintraege(
