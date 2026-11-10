@@ -15,7 +15,9 @@ from pathlib import Path
 from ntf_insight.acquisition.credentials import LoginCredentials, load_saved_credentials
 from ntf_insight.acquisition.diagnosis_viewer import parse_fins
 from ntf_insight.acquisition.output_paths import standard_ausgabe
-from ntf_insight.acquisition.qec_tool import QecDownloader, QecResult, parse_qec_targets
+from ntf_insight.acquisition.qec_tool import (
+    QecDownloader, QecResult, QecTarget, parse_qec_targets, pruefe_sachnummer,
+)
 from ntf_insight.acquisition.tips_writer import TipsResult, TipsWriterDownloader
 
 QEC_AUSGABE = Path("data/processed/qec")
@@ -128,28 +130,64 @@ def _auswertung(
     return 1 if mangelhaft else 0
 
 
+def _qec_ziele(raw: str, sachnummer: str | None = None) -> list[QecTarget]:
+    """Optional dieselbe exakte Sachnummer auf alle FINs anwenden.
+
+    Bereits in der TXT angegebene Sachnummern haben Vorrang, duerfen aber
+    nicht still mit dem globalen Filter kollidieren.
+    """
+    ziele = parse_qec_targets(raw)
+    if sachnummer is None:
+        return ziele
+    global_part = pruefe_sachnummer(sachnummer)
+    compare = global_part.replace(" ", "").replace("-", "")
+    result: list[QecTarget] = []
+    for ziel in ziele:
+        if ziel.part_number and ziel.part_number.replace(" ", "").replace("-", "") != compare:
+            raise ValueError(
+                f"FIN {ziel.fin}: Sachnummer in TXT widerspricht --sachnummer. "
+                "Bitte eine eindeutige Sachnummer pro FIN verwenden."
+            )
+        result.append(QecTarget(ziel.fin, ziel.part_number or global_part, ziel.reference))
+    return result
+
+
 def qec_main(argv: list[str] | None = None) -> int:
     parser = _parser("QEC", ausgabe=QEC_AUSGABE, profil=QEC_PROFIL)
     parser.add_argument("--alle-bauteile", action="store_true",
-                        help="QEC nicht nur nach Kuehlmittelpumpen filtern")
+                        help="Ohne Sachnummer nicht nur nach Kuehlmittelpumpen filtern")
+    parser.add_argument("--sachnummer", metavar="NUMMER",
+                        help="Exakte Sachnummer fuer alle FINs; Alternative zu FIN;Sachnummer in der TXT")
+    parser.add_argument("--anhaenge", choices=("referenz", "alle"), default="referenz",
+                        help="referenz: nur Referenz im Dateinamen (Standard); "
+                             "alle: alle im Fall-Popup sichtbaren Anhaenge, Zuordnung ungeprueft")
     args = parser.parse_args(argv)
     try:
         if args.ausgabe is None:
             args.ausgabe = standard_ausgabe(args.eingabe, "qec")
         ausgabe, profil = _pruefe_argumente(args)
-        ziele = parse_qec_targets(lese_eingabe(args.eingabe))
+        ziele = _qec_ziele(lese_eingabe(args.eingabe), args.sachnummer)
         login = _lade_login(args)
         print(
-            f"QEC: {len(ziele)} FIN-/Sachnummernziel(e). "
+            f"QEC: {len(ziele)} FIN-/Sachnummernziel(e), "
+            f"Anhangmodus: {args.anhaenge}. "
             "SSO/PING ID bei Aufforderung in Edge/auf dem Smartphone bestaetigen.",
             flush=True,
         )
+        if args.anhaenge == "alle":
+            print(
+                "Alle Dateien aus dem QEC-Fall-Popup werden abgerufen. "
+                "Eine Referenzzuordnung ohne Dateinamen-Beleg ist NICHT verifiziert; "
+                "vor der KI-/ChatGPT-Auswertung separat pruefen.",
+                flush=True,
+            )
         downloader = QecDownloader(
             ausgabe, profil,
             login_timeout_seconds=args.anmelde_timeout,
             user_id=login.user_id if login else "",
             password=login.password if login else "",
             pump_only=not args.alle_bauteile,
+            attachment_policy=args.anhaenge,
             click_delay_seconds=0.85,
         )
         ergebnisse = downloader.run(ziele, progress=lambda m: print(m, flush=True))
