@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from collections import Counter
 from contextlib import nullcontext
 import re
 import tempfile
@@ -38,6 +39,28 @@ class DownloadCancelled(RuntimeError):
 
 class QuickTestDataUnavailable(RuntimeError):
     """A diagnosis exists, but its S3 payload has no QuickTest PDF."""
+
+
+class BrowserSessionLost(RuntimeError):
+    """Die Edge-/Playwright-Verbindung wurde unerwartet getrennt."""
+
+
+def _browser_verloren(exc: Exception) -> bool:
+    """Playwright schliesst Tab, Kontext und Browser mit aehnlichen Meldungen."""
+    name = type(exc).__name__.casefold()
+    message = str(exc).casefold()
+    return (
+        "targetclosed" in name
+        or any(meldung in message for meldung in (
+            "target page, context or browser has been closed",
+            "target closed",
+            "browser has been closed",
+            "browser closed",
+            "page crashed",
+            "target crashed",
+            "connection closed",
+        ))
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -119,6 +142,31 @@ def _save_pdf(download, folder: Path, row: DownloadRow) -> Path:
         temporary.unlink(missing_ok=True)
 
 
+def _vorhandene_sitzungs_pdf(folder: Path, row: DownloadRow) -> Path | None:
+    """Nur eine gueltige PDF mit eindeutigem Sitzungs-Praefix wiederverwenden.
+
+    Der alte Downloader speichert bereits <Zeitpunkt>_<Quelle>_<PDF-Name>.
+    Eine Dateigroesse >0 oder ein Manifest allein ist kein Download-Beleg.
+    """
+    if not folder.is_dir() or folder.is_symlink():
+        return None
+    prefix = _safe_name(f"{row.timestamp}_{row.source}") + "_"
+    for pdf in sorted(folder.iterdir()):
+        if (
+            not pdf.is_file() or pdf.is_symlink()
+            or pdf.suffix.casefold() != ".pdf"
+            or not pdf.name.startswith(prefix)
+        ):
+            continue
+        try:
+            with pdf.open("rb") as datei:
+                if datei.read(5) == b"%PDF-":
+                    return pdf
+        except OSError:
+            continue
+    return None
+
+
 def _visible_rows(page) -> tuple[list[DownloadRow], bool]:
     """Identify usable icons from the actual Diagnosis Viewer DOM.
 
@@ -161,9 +209,18 @@ def _write_manifest(folder: Path, result: FinDownloadResult) -> None:
         "fehler": result.errors,
         "ohne_quicktest": result.no_quicktest_sessions,
     }
-    (folder / "abrufstatus.json").write_text(
-        json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8"
-    )
+    # Bei Stromausfall oder Edge-Absturz nie einen halb geschriebenen
+    # Checkpoint als gueltigen Status zuruecklassen.
+    with tempfile.NamedTemporaryFile(
+        mode="w", encoding="utf-8", dir=folder,
+        suffix=".partial", delete=False,
+    ) as stream:
+        temp = Path(stream.name)
+        json.dump(payload, stream, indent=2, ensure_ascii=False)
+    try:
+        temp.replace(folder / "abrufstatus.json")
+    finally:
+        temp.unlink(missing_ok=True)
 
 
 def read_last_attempt(folder: Path, fin: str) -> FinDownloadResult | None:
