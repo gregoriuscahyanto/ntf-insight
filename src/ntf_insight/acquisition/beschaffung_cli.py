@@ -42,7 +42,7 @@ def _parser() -> argparse.ArgumentParser:
                         help="Optionaler Basisordner fuer alle Quellen; Standard: "
                              "data/processed/<bereinigter TXT-Name>")
     parser.add_argument("--quellen", default="alle",
-                        help="Kommagetrennt: dcdc223,wem,sa-codes,quicktests,qec,tips "
+                        help="Kommagetrennt: dcdc223 (Alias vedoc-historie),wem,sa-codes,quicktests,qec,tips "
                              "(Standard: alle)")
     parser.add_argument("--parallel", type=int, default=2,
                         help="Maximale Anzahl gleichzeitiger Datenquellen (1-6; Standard: 2)")
@@ -57,11 +57,12 @@ def _parser() -> argparse.ArgumentParser:
 
 def _quellen(text: str) -> list[str]:
     auswahl = list(quellennamen()) if text.strip().lower() == "alle" else [
-        teil.strip().lower() for teil in text.split(",")
+        "dcdc223" if teil.strip().lower() == "vedoc-historie" else teil.strip().lower()
+        for teil in text.split(",")
     ]
     if not auswahl or any(teil not in _EINSTIEGE for teil in auswahl):
         raise ValueError(
-            "--quellen: erlaubt sind dcdc223,wem,sa-codes,quicktests,qec,tips oder alle."
+            "--quellen: erlaubt sind dcdc223 (Alias vedoc-historie),wem,sa-codes,quicktests,qec,tips oder alle."
         )
     # Doppelte Quellen duerfen niemals dieselben FIN-Checkpoints parallel schreiben.
     if len(auswahl) != len(set(auswahl)):
@@ -161,12 +162,14 @@ def main(argv: list[str] | None = None) -> int:
             raise ValueError("--ausgabe muss ein Verzeichnis sein.")
         eingabe = argumente.eingabe.expanduser().resolve()
         # Eine frei gewaehlte Hardware-Historie nutzt den neutralen Quellordner.
+        generisch = (
+            argumente.objekt is not None or argumente.attribut is not None
+            or "vedoc-historie" in [teil.strip().lower()
+                                   for teil in argumente.quellen.split(",")]
+        )
         arbeitsliste = [
             (q, ausgabe_in_gruppe(
-                gruppe,
-                "vedoc-historie" if q == "dcdc223" and (
-                    argumente.objekt is not None or argumente.attribut is not None
-                ) else q,
+                gruppe, "vedoc-historie" if q == "dcdc223" and generisch else q,
             ))
             for q in auswahl
         ]
