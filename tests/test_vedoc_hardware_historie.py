@@ -191,3 +191,64 @@ def test_cli_optionen_vor_browser_validieren(tmp_path):
     with pytest.raises(SystemExit) as exc:
         m.historie_main(["--eingabe", str(eingabe), "--attribut", " "])
     assert exc.value.code == 2
+
+
+
+def test_cli_komplett_offline_schreibt_objektbezogene_dateien(monkeypatch, tmp_path):
+    """Inklusive Argumente, Browsergrenze, JSON, Excel und sicherer Defaultablage."""
+    import sys
+    from types import ModuleType
+
+    monkeypatch.chdir(tmp_path)
+    datei = tmp_path / "FIN-Liste SensorIssue.txt"
+    datei.write_text(FIN + "\n", encoding="utf-8")
+    aufrufe = []
+
+    seite = SimpleNamespace(goto=lambda *args, **kwargs: None)
+
+    class Kontext:
+        pages = [seite]
+
+        def close(self):
+            pass
+
+    class Manager:
+        def __enter__(self):
+            return SimpleNamespace(chromium=SimpleNamespace(
+                launch_persistent_context=lambda **kwargs: Kontext(),
+            ))
+
+        def __exit__(self, *_args):
+            return False
+
+    fake_api = ModuleType("playwright.sync_api")
+    fake_api.TimeoutError = TimeoutError
+    fake_api.sync_playwright = lambda: Manager()
+    monkeypatch.setitem(sys.modules, "playwright.sync_api", fake_api)
+    monkeypatch.setattr(m, "_anmelden", lambda *_args, **kwargs: seite)
+
+    def abrufen(page, fin, timeout, historie_timeout, *, objekt, attribut):
+        aufrufe.append((objekt, attribut, fin))
+        return m._ergebnis(
+            fin, "gefunden", "HW05", objekt=objekt, attribut=attribut,
+            aenderungen=(m.SeriennummerAenderung("01.11.2026 12:00:00", "HW04", "HW05"),),
+        )
+
+    monkeypatch.setattr(m, "_abfrage", abrufen)
+    assert m.historie_main([
+        "--eingabe", str(datei), "--objekt", "CPC3", "--attribut", "Hardwarestand",
+        "--login-manuell",
+    ]) == 0
+    pfad = tmp_path / "data/processed/FIN-Liste SensorIssue/vedoc_historie"
+    assert (pfad / "cpc3_hardwarestand.json").exists()
+    assert (pfad / "cpc3_hardwarestand.xlsx").exists()
+    assert aufrufe == [("CPC3", "Hardwarestand", FIN)]
+    daten = json.loads((pfad / "cpc3_hardwarestand.json").read_text("utf-8"))
+    assert daten["fahrzeuge"][0]["letzter_neuer_wert"] == "HW05"
+    assert daten["fahrzeuge"][0]["seriennummer"] is None
+
+    # Derselbe Ordner kann auch eine andere Hardware enthalten:
+    assert m.main(["--eingabe", str(datei), "--ausgabe", str(pfad), "--login-manuell"]) == 0
+    assert (pfad / "dcdc223_seriennummern.json").exists()
+    assert (pfad / "cpc3_hardwarestand.json").exists()
+    assert aufrufe[1] == ("DCDC223", "Seriennummer", FIN)
