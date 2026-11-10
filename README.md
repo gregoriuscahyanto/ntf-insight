@@ -25,6 +25,20 @@ WDD12345678901235
 ntf-insight-beschaffung --eingabe ".\FIN-Liste DCDC223 SensorIssue.txt"
 ```
 
+**QEC nur für eine Sachnummer inklusive aller angezeigten Anhänge** (auch ohne QEC-Referenz im Dateinamen):
+
+```powershell
+ntf-insight-qec --eingabe ".\FIN-Liste DCDC223 SensorIssue.txt" --sachnummer "A 123 456 78 90" --anhaenge alle
+```
+
+**QEC mit QuickTests und WEM parallel** (Sachnummer und Anhangmodus gelten ausschließlich für QEC):
+
+```powershell
+ntf-insight-beschaffung --eingabe ".\FIN-Liste DCDC223 SensorIssue.txt" --quellen qec,quicktests,wem --sachnummer "A 123 456 78 90" --anhaenge alle --parallel 3
+```
+
+*Die Sachnummer oben ist fiktiv. Bei `--anhaenge alle` werden nicht eindeutig referenzbestätigte Anhänge in `qec.json` gekennzeichnet und müssen vor der fachlichen/ChatGPT-Auswertung geprüft werden. Ohne den Schalter bleibt die Referenzprüfung strikt.*
+
 **Nur bestimmte Quellen, drei parallel:**
 
 ```powershell
@@ -45,6 +59,8 @@ ntf-insight-beschaffung --eingabe ".\FIN-Liste DCDC223 SensorIssue.txt" --quelle
 | `--quellen` | `alle` (Standard) oder kommagetrennte IDs | Nur die genannten Datenquellen abrufen, z. B. `qec,quicktests,wem`. Jede Quelle höchstens einmal angeben. |
 | `--parallel` | Ganze Zahl von **1 bis 6**, Standard **2** | Maximale Zahl gleichzeitig laufender **Datenquellen** (nicht FINs). Innerhalb einer Quelle werden FINs nacheinander abgearbeitet. |
 | `--ausgabe` | Optional: Ziel-**Basisordner** | Ohne Angabe: `data/processed/<bereinigter TXT-Dateiname>/`. |
+| `--sachnummer` | Optional, z. B. `"A 123 456 78 90"` | **Nur QEC:** Exakte Sachnummer für alle FINs der TXT; damit werden auch Bauteile ohne Pumpenbezeichnung gesucht. |
+| `--anhaenge` | `referenz` (Standard) oder `alle` | **Nur QEC:** Strikter Referenzabgleich am Dateinamen oder Download sämtlicher im QEC-Fall-Popup sichtbarer Dateien mit ungeprüfter Zuordnung. |
 | `--login-manuell` | Optionaler Schalter | Automatisches Ausfüllen der SSO-Anmeldedaten deaktivieren; die PING-ID-Freigabe bleibt immer manuell. |
 
 | Quellen-ID für `--quellen` | Datenquelle | Inhalt |
