@@ -265,3 +265,21 @@ def test_alle_anhaenge_fruehere_ungepruefte_nur_bei_gleicher_referenz_wiederverw
 def test_ungueltigen_anhangmodus_ablehnen(tmp_path):
     with pytest.raises(ValueError, match="Anhangmodus"):
         QecDownloader(tmp_path, tmp_path / "profile", attachment_policy="irgendwas")
+
+
+
+def test_reiner_http_dateiname_macht_ungeprueften_anhang_nicht_referenzbestaetigt():
+    prior = [{
+        "anhang_id": "101",
+        "dateiname": "",
+        "linktext": "101",
+        "datei": "101_900000625_angeblich_passend.pdf",
+        "auswahlmodus": "alle",
+        "sichtbar_bei_referenz": REF,
+        "referenz_im_dateinamen_bestaetigt": False,
+        "zuordnung": "nur_im_popup_gesehen_nicht_verifiziert",
+    }]
+    assert _matching_previous_attachments(prior, REF) == {}
+    assert list(_matching_previous_attachments(
+        prior, REF, include_unverified=True,
+    )) == ["101"]
