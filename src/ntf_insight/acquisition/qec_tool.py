@@ -94,7 +94,8 @@ def pruefe_benennung(value: str) -> str:
     begriffe = [teil.strip() for teil in raw.split(",")]
     if (not begriffe or any(not 2 <= len(teil) <= 80 for teil in begriffe)
             or len(begriffe) > 8
-            or not all(re.fullmatch(r"[\w\s./()+\-]+", teil) for teil in begriffe)):
+            or not all(re.fullmatch(r"[\w\s./()+\-]+", teil) and ".." not in teil
+                       for teil in begriffe)):
         raise ValueError(
             "Ungueltige QEC-Benennung (2-80 Zeichen je Begriff, max. 8; "
             "Buchstaben/Ziffern und Leerzeichen, . / ( ) + - erlaubt)."
