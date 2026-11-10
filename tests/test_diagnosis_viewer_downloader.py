@@ -466,3 +466,62 @@ def test_pdf_check_schliesst_symlinks_aus(tmp_path):
     except (NotImplementedError, OSError):
         pytest.skip("Windows-Testsystem erlaubt keine Symlinks")
     assert lokal_vorhandene_pdf(tmp_path, FIN) is None
+
+
+
+def test_quicktest_ping_sperre_vor_portal_navigation_und_nicht_waehrend_download(
+    tmp_path, monkeypatch,
+):
+    from contextlib import contextmanager
+
+    import ntf_insight.acquisition.diagnosis_viewer as backend
+
+    reihenfolge = []
+
+    @contextmanager
+    def gate(*, status, abbruch):
+        reihenfolge.append("sso-lock")
+        yield
+        reihenfolge.append("sso-unlock")
+
+    class FakeField:
+        def fill(self, value):
+            reihenfolge.append("fin-suchfeld")
+
+        def click(self, **kwargs):
+            reihenfolge.append("search")
+
+    class FakePage:
+        def goto(self, url, **kwargs):
+            reihenfolge.append("goto")
+
+        def locator(self, selector):
+            return FakeField()
+
+        def get_by_role(self, *args, **kwargs):
+            return FakeField()
+
+    monkeypatch.setattr(backend, "serielle_sso_anmeldung", gate)
+    downloader = DiagnosisViewerDownloader(
+        tmp_path, tmp_path / "profile", serielle_sso=True, action_interval_seconds=0,
+    )
+    page = FakePage()
+
+    def login(context, seite, progress, cancel):
+        reihenfolge.append("login")
+        return seite
+
+    def results(seite, cancel, fin):
+        reihenfolge.append("results")
+        return []
+
+    monkeypatch.setattr(downloader, "_login", login)
+    monkeypatch.setattr(downloader, "_wait_results", results)
+    result, _ = downloader._one_fin(
+        SimpleNamespace(), page, FIN, lambda _: None, Event(),
+    )
+    assert result.status == "Keine Quicktests"
+    assert reihenfolge == [
+        "sso-lock", "goto", "login", "sso-unlock",
+        "fin-suchfeld", "search", "results",
+    ]
