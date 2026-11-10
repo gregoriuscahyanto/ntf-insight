@@ -173,7 +173,19 @@ Mit `--ausgabe` beim Sammelbefehl wird **der Basisordner** angegeben
 ergänzt die spezifischen Quellunterordner und JSON-Dateinamen automatisch.
 
 Alle sechs Datenquellen können unterschiedliche Edge-Fenster gleichzeitig
-öffnen und eigene SSO-/PING-ID-Freigaben benötigen. Mit
+öffnen und eigene SSO-/PING-ID-Freigaben benötigen. **VeDoc-Historie und
+QuickTests** haben eine gemeinsame prozessuebergreifende SSO-Sperre:
+PING-ID-Anmeldungen finden **nacheinander** statt, die FIN-Abfragen
+anschliessend weiterhin **parallel**. Zuerst die erste PING ID im
+Smartphone bestaetigen, dann die zweite. Unter
+%USERPROFILE%\.ntf-insight\sso-anmeldung.lock liegen keine persoenlichen
+Daten; der Betriebssystem-Lock wird beim Prozessende freigegeben.
+Die anderen vier Quellen sind noch nicht an diese Sperre angebunden.
+
+Die QuickTest-**CLI** ueberspringt nur FINs mit bereits vorhandener
+lesbarer PDF im passenden FIN-Unterordner. Ein alter oder juengster
+Abrufversuch ohne PDF wird wiederholt; --erneut erzwingt den Abruf
+auch bei bereits vorhandenen PDFs. Mit
 `--login-manuell` wird bei allen die Anmeldung manuell durchgeführt.
 **PING ID bleibt in jedem Fall manuell.** Der Standard von zwei parallelen
 Diensten reduziert Browser-/Serverlast; `--parallel 6` ist optional
