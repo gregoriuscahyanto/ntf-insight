@@ -110,7 +110,7 @@ def parse_tips_queries(raw: str) -> list[str]:
     targets: list[str] = []
     seen: set[str] = set()
     for zeilennummer, zeile in enumerate(raw.splitlines(), 1):
-        inhalt = zeile.partition("#")[0].strip().upper()
+        inhalt = zeile.lstrip("\ufeff").partition("#")[0].strip().upper()
         if not inhalt:
             continue
         for wert in (v for v in re.split(r"[,;\s]+", inhalt) if v):
