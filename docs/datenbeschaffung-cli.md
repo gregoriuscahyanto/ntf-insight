@@ -160,7 +160,7 @@ sichtbarer Name die exakte QEC-Referenz enthaelt. `--anhaenge alle`:
 herunterladen, selbst wenn ihr Dateiname keine Referenznummer enthaelt.
 Dies kann **fremde QEC-Fallanhaenge** einschliessen. Dateien sind daher
 nur als im Popup gesichtete Belege nachgewiesen, nicht als gepruefte
-Referenzzuordnung. Unter `qec.json/anhaenge` wird je Datei der
+Referenzzuordnung. In der `anhaenge`-Liste der jeweiligen `qec.json` werden
 `sichtbar_bei_referenz`, `auswahlmodus` und
 `referenz_im_dateinamen_bestaetigt` sowie `zuordnung` dokumentiert.
 Erst im spaeteren fachlichen bzw. ChatGPT-Schritt darf die Zugehoerigkeit
