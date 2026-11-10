@@ -120,16 +120,52 @@ def test_tresor_nicht_verfuegbar_erlaubt_browser_login(tmp_path, monkeypatch, ca
     assert "SSO in Edge manuell" in capsys.readouterr().err
 
 
-def test_24h_sperre_vermeidet_passwortzugriff(tmp_path, monkeypatch):
-    monkeypatch.setattr(
-        cli, "recently_attempted", lambda root, fin: FinDownloadResult(fin=fin)
-    )
+def test_vorhandene_pdf_vermeiden_login_unabhaengig_von_24h(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    ordner = tmp_path / "data/processed/fins/diagnosis_viewer_quicktests"
+    for fin in (FIN, FIN_ZWEI):
+        ziel = ordner / fin
+        ziel.mkdir(parents=True)
+        (ziel / "test.pdf").write_bytes(b"%PDF-1.7\\nOffline-Test")
     monkeypatch.setattr(cli, "load_saved_credentials", lambda: pytest.fail("Nicht benoetigt"))
-    ergebnisse = [FinDownloadResult(fin=FIN, status="Übersprungen (< 24 h)"),
-                  FinDownloadResult(fin=FIN_ZWEI, status="Übersprungen (< 24 h)")]
+    ergebnisse = [FinDownloadResult(fin=FIN, status="Uebersprungen (PDF bereits vorhanden)"),
+                  FinDownloadResult(fin=FIN_ZWEI, status="Uebersprungen (PDF bereits vorhanden)")]
     aufrufe = _fake_downloader(monkeypatch, ergebnisse)
     assert cli.main(["--eingabe", str(_eingabe(tmp_path))]) == 0
     assert aufrufe[0][2]["password"] == ""
+    assert aufrufe[0][2]["nur_fehlende_pdfs"] is True
+    assert aufrufe[0][2]["serielle_sso"] is True
+
+
+def test_keine_pdf_trotz_juengstem_fehler_erfordert_login(tmp_path, monkeypatch):
+    """Ohne echte PDF im richtigen FIN-Ordner ist der Abruf nicht erledigt."""
+    monkeypatch.setattr(
+        cli, "load_saved_credentials", lambda: LoginCredentials("uid", "secret")
+    )
+    aufrufe = _fake_downloader(monkeypatch)
+    ordner = tmp_path / "diagnose"
+    ordner.mkdir()
+    (ordner / FIN).mkdir()
+    (ordner / FIN / "abrufstatus.json").write_text('{"status":"Fehler"}', encoding="utf-8")
+    assert cli.main([
+        "--eingabe", str(_eingabe(tmp_path)), "--ausgabe", str(ordner),
+    ]) == 0
+    assert aufrufe[0][2]["user_id"] == "uid"
+    assert aufrufe[0][2]["nur_fehlende_pdfs"] is True
+
+
+def test_erneut_umgeht_auch_vorhandene_pdfs(tmp_path, monkeypatch):
+    monkeypatch.setattr(cli, "load_saved_credentials", lambda: LoginCredentials("uid", "pw"))
+    ausgabe = tmp_path / "mit-pdfs"
+    (ausgabe / FIN).mkdir(parents=True)
+    (ausgabe / FIN / "quicktest.pdf").write_bytes(b"%PDF-1.7\\nOffline")
+    aufrufe = _fake_downloader(monkeypatch)
+    assert cli.main([
+        "--eingabe", str(_eingabe(tmp_path)), "--ausgabe", str(ausgabe),
+        "--erneut",
+    ]) == 0
+    assert aufrufe[0][2]["retry_recent"] is True
+    assert aufrufe[0][2]["user_id"] == "uid"
 
 
 def test_teilerfolg_mit_fehler_liefert_exitcode_eins(tmp_path, monkeypatch):
