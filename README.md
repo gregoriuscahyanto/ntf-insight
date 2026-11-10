@@ -1,5 +1,69 @@
 # NTF Insight
 
+## Schnellstart: Daten per CLI herunterladen (Windows / PowerShell)
+
+Die sechs Datenquellen lassen sich mit einer **FIN-TXT-Datei** gemeinsam oder einzeln abrufen. Der Sammelbefehl startet die ausgewählten Quellen parallel; jede Quelle speichert ihre Ergebnisse getrennt. Voraussetzung: **aktuelle NTF-Insight-Entwicklungsversion** mit installierten CLI-Befehlen, Microsoft Edge und Berechtigung für die jeweiligen Unternehmenssysteme.
+
+**Einmalig installieren bzw. nach einem Update erneut ausführen** (im Repository, mit aktivierter Python-Umgebung):
+
+```powershell
+python -m pip install -e .
+```
+
+**Eingabe:** `--eingabe` ist der Pfad zu einer `.txt`-Datei mit vollständigen, 17-stelligen FINs (**eine FIN pro Zeile**). Beispiel `FIN-Liste DCDC223 SensorIssue.txt`:
+
+```text
+WDD12345678901234
+WDD12345678901235
+```
+
+*Die FINs hier sind fiktive Testwerte. Leere Zeilen und mit `#` beginnende Kommentare sind erlaubt. Echte FIN-Dateien nur lokal speichern, nicht ins Repository hochladen.*
+
+**Alle sechs Quellen abrufen** (standardmäßig maximal zwei gleichzeitig):
+
+```powershell
+ntf-insight-beschaffung --eingabe ".\FIN-Liste DCDC223 SensorIssue.txt"
+```
+
+**Nur bestimmte Quellen, drei parallel:**
+
+```powershell
+ntf-insight-beschaffung --eingabe ".\FIN-Liste DCDC223 SensorIssue.txt" --quellen qec,quicktests,wem --parallel 3
+```
+
+**Alle sechs gleichzeitig mit eigenem Basisordner:**
+
+```powershell
+ntf-insight-beschaffung --eingabe ".\FIN-Liste DCDC223 SensorIssue.txt" --quellen alle --parallel 6 --ausgabe "D:\NTF\SensorIssue"
+```
+
+### Parameter und auswählbare Quellen
+
+| Parameter | Eingabe / Standard | Bedeutung |
+| --- | --- | --- |
+| `--eingabe` | **Erforderlich:** `pfad\FIN-Liste.txt` | Textdatei mit den abzufragenden FINs; bei Leerzeichen Pfad in Anführungszeichen setzen. |
+| `--quellen` | `alle` (Standard) oder kommagetrennte IDs | Nur die genannten Datenquellen abrufen, z. B. `qec,quicktests,wem`. Jede Quelle höchstens einmal angeben. |
+| `--parallel` | Ganze Zahl von **1 bis 6**, Standard **2** | Maximale Zahl gleichzeitig laufender **Datenquellen** (nicht FINs). Innerhalb einer Quelle werden FINs nacheinander abgearbeitet. |
+| `--ausgabe` | Optional: Ziel-**Basisordner** | Ohne Angabe: `data/processed/<bereinigter TXT-Dateiname>/`. |
+| `--login-manuell` | Optionaler Schalter | Automatisches Ausfüllen der SSO-Anmeldedaten deaktivieren; die PING-ID-Freigabe bleibt immer manuell. |
+
+| Quellen-ID für `--quellen` | Datenquelle | Inhalt |
+| --- | --- | --- |
+| `dcdc223` | VeDoc – DCDC223 | Seriennummern- und Änderungshistorie (JSON/Excel) |
+| `wem` | Diagnosis Viewer – WEM | Warn- und Fehlermeldungen (JSON) |
+| `sa-codes` | VeDoc – Fahrzeugcodes | Fahrzeug-/SA-Codes (JSON) |
+| `quicktests` | Diagnosis Viewer – QuickTests | Kurztest-PDFs |
+| `qec` | QEC | Befundungsfälle und Anhänge |
+| `tips` | XENTRY TIPS Writer | Fälle und Anhänge |
+
+**Standardablage:** Bei `FIN-Liste DCDC223 SensorIssue.txt` entsteht `data/processed/FIN-Liste DCDC223 SensorIssue/` mit sechs getrennten Quell-Unterordnern, z. B. `qec/`, `diagnosis_viewer_quicktests/` und `vedoc_codes/`. Ungültige Windows-Zeichen im TXT-Dateinamen werden ersetzt; vorhandene ältere Downloads werden nicht automatisch verschoben. `--ausgabe` überschreibt die automatische Basisordnerwahl.
+
+**Parallele Anmeldung:** Für jede Quelle wird ein eigener Edge-Prozess bzw. ein getrenntes Browserprofil genutzt. Das kann mehrere SSO- und PING-ID-Bestätigungen erfordern; `--parallel 6` ist bei hoher Browser- oder Serverlast nicht unbedingt schneller. Für den Anfang sind **2–3** parallele Quellen sinnvoll.
+
+**Einzelabrufe:** Alternativ `ntf-insight-qec --eingabe .\fins.txt`, `ntf-insight-quicktests --eingabe .\fins.txt` usw. starten. Die vollständige Anleitung mit allen sechs Einzelbefehlen, Unterordnern und Optionen steht in [Datenbeschaffung per CLI](docs/datenbeschaffung-cli.md).
+
+---
+
 **NTF Insight hilft dabei, „No Trouble Found“-Fälle (NTF) zu untersuchen.** Das bedeutet: Ein Bauteil wurde im Fahrzeug ausgetauscht, aber bei der späteren Prüfung wurde kein Fehler gefunden.
 
 Im Mittelpunkt steht zurzeit die **Kühlmittelpumpe**. Die App sammelt und vergleicht Informationen aus Fahrzeugdiagnosen, Werkstattdaten und Befundungsberichten.
@@ -38,7 +102,7 @@ Die Anwendung soll später auch für **andere Bauteile** genutzt werden können,
 
 ### Noch nicht umgesetzt oder fachlich zu prüfen
 
-- **Automatischer Berichtsdownload** aus den tatsächlichen internen Quellsystemen. Die technische Grundlage ist vorhanden, die Anbindungen fehlen noch.
+- **Produktive Freigabe des automatischen Berichtsdownloads:** CLI-Anbindungen für sechs Quellen sind technisch vorhanden; echte SSO-/PING-ID-Abläufe, Systemberechtigungen und vollständige Datenerfassung müssen im Unternehmensnetz noch validiert werden.
 - **Weitere Datenformate**, insbesondere Lieferanten-Befundungsberichte, SMR-D-Diagnosebedingungen und vollständige Software-/Änderungshistorien.
 - **Kühlmittelpumpen-spezifische Diagnose:** Tatsächliche CPC3-DTCs, Auslösebedingungen, Fehlerbilder und Prüfregeln mit Fachleuten validieren.
 - **Verlässliche Ursachenbewertung:** Hinweise aus Fahrzeug, Werkstatt und Befundung zusammenführen, die Regeln an echten Fällen prüfen und fachlich bestätigte Ursachen dokumentieren.
