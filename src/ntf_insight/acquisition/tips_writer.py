@@ -23,7 +23,6 @@ from zipfile import ZipFile, is_zipfile
 
 from lxml import html as lxml_html
 
-from ntf_insight.acquisition.diagnosis_viewer import parse_fins
 from ntf_insight.acquisition.sso_login_gate import serielle_sso_anmeldung
 
 
@@ -188,6 +187,7 @@ def parse_tips_search_hits(
                 cells=values,
             ))
     return results
+
 
 def parse_tips_attachment_rows(document: str) -> list[dict[str, str]]:
     """HTML-Tabelle der aktiven Registerkarte: Datei, Datum und Beschreibung."""
