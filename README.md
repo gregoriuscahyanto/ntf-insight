@@ -132,6 +132,7 @@ Importierte Daten und Berichte bleiben auf dem jeweiligen Rechner. Standardmäß
 
 ## Weitere Informationen
 
+- [Sechs Datenquellen per CLI abrufen (VeDoc, Diagnosis Viewer, QEC, TIPS)](docs/datenbeschaffung-cli.md)
 - [Daten importieren](docs/real-data-import.md)
 - [FIN- und Fallanalyse bedienen](docs/fin-workspace.md)
 - [CPC3-Softwarestand und Pumpentausch bewerten](docs/cpc3-softwareanalyse.md)
