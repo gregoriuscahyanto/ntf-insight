@@ -1,4 +1,4 @@
-"""Eigenstaendiger, lesender VeDoc-Export: FIN-TXT -> DCDC223-Seriennummernhistorie (JSON/XLSX).
+"""VeDoc-Hardwarehistorie fuer frei waehlbares Objekt/Attribut (JSON/XLSX).
 
 Die Anmeldung nutzt den bestehenden NTF-Insight-Schluesselbund oder fragt in PowerShell.
 Weder Zugangsdaten noch HTML-Snapshots oder Browser-Profile werden gespeichert.
@@ -8,7 +8,9 @@ from __future__ import annotations
 
 import argparse
 import getpass
+import hashlib
 import json
+import unicodedata
 import os
 import re
 import time
@@ -26,7 +28,8 @@ from openpyxl.utils import get_column_letter
 from openpyxl.worksheet.table import Table, TableStyleInfo
 
 _FIN = re.compile(r"[A-HJ-NPR-Z0-9]{17}\Z")
-_STEUERGERAET = "DCDC223"
+_STEUERGERAET = "DCDC223"  # Bisheriger Standard fuer Legacy-Aufruf
+_STANDARD_ATTRIBUT = "Seriennummer"
 VEDOC_START = "https://prod.core.public.vedoc.i.mercedes-benz.com/ui/homepage.html"
 _SSO_HOST = "login.mercedes-benz.com"
 _FIN_EINGABE = 'input[data-ng-model="viewDataObject.vehicleSearchValue"]'
@@ -53,6 +56,45 @@ class Ergebnis:
     hinweis: str
     abgefragt_am_utc: str
     aenderungen: tuple[SeriennummerAenderung, ...] = ()
+    attribut: str = _STANDARD_ATTRIBUT
+
+    @property
+    def objekt(self) -> str:
+        """Neutrales Alias zum historischen Feld `steuergeraet`."""
+        return self.steuergeraet
+
+    @property
+    def letzter_neuer_wert(self) -> str | None:
+        """Der letzte dokumentierte, zeitlich eindeutige neue Attributwert."""
+        return self.seriennummer
+
+
+def pruefe_historienziel(wert: str, *, feld: str) -> str:
+    """Freien VeDoc-Text vor Browser/Export validieren; keine Steuerzeichen."""
+    text = " ".join(str(wert).split())
+    if (not text or len(text) > 120 or any(
+        unicodedata.category(zeichen).startswith("C") for zeichen in str(wert)
+    )):
+        raise ValueError(f"{feld} muss 1-120 lesbare Zeichen ohne Steuerzeichen enthalten.")
+    return text
+
+
+def _dateiteil(wert: str) -> str:
+    """Kollisionsarme, Windows-sichere Exporte fuer frei waehlbare Namen."""
+    ascii_text = unicodedata.normalize("NFKD", wert).encode("ascii", "ignore").decode("ascii")
+    roh = re.sub(r"[^a-z0-9_-]+", "_", ascii_text.casefold()).strip("_")
+    teil = (roh or "objekt")[:48].rstrip("_")
+    if teil != wert.casefold():
+        teil = teil[:39] + "_" + hashlib.sha256(wert.encode("utf-8")).hexdigest()[:8]
+    return teil
+
+
+def _dateistamm(objekt: str, attribut: str) -> str:
+    if objekt == _STEUERGERAET and attribut == _STANDARD_ATTRIBUT:
+        return "dcdc223_seriennummern"
+    suffix = ("seriennummern" if attribut.casefold() == _STANDARD_ATTRIBUT.casefold()
+              else _dateiteil(attribut))
+    return f"{_dateiteil(objekt)}_{suffix}"
 
 
 def lade_fins(pfad: Path) -> list[str]:
@@ -95,11 +137,14 @@ def _history_feld(zeile, feld: str) -> str:
     return elemente[0].text_content().strip() if elemente else ""
 
 
-def lese_historie_aus_html(quelltext: str, fin: str) -> tuple[SeriennummerAenderung, ...]:
-    """Nur Seriennummer-Aenderungen von DCDC223 fuer die volle FIN.
+def lese_historie_aus_html(
+    quelltext: str, fin: str, objekt: str = _STEUERGERAET,
+    attribut: str = _STANDARD_ATTRIBUT,
+) -> tuple[SeriennummerAenderung, ...]:
+    """Nur exakte Objekt-/Attributtreffer mit bestaetigter FIN auswerten.
 
-    Die VeDoc-Historie enthaelt auch andere Attribute, z.B. das Datum des
-    ersten Zugriffs. Alte DOM-Zeilen der vorherigen FIN werden abgewiesen.
+    Keine unscharfen Teiltreffer: DCDC223 darf z.B. nicht DCDC223A oder
+    einen fremden Hardwarestand einschliessen.
     """
     dokument = html.fromstring(quelltext)
     tabellen = dokument.xpath('//table[@id="historyTable"]')
@@ -112,12 +157,12 @@ def lese_historie_aus_html(quelltext: str, fin: str) -> tuple[SeriennummerAender
         anfang = pfad.split("/", 1)[0].strip().upper()
         if _FIN.fullmatch(anfang) and anfang != fin:
             raise ValueError("Historie gehoert noch zu einer anderen FIN.")
-        if _history_feld(zeile, "parentObjectIdentifier").upper() != _STEUERGERAET:
+        if " ".join(_history_feld(zeile, "parentObjectIdentifier").split()).casefold() != objekt.casefold():
             continue
-        if _history_feld(zeile, "attributeName").casefold() != "seriennummer":
+        if " ".join(_history_feld(zeile, "attributeName").split()).casefold() != attribut.casefold():
             continue
         if anfang != fin:
-            raise ValueError("DCDC223-Historienzeile hat keine bestaetigte Voll-FIN.")
+            raise ValueError("Historienzeile zum ausgewaehlten Objekt hat keine bestaetigte Voll-FIN.")
         zeit = _history_feld(zeile, "date")
         alt = _history_feld(zeile, "oldValue")
         neu = _history_feld(zeile, "newValue")
@@ -125,7 +170,10 @@ def lese_historie_aus_html(quelltext: str, fin: str) -> tuple[SeriennummerAender
     return tuple(eintraege)
 
 
-def _historienmoment(quelltext: str, fin: str) -> tuple[tuple[SeriennummerAenderung, ...], int, bool]:
+def _historienmoment(
+    quelltext: str, fin: str, objekt: str = _STEUERGERAET,
+    attribut: str = _STANDARD_ATTRIBUT,
+) -> tuple[tuple[SeriennummerAenderung, ...], int, bool]:
     """Aus einem DOM-Snapshot Historienentries und FIN-Zuordnung ableiten.
 
     Eine leere oder alte Tabelle ist kein Nachweis, dass es keine Aenderung gibt.
@@ -143,14 +191,15 @@ def _historienmoment(quelltext: str, fin: str) -> tuple[tuple[SeriennummerAender
             if moegliche_fin != fin:
                 raise ValueError("Historie zeigt noch Eintraege einer anderen FIN.")
             bestaetigte_fin = True
-    return lese_historie_aus_html(quelltext, fin), len(zeilen), bestaetigte_fin
+    return lese_historie_aus_html(quelltext, fin, objekt, attribut), len(zeilen), bestaetigte_fin
 
 
 def _warte_auf_historieneintraege(
     seite, fin: str, filter_feld, wartezeit_ms: int, *,
+    objekt: str = _STEUERGERAET, attribut: str = _STANDARD_ATTRIBUT,
     ruhezeit_ms: int = 1500, intervall_ms: int = 350,
 ) -> Ergebnis:
-    """Wartet auf gerenderte DCDC223-Daten; prueft danach ungefiltert nach.
+    """Wartet auf gerenderte Objektdaten; prueft danach ungefiltert nach.
 
     Kein fruehzeitiges `keine_seriennummer_aenderung` beim Angular-Zwischenzustand
     0 Zeilen. Bei nicht belegbarer Vollstaendigkeit wird explizit ein unsicherer
@@ -160,7 +209,7 @@ def _warte_auf_historieneintraege(
     letzte_signatur: tuple[SeriennummerAenderung, ...] | None = None
     stabil_seit: float | None = None
     erweitert = False
-    print(f"{_gekuerzte_fin(fin)}: Filter DCDC223 wird geladen und kontrolliert ...", flush=True)
+    print(f"{_gekuerzte_fin(fin)}: VeDoc-Filter fuer {objekt} / {attribut} wird kontrolliert ...", flush=True)
 
     while time.monotonic() < deadline:
         # Erweiterung erst nach dem ersten sichtbaren Datenstand ist moeglich.
@@ -170,7 +219,7 @@ def _warte_auf_historieneintraege(
             erweitert = True
             seite.wait_for_timeout(intervall_ms)
         try:
-            eintraege, _anzahl, _fin_erkennbar = _historienmoment(seite.content(), fin)
+            eintraege, _anzahl, _fin_erkennbar = _historienmoment(seite.content(), fin, objekt, attribut)
         except ValueError:
             # Seitenwechsel / Angular ist noch nicht fertig. Nicht als 0 Treffer zaehlen.
             eintraege = ()
@@ -179,7 +228,7 @@ def _warte_auf_historieneintraege(
             if eintraege != letzte_signatur:
                 letzte_signatur, stabil_seit = eintraege, jetzt
             elif stabil_seit is not None and (jetzt - stabil_seit) * 1000 >= ruhezeit_ms:
-                return _bewerte_historie(fin, eintraege)
+                return _bewerte_historie(fin, eintraege, objekt=objekt, attribut=attribut)
         else:
             letzte_signatur, stabil_seit = None, None
         seite.wait_for_timeout(intervall_ms)
@@ -201,7 +250,7 @@ def _warte_auf_historieneintraege(
             erweitern.first.click(timeout=5000)
             erweitert = True
         try:
-            eintraege, anzahl, gilt_fin = _historienmoment(seite.content(), fin)
+            eintraege, anzahl, gilt_fin = _historienmoment(seite.content(), fin, objekt, attribut)
         except ValueError:
             fehlerhafte_fins = True
             letzte_signatur, stabil_seit = None, None
@@ -217,11 +266,11 @@ def _warte_auf_historieneintraege(
             if eintraege != letzte_signatur:
                 letzte_signatur, stabil_seit = eintraege, jetzt
             elif stabil_seit is not None and (jetzt - stabil_seit) * 1000 >= ruhezeit_ms:
-                ergebnis = _bewerte_historie(fin, eintraege)
+                ergebnis = _bewerte_historie(fin, eintraege, objekt=objekt, attribut=attribut)
                 return _ergebnis(
                     fin, ergebnis.status, seriennummer=ergebnis.seriennummer,
                     hinweis=("Treffer nach ungefilterter Nachpruefung. " + ergebnis.hinweis),
-                    aenderungen=ergebnis.aenderungen,
+                    aenderungen=ergebnis.aenderungen, objekt=objekt, attribut=attribut,
                 )
         else:
             letzte_signatur, stabil_seit = None, None
@@ -231,44 +280,56 @@ def _warte_auf_historieneintraege(
     if (letzte_anzahl > 0 and unveraendert_seit is not None
             and (time.monotonic() - unveraendert_seit) >= 1.0
             and not fehlerhafte_fins):
+        status = ("keine_seriennummer_aenderung" if attribut.casefold() ==
+                  _STANDARD_ATTRIBUT.casefold() else "keine_attributaenderung")
         return _ergebnis(
-            fin, "keine_seriennummer_aenderung",
-            hinweis="Nach Wartezeit auch ungefiltert keine DCDC223-Seriennummernaenderung gefunden.",
+            fin, status,
+            hinweis="Nach Wartezeit auch ungefiltert keine passende Objekt-/Attributaenderung gefunden.",
+            objekt=objekt, attribut=attribut,
         )
     return _ergebnis(
         fin, "historie_nicht_bestaetigt",
         hinweis="Historie nach Wartezeit nicht vollstaendig / FIN nicht zweifelsfrei belegt.",
+        objekt=objekt, attribut=attribut,
     )
 
 
-def _bewerte_historie(fin: str, eintraege: tuple[SeriennummerAenderung, ...]) -> Ergebnis:
+def _bewerte_historie(
+    fin: str, eintraege: tuple[SeriennummerAenderung, ...], *,
+    objekt: str = _STEUERGERAET, attribut: str = _STANDARD_ATTRIBUT,
+) -> Ergebnis:
     """Letzten dokumentierten neuen Wert ableiten, nicht den aktuellen Einbau behaupten."""
+    ziel = {"objekt": objekt, "attribut": attribut}
     if not eintraege:
-        return _ergebnis(fin, "keine_seriennummer_aenderung",
-                         hinweis="Keine passende Seriennummer-Aenderung in der Historie.")
+        status = ("keine_seriennummer_aenderung" if attribut.casefold() ==
+                  _STANDARD_ATTRIBUT.casefold() else "keine_attributaenderung")
+        return _ergebnis(fin, status,
+                         hinweis="Keine passende Objekt-/Attributaenderung in der Historie.", **ziel)
     try:
         sortiert = sorted(eintraege, key=lambda x: datetime.strptime(
             x.aenderungszeitpunkt, "%d.%m.%Y %H:%M:%S"
         ))
     except ValueError:
         return _ergebnis(fin, "zeitstempel_ungueltig",
-                         hinweis="Zeitangabe nicht eindeutig lesbar; keine letzte Seriennummer ableiten.",
-                         aenderungen=eintraege)
+                         hinweis="Zeitangabe nicht eindeutig lesbar; kein letzter Attributwert ableitbar.",
+                         aenderungen=eintraege, **ziel)
     zeit = sortiert[-1].aenderungszeitpunkt
     letzte_werte = {eintrag.neuer_wert for eintrag in sortiert
                     if eintrag.aenderungszeitpunkt == zeit}
     if len(letzte_werte) != 1:
         return _ergebnis(fin, "mehrdeutig",
-                         hinweis="Verschiedene neue Seriennummern zum letzten Zeitpunkt.",
-                         aenderungen=tuple(sortiert))
+                         hinweis="Verschiedene neue Attributwerte zum letzten Zeitpunkt.",
+                         aenderungen=tuple(sortiert), **ziel)
     wert = next(iter(letzte_werte))
     if not wert:
-        return _ergebnis(fin, "seriennummer_fehlt",
+        status = ("seriennummer_fehlt" if attribut.casefold() ==
+                  _STANDARD_ATTRIBUT.casefold() else "neuer_wert_fehlt")
+        return _ergebnis(fin, status,
                          hinweis="Der letzte Historieneintrag enthaelt keinen neuen Wert.",
-                         aenderungen=tuple(sortiert))
+                         aenderungen=tuple(sortiert), **ziel)
     return _ergebnis(fin, "gefunden", seriennummer=wert,
-                     hinweis="Seriennummer ist der letzte dokumentierte neue Wert aus VeDoc-Historie.",
-                     aenderungen=tuple(sortiert))
+                     hinweis="Letzter dokumentierter neuer Attributwert aus VeDoc (kein Ist-Zustand).",
+                     aenderungen=tuple(sortiert), **ziel)
 
 
 def _zeitpunkt() -> str:
@@ -277,9 +338,10 @@ def _zeitpunkt() -> str:
 
 def _ergebnis(
     fin: str, status: str, seriennummer: str | None = None, hinweis: str = "",
-    aenderungen: tuple[SeriennummerAenderung, ...] = (),
+    aenderungen: tuple[SeriennummerAenderung, ...] = (), *,
+    objekt: str = _STEUERGERAET, attribut: str = _STANDARD_ATTRIBUT,
 ) -> Ergebnis:
-    return Ergebnis(fin, _STEUERGERAET, seriennummer, status, hinweis, _zeitpunkt(), aenderungen)
+    return Ergebnis(fin, objekt, seriennummer, status, hinweis, _zeitpunkt(), aenderungen, attribut)
 
 
 def _gekuerzte_fin(fin: str) -> str:
@@ -496,7 +558,10 @@ def _fahrzeugdaten_oeffnen(seite, timeout_ms: int) -> None:
     feld.wait_for(state="visible", timeout=timeout_ms)
 
 
-def _abfrage(seite, fin: str, timeout_ms: int, historie_wartezeit_ms: int = 20000) -> Ergebnis:
+def _abfrage(
+    seite, fin: str, timeout_ms: int, historie_wartezeit_ms: int = 20000, *,
+    objekt: str = _STEUERGERAET, attribut: str = _STANDARD_ATTRIBUT,
+) -> Ergebnis:
     """Historie nach bestaetigtem FIN-Wechsel laden und auf Ergebnisse warten."""
     from playwright.sync_api import TimeoutError as PlaywrightTimeout
 
@@ -513,7 +578,8 @@ def _abfrage(seite, fin: str, timeout_ms: int, historie_wartezeit_ms: int = 2000
             timeout=timeout_ms,
         )
     except PlaywrightTimeout:
-        return _ergebnis(fin, "fin_nicht_bestaetigt", hinweis="FIN-Wechsel nicht bestaetigt.")
+        return _ergebnis(fin, "fin_nicht_bestaetigt", hinweis="FIN-Wechsel nicht bestaetigt.",
+                         objekt=objekt, attribut=attribut)
 
     try:
         seite.locator(_TAB).click(timeout=timeout_ms)
@@ -525,21 +591,37 @@ def _abfrage(seite, fin: str, timeout_ms: int, historie_wartezeit_ms: int = 2000
         # Alter Filter kann noch zur vorherigen FIN gehoeren.
         filter_feld.fill("")
         seite.wait_for_timeout(350)
-        filter_feld.fill(_STEUERGERAET)
+        filter_feld.fill(objekt)
         return _warte_auf_historieneintraege(
             seite, fin, filter_feld, historie_wartezeit_ms,
+            objekt=objekt, attribut=attribut,
         )
     except PlaywrightTimeout:
         return _ergebnis(fin, "zeitueberschreitung",
-                         hinweis="Historienreiter oder Filter nicht bereit.")
+                         hinweis="Historienreiter oder Filter nicht bereit.",
+                         objekt=objekt, attribut=attribut)
     except ValueError:
         return _ergebnis(fin, "historie_nicht_bestaetigt",
-                         hinweis="Historie ist nicht eindeutig dieser FIN zuzuordnen.")
+                         hinweis="Historie ist nicht eindeutig dieser FIN zuzuordnen.",
+                         objekt=objekt, attribut=attribut)
 
 
-def _schreibe_json(pfad: Path, ergebnisse: list[Ergebnis]) -> None:
-    daten = {"quelle": "VeDoc/Historie", "steuergeraet": _STEUERGERAET,
-             "anzahl": len(ergebnisse), "fahrzeuge": [asdict(x) for x in ergebnisse]}
+def _schreibe_json(
+    pfad: Path, ergebnisse: list[Ergebnis], *,
+    objekt: str = _STEUERGERAET, attribut: str = _STANDARD_ATTRIBUT,
+) -> None:
+    fahrzeuge = []
+    for eintrag in ergebnisse:
+        datenreihe = asdict(eintrag)
+        datenreihe["objekt"] = eintrag.objekt
+        datenreihe["letzter_neuer_wert"] = eintrag.letzter_neuer_wert
+        # Seriennummer ist ein Legacy-Feld: niemals fremde Attribute als solche ausgeben.
+        if eintrag.attribut.casefold() != _STANDARD_ATTRIBUT.casefold():
+            datenreihe["seriennummer"] = None
+        fahrzeuge.append(datenreihe)
+    daten = {"quelle": "VeDoc/Historie", "steuergeraet": objekt,
+             "objekt": objekt, "attribut": attribut,
+             "anzahl": len(ergebnisse), "fahrzeuge": fahrzeuge}
     temporaer = pfad.with_suffix(pfad.suffix + ".tmp")
     temporaer.write_text(json.dumps(daten, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     temporaer.replace(pfad)
@@ -563,11 +645,11 @@ def _tabelle_formatieren(ws, spalten: list[str], zeilen: list[list[str]]) -> Non
         ws.row_dimensions[ws.max_row].height = 23
     ws.freeze_panes = "A2"
     for nummer, breite in enumerate(([24, 17, 39, 21, 30, 68, 29]
-                                    if ws.title == "DCDC223" else
+                                    if ws.title != "Historie" else
                                     [24, 17, 20, 25, 39, 39, 27]), 1):
         ws.column_dimensions[get_column_letter(nummer)].width = breite
     if zeilen:
-        tabelle = Table(displayName="VeDoc" + ws.title, ref=f"A1:G{len(zeilen) + 1}")
+        tabelle = Table(displayName="VeDocHistorie" if ws.title == "Historie" else "VeDocUebersicht", ref=f"A1:G{len(zeilen) + 1}")
         tabelle.tableStyleInfo = TableStyleInfo(
             name="TableStyleMedium2", showFirstColumn=False,
             showLastColumn=False, showRowStripes=True, showColumnStripes=False
@@ -575,29 +657,33 @@ def _tabelle_formatieren(ws, spalten: list[str], zeilen: list[list[str]]) -> Non
         ws.add_table(tabelle)
 
 
-def _schreibe_excel(pfad: Path, ergebnisse: list[Ergebnis]) -> None:
+def _schreibe_excel(
+    pfad: Path, ergebnisse: list[Ergebnis], *,
+    objekt: str = _STEUERGERAET, attribut: str = _STANDARD_ATTRIBUT,
+) -> None:
     wb = Workbook()
     uebersicht = wb.active
-    uebersicht.title = "DCDC223"
+    uebersicht.title = ("DCDC223" if objekt == _STEUERGERAET
+                        and attribut == _STANDARD_ATTRIBUT else "Uebersicht")
     _tabelle_formatieren(
         uebersicht,
-        ["FIN", "Steuergerät", "Letzter neuer Wert (Historie)", "Änderungen", "Status",
+        ["FIN", "VeDoc-Objekt", "Letzter neuer Wert (Historie)", "Änderungen", "Status",
          "Hinweis", "Abfragezeit (UTC)"],
         [
-            [e.fin, e.steuergeraet, e.seriennummer or "", str(len(e.aenderungen)),
+            [e.fin, e.objekt, e.letzter_neuer_wert or "", str(len(e.aenderungen)),
              e.status, e.hinweis, e.abgefragt_am_utc]
             for e in ergebnisse
         ],
     )
     historie = wb.create_sheet("Historie")
     zeilen = [
-        [e.fin, e.steuergeraet, "Seriennummer", a.aenderungszeitpunkt,
+        [e.fin, e.objekt, e.attribut, a.aenderungszeitpunkt,
          a.alter_wert or "", a.neuer_wert or "", e.status]
         for e in ergebnisse for a in e.aenderungen
     ]
     _tabelle_formatieren(
         historie,
-        ["FIN", "Steuergerät", "Attributname", "Änderungszeitpunkt (VeDoc)",
+        ["FIN", "VeDoc-Objekt", "Attributname", "Änderungszeitpunkt (VeDoc)",
          "Alter Wert", "Neuer Wert", "FIN-Status"],
         zeilen,
     )
@@ -606,13 +692,17 @@ def _schreibe_excel(pfad: Path, ergebnisse: list[Ergebnis]) -> None:
     temporaer.replace(pfad)
 
 
-def main(argv: list[str] | None = None) -> int:
+def main(argv: list[str] | None = None, *, allgemeine_historie: bool = False) -> int:
     parser = argparse.ArgumentParser(
-        description="Exportiert die DCDC223-Seriennummernhistorie je FIN als JSON und Excel."
+        description="Exportiert die VeDoc-Seriennummern- oder Attributhistorie fuer ein frei waehlbares Hardware-Objekt."
     )
     parser.add_argument("--eingabe", type=Path, help="TXT mit einer FIN pro Zeile")
+    parser.add_argument("--objekt", "--steuergeraet", dest="objekt", default=_STEUERGERAET,
+                        help="Exakter VeDoc-Objektname (Standard: DCDC223)")
+    parser.add_argument("--attribut", default=_STANDARD_ATTRIBUT,
+                        help="Exakter Attributname im VeDoc-Historienreiter (Standard: Seriennummer)")
     parser.add_argument("--ausgabe", type=Path, default=None,
-                        help="Zielordner (Standard: data/processed/<TXT-Name>/vedoc_dcdc223)")
+                        help="Zielordner unter data/processed/<TXT-Name>/vedoc_historie (Legacy: vedoc_dcdc223)")
     parser.add_argument("--url", default=os.getenv("VEDOC_URL", VEDOC_START),
                         help="VeDoc-Startadresse (Standard bereits im Skript hinterlegt)")
     parser.add_argument("--browser", choices=["edge", "chromium"], default="edge")
@@ -620,17 +710,23 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--login-timeout", type=int, default=240,
                         help="Maximale Wartezeit fuer SSO/PING ID in Sekunden")
     parser.add_argument("--historie-wartezeit", type=int, default=20,
-                        help="Wartezeit auf DCDC223-Historie pro FIN in Sekunden (Standard: 20)")
+                        help="Wartezeit auf Objekt-/Attributhistorie pro FIN in Sekunden (Standard: 20)")
     parser.add_argument("--login-manuell", action="store_true",
                         help="SSO ohne automatisches Ausfuellen von Benutzername/Passwort")
     parser.add_argument("--nur-login", action="store_true",
                         help="Nur den SSO/PING-ID-Login testen, ohne FIN-Abfrage oder Export")
     argumente = parser.parse_args(argv)
-    if argumente.ausgabe is None:
-        argumente.ausgabe = (standard_ausgabe(argumente.eingabe, "dcdc223")
-                            if argumente.eingabe is not None
-                            else Path("data/processed/vedoc_dcdc223"))
     try:
+        argumente.objekt = pruefe_historienziel(argumente.objekt, feld="--objekt")
+        argumente.attribut = pruefe_historienziel(argumente.attribut, feld="--attribut")
+        if argumente.ausgabe is None:
+            quelle = ("vedoc-historie" if allgemeine_historie
+                      or argumente.objekt != _STEUERGERAET
+                      or argumente.attribut != _STANDARD_ATTRIBUT else "dcdc223")
+            argumente.ausgabe = (standard_ausgabe(argumente.eingabe, quelle)
+                                if argumente.eingabe is not None
+                                else Path("data/processed/vedoc_historie" if allgemeine_historie
+                                          else "data/processed/vedoc_dcdc223"))
         if not argumente.nur_login and argumente.eingabe is None:
             raise ValueError("--eingabe ist fuer FIN-Exporte erforderlich.")
         fins = [] if argumente.nur_login else lade_fins(argumente.eingabe)
@@ -646,8 +742,9 @@ def main(argv: list[str] | None = None) -> int:
 
     if not argumente.nur_login:
         argumente.ausgabe.mkdir(parents=True, exist_ok=True)
-    json_pfad = argumente.ausgabe / "dcdc223_seriennummern.json"
-    excel_pfad = argumente.ausgabe / "dcdc223_seriennummern.xlsx"
+    dateistamm = _dateistamm(argumente.objekt, argumente.attribut)
+    json_pfad = argumente.ausgabe / f"{dateistamm}.json"
+    excel_pfad = argumente.ausgabe / f"{dateistamm}.xlsx"
     ergebnisse: list[Ergebnis] = []
     try:
         from playwright.sync_api import TimeoutError as PlaywrightTimeout, sync_playwright
@@ -689,6 +786,7 @@ def main(argv: list[str] | None = None) -> int:
                             ergebnis = _abfrage(
                                 seite, fin, argumente.timeout * 1000,
                                 argumente.historie_wartezeit * 1000,
+                                objekt=argumente.objekt, attribut=argumente.attribut,
                             )
                         except Exception as fehler:
                             if _browserfehler(fehler) or not _kontext_hat_seiten(kontext):
@@ -696,9 +794,11 @@ def main(argv: list[str] | None = None) -> int:
                                     "Browser waehrend der FIN-Abfrage geschlossen oder abgestuerzt."
                                 ) from None
                             # Keine internen Browserfehlermeldungen mit FIN/URLs ausgeben.
-                            ergebnis = _ergebnis(fin, "fehler", hinweis="VeDoc-Abfrage fehlgeschlagen.")
+                            ergebnis = _ergebnis(fin, "fehler", hinweis="VeDoc-Abfrage fehlgeschlagen.",
+                                                    objekt=argumente.objekt, attribut=argumente.attribut)
                         ergebnisse.append(ergebnis)
-                        _schreibe_json(json_pfad, ergebnisse)  # Zwischenstand nach jeder FIN.
+                        _schreibe_json(json_pfad, ergebnisse, objekt=argumente.objekt,
+                                        attribut=argumente.attribut)  # Zwischenstand nach jeder FIN.
                         print(f"[{nummer}/{len(fins)}] {_gekuerzte_fin(fin)}: {ergebnis.status}")
             finally:
                 try:
@@ -726,12 +826,19 @@ def main(argv: list[str] | None = None) -> int:
         if argumente.nur_login:
             pass  # Login-Probe erzeugt und ueberschreibt keine Exportdateien.
         elif ergebnisse:
-            _schreibe_json(json_pfad, ergebnisse)
-            _schreibe_excel(excel_pfad, ergebnisse)
+            _schreibe_json(json_pfad, ergebnisse, objekt=argumente.objekt,
+                            attribut=argumente.attribut)
+            _schreibe_excel(excel_pfad, ergebnisse, objekt=argumente.objekt,
+                             attribut=argumente.attribut)
             print(f"JSON: {json_pfad}\nExcel: {excel_pfad}")
         else:
             print("Keine FIN verarbeitet; vorhandene Exporte bleiben unveraendert.", flush=True)
     return returncode
+
+
+def historie_main(argv: list[str] | None = None) -> int:
+    """Neuer neutral benannter CLI-Einstieg fuer beliebige VeDoc-Objekte."""
+    return main(argv, allgemeine_historie=True)
 
 
 if __name__ == "__main__":

@@ -92,8 +92,23 @@ jobs:
           python -c "import importlib.metadata as m; names = {e.name for e in m.distribution('ntf-insight').entry_points if e.group == 'console_scripts'}; assert {'ntf-insight-vedoc-dcdc223','ntf-insight-wem','ntf-insight-vedoc-codes','ntf-insight-quicktests','ntf-insight-qec','ntf-insight-tips','ntf-insight-beschaffung'} <= names"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
+      # PR #76: Objekt-/Attributhistorie plus Batch-CLI und alte DCDC223-Regressionen.
+      # Der unbeteiligte GUI-Volltest kann auf main wegen Qt-Blockade haengen.
+      - name: Run focused hardware history gate for PR #76
+        if: ${{ github.event_name == 'pull_request' && github.event.pull_request.number == 76 }}
+        shell: pwsh
+        run: |
+          python -m compileall -q src scripts tests/test_vedoc_hardware_historie.py
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python -m ruff check src tests ci scripts/vedoc_dcdc223_seriennummern.py
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python -m pytest -q --maxfail=1 --tb=short tests/test_vedoc_dcdc223_seriennummern.py tests/test_vedoc_hardware_historie.py tests/test_acquisition_batch_cli.py tests/test_acquisition_output_paths.py tests/test_acquisition_portal_cli.py
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python -c "import importlib.metadata as m; e = {p.name: p.value for p in m.distribution('ntf-insight').entry_points if p.group == 'console_scripts'}; assert e['ntf-insight-vedoc-historie'] == 'scripts.vedoc_dcdc223_seriennummern:historie_main'; assert e['ntf-insight-vedoc-dcdc223'] == 'scripts.vedoc_dcdc223_seriennummern:main'"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
       - name: Run full portable quality gate
-        if: ${{ github.event_name != 'pull_request' || (github.event.pull_request.number != 72 && github.event.pull_request.number != 73 && github.event.pull_request.number != 74 && github.event.pull_request.number != 75) }}
+        if: ${{ github.event_name != 'pull_request' || (github.event.pull_request.number != 72 && github.event.pull_request.number != 73 && github.event.pull_request.number != 74 && github.event.pull_request.number != 75 && github.event.pull_request.number != 76) }}
         run: python ci/quality_gate.py
 
       - name: Build wheel
@@ -104,6 +119,13 @@ jobs:
         shell: pwsh
         run: |
           python -c "from pathlib import Path; from zipfile import ZipFile; wheel = next(Path('dist').glob('ntf_insight-*.whl')); names = set(ZipFile(wheel).namelist()); required = {'scripts/__init__.py', 'scripts/vedoc_dcdc223_seriennummern.py', 'scripts/diagnosis_viewer_warn_error.py', 'ntf_insight/acquisition/portal_cli.py', 'ntf_insight/acquisition/output_paths.py', 'ntf_insight/acquisition/beschaffung_cli.py'}; assert required.issubset(names), sorted(required - names)"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Verify VeDoc-historie modules in wheel for PR #76
+        if: ${{ github.event_name == 'pull_request' && github.event.pull_request.number == 76 }}
+        shell: pwsh
+        run: |
+          python -c "from pathlib import Path; from zipfile import ZipFile; wheel = next(Path('dist').glob('ntf_insight-*.whl')); names = set(ZipFile(wheel).namelist()); assert {'scripts/vedoc_dcdc223_seriennummern.py','ntf_insight/acquisition/beschaffung_cli.py','ntf_insight/acquisition/output_paths.py'} <= names"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       # No artifacts uploaded to GitHub Actions: quota protection.

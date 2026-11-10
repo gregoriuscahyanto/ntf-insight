@@ -42,10 +42,14 @@ def _parser() -> argparse.ArgumentParser:
                         help="Optionaler Basisordner fuer alle Quellen; Standard: "
                              "data/processed/<bereinigter TXT-Name>")
     parser.add_argument("--quellen", default="alle",
-                        help="Kommagetrennt: dcdc223,wem,sa-codes,quicktests,qec,tips "
+                        help="Kommagetrennt: dcdc223 (Alias vedoc-historie),wem,sa-codes,quicktests,qec,tips "
                              "(Standard: alle)")
     parser.add_argument("--parallel", type=int, default=2,
                         help="Maximale Anzahl gleichzeitiger Datenquellen (1-6; Standard: 2)")
+    parser.add_argument("--objekt", "--steuergeraet", dest="objekt",
+                        help="VeDoc-Hardwareobjekt fuer die Quelle dcdc223, z. B. CPC3")
+    parser.add_argument("--attribut",
+                        help="VeDoc-Historienattribut fuer dcdc223, Standard: Seriennummer")
     parser.add_argument("--login-manuell", action="store_true",
                         help="Alle Quellen mit manueller Anmeldung im sichtbaren Edge starten")
     return parser
@@ -53,11 +57,12 @@ def _parser() -> argparse.ArgumentParser:
 
 def _quellen(text: str) -> list[str]:
     auswahl = list(quellennamen()) if text.strip().lower() == "alle" else [
-        teil.strip().lower() for teil in text.split(",")
+        "dcdc223" if teil.strip().lower() == "vedoc-historie" else teil.strip().lower()
+        for teil in text.split(",")
     ]
     if not auswahl or any(teil not in _EINSTIEGE for teil in auswahl):
         raise ValueError(
-            "--quellen: erlaubt sind dcdc223,wem,sa-codes,quicktests,qec,tips oder alle."
+            "--quellen: erlaubt sind dcdc223 (Alias vedoc-historie),wem,sa-codes,quicktests,qec,tips oder alle."
         )
     # Doppelte Quellen duerfen niemals dieselben FIN-Checkpoints parallel schreiben.
     if len(auswahl) != len(set(auswahl)):
@@ -79,7 +84,10 @@ def _eingabe_pruefen(pfad: Path) -> int:
     return len(fins)
 
 
-def _befehl(quelle: str, eingabe: Path, ausgabe: Path, manuell: bool) -> list[str]:
+def _befehl(
+    quelle: str, eingabe: Path, ausgabe: Path, manuell: bool,
+    objekt: str | None = None, attribut: str | None = None,
+) -> list[str]:
     modul, funktion = _EINSTIEGE[quelle]
     # -u gibt Fortschritt ohne Pufferung an den Sammelprozess weiter.
     code = f"from {modul} import {funktion}; raise SystemExit({funktion}())"
@@ -88,6 +96,11 @@ def _befehl(quelle: str, eingabe: Path, ausgabe: Path, manuell: bool) -> list[st
         "--eingabe", str(eingabe),
         "--ausgabe", str(ausgabe),
     ]
+    if quelle == "dcdc223":
+        if objekt is not None:
+            argv.extend(("--objekt", objekt))
+        if attribut is not None:
+            argv.extend(("--attribut", attribut))
     if manuell:
         argv.append("--login-manuell")
     return argv
@@ -96,7 +109,8 @@ def _befehl(quelle: str, eingabe: Path, ausgabe: Path, manuell: bool) -> list[st
 def _starte_quelle(
     quelle: str, eingabe: Path, ausgabe: Path, manuell: bool,
     aktiv: dict[str, subprocess.Popen[str]], sperre: threading.Lock,
-    abbruch: threading.Event,
+    abbruch: threading.Event, objekt: str | None = None,
+    attribut: str | None = None,
 ) -> int:
     if abbruch.is_set():
         return 130
@@ -104,7 +118,7 @@ def _starte_quelle(
     env = os.environ.copy()
     env["PYTHONIOENCODING"] = "utf-8"
     prozess = subprocess.Popen(
-        _befehl(quelle, eingabe, ausgabe, manuell),
+        _befehl(quelle, eingabe, ausgabe, manuell, objekt, attribut),
         stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
         bufsize=1, text=True, encoding="utf-8", errors="replace", env=env,
     )
@@ -128,6 +142,14 @@ def main(argv: list[str] | None = None) -> int:
     argumente = parser.parse_args(argv)
     try:
         auswahl = _quellen(argumente.quellen)
+        if (argumente.objekt is not None or argumente.attribut is not None) and "dcdc223" not in auswahl:
+            raise ValueError("--objekt und --attribut sind nur mit der VeDoc-Historienquelle dcdc223 erlaubt.")
+        if argumente.objekt is not None or argumente.attribut is not None:
+            from scripts.vedoc_dcdc223_seriennummern import pruefe_historienziel
+            if argumente.objekt is not None:
+                argumente.objekt = pruefe_historienziel(argumente.objekt, feld="--objekt")
+            if argumente.attribut is not None:
+                argumente.attribut = pruefe_historienziel(argumente.attribut, feld="--attribut")
         if not 1 <= argumente.parallel <= len(_EINSTIEGE):
             raise ValueError("--parallel muss zwischen 1 und 6 liegen.")
         anzahl_fins = _eingabe_pruefen(argumente.eingabe)
@@ -139,7 +161,18 @@ def main(argv: list[str] | None = None) -> int:
         if gruppe.is_file():
             raise ValueError("--ausgabe muss ein Verzeichnis sein.")
         eingabe = argumente.eingabe.expanduser().resolve()
-        arbeitsliste = [(q, ausgabe_in_gruppe(gruppe, q)) for q in auswahl]
+        # Eine frei gewaehlte Hardware-Historie nutzt den neutralen Quellordner.
+        generisch = (
+            argumente.objekt is not None or argumente.attribut is not None
+            or "vedoc-historie" in [teil.strip().lower()
+                                   for teil in argumente.quellen.split(",")]
+        )
+        arbeitsliste = [
+            (q, ausgabe_in_gruppe(
+                gruppe, "vedoc-historie" if q == "dcdc223" and generisch else q,
+            ))
+            for q in auswahl
+        ]
     except (OSError, ValueError) as exc:
         print(f"Fehler: {exc}", file=sys.stderr)
         return 2
@@ -166,6 +199,7 @@ def main(argv: list[str] | None = None) -> int:
             pool.submit(
                 _starte_quelle, quelle, eingabe, ziel, argumente.login_manuell,
                 aktiv, sperre, abbruch,
+                argumente.objekt, argumente.attribut,
             ): quelle
             for quelle, ziel in arbeitsliste
         }
