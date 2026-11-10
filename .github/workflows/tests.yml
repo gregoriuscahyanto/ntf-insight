@@ -92,8 +92,21 @@ jobs:
           python -c "import importlib.metadata as m; names = {e.name for e in m.distribution('ntf-insight').entry_points if e.group == 'console_scripts'}; assert {'ntf-insight-vedoc-dcdc223','ntf-insight-wem','ntf-insight-vedoc-codes','ntf-insight-quicktests','ntf-insight-qec','ntf-insight-tips','ntf-insight-beschaffung'} <= names"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
+      # PR #77: QEC-Sachnummer und explizit alle Anhaenge ohne Fallzuordnungsbehauptung.
+      # Die allgemeine GUI-Vollsuite ist auf main von einer Qt-Blockade betroffen.
+      - name: Run focused QEC Sachnummer and attachments gate for PR #77
+        if: ${{ github.event_name == 'pull_request' && github.event.pull_request.number == 77 }}
+        shell: pwsh
+        run: |
+          python -m compileall -q src scripts tests/test_qec_attachment_reference.py
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python -m ruff check src tests ci
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python -m pytest -q --maxfail=1 --tb=short tests/test_qec_attachment_reference.py tests/test_qec_tool_downloader.py tests/test_acquisition_portal_cli.py tests/test_acquisition_batch_cli.py tests/test_qec_archive.py tests/test_qec_json.py tests/test_qec_case_gui.py tests/test_qec_reference_end_findings.py
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
       - name: Run full portable quality gate
-        if: ${{ github.event_name != 'pull_request' || (github.event.pull_request.number != 72 && github.event.pull_request.number != 73 && github.event.pull_request.number != 74 && github.event.pull_request.number != 75) }}
+        if: ${{ github.event_name != 'pull_request' || (github.event.pull_request.number != 72 && github.event.pull_request.number != 73 && github.event.pull_request.number != 74 && github.event.pull_request.number != 75 && github.event.pull_request.number != 77) }}
         run: python ci/quality_gate.py
 
       - name: Build wheel
@@ -104,6 +117,13 @@ jobs:
         shell: pwsh
         run: |
           python -c "from pathlib import Path; from zipfile import ZipFile; wheel = next(Path('dist').glob('ntf_insight-*.whl')); names = set(ZipFile(wheel).namelist()); required = {'scripts/__init__.py', 'scripts/vedoc_dcdc223_seriennummern.py', 'scripts/diagnosis_viewer_warn_error.py', 'ntf_insight/acquisition/portal_cli.py', 'ntf_insight/acquisition/output_paths.py', 'ntf_insight/acquisition/beschaffung_cli.py'}; assert required.issubset(names), sorted(required - names)"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Verify QEC CLI modules in wheel for PR #77
+        if: ${{ github.event_name == 'pull_request' && github.event.pull_request.number == 77 }}
+        shell: pwsh
+        run: |
+          python -c "from pathlib import Path; from zipfile import ZipFile; wheel = next(Path('dist').glob('ntf_insight-*.whl')); names = set(ZipFile(wheel).namelist()); assert {'ntf_insight/acquisition/portal_cli.py','ntf_insight/acquisition/qec_tool.py','ntf_insight/acquisition/beschaffung_cli.py'} <= names"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       # No artifacts uploaded to GitHub Actions: quota protection.
