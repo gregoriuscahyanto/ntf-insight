@@ -1,0 +1,207 @@
+"""Mehrere unabhängige Datenquellen parallel aus der gleichen FIN-Liste abrufen.
+
+Jeder Abruf laeuft als separater Python-Prozess mit dem bestehenden CLI-Einstieg
+und dessen eigenem Edge-Profil. Nie zwei Instanzen derselben Quelle starten:
+Downloads und Checkpoints einer Quelle bleiben seriell und wiederaufnehmbar.
+"""
+
+from __future__ import annotations
+
+import argparse
+import os
+import subprocess
+import sys
+import threading
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from pathlib import Path
+
+from ntf_insight.acquisition.diagnosis_viewer import parse_fins
+from ntf_insight.acquisition.output_paths import (
+    ausgabe_in_gruppe, quellennamen, sicherer_listenname,
+)
+
+# Statische, fest hinterlegte Entry-Points; Nutzereingaben werden niemals als
+# Code oder Shell-Befehle ausgefuehrt.
+_EINSTIEGE = {
+    "dcdc223": ("scripts.vedoc_dcdc223_seriennummern", "main"),
+    "wem": ("scripts.diagnosis_viewer_warn_error", "main"),
+    "sa-codes": ("ntf_insight.acquisition.vedoc_codes", "main"),
+    "quicktests": ("ntf_insight.acquisition.diagnosis_viewer_cli", "main"),
+    "qec": ("ntf_insight.acquisition.portal_cli", "qec_main"),
+    "tips": ("ntf_insight.acquisition.portal_cli", "tips_main"),
+}
+
+
+def _parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        description="Mehrere NTF-Datenquellen parallel je FIN-Liste herunterladen."
+    )
+    parser.add_argument("--eingabe", type=Path, required=True,
+                        help="Gemeinsame TXT mit FINs (eine FIN pro Zeile)")
+    parser.add_argument("--ausgabe", type=Path,
+                        help="Optionaler Basisordner fuer alle Quellen; Standard: "
+                             "data/processed/<bereinigter TXT-Name>")
+    parser.add_argument("--quellen", default="alle",
+                        help="Kommagetrennt: dcdc223,wem,sa-codes,quicktests,qec,tips "
+                             "(Standard: alle)")
+    parser.add_argument("--parallel", type=int, default=2,
+                        help="Maximale Anzahl gleichzeitiger Datenquellen (1-6; Standard: 2)")
+    parser.add_argument("--login-manuell", action="store_true",
+                        help="Alle Quellen mit manueller Anmeldung im sichtbaren Edge starten")
+    return parser
+
+
+def _quellen(text: str) -> list[str]:
+    auswahl = list(quellennamen()) if text.strip().lower() == "alle" else [
+        teil.strip().lower() for teil in text.split(",")
+    ]
+    if not auswahl or any(teil not in _EINSTIEGE for teil in auswahl):
+        raise ValueError(
+            "--quellen: erlaubt sind dcdc223,wem,sa-codes,quicktests,qec,tips oder alle."
+        )
+    # Doppelte Quellen duerfen niemals dieselben FIN-Checkpoints parallel schreiben.
+    if len(auswahl) != len(set(auswahl)):
+        raise ValueError("--quellen enthaelt dieselbe Datenquelle mehrfach.")
+    return auswahl
+
+
+def _eingabe_pruefen(pfad: Path) -> int:
+    if pfad.suffix.lower() != ".txt":
+        raise ValueError("--eingabe muss eine .txt-Datei sein.")
+    zeilen = [
+        zeile.partition("#")[0]
+        for zeile in pfad.expanduser().read_text(encoding="utf-8-sig").splitlines()
+    ]
+    fins = parse_fins("\n".join(zeilen))
+    if not fins:
+        raise ValueError("Die FIN-Liste enthaelt keine gueltige FIN.")
+    # QEC-Sachnummern gehoeren nur in den einzelnen QEC-CLI-Lauf.
+    return len(fins)
+
+
+def _befehl(quelle: str, eingabe: Path, ausgabe: Path, manuell: bool) -> list[str]:
+    modul, funktion = _EINSTIEGE[quelle]
+    # -u gibt Fortschritt ohne Pufferung an den Sammelprozess weiter.
+    code = f"from {modul} import {funktion}; raise SystemExit({funktion}())"
+    argv = [
+        sys.executable, "-u", "-c", code,
+        "--eingabe", str(eingabe),
+        "--ausgabe", str(ausgabe),
+    ]
+    if manuell:
+        argv.append("--login-manuell")
+    return argv
+
+
+def _starte_quelle(
+    quelle: str, eingabe: Path, ausgabe: Path, manuell: bool,
+    aktiv: dict[str, subprocess.Popen[str]], sperre: threading.Lock,
+    abbruch: threading.Event,
+) -> int:
+    if abbruch.is_set():
+        return 130
+    # Ohne shell=True: Leerzeichen/Sonderzeichen in FIN-Listenpfaden sicher.
+    env = os.environ.copy()
+    env["PYTHONIOENCODING"] = "utf-8"
+    prozess = subprocess.Popen(
+        _befehl(quelle, eingabe, ausgabe, manuell),
+        stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+        bufsize=1, text=True, encoding="utf-8", errors="replace", env=env,
+    )
+    with sperre:
+        aktiv[quelle] = prozess
+        if abbruch.is_set():
+            prozess.terminate()
+    try:
+        if prozess.stdout is not None:
+            with prozess.stdout:
+                for zeile in prozess.stdout:
+                    print(f"[{quelle}] {zeile.rstrip()}", flush=True)
+        return prozess.wait()
+    finally:
+        with sperre:
+            aktiv.pop(quelle, None)
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = _parser()
+    argumente = parser.parse_args(argv)
+    try:
+        auswahl = _quellen(argumente.quellen)
+        if not 1 <= argumente.parallel <= len(_EINSTIEGE):
+            raise ValueError("--parallel muss zwischen 1 und 6 liegen.")
+        anzahl_fins = _eingabe_pruefen(argumente.eingabe)
+        gruppe = (
+            argumente.ausgabe.expanduser()
+            if argumente.ausgabe is not None
+            else Path("data") / "processed" / sicherer_listenname(argumente.eingabe)
+        ).resolve()
+        if gruppe.is_file():
+            raise ValueError("--ausgabe muss ein Verzeichnis sein.")
+        eingabe = argumente.eingabe.expanduser().resolve()
+        arbeitsliste = [(q, ausgabe_in_gruppe(gruppe, q)) for q in auswahl]
+    except (OSError, ValueError) as exc:
+        print(f"Fehler: {exc}", file=sys.stderr)
+        return 2
+
+    print(
+        f"FINs: {anzahl_fins} | Quellen: {len(arbeitsliste)} | "
+        f"Parallel: {min(argumente.parallel, len(arbeitsliste))} | Basisordner: {gruppe}",
+        flush=True,
+    )
+    print(
+        "Eigenstaendige Edge-Fenster je Quelle; PING ID bei Bedarf jeweils "
+        "manuell bestaetigen. Mehrere gleichzeitige Anmeldungen sind moeglich.",
+        flush=True,
+    )
+    for quelle, ziel in arbeitsliste:
+        print(f"[{quelle}] Ablage: {ziel}", flush=True)
+
+    aktiv: dict[str, subprocess.Popen[str]] = {}
+    sperre = threading.Lock()
+    abbruch = threading.Event()
+    ergebnisse: dict[str, int] = {}
+    with ThreadPoolExecutor(max_workers=min(argumente.parallel, len(arbeitsliste))) as pool:
+        futures = {
+            pool.submit(
+                _starte_quelle, quelle, eingabe, ziel, argumente.login_manuell,
+                aktiv, sperre, abbruch,
+            ): quelle
+            for quelle, ziel in arbeitsliste
+        }
+        try:
+            for future in as_completed(futures):
+                quelle = futures[future]
+                try:
+                    status = future.result()
+                except OSError as exc:
+                    print(f"[{quelle}] Prozess konnte nicht starten: {exc}",
+                          file=sys.stderr, flush=True)
+                    status = 2
+                ergebnisse[quelle] = status
+                print(f"[{quelle}] beendet mit Exitcode {status}", flush=True)
+        except KeyboardInterrupt:
+            abbruch.set()
+            with sperre:
+                for prozess in aktiv.values():
+                    if prozess.poll() is None:
+                        prozess.terminate()
+            for future in futures:
+                future.cancel()
+            print(
+                "Sammelabruf abgebrochen. Bereits gespeicherte Quelldateien bleiben erhalten.",
+                file=sys.stderr, flush=True,
+            )
+            return 130
+
+    anzahl_fehler = sum(code != 0 for code in ergebnisse.values())
+    print(
+        f"Sammelabruf abgeschlossen: {len(ergebnisse) - anzahl_fehler}/"
+        f"{len(arbeitsliste)} Datenquellen erfolgreich. Basisordner: {gruppe}",
+        flush=True,
+    )
+    return 1 if anzahl_fehler else 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
