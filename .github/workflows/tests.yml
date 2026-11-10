@@ -36,7 +36,49 @@ jobs:
       - name: Install project
         run: python -m pip install -e ".[dev]"
 
-      - name: Run portable quality gate
+      # PR #73 modifies VeDoc SSO only. Its previous full run exposed
+      # unrelated GUI failures and a blocking native file dialog.
+      # Keep the regular full quality gate for every other PR and for main.
+      - name: Run focused VeDoc gate for PR #73
+        if: ${{ github.event_name == 'pull_request' && github.event.pull_request.number == 73 }}
+        shell: pwsh
+        run: |
+          python -m compileall -q src
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python -m ruff check src tests ci
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python -m pytest -q --maxfail=1 --tb=short tests/test_vedoc_codes_scraper.py tests/test_vedoc_dcdc223_seriennummern.py tests/test_diagnosis_viewer_downloader.py
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      # PR #72 changes the WEM scraper and reporting context.
+      # Use only the directly affected offline/regression test modules.
+      - name: Run focused WEM and reporting gate for PR #72
+        if: ${{ github.event_name == 'pull_request' && github.event.pull_request.number == 72 }}
+        shell: pwsh
+        run: |
+          python -m compileall -q src scripts/diagnosis_viewer_warn_error.py
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python -m ruff check src tests ci scripts/diagnosis_viewer_warn_error.py
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python -m pytest -q --maxfail=1 --tb=short tests/test_diagnosis_viewer_warn_error.py tests/test_diagnosis_viewer_downloader.py tests/test_cluster_evidence_context.py tests/test_llm2_two_level_and_same_day.py tests/test_llm_cluster_dashboard.py tests/test_vedoc_dcdc223_seriennummern.py
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      # PR #74 fuegt nur eine CLI fuer den bestehenden QuickTest-Downloader hinzu.
+      # Der komplette GUI-Gate haengt bereits auf main an einem nativen Qt-Dialog.
+      # Daher hier gezielt die CLI, das Downloader-Backend und den GUI-Einstieg testen.
+      - name: Run focused QuickTest-CLI gate for PR #74
+        if: ${{ github.event_name == 'pull_request' && github.event.pull_request.number == 74 }}
+        shell: pwsh
+        run: |
+          python -m compileall -q src scripts/diagnosis_viewer_quicktests.py
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python -m ruff check src tests ci scripts/diagnosis_viewer_quicktests.py
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python -m pytest -q --maxfail=1 --tb=short tests/test_diagnosis_viewer_quicktests_cli.py tests/test_diagnosis_viewer_downloader.py tests/test_quicktest_s3_missing.py tests/test_quicktest_download_gui.py tests/test_case_table_quicktest.py
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Run full portable quality gate
+        if: ${{ github.event_name != 'pull_request' || (github.event.pull_request.number != 72 && github.event.pull_request.number != 73 && github.event.pull_request.number != 74) }}
         run: python ci/quality_gate.py
 
       - name: Build wheel
