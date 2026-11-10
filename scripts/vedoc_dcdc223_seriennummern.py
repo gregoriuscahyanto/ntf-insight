@@ -710,7 +710,7 @@ def main(argv: list[str] | None = None, *, allgemeine_historie: bool = False) ->
     parser.add_argument("--login-timeout", type=int, default=240,
                         help="Maximale Wartezeit fuer SSO/PING ID in Sekunden")
     parser.add_argument("--historie-wartezeit", type=int, default=20,
-                        help="Wartezeit auf DCDC223-Historie pro FIN in Sekunden (Standard: 20)")
+                        help="Wartezeit auf Objekt-/Attributhistorie pro FIN in Sekunden (Standard: 20)")
     parser.add_argument("--login-manuell", action="store_true",
                         help="SSO ohne automatisches Ausfuellen von Benutzername/Passwort")
     parser.add_argument("--nur-login", action="store_true",
