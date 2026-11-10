@@ -181,6 +181,47 @@ def test_genau_sechs_quellen_in_vordefinierter_reihenfolge():
 
 
 
+def test_freies_hardwareobjekt_nur_an_vedoc_weiterreichen(monkeypatch, tmp_path):
+    commands, _ = _popen_simulieren(monkeypatch)
+    root = tmp_path / "Ergebnisse"
+    assert cli.main([
+        "--eingabe", str(_eingabe(tmp_path)), "--ausgabe", str(root),
+        "--quellen", "vedoc-historie,wem", "--parallel", "2",
+        "--objekt", "CPC3", "--attribut", "Hardwarestand",
+    ]) == 0
+    assert len(commands) == 2
+    ven = next(args for args, _ in commands if "vedoc_dcdc223_seriennummern" in args[3])
+    wem = next(args for args, _ in commands if "diagnosis_viewer_warn_error" in args[3])
+    assert ven[ven.index("--objekt") + 1] == "CPC3"
+    assert ven[ven.index("--attribut") + 1] == "Hardwarestand"
+    assert ven[ven.index("--ausgabe") + 1] == str(root / "vedoc_historie")
+    assert "--objekt" not in wem and "--attribut" not in wem
+    assert cli._quellen("vedoc-historie,wem") == ["dcdc223", "wem"]
+
+
+def test_freie_vedoc_historie_bei_alle_ohne_andere_quellen_zu_aendern(monkeypatch, tmp_path):
+    commands, _ = _popen_simulieren(monkeypatch)
+    assert cli.main([
+        "--eingabe", str(_eingabe(tmp_path)), "--quellen", "alle",
+        "--objekt", "Pumpensteuergeraet",
+    ]) == 0
+    assert len(commands) == 6
+    v = next(argv for argv, _ in commands if "vedoc_dcdc223_seriennummern" in argv[3])
+    assert Path(v[v.index("--ausgabe") + 1]).name == "vedoc_historie"
+
+
+def test_unzulaessige_doppelte_vedoc_aliasse_oder_andere_quellen(monkeypatch, tmp_path):
+    commands, _ = _popen_simulieren(monkeypatch)
+    fin = _eingabe(tmp_path)
+    assert cli.main([
+        "--eingabe", str(fin), "--quellen", "dcdc223,vedoc-historie",
+    ]) == 2
+    assert cli.main([
+        "--eingabe", str(fin), "--quellen", "qec,tips", "--objekt", "CPC3",
+    ]) == 2
+    assert commands == []
+
+
 def test_qec_sachnummer_und_anhangmodus_nur_an_qec_prozess(tmp_path, monkeypatch):
     cmds, _ = _popen_simulieren(monkeypatch)
     fin = _eingabe(tmp_path)
@@ -210,3 +251,28 @@ def test_batch_ungueltige_qec_parameter_starten_keinen_prozess(
     cmds, _ = _popen_simulieren(monkeypatch)
     assert cli.main(["--eingabe", str(_eingabe(tmp_path)), *extra]) == 2
     assert cmds == []
+
+def test_kombinierter_hardware_und_qec_sammelabruf(tmp_path, monkeypatch):
+    """VeDoc-Objekt und QEC-Sachnummer bleiben auch im selben Batch getrennt."""
+    commands, _ = _popen_simulieren(monkeypatch)
+    fin = _eingabe(tmp_path)
+    assert cli.main([
+        "--eingabe", str(fin),
+        "--quellen", "vedoc-historie,qec,quicktests",
+        "--objekt", "CPC3", "--attribut", "Hardwarestand",
+        "--sachnummer", "A 111 222 33 44", "--anhaenge", "alle",
+        "--parallel", "3",
+    ]) == 0
+    assert len(commands) == 3
+    vedoc = next(args for args, _ in commands if "vedoc_dcdc223_seriennummern" in args[3])
+    qec = next(args for args, _ in commands if "portal_cli" in args[3])
+    quicktests = next(args for args, _ in commands if "diagnosis_viewer_cli" in args[3])
+    assert vedoc[vedoc.index("--objekt") + 1] == "CPC3"
+    assert vedoc[vedoc.index("--attribut") + 1] == "Hardwarestand"
+    assert "--sachnummer" not in vedoc and "--anhaenge" not in vedoc
+    assert qec[qec.index("--sachnummer") + 1] == "A 111 222 33 44"
+    assert qec[qec.index("--anhaenge") + 1] == "alle"
+    assert "--objekt" not in qec and "--attribut" not in qec
+    assert "--objekt" not in quicktests and "--sachnummer" not in quicktests
+    assert vedoc[vedoc.index("--ausgabe") + 1].endswith("vedoc_historie")
+    assert qec[qec.index("--ausgabe") + 1].endswith("qec")

@@ -252,6 +252,7 @@ def test_alle_sechs_wheel_entrypoints_und_script_paket():
     entrypoints = config["project"]["scripts"]
     assert {
         "ntf-insight-vedoc-dcdc223",
+        "ntf-insight-vedoc-historie",
         "ntf-insight-wem",
         "ntf-insight-vedoc-codes",
         "ntf-insight-quicktests",
@@ -261,9 +262,9 @@ def test_alle_sechs_wheel_entrypoints_und_script_paket():
     } <= entrypoints.keys()
     assert entrypoints["ntf-insight-wem"] == "scripts.diagnosis_viewer_warn_error:main"
     assert entrypoints["ntf-insight-vedoc-dcdc223"] == "scripts.vedoc_dcdc223_seriennummern:main"
+    assert entrypoints["ntf-insight-vedoc-historie"] == "scripts.vedoc_dcdc223_seriennummern:historie_main"
     assert (ROOT / "scripts" / "__init__.py").is_file()
     assert config["tool"]["setuptools"]["package-dir"]["scripts"] == "scripts"
-
 
 
 def test_qec_globale_sachnummer_und_alle_anhaenge_fuer_mehrere_fins(tmp_path, monkeypatch, capsys):

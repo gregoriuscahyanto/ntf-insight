@@ -1,5 +1,10 @@
 # VeDoc: DCDC223-Seriennummernhistorie nach FIN exportieren
 
+**Neu:** Dieses Skript ist jetzt auch fuer andere Hardwareobjekte nutzbar.
+Die folgenden Abschnitte dokumentieren den bisherigen DCDC223-Standardfall;
+fuer frei gewaehlt Objekte/Attribute siehe [VeDoc-Hardwarehistorie](vedoc-hardware-historie.md).
+Beispiel: `ntf-insight-vedoc-historie --eingabe .\fins.txt --objekt CPC3 --attribut Seriennummer`.
+
 Das **eigenständige Python-Skript** `scripts/vedoc_dcdc223_seriennummern.py` arbeitet ohne GUI-Integration. Es liest eine TXT-Liste mit FINs, fragt VeDoc im berechtigten Browserzugang ab und exportiert die **Seriennummern-Änderungshistorie des Steuergeräts DCDC223** als JSON und Excel.
 
 ## Datenquelle und Ablauf (VeDoc-Anleitung v2)
