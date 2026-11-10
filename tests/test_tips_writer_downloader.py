@@ -578,7 +578,8 @@ def test_tips_fallnummer_ohne_treffer_erzeugt_nur_abfragestatus(tmp_path, monkey
     result, _ = downloader._one_fallnummer(
         SimpleNamespace(), object(), "00001234", lambda _: None, Event(),
     )
-    assert not result.fin and result.status == "Keine TIPS-Faelle"
+    assert not result.fin and result.status == "Fehler"
+    assert "nicht gefunden" in result.errors[0]
     status = tmp_path / "tips" / "_fallnummern" / "fall_00001234" / "abrufstatus.json"
     assert json.loads(status.read_text("utf-8"))["fin"] is None
     assert not list((tmp_path / "tips").glob("*/fall_00001234/tips.json"))
