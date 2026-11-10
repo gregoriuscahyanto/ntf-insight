@@ -55,6 +55,40 @@ Referenznummer** übereinstimmen. Führende Nullen bleiben erhalten.
 Eine fehlerhafte Referenz darf nicht stillschweigend zu einem
 FIN-weiten Abruf erweitert werden.
 
+## Optionaler Sachnummernfilter und Anhangmodus in der CLI
+
+Der bisherige GUI-Abruf bleibt standardmäßig referenzstreng. Die
+Kommandozeile kann jetzt eine Sachnummer vorgeben, statt sie in jede
+Zeile der FIN-Liste einzutragen:
+
+```powershell
+ntf-insight-qec --eingabe .\fins.txt --sachnummer "A 123 456 78 90"
+ntf-insight-qec --eingabe .\fins.txt --sachnummer "A 123 456 78 90" --anhaenge alle
+```
+
+Eine explizite Sachnummer wird mit den QEC-Suchergebnissen **exakt**
+abgeglichen, auch für andere Hardware als eine Kühlmittelpumpe (z. B.
+DCDC223). Eine FIN mit mehreren QEC-Fällen kann deshalb anhand der
+Sachnummer gezielt eingeschränkt werden. Mehrere Referenzen mit
+derselben Sachnummer werden weiterhin separat gespeichert.
+
+Für Dateianhänge gibt es zwei bewusst unterschiedliche Modi:
+`referenz` (Standard) lädt nur Dateien mit dieser **exakten
+Referenznummer im sichtbaren Dateinamen**. `alle` lädt **alle im
+jeweiligen QEC-Popup angezeigten Dateien**, auch wenn kein
+Referenzbezug im Dateinamen erkennbar ist. Ein Popup kann fremde
+Dateien enthalten. Deshalb wird jede Datei im betreffenden
+`qec.json` mit `auswahlmodus`, `sichtbar_bei_referenz`,
+`referenz_im_dateinamen_bestaetigt` und `zuordnung` markiert.
+Ungeprüfte Anhänge werden nicht als referenzbestätigte QEC-Belege
+bezeichnet und müssen später fachlich bzw. in der ChatGPT-Auswertung
+geprüft werden. Die Herkunft des Popups ist nur ein Kontextsignal.
+SSO, PING ID, URL- und Dateisicherheitsprüfungen bleiben unverändert.
+
+Der parallele Sammelbefehl kann `--sachnummer` und
+`--anhaenge` ebenfalls an die Quelle `qec` weiterreichen; andere
+Datenquellen erhalten diese Parameter nicht.
+
 ## Neues Speicherformat (lokal)
 
 ```text
