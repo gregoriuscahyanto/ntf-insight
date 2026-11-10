@@ -220,6 +220,13 @@ def tips_main(argv: list[str] | None = None) -> int:
         "XENTRY TIPS Writer: 17-stellige FINs oder numerische TIPS-Fallnummern "
         "(4-16 Ziffern) aus einer TXT laden; auch gemischte Listen."
     )
+    for option in parser._actions:
+        if option.dest == "eingabe":
+            option.help = (
+                "TXT mit vollstaendigen 17-stelligen FINs und/oder "
+                "numerischen TIPS-Fallnummern (4-16 Ziffern)"
+            )
+            break
     args = parser.parse_args(argv)
     try:
         if args.ausgabe is None:
