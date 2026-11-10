@@ -746,8 +746,15 @@ class DiagnosisViewerDownloader:
                 # Playwright dispatches on('download') while its event loop runs.
                 page.wait_for_timeout(max(1, int(min(0.25, remaining) * 1000)))
         finally:
-            page.remove_listener("download", on_download)
-            page.remove_listener("dialog", on_dialog)
+            # Playwright kann beim Prozessabsturz bereits abgekoppelt sein.
+            # Aufraeumfehler duerfen die eigentliche Absturzursache nicht verdecken.
+            for event, callback in (
+                ("download", on_download), ("dialog", on_dialog),
+            ):
+                try:
+                    page.remove_listener(event, callback)
+                except Exception:
+                    pass
             if observer_installed:
                 self._stop_no_quicktest_watcher(page)
 
@@ -755,9 +762,13 @@ class DiagnosisViewerDownloader:
         # Bereits vorhandene PDFs werden in den neuen Status uebernommen.
         # Ein Edge-Absturz darf keine erfolgreichen Sitzungen ausblenden.
         vorhanden = lokal_vorhandene_pdf(self.output_dir, fin)
+        letzter_abruf = read_last_attempt(self.output_dir, fin)
         result = FinDownloadResult(
             fin=fin, status="Abruf gestartet",
             files=list(vorhanden.files) if vorhanden is not None else [],
+            # Bei erneutem Edge-Absturz schon vor der Ergebnistabelle darf
+            # der vorherige Zaehler 1/14 nicht verloren gehen.
+            available=letzter_abruf.available if letzter_abruf is not None else 0,
             last_attempt_at=datetime.now(timezone.utc).isoformat(),
         )
         folder = self.output_dir / fin
