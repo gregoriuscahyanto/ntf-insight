@@ -102,7 +102,7 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           python -m ruff check src tests ci
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          python -m pytest -q --maxfail=1 --tb=short tests/test_qec_attachment_reference.py tests/test_qec_tool_downloader.py tests/test_acquisition_portal_cli.py tests/test_acquisition_batch_cli.py tests/test_qec_archive.py tests/test_qec_json.py tests/test_qec_case_gui.py tests/test_qec_reference_end_findings.py tests/test_qec_first_package.py
+          python -m pytest -q --tb=short tests/test_qec_attachment_reference.py tests/test_qec_tool_downloader.py tests/test_acquisition_portal_cli.py tests/test_acquisition_batch_cli.py tests/test_qec_archive.py tests/test_qec_json.py tests/test_qec_case_gui.py tests/test_qec_reference_end_findings.py tests/test_qec_first_package.py
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Run full portable quality gate
