@@ -18,6 +18,35 @@ Console-Scripts bekannt sind. Bei Wheel-Installationen die neu gebaute
 `.whl`-Datei installieren. Ein bereits installiertes Windows-Setup aktualisiert
 seine Kommandozeileneinstiege **nicht automatisch** durch einen Git-Merge.
 
+## 14-stellige Mercedes-Kurz-FINs
+
+Die **VeDoc-Historie** und **Diagnosis Viewer QuickTests** können in der CLI
+neben vollständigen 17-stelligen Fahrzeugkennungen auch 14-stellige
+Mercedes-Kurz-FINs als TXT-Eingabe verwenden. Synthetisches Beispiel:
+
+```text
+1671061B000001
+1671061B000002
+```
+
+```powershell
+ntf-insight-beschaffung --eingabe .\\kurz-fins.txt --quellen vedoc-historie,quicktests --objekt DCDC223 --parallel 2
+```
+
+Die Eingabe wird **nicht** automatisch mit einem geratenen WMI-Präfix
+erweitert. Zeigt VeDoc oder Diagnosis Viewer eine 17-stellige Kennung,
+werden nur Ergebnisse mit exakt passenden letzten 14 Zeichen akzeptiert.
+Zwei verschiedene 17-stellige Kennungen zur gleichen Kurz-FIN gelten als
+**mehrdeutig und führen zum Fehler**, nicht zu einem Download.
+Ein Live-Test mit berechtigtem Zugriff bleibt erforderlich, da die
+serverseitige Suche nach Kurz-FINs von den Quellsystemen abhängt.
+
+Andere Datenquellen (**WEM, SA-Codes, QEC, TIPS**) verlangen vorerst
+vollständige 17-stellige FINs. Enthält die Liste eine Kurz-FIN, werden
+diese Quellen im Sammelabruf vor dem Start abgelehnt. Dafür `--quellen
+vedoc-historie,quicktests` wählen oder eine Liste mit Voll-FINs nutzen.
+Bei gemischter Kurz-/Voll-FIN-Liste gelten dieselben Einschränkungen.
+
 ## Die sechs Befehle
 
 Mit `FIN-Liste DCDC223 SensorIssue.txt` als Eingabe:
