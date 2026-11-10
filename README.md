@@ -28,13 +28,37 @@ WDD12345678901235
 | **VeDoc-Hardwarehistorie** (`ntf-insight-vedoc-historie` bzw. `ntf-insight-vedoc-dcdc223`) | `--eingabe`: 14- oder 17-stellige FINs | `--objekt` (Standard **DCDC223**), `--attribut` (Standard **Seriennummer**). Für die DCDC223-Seriennummernhistorie sind **keine** weiteren Angaben nötig. |
 | **Diagnosis Viewer – WEM** (`ntf-insight-wem`) | `--eingabe`: **17-stellige FINs** | `--aktualisieren` (neue Sitzungen), `--erneut` (bereits bearbeitete Sitzungen erneut), nur bei der Einzel-CLI. |
 | **VeDoc – SA-/Fahrzeugcodes** (`ntf-insight-vedoc-codes`) | `--eingabe`: **17-stellige FINs** | `--erneut` für bereits gespeicherte FINs, nur bei der Einzel-CLI. Keine DCDC223-Zusatzangabe nötig. |
-| **Diagnosis Viewer – QuickTests** (`ntf-insight-quicktests`) | `--eingabe`: 14- oder 17-stellige FINs | `--erneut`, um auch bei vorhandener PDF neu herunterzuladen. Sonst wird nur übersprungen, wenn eine PDF im entsprechenden FIN-Ordner vorhanden ist; **keine 24-h-Sperre**. |
+| **Diagnosis Viewer – QuickTests** (`ntf-insight-quicktests`) | `--eingabe`: 14- oder 17-stellige FINs | **PDF + strukturiertes JSON automatisch.** `--erneut` lädt PDFs noch einmal herunter; `--ohne-json` deaktiviert die lokale JSON-Konvertierung. Ohne `--erneut` wird eine FIN mit vorhandener PDF übersprungen, aber deren JSON ggf. noch erstellt. **Keine 24-h-Sperre**. |
 | **QEC – Befundungsberichte und Anhänge** (`ntf-insight-qec`) | `--eingabe`: **17-stellige FINs** | `--sachnummer` (exakte Sachnummer, auch ohne Leerzeichen), `--benennung`/`--keyword` (Text in „Benennung“), `--anhaenge referenz` (**Standard**) oder `--anhaenge alle`. `--alle-bauteile` nur bei der Einzel-CLI. Für DCDC223 **empfohlen:** `--benennung DCDC223 --anhaenge alle`, wenn die Sachnummer unbekannt ist. |
 | **XENTRY TIPS Writer – Fälle** (`ntf-insight-tips`) | `--eingabe`: **17-stellige FINs** oder numerische **TIPS-Fallnummern (4–16 Ziffern)**, auch gemischt | Kein zusätzlicher fachlicher Parameter nötig. Im **Sammelabruf** optional `--tips-eingabe`, damit TIPS eine eigene Fallnummern-TXT erhält. |
 
 **Für alle Einzel-CLIs optional:** `--ausgabe` und `--login-manuell`. Bei QuickTests, QEC und TIPS zusätzlich `--profil`, `--anmelde-timeout` (Standard: 300 Sekunden) und `--passwort-abfragen` mit optionaler `--benutzer-id`. Weitere Zeit-/Wiederholungsoptionen stehen in `--help`. Der **Sammelbefehl** `ntf-insight-beschaffung` benötigt ebenfalls `--eingabe`; `--quellen` (Standard: **alle sechs**), `--parallel` (Standard: **2**, erlaubt 1–6), `--ausgabe`, `--login-manuell` und quellenbezogene Zusatzparameter sind optional. Im Sammelbefehl bezeichnet `--ausgabe` einen **Basisordner**, bei den Einzelbefehlen für WEM/SA-Codes dagegen einen **JSON-Dateipfad**.
 
 **QEC-Filter:** Ohne Sachnummer oder Benennungsfilter wird standardmäßig nach **Kühlmittelpumpen** gesucht, nicht automatisch nach DCDC223. `--benennung DCDC` umfasst mehr Varianten als `--benennung DCDC223`. Eine zusätzliche `--sachnummer` muss **ebenfalls** passen (UND). Bei `--anhaenge alle` werden auch Anhänge heruntergeladen, deren Dateiname keine QEC-Referenz enthält; diese Zuordnung ist für die spätere Auswertung **nicht automatisch bestätigt**.
+
+### QuickTest-PDFs als JSON: automatisch oder nachträglich
+
+**Automatisch:** Bei `ntf-insight-quicktests` und beim Sammelabruf
+`ntf-insight-beschaffung` wird **jede lokal vorhandene QuickTest-PDF**
+der angefragten FINs zusätzlich mit dem bereits vorhandenen XENTRY-Parser
+in ein strukturiertes JSON konvertiert (ECU, DTC, HW/SW, Diagnosezeitpunkte,
+Rohtext/Parameter). Die PDFs bleiben erhalten. Der Sammelbefehl mit
+`--quellen alle` unterstützt das unverändert; `--ohne-quicktest-json`
+schaltet die Konvertierung gezielt aus.
+
+**Nachträglich, ohne Login/FIN-Liste:** Den Basisordner übergeben, in dem
+`diagnosis_viewer_quicktests/<FIN>/*.pdf` liegt:
+
+```powershell
+ntf-insight-quicktests-json --ordner "data/processed/FIN Liste DCDC223 NTF PDF"
+```
+
+Ergebnis: `data/processed/FIN Liste DCDC223 NTF PDF/diagnosis_viewer_quicktests_json/<FIN>/<PDF-Dateiname>.json`.
+Bereits aktuelle JSONs werden anhand PDF-SHA-256 und Parser-Version
+übersprungen; `--erneut` konvertiert alle nochmals. Fehlende PDF-Textebenen
+oder unsichere DTC-/ECU-Strukturen führen zu einem dokumentierten Fehler,
+**nicht** zu erfundenen Diagnosewerten. Weitere Einzelheiten und Optionen:
+[QuickTest PDF → JSON](docs/quicktest-pdf-json.md).
 
 ### Drei Einzelbefehle für DCDC223
 
@@ -165,6 +189,7 @@ ntf-insight-beschaffung --eingabe ".\FIN-Liste DCDC223 SensorIssue.txt" --quelle
 | --- | --- | --- |
 | `--eingabe` | **Erforderlich:** `pfad\FIN-Liste.txt` | Gemeinsame FIN-Liste (17-stellig; Kurz-FIN nur für VeDoc-Historie/QuickTests). Bei `--quellen tips` auch Fallnummernliste möglich. | 
 | `--tips-eingabe` | Optional: `"TIPS-Fallnummern.txt"` | **Nur TIPS:** separate TXT mit numerischen Fallnummern (4–16 Ziffern), 17-stelligen FINs oder beidem. Bei mehreren Quellen bleiben die übrigen FIN-Listen unverändert. |
+| `--ohne-quicktest-json` | Optional; Standard **aus** | Nur beim Sammelabruf mit QuickTests: JSON-Konvertierung ausschalten. QuickTests werden standardmäßig zusätzlich als JSON gespeichert. |
 | `--quellen` | `alle` (Standard) oder kommagetrennte IDs | Nur die genannten Datenquellen abrufen, z. B. `qec,quicktests,wem`. Jede Quelle höchstens einmal angeben. |
 | `--parallel` | Ganze Zahl von **1 bis 6**, Standard **2** | Maximale Zahl gleichzeitig laufender **Datenquellen** (nicht FINs). Innerhalb einer Quelle werden FINs nacheinander abgearbeitet. |
 | `--ausgabe` | Optional: Ziel-**Basisordner** | Ohne Angabe: `data/processed/<bereinigter TXT-Dateiname>/`. |

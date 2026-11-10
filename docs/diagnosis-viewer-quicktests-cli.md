@@ -7,6 +7,29 @@ Die **CLI** ueberspringt eine FIN nur, wenn im FIN-Ausgabeordner bereits
 eine lesbare PDF liegt; die **GUI** behaelt ihre bisherige 24-Stunden-Regel.
 Bei parallelem VeDoc-/QuickTest-Abruf erfolgt die PING-ID-Anmeldung seriell.
 
+## QuickTest-PDFs automatisch in JSON konvertieren
+
+Die CLI konvertiert **standardmäßig nach dem Download** alle lokalen
+QuickTest-PDFs der angefragten FINs mit dem bereits vorhandenen
+NTF-Insight-XENTRY-Parser. Das gilt auch bei übersprungenen Downloads,
+sofern die PDF im FIN-Ordner schon existiert. Original-PDFs bleiben
+erhalten; JSONs liegen im parallelen Ordner
+`diagnosis_viewer_quicktests_json/<FIN>/<PDF-Dateiname>.json`.
+
+```powershell
+# Üblicher PDF-Download inklusive JSON
+ntf-insight-quicktests --eingabe .\fins.txt
+
+# Nur PDFs herunterladen
+ntf-insight-quicktests --eingabe .\fins.txt --ohne-json
+
+# Ältere PDFs ausschließlich lokal in JSON wandeln, ohne Edge/SSO
+ntf-insight-quicktests-json --ordner "data/processed/FIN Liste DCDC223 NTF PDF"
+```
+
+Alle Details zur FIN-Prüfung, zum SHA-256-Resume und zu Fehlern
+stehen unter [QuickTest PDF → JSON](quicktest-pdf-json.md).
+
 ## Aufruf
 
 **14-stellige Mercedes-Kurz-FINs:** Dieser CLI-Einstieg akzeptiert neben

@@ -13,6 +13,7 @@ from pathlib import Path
 
 from ntf_insight.acquisition.credentials import LoginCredentials, load_saved_credentials
 from ntf_insight.acquisition.output_paths import standard_ausgabe
+from ntf_insight.acquisition.quicktest_json import konvertiere_quicktests
 from ntf_insight.acquisition.diagnosis_viewer import (
     DiagnosisViewerDownloader,
     FinDownloadResult,
@@ -45,6 +46,8 @@ def erstelle_parser() -> argparse.ArgumentParser:
                         help="Separates lokales Edge-Profil fuer die CLI")
     parser.add_argument("--erneut", action="store_true",
                         help="Auch FINs mit bereits gespeicherter PDF erneut herunterladen")
+    parser.add_argument("--ohne-json", action="store_true",
+                        help="Nur PDFs herunterladen, keine lokale JSON-Konvertierung (Standard: automatisch)")
     parser.add_argument("--login-manuell", action="store_true",
                         help="SSO-Anmeldedaten nicht aus dem Betriebssystem-Tresor laden")
     parser.add_argument("--passwort-abfragen", action="store_true",
@@ -138,7 +141,23 @@ def main(argv: list[str] | None = None) -> int:
             kurz_fin_erlaubt=True,
         )
         ergebnisse = downloader.run(fins, progress=lambda meldung: print(meldung, flush=True))
-        return _bericht(ergebnisse, len(fins), ausgabe)
+        download_status = _bericht(ergebnisse, len(fins), ausgabe)
+        if args.ohne_json:
+            return download_status
+        # Nach dem Abruf *alle lokal vorhandenen* PDFs dieser FIN-Liste
+        # konvertieren, auch bei bereits uebersprungenen Downloads (Resume).
+        json_ergebnis = konvertiere_quicktests(
+            ausgabe, erlaubte_fins=set(fins),
+            fortschritt=lambda meldung: print(f"[quicktests-json] {meldung}", flush=True),
+        )
+        print(
+            f"QuickTest-JSON: {json_ergebnis.konvertiert} neu | "
+            f"{json_ergebnis.uebersprungen} aktuell | "
+            f"{json_ergebnis.fehler} Konvertierungsfehler | "
+            f"Status: {json_ergebnis.statusdatei}",
+            flush=True,
+        )
+        return 1 if json_ergebnis.fehler else download_status
     except KeyboardInterrupt:
         print("\nAbgebrochen. Bereits gespeicherte PDFs und FIN-Statusdateien bleiben erhalten.",
               file=sys.stderr)
