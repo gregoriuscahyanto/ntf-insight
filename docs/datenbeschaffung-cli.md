@@ -20,30 +20,101 @@ seine Kommandozeileneinstiege **nicht automatisch** durch einen Git-Merge.
 
 ## Die sechs Befehle
 
+Mit `FIN-Liste DCDC223 SensorIssue.txt` als Eingabe:
+
 ```powershell
-# VeDoc: DCDC223-Seriennummern und Aenderungshistorie -> Ordner mit JSON + XLSX
-ntf-insight-vedoc-dcdc223 --eingabe .\fins.txt --ausgabe .\data\processed\vedoc_dcdc223
-
-# Diagnosis Viewer: Warning / Error Messages -> Gesamt-JSON + FIN-Teildateien
-ntf-insight-wem --eingabe .\fins.txt --ausgabe .\data\processed\diagnosis_viewer_warn_error\warnings_errors.json
-
-# VeDoc: Fahrzeug-/SA-Codes -> eine JSON-Datei
-ntf-insight-vedoc-codes --eingabe .\fins.txt --ausgabe .\data\processed\vedoc_codes.json
-
-# Diagnosis Viewer: QuickTest-PDFs -> <FIN> / PDFs + abrufstatus.json
-ntf-insight-quicktests --eingabe .\fins.txt --ausgabe .\data\processed\diagnosis_viewer_quicktests
-
-# QEC: Pumpenbezogene Schadteilfaelle mit Befunden und Anhaengen
-ntf-insight-qec --eingabe .\fins.txt --ausgabe .\data\processed\qec
-
-# XENTRY TIPS Writer: Fallinhalte und Anhaenge pro FIN
-ntf-insight-tips --eingabe .\fins.txt --ausgabe .\data\processed\tips_writer
+ntf-insight-vedoc-dcdc223 --eingabe ".\FIN-Liste DCDC223 SensorIssue.txt"
+ntf-insight-wem --eingabe ".\FIN-Liste DCDC223 SensorIssue.txt"
+ntf-insight-vedoc-codes --eingabe ".\FIN-Liste DCDC223 SensorIssue.txt"
+ntf-insight-quicktests --eingabe ".\FIN-Liste DCDC223 SensorIssue.txt"
+ntf-insight-qec --eingabe ".\FIN-Liste DCDC223 SensorIssue.txt"
+ntf-insight-tips --eingabe ".\FIN-Liste DCDC223 SensorIssue.txt"
 ```
 
-**Die Ausgabeform ist quellenabhaengig:** VeDoc-Codes und WEM erwarten
-`--ausgabe` als **.json-Dateipfad**; die anderen vier Befehle erwarten
-ein **Verzeichnis**. Alle haben Standardpfade unter `data/processed/`,
-wenn `--ausgabe` weggelassen wird.
+Ohne `--ausgabe` wird ausschliesslich aus dem **TXT-Dateinamen** ein
+Windows-sicherer Ordnername gebildet. Sonderzeichen wie `: ? * < > | " / `
+und Steuerzeichen werden durch `_` ersetzt. Bei reservierten Windows-Namen
+(`CON`, `PRN`, `COM1` usw.) wird ein Unterstrich vorangestellt.
+Leere Namen erhalten `FIN-Liste`; sehr lange Namen werden auf 80 Zeichen
+mit kurzem Hash verkuerzt. Leerzeichen im Namen bleiben erhalten.
+
+```text
+data/
+  processed/
+    FIN-Liste DCDC223 SensorIssue/
+      vedoc_dcdc223/
+        dcdc223_seriennummern.json
+        dcdc223_seriennummern.xlsx
+      diagnosis_viewer_warn_error/
+        warnings_errors.json
+        warnings_errors_teile/
+      vedoc_codes/
+        vedoc_codes.json
+      diagnosis_viewer_quicktests/
+        <FIN>/QuickTest-*.pdf
+      qec/
+        <FIN>/ref_<QEC-Referenz>/qec.json
+      tips_writer/
+        <FIN>/fall_<Fallnummer>/tips.json
+```
+
+**Vorhandene CLI-Daten bleiben am bisherigen Speicherort** und werden nicht
+automatisch verschoben. Es wird beim neuen Aufruf nur ein neuer Listenordner
+angelegt. Das gilt auch fuer Wiederaufnahmedateien. Zum Fortsetzen alter
+Datenstaende einfach `--ausgabe` mit dem bisherigen Pfad angeben.
+
+`--ausgabe` hat in jedem Einzelbefehl Vorrang:
+- VeDoc-Codes und WEM: eine **.json-Datei**, wie bisher.
+- DCDC223, QuickTests, QEC und TIPS: ein **Verzeichnis**, wie bisher.
+
+Beispiele:
+
+```powershell
+ntf-insight-wem --eingabe .\fins.txt --ausgabe "D:\NTF\wem.json"
+ntf-insight-qec --eingabe .\fins.txt --ausgabe "D:\NTF\qec"
+```
+
+## Alle Quellen parallel abrufen
+
+Im selben Terminal koennen alle **sechs unterschiedlichen** Datenquellen
+parallel laufen. Der Sammelbefehl erzeugt keine eigene Scraper-Logik, sondern
+startet die sechs installierten Einzel-CLIs als voneinander unabhaengige
+Prozesse. Jede Quelle schreibt in ihren eigenen Unterordner.
+
+```powershell
+# Maximal 2 Quellen gleichzeitig (Standard):
+ntf-insight-beschaffung --eingabe ".\FIN-Liste DCDC223 SensorIssue.txt"
+
+# Maximal 3 unterschiedliche Quellen gleichzeitig:
+ntf-insight-beschaffung --eingabe ".\FIN-Liste DCDC223 SensorIssue.txt" --parallel 3
+
+# Alle 6 Quellen gleichzeitig, wenn PC, Netzwerk und Unternehmenssysteme mitmachen:
+ntf-insight-beschaffung --eingabe ".\FIN-Liste DCDC223 SensorIssue.txt" --parallel 6
+
+# Nur QEC, QuickTests und WEM gleichzeitig:
+ntf-insight-beschaffung --eingabe .\fins.txt --quellen qec,quicktests,wem --parallel 3
+
+# Eigenen Sammelordner setzen:
+ntf-insight-beschaffung --eingabe .\fins.txt --ausgabe "D:\NTF\Batch-1" --parallel 2
+```
+
+Mit `--ausgabe` beim Sammelbefehl wird **der Basisordner** angegeben
+(`D:\NTF\Batch-1`), nicht eine einzelne JSON-Datei. Der Sammelprozess
+ergänzt die spezifischen Quellunterordner und JSON-Dateinamen automatisch.
+
+Alle sechs Datenquellen können unterschiedliche Edge-Fenster gleichzeitig
+öffnen und eigene SSO-/PING-ID-Freigaben benötigen. Mit
+`--login-manuell` wird bei allen die Anmeldung manuell durchgeführt.
+**PING ID bleibt in jedem Fall manuell.** Der Standard von zwei parallelen
+Diensten reduziert Browser-/Serverlast; `--parallel 6` ist optional
+und nicht garantiert schneller (Anmeldungen, Serverlimits und RAM).
+Eine einzelne Quelle wird niemals zweimal parallel gestartet; **FINs
+innerhalb derselben Quelle** werden weiterhin sequenziell verarbeitet.
+Der Sammelprozess gibt pro Quelle den Exitcode aus und meldet Teilausfälle.
+
+Auch ohne Sammelbefehl sind **mehrere eigene Terminals** mit unterschiedlichen
+Einzel-CLIs möglich. Zwei gleichzeitige Aufrufe **derselben** Quelle
+mit demselben Profil oder Ausgabeordner vermeiden.
 
 `fins.txt` enthaelt eine FIN pro Zeile, z. B.:
 
@@ -69,7 +140,7 @@ Bei einer solchen erweiterten Suche nur im freigegebenen Umfang abrufen.
 ## QEC-Ablage
 
 ```text
-data/processed/qec/
+data/processed/<TXT-Name>/qec/
   <FIN>/
     abrufstatus.json
     ref_<QEC-Referenz>/
@@ -87,7 +158,7 @@ bestehenden Metadaten abgeglichen.
 ## XENTRY-TIPS-Ablage
 
 ```text
-data/processed/tips_writer/
+data/processed/<TXT-Name>/tips_writer/
   <FIN>/
     abrufstatus.json
     fall_<Fallnummer>/
