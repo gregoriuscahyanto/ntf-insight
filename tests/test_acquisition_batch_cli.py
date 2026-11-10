@@ -431,3 +431,38 @@ def test_batch_14stellige_numerische_fallnummer_ist_keine_mercedes_kurz_fin(
     assert cli.main(["--eingabe", str(datei), "--quellen", "tips"]) == 0
     assert len(commands) == 1
     assert commands[0][0][commands[0][0].index("--eingabe") + 1] == str(datei)
+
+
+
+def test_batch_quicktests_json_standard_auto_und_spezifisch_deaktivierbar(
+    tmp_path, monkeypatch,
+):
+    commands, _ = _popen_simulieren(monkeypatch)
+    fin = _eingabe(tmp_path)
+    assert cli.main([
+        "--eingabe", str(fin), "--quellen", "quicktests,qec",
+        "--parallel", "2",
+    ]) == 0
+    assert len(commands) == 2
+    assert all("--ohne-json" not in cmd for cmd, _ in commands)
+
+    commands.clear()
+    assert cli.main([
+        "--eingabe", str(fin), "--quellen", "quicktests,qec",
+        "--ohne-quicktest-json",
+    ]) == 0
+    quick = next(cmd for cmd, _ in commands if "diagnosis_viewer_cli" in cmd[3])
+    qec = next(cmd for cmd, _ in commands if "portal_cli" in cmd[3])
+    assert "--ohne-json" in quick
+    assert "--ohne-json" not in qec
+
+
+def test_batch_ohne_quicktest_json_ohne_quicktests_unzulaessig(
+    tmp_path, monkeypatch,
+):
+    commands, _ = _popen_simulieren(monkeypatch)
+    assert cli.main([
+        "--eingabe", str(_eingabe(tmp_path)), "--quellen", "qec,tips",
+        "--ohne-quicktest-json",
+    ]) == 2
+    assert not commands
