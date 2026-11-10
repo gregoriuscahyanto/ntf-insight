@@ -14,6 +14,7 @@ from pathlib import Path
 
 _QUELLEN = {
     "dcdc223": ("vedoc_dcdc223", None),
+    "vedoc-historie": ("vedoc_historie", None),
     "wem": ("diagnosis_viewer_warn_error", "warnings_errors.json"),
     "sa-codes": ("vedoc_codes", "vedoc_codes.json"),
     "quicktests": ("diagnosis_viewer_quicktests", None),
@@ -66,4 +67,4 @@ def standard_ausgabe(eingabe: Path, quelle: str) -> Path:
 
 
 def quellennamen() -> tuple[str, ...]:
-    return tuple(_QUELLEN)
+    return tuple(name for name in _QUELLEN if name != "vedoc-historie")
