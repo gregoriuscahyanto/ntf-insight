@@ -417,7 +417,6 @@ def test_tips_fallnummer_mit_fehlender_vollfin_nicht_als_erfolg():
 
 
 def test_tips_fallnummern_suche_klickt_auf_faelle_nicht_themen(tmp_path, monkeypatch):
-    from ntf_insight import acquisition
     from ntf_insight.acquisition import tips_writer as m
 
     steps = []
