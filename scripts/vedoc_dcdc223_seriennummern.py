@@ -196,9 +196,10 @@ def _historienmoment(
 
 def _warte_auf_historieneintraege(
     seite, fin: str, filter_feld, wartezeit_ms: int, *,
+    objekt: str = _STEUERGERAET, attribut: str = _STANDARD_ATTRIBUT,
     ruhezeit_ms: int = 1500, intervall_ms: int = 350,
 ) -> Ergebnis:
-    """Wartet auf gerenderte DCDC223-Daten; prueft danach ungefiltert nach.
+    """Wartet auf gerenderte Objektdaten; prueft danach ungefiltert nach.
 
     Kein fruehzeitiges `keine_seriennummer_aenderung` beim Angular-Zwischenzustand
     0 Zeilen. Bei nicht belegbarer Vollstaendigkeit wird explizit ein unsicherer
@@ -208,7 +209,7 @@ def _warte_auf_historieneintraege(
     letzte_signatur: tuple[SeriennummerAenderung, ...] | None = None
     stabil_seit: float | None = None
     erweitert = False
-    print(f"{_gekuerzte_fin(fin)}: Filter DCDC223 wird geladen und kontrolliert ...", flush=True)
+    print(f"{_gekuerzte_fin(fin)}: VeDoc-Filter fuer {objekt} / {attribut} wird kontrolliert ...", flush=True)
 
     while time.monotonic() < deadline:
         # Erweiterung erst nach dem ersten sichtbaren Datenstand ist moeglich.
@@ -218,7 +219,7 @@ def _warte_auf_historieneintraege(
             erweitert = True
             seite.wait_for_timeout(intervall_ms)
         try:
-            eintraege, _anzahl, _fin_erkennbar = _historienmoment(seite.content(), fin)
+            eintraege, _anzahl, _fin_erkennbar = _historienmoment(seite.content(), fin, objekt, attribut)
         except ValueError:
             # Seitenwechsel / Angular ist noch nicht fertig. Nicht als 0 Treffer zaehlen.
             eintraege = ()
@@ -227,7 +228,7 @@ def _warte_auf_historieneintraege(
             if eintraege != letzte_signatur:
                 letzte_signatur, stabil_seit = eintraege, jetzt
             elif stabil_seit is not None and (jetzt - stabil_seit) * 1000 >= ruhezeit_ms:
-                return _bewerte_historie(fin, eintraege)
+                return _bewerte_historie(fin, eintraege, objekt=objekt, attribut=attribut)
         else:
             letzte_signatur, stabil_seit = None, None
         seite.wait_for_timeout(intervall_ms)
@@ -249,7 +250,7 @@ def _warte_auf_historieneintraege(
             erweitern.first.click(timeout=5000)
             erweitert = True
         try:
-            eintraege, anzahl, gilt_fin = _historienmoment(seite.content(), fin)
+            eintraege, anzahl, gilt_fin = _historienmoment(seite.content(), fin, objekt, attribut)
         except ValueError:
             fehlerhafte_fins = True
             letzte_signatur, stabil_seit = None, None
@@ -265,11 +266,11 @@ def _warte_auf_historieneintraege(
             if eintraege != letzte_signatur:
                 letzte_signatur, stabil_seit = eintraege, jetzt
             elif stabil_seit is not None and (jetzt - stabil_seit) * 1000 >= ruhezeit_ms:
-                ergebnis = _bewerte_historie(fin, eintraege)
+                ergebnis = _bewerte_historie(fin, eintraege, objekt=objekt, attribut=attribut)
                 return _ergebnis(
                     fin, ergebnis.status, seriennummer=ergebnis.seriennummer,
                     hinweis=("Treffer nach ungefilterter Nachpruefung. " + ergebnis.hinweis),
-                    aenderungen=ergebnis.aenderungen,
+                    aenderungen=ergebnis.aenderungen, objekt=objekt, attribut=attribut,
                 )
         else:
             letzte_signatur, stabil_seit = None, None
@@ -281,42 +282,48 @@ def _warte_auf_historieneintraege(
             and not fehlerhafte_fins):
         return _ergebnis(
             fin, "keine_seriennummer_aenderung",
-            hinweis="Nach Wartezeit auch ungefiltert keine DCDC223-Seriennummernaenderung gefunden.",
+            hinweis="Nach Wartezeit auch ungefiltert keine passende Objekt-/Attributaenderung gefunden.",
+            objekt=objekt, attribut=attribut,
         )
     return _ergebnis(
         fin, "historie_nicht_bestaetigt",
         hinweis="Historie nach Wartezeit nicht vollstaendig / FIN nicht zweifelsfrei belegt.",
+        objekt=objekt, attribut=attribut,
     )
 
 
-def _bewerte_historie(fin: str, eintraege: tuple[SeriennummerAenderung, ...]) -> Ergebnis:
+def _bewerte_historie(
+    fin: str, eintraege: tuple[SeriennummerAenderung, ...], *,
+    objekt: str = _STEUERGERAET, attribut: str = _STANDARD_ATTRIBUT,
+) -> Ergebnis:
     """Letzten dokumentierten neuen Wert ableiten, nicht den aktuellen Einbau behaupten."""
+    ziel = {"objekt": objekt, "attribut": attribut}
     if not eintraege:
         return _ergebnis(fin, "keine_seriennummer_aenderung",
-                         hinweis="Keine passende Seriennummer-Aenderung in der Historie.")
+                         hinweis="Keine passende Objekt-/Attributaenderung in der Historie.", **ziel)
     try:
         sortiert = sorted(eintraege, key=lambda x: datetime.strptime(
             x.aenderungszeitpunkt, "%d.%m.%Y %H:%M:%S"
         ))
     except ValueError:
         return _ergebnis(fin, "zeitstempel_ungueltig",
-                         hinweis="Zeitangabe nicht eindeutig lesbar; keine letzte Seriennummer ableiten.",
-                         aenderungen=eintraege)
+                         hinweis="Zeitangabe nicht eindeutig lesbar; kein letzter Attributwert ableitbar.",
+                         aenderungen=eintraege, **ziel)
     zeit = sortiert[-1].aenderungszeitpunkt
     letzte_werte = {eintrag.neuer_wert for eintrag in sortiert
                     if eintrag.aenderungszeitpunkt == zeit}
     if len(letzte_werte) != 1:
         return _ergebnis(fin, "mehrdeutig",
-                         hinweis="Verschiedene neue Seriennummern zum letzten Zeitpunkt.",
-                         aenderungen=tuple(sortiert))
+                         hinweis="Verschiedene neue Attributwerte zum letzten Zeitpunkt.",
+                         aenderungen=tuple(sortiert), **ziel)
     wert = next(iter(letzte_werte))
     if not wert:
         return _ergebnis(fin, "seriennummer_fehlt",
                          hinweis="Der letzte Historieneintrag enthaelt keinen neuen Wert.",
-                         aenderungen=tuple(sortiert))
+                         aenderungen=tuple(sortiert), **ziel)
     return _ergebnis(fin, "gefunden", seriennummer=wert,
-                     hinweis="Seriennummer ist der letzte dokumentierte neue Wert aus VeDoc-Historie.",
-                     aenderungen=tuple(sortiert))
+                     hinweis="Letzter dokumentierter neuer Attributwert aus VeDoc (kein Ist-Zustand).",
+                     aenderungen=tuple(sortiert), **ziel)
 
 
 def _zeitpunkt() -> str:
@@ -325,9 +332,10 @@ def _zeitpunkt() -> str:
 
 def _ergebnis(
     fin: str, status: str, seriennummer: str | None = None, hinweis: str = "",
-    aenderungen: tuple[SeriennummerAenderung, ...] = (),
+    aenderungen: tuple[SeriennummerAenderung, ...] = (), *,
+    objekt: str = _STEUERGERAET, attribut: str = _STANDARD_ATTRIBUT,
 ) -> Ergebnis:
-    return Ergebnis(fin, _STEUERGERAET, seriennummer, status, hinweis, _zeitpunkt(), aenderungen)
+    return Ergebnis(fin, objekt, seriennummer, status, hinweis, _zeitpunkt(), aenderungen, attribut)
 
 
 def _gekuerzte_fin(fin: str) -> str:
