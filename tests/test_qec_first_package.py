@@ -566,3 +566,15 @@ def test_first_llm_result_rejects_clustering_but_accepts_unassigned_case(tmp_pat
     out.write_text(json.dumps(template), encoding="utf-8")
     result = ChatGPTAnalyseStore(source.store).import_file(out)
     assert result["faelle"] == 1 and result["cluster"] == 0
+
+
+
+def test_ki_anweisung_verbietet_ungepruefte_qec_anhangzuordnung(tmp_path):
+    source = _set_up(tmp_path)
+    result = _export(source, tmp_path / "qec-hinweise.zip")
+    with ZipFile(result.pfad) as archive:
+        prompt = archive.read("CHATGPT_ANWEISUNG.txt").decode("utf-8")
+        assert "KEIN Nachweis" in prompt
+        assert "erst nach dokumentierter Pruefung" in prompt
+        regeln = _rows(archive, "methodik.csv")
+        assert any(row["thema"] == "QEC-Anhangzuordnung" for row in regeln)
