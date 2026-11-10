@@ -150,3 +150,17 @@ def test_teilerfolg_mit_fehler_liefert_exitcode_eins(tmp_path, monkeypatch):
 def test_ungueltige_cli_kombinationen(tmp_path, monkeypatch, weitere):
     _fake_downloader(monkeypatch)
     assert cli.main(["--eingabe", str(_eingabe(tmp_path)), *weitere]) == 2
+
+
+
+def test_kurz_fin_als_cli_eingabe_und_downloader_opt_in(tmp_path, monkeypatch):
+    """14 Zeichen duerfen vor dem SSO passieren, ohne eine WMI zu erfinden."""
+    kurz = "1671061B000001"  # Synthetisch, keine reale FIN
+    datei = tmp_path / "kurz.txt"
+    datei.write_text(kurz + "\n", encoding="utf-8")
+    monkeypatch.setattr(cli, "load_saved_credentials", lambda: None)
+    aufrufe = _fake_downloader(monkeypatch)
+    assert cli.lade_fins(datei) == [kurz]
+    assert cli.main(["--eingabe", str(datei)]) == 0
+    assert aufrufe[1] == [kurz]
+    assert aufrufe[0][2]["kurz_fin_erlaubt"] is True
