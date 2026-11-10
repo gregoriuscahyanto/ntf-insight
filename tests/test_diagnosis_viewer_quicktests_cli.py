@@ -69,7 +69,7 @@ def test_standardpfad_und_automatischer_login_aus_gui_tresor(tmp_path, monkeypat
     aufrufe = _fake_downloader(monkeypatch)
     assert cli.main(["--eingabe", str(_eingabe(tmp_path))]) == 0
     ausgabe, profil, kwargs = aufrufe[0]
-    assert ausgabe == (tmp_path / cli.STANDARD_AUSGABE).resolve()
+    assert ausgabe == (tmp_path / "data/processed/fins/diagnosis_viewer_quicktests").resolve()
     assert profil == cli.STANDARD_PROFIL.resolve()
     assert kwargs["user_id"] == "beispiel-id"
     assert kwargs["password"] == "test-passwort"
