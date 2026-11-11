@@ -1,0 +1,274 @@
+"""Windows-only offline Softing.Dts.dll backend for DTC metadata.
+
+No proprietary binaries, licenses or ECU data are bundled. No license bypass,
+no vehicle connection and no diagnostic service execution is attempted.
+"""
+from __future__ import annotations
+
+import os
+import shutil
+import subprocess
+import sys
+import tempfile
+from importlib.resources import files
+from pathlib import Path
+
+from ntf_insight.smrd.library import SmrdLocalLibrary, digest
+from ntf_insight.smrd.native_details import NativeDetailError, parse_native_details
+from ntf_insight.smrd.native_symbols import diagnose_native_symbols
+
+
+class NativeRuntimeError(RuntimeError):
+    """Native Softing runtime is missing, incompatible or returned an error."""
+
+
+class NativeLicenseError(NativeRuntimeError):
+    """The vendor reports an unavailable required DTS BaseSystem license."""
+
+
+def _native_process_failure(
+    result: subprocess.CompletedProcess, *, context: str
+) -> NativeRuntimeError:
+    """Preserve the actual vendor diagnostic, distinguishing licensing errors."""
+    diagnostic = "\n".join(
+        part for part in (result.stderr or "", result.stdout or "") if part.strip()
+    )
+    if not diagnostic:
+        diagnostic = "Keine Fehlermeldung von Softing DTS empfangen."
+    normalized = diagnostic.casefold()
+    if (
+        "esystem_license_error" in normalized
+        or "no basesystem license was found" in normalized
+    ):
+        return NativeLicenseError(
+            "Softing DTS: Keine BaseSystem-Lizenz erkannt "
+            "(eSYSTEM_LICENSE_ERROR, Code 58679 / 59075). "
+            "DTS System Configurator > General Settings: gueltige, "
+            "fuer diese Version und diesen Rechner berechtigte Lizenz "
+            "pruefen oder beim Lizenzverantwortlichen / Softing klaeren. "
+            "Eine vorhandene license.bin oder der erfolgreiche native-probe "
+            "sind kein Nachweis einer aktivierten BaseSystem-Lizenz. "
+            "Bis zur Klaerung native-project-test und native-export nicht "
+            "erneut starten. Keine SMR-D/NTF-Insight-Datenbank geaendert.\n"
+            + diagnostic[-4000:]
+        )
+    return NativeRuntimeError(context + "\n" + diagnostic[-6000:])
+
+
+def resolve_runtime_dir(runtime_dir: Path | None, library: SmrdLocalLibrary) -> tuple[Path, Path]:
+    """Find the user's locally installed licensed runtime, never repo binaries."""
+    base = (
+        Path(runtime_dir).expanduser()
+        if runtime_dir
+        else (
+            Path(os.environ["NTF_SOFTING_RUNTIME_DIR"]).expanduser()
+            if os.environ.get("NTF_SOFTING_RUNTIME_DIR")
+            else library.root / "runtime" / "SMRxView"
+        )
+    ).resolve()
+    candidates = (base / "mvci" / "bin", base / "bin", base)
+    for binary_dir in candidates:
+        if (binary_dir / "Softing.Dts.dll").is_file() and (
+            binary_dir / "csWrap.dll"
+        ).is_file():
+            return base, binary_dir
+    raise NativeRuntimeError(
+        "Kompatible lokale Softing-Laufzeit fehlt (Softing.Dts.dll/csWrap.dll). "
+        f"Pruefe {base}; installiere/kopiere eine selbst lizenzierte Laufzeit "
+        "ausserhalb des Git-Repositories."
+    )
+
+
+def _run_script(
+    script: Path,
+    *,
+    source: Path | None,
+    runtime: Path,
+    output: Path | None,
+    timeout: int,
+    probe_only: bool,
+    project_only: bool = False,
+) -> subprocess.CompletedProcess:
+    if sys.platform != "win32":
+        raise NativeRuntimeError("Der native DTS-Exporter erfordert Windows x64.")
+    if sys.maxsize <= 2**32:
+        raise NativeRuntimeError("Der native DTS-Exporter erfordert 64-Bit-Python.")
+    executable = shutil.which("powershell.exe")
+    if executable is None:
+        raise NativeRuntimeError("Windows PowerShell 5.1 wurde nicht gefunden.")
+    args = [
+        executable,
+        "-NoProfile", "-NonInteractive", "-File", str(script),
+        "-RuntimeDir", str(runtime),
+    ]
+    if probe_only:
+        args.append("-ProbeOnly")
+    elif project_only:
+        assert source is not None
+        args.extend(["-SmrdFile", str(source), "-ProjectOnly"])
+    else:
+        assert source is not None and output is not None
+        args.extend(["-SmrdFile", str(source), "-OutputJson", str(output)])
+    try:
+        return subprocess.run(
+            args, cwd=runtime, capture_output=True, text=True,
+            encoding="utf-8", errors="replace", timeout=timeout, check=False,
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise NativeRuntimeError(
+            "Die Softing-DTS-Konvertierung hat das Zeitlimit ueberschritten."
+        ) from exc
+
+
+def native_capabilities(
+    *, runtime_dir: Path | None = None, data_dir: Path | None = None
+) -> dict:
+    """Check native DLL export table without loading or executing vendor code."""
+    library = SmrdLocalLibrary(data_dir=data_dir)
+    _, binary_dir = resolve_runtime_dir(runtime_dir, library)
+    return diagnose_native_symbols(binary_dir / "csWrap.dll")
+
+
+def native_probe(
+    *,
+    runtime_dir: Path | None = None,
+    data_dir: Path | None = None,
+    timeout: int = 40,
+) -> str:
+    library = SmrdLocalLibrary(data_dir=data_dir)
+    runtime, binary_dir = resolve_runtime_dir(runtime_dir, library)
+    symbols = diagnose_native_symbols(binary_dir / "csWrap.dll")
+    if not symbols["native_api_ready"]:
+        raise NativeRuntimeError(
+            "Softing-DTS API nicht kompatibel; nicht exportierte native Funktionen: "
+            + ", ".join(symbols["missing_required_exports"])
+        )
+    script = Path(str(files("ntf_insight.smrd").joinpath("softing_native_export.ps1")))
+    result = _run_script(
+        script, source=None, output=None, runtime=runtime,
+        timeout=timeout, probe_only=True,
+    )
+    if result.returncode:
+        raise NativeRuntimeError(
+            (result.stderr or result.stdout or "DTS-Probe fehlgeschlagen")[-4000:]
+        )
+    return (
+        result.stdout.strip()
+        + "\nCSWRAP_DYNAMIC_PROJECT_API_OK: "
+        + str(symbols["has_dynamic_project_api"])
+        + "; VIEWER_ENTRYPOINT_MISSING: "
+        + str(symbols["managed_only_viewer_api"])
+    )
+
+
+def native_project_test(
+    smrd: Path,
+    *,
+    runtime_dir: Path | None = None,
+    data_dir: Path | None = None,
+    timeout: int = 120,
+) -> str:
+    """Test only native offline project selection and DbProject access.
+
+    No DTC enumeration, output JSON, vehicle connection or DuckDB import.
+    Runs the untrusted vendor runtime in its own Windows process.
+    """
+    smrd = Path(smrd).expanduser().resolve()
+    if not smrd.is_file() or smrd.suffix.casefold() != ".smr-d":
+        raise FileNotFoundError(f"SMR-D-Datei fehlt: {smrd}")
+    library = SmrdLocalLibrary(data_dir=data_dir)
+    runtime, binary_dir = resolve_runtime_dir(runtime_dir, library)
+    symbols = diagnose_native_symbols(binary_dir / "csWrap.dll")
+    if not symbols["native_api_ready"]:
+        raise NativeRuntimeError(
+            "CSWrap.dll ist nicht kompatibel. Fehlende native Funktionen: "
+            + ", ".join(symbols["missing_required_exports"])
+        )
+    from ntf_insight.smrd.runtime_config import diagnose_native_runtime
+
+    health = diagnose_native_runtime(runtime)
+    if not health["ready_for_native_attempt"]:
+        raise NativeRuntimeError(
+            "DTS-Runtime ist nicht bereit. Zuerst 'native-doctor' ausfuehren. "
+            f"Fehler: {health['errors']}; fehlend: {health['missing']}; "
+            f"abweichende Pfade: {health['mismatches']}"
+        )
+    script = Path(str(files("ntf_insight.smrd").joinpath("softing_native_export.ps1")))
+    result = _run_script(
+        script, source=smrd, runtime=runtime, output=None,
+        timeout=timeout, probe_only=False, project_only=True,
+    )
+    if result.returncode or "SOFTING_DTS_PROJECT_OPEN_OK" not in result.stdout:
+        raise _native_process_failure(
+            result,
+            context=(
+                "DTS-Projektpruefung fehlgeschlagen; keine DTCs exportiert "
+                "und keine Datenbank veraendert."
+            ),
+        )
+    return result.stdout.strip()
+
+
+def export_native_dtcs(
+    smrd: Path,
+    *,
+    runtime_dir: Path | None = None,
+    data_dir: Path | None = None,
+    output_path: Path | None = None,
+    timeout: int = 240,
+) -> tuple[Path, int]:
+    """Extract offline native DTS DTC details; reject incomplete and empty output."""
+    smrd = Path(smrd).expanduser().resolve()
+    if not smrd.is_file() or smrd.suffix.casefold() != ".smr-d":
+        raise FileNotFoundError(f"SMR-D-Datei fehlt: {smrd}")
+    library = SmrdLocalLibrary(data_dir=data_dir)
+    runtime, binary_dir = resolve_runtime_dir(runtime_dir, library)
+    symbols = diagnose_native_symbols(binary_dir / "csWrap.dll")
+    if not symbols["native_api_ready"]:
+        raise NativeRuntimeError(
+            "Der native DTS-Exporter wurde vor dem Aufruf gestoppt: "
+            "CSWrap.dll exportiert nicht alle benoetigten Funktionen. "
+            "Fehlend: " + ", ".join(symbols["missing_required_exports"])
+        )
+    from ntf_insight.smrd.runtime_config import diagnose_native_runtime
+
+    health = diagnose_native_runtime(runtime)
+    if not health["ready_for_native_attempt"]:
+        missing = ", ".join(health["missing"])
+        differences = ", ".join(item["key"] for item in health["mismatches"])
+        errors = "; ".join(health["errors"])
+        raise NativeRuntimeError(
+            "Softing-Laufzeit vor dem nativen Aufruf nicht bereit. "
+            "Abbruch, um einen erneuten CSNIDTS_getSystem-Absturz zu vermeiden. "
+            f"Fehlend: {missing or '-'}; falsche Pfade: {differences or '-'}; "
+            f"Konfigurationsfehler: {errors or '-'}. "
+            "Bitte erst 'python -m ntf_insight.smrd native-doctor' ausfuehren."
+        )
+    library.exports.mkdir(parents=True, exist_ok=True)
+    output = (
+        Path(output_path).expanduser().resolve()
+        if output_path
+        else library.exports / f"{digest(smrd)}.native-dtc.json"
+    )
+    output.parent.mkdir(parents=True, exist_ok=True)
+    script = Path(str(files("ntf_insight.smrd").joinpath("softing_native_export.ps1")))
+    with tempfile.TemporaryDirectory(dir=library.exports, prefix=".native-") as workdir:
+        intermediate = Path(workdir) / "details.json"
+        result = _run_script(
+            script, source=smrd, runtime=runtime, output=intermediate,
+            timeout=timeout, probe_only=False,
+        )
+        if result.returncode:
+            raise _native_process_failure(
+                result, context="Softing-DTS-Exporter fehlgeschlagen. Keine Datenbank veraendert."
+            )
+        try:
+            metadata, rows = parse_native_details(intermediate)
+        except (NativeDetailError, ValueError) as exc:
+            raise NativeRuntimeError(f"Native-DTS-JSON unvollstaendig: {exc}") from exc
+        if metadata["smrd_sha256"] != digest(smrd):
+            raise NativeRuntimeError(
+                "Die SMR-D-Pruefsumme stimmt mit dem Export nicht ueberein."
+            )
+        os.replace(intermediate, output)
+    return output, len(rows)
