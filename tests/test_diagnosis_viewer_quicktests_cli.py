@@ -266,3 +266,36 @@ def test_quicktest_cli_json_fehler_ist_nicht_stillschweigend_erfolgreich(
         lambda *_args, **_kwargs: KonvertierungsErgebnis(fehler=1, gefunden=2),
     )
     assert cli.main(["--eingabe", str(_eingabe(tmp_path))]) == 1
+
+
+def test_teilabruf_eine_von_14_pdfs_startet_ssologin_fuer_resume(tmp_path, monkeypatch):
+    """Eine alte PDF genuegt nicht: nur fehlende Sitzungen sollen starten."""
+    from ntf_insight.acquisition.diagnosis_viewer import (
+        DownloadRow, _save_pdf, _write_manifest,
+    )
+
+    eingabe = tmp_path / "teilabruf.txt"
+    eingabe.write_text(FIN + "\n", encoding="utf-8")
+    ordner = tmp_path / "diagnosis_viewer_quicktests"
+    pdf_ordner = ordner / FIN
+
+    class Download:
+        suggested_filename = "quicktest.pdf"
+
+        def save_as(self, dateiname):
+            Path(dateiname).write_bytes(b"%PDF-1.7\nOffline")
+
+    pdf = _save_pdf(Download(), pdf_ordner, DownloadRow(0, "XD", "2026-10-13 10:01"))
+    _write_manifest(pdf_ordner, FinDownloadResult(
+        fin=FIN, files=[pdf], available=14, status="Teilweise erfolgreich",
+    ))
+    monkeypatch.setattr(
+        cli, "load_saved_credentials",
+        lambda: LoginCredentials("synthetische-id", "test-passwort"),
+    )
+    aufrufe = _fake_downloader(monkeypatch)
+    assert cli.main([
+        "--eingabe", str(eingabe), "--ausgabe", str(ordner),
+    ]) == 0
+    assert aufrufe[0][2]["user_id"] == "synthetische-id"
+    assert aufrufe[0][2]["nur_fehlende_pdfs"] is True

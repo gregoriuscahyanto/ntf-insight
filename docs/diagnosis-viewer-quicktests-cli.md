@@ -3,8 +3,10 @@
 Die CLI ist eine zusaetzliche Oberflaeche fuer den **bereits vorhandenen GUI-Scraper**
 \`ntf_insight.acquisition.diagnosis_viewer.DiagnosisViewerDownloader\`.
 Sie verwendet die gleichen PDF-Pruefungen, FIN-Validierung und Statusdateien.
-Die **CLI** ueberspringt eine FIN nur, wenn im FIN-Ausgabeordner bereits
-eine lesbare PDF liegt; die **GUI** behaelt ihre bisherige 24-Stunden-Regel.
+Die **CLI** ueberspringt eine FIN nur, wenn ihr bisheriger Abrufstand
+keine fehlenden PDF-Sitzungen ausweist. Eine FIN mit 1 von 14 gespeicherten
+PDFs wird erneut geoeffnet, aber die vorhandene PDF nicht nochmals geladen.
+Die **GUI** behaelt ihre bisherige 24-Stunden-Regel.
 Bei parallelem VeDoc-/QuickTest-Abruf erfolgt die PING-ID-Anmeldung seriell.
 
 ## QuickTest-PDFs automatisch in JSON konvertieren
@@ -84,11 +86,21 @@ Das gilt ausschliesslich fuer die neue CLI. Die GUI behält ihre bisherige
 Ablage \`%USERPROFILE%\.ntf-insight\quicktests\<FIN>\`.
 PDFs werden nicht ueberschrieben; identische Downloads werden anhand SHA-256
 erkannt. \`abrufstatus.json\` haelt den letzten FIN-Abrufversuch, den Status,
-PDF-Dateinamen, Fehler und Sitzungen ohne QuickTest fest. Wiederholte CLI-Aufrufe ueberspringen eine FIN **nur**, wenn eine gueltige
-PDF-Datei im entsprechenden FIN-Unterordner vorhanden ist. Die PDF muss
-mit der Kennung %PDF- beginnen. Ein `abrufstatus.json` mit Status Fehler,
-Keine Quicktests oder gerade erfolgt ohne PDF wird *nicht* uebersprungen.
-Mit `--erneut` werden auch FINs mit vorhandenen PDFs nochmals geladen.
+PDF-Dateinamen, Fehler und Sitzungen ohne QuickTest fest. Nach jedem
+erfolgreich gespeicherten PDF wird der Abrufstatus atomar aktualisiert.
+Der Resume-Abgleich verwendet den Sitzungs-Zeitpunkt und die Quelle aus
+dem PDF-Dateinamen sowie den `%PDF-`-Dateikopf. Bei mehrfach vorhandenen
+gleichen Zeitstempel-/Quellenpaaren wird aus Sicherheitsgruenden kein
+Dateiname als eindeutiger Sitzungsbeleg angenommen.
+
+Sind im bisherigen Status beispielsweise 14 Sitzungen dokumentiert,
+aber erst eine PDF gespeichert, beginnt der naechste CLI-Lauf erneut mit
+der FIN. Der Downloader ueberspringt die eindeutig bereits lokal
+gespeicherten Sitzungs-PDFs und versucht die fehlenden. Bei
+**Altbeständen ohne Sitzungszaehler** bleibt das bisherige
+Ueberspringen bei mindestens einer gueltigen PDF bestehen, da deren
+Vollstaendigkeit nicht automatisch belegbar ist. Mit `--erneut` wird
+die Wiederverwendung bestehender Sitzungs-PDFs deaktiviert.
 
 ## SSO / PING ID
 
@@ -126,6 +138,28 @@ bestehender Berechtigung zu. Nie reale FINs, QuickTests, Passwoerter oder
 SSO-Cookies ins Repository oder in CI-Artefakte uebertragen. Live-Tests
 im internen Unternehmensnetz und mit einer freigegebenen Test-FIN sind
 erforderlich; Offline-Tests pruefen keine reale SSO-/PING-ID-Sitzung.
+
+## Browserabsturz und SSO-Wiederanlauf
+
+Die SSO-Erkennung prueft nach PING ID die sichtbare FIN-Suchmaske
+auf der authentifizierten Diagnosis-Viewer-Domain, auch in einem
+eingebetteten Frame oder neu geoeffneten Tab. Falls die Viewer-Seite
+geladen ist, aber das Suchfeld laenger nicht erscheint, wird die
+Seite hoechstens einmal neu geladen. PING ID bleibt vollstaendig manuell.
+
+Verliert Playwright die Edge-Verbindung waehrend eines PDFs, bricht
+der Downloader die Sitzungsschleife sofort ab. Er versucht maximal
+**einen kontrollierten Neustart pro CLI-Lauf** mit demselben Profil.
+Eine erneute PING-ID-Freigabe kann erforderlich sein. Falls auch der
+Neustart fehlschlaegt, werden die Fehler in `abrufstatus.json`
+protokolliert und der Abruf gestoppt. Gespeicherte PDF-Originale
+werden nicht geloescht oder ueberschrieben.
+
+**Wichtig:** Weder ein einmaliger Neustart noch das Anlegen eines
+neuen Edge-Profils beweist die Ursache eines Browserabsturzes.
+Bei wiederholten Abstuerzen zuerst Edge und den Firmenzugang pruefen.
+Nicht waehrend eines laufenden Downloads `main` aktualisieren oder
+die aktuell verwendete Python-Installation austauschen.
 
 ## Rueckgabewerte
 

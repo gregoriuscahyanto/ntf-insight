@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from collections import Counter
 from contextlib import nullcontext
 import re
 import tempfile
@@ -38,6 +39,28 @@ class DownloadCancelled(RuntimeError):
 
 class QuickTestDataUnavailable(RuntimeError):
     """A diagnosis exists, but its S3 payload has no QuickTest PDF."""
+
+
+class BrowserSessionLost(RuntimeError):
+    """Die Edge-/Playwright-Verbindung wurde unerwartet getrennt."""
+
+
+def _browser_verloren(exc: Exception) -> bool:
+    """Playwright schliesst Tab, Kontext und Browser mit aehnlichen Meldungen."""
+    name = type(exc).__name__.casefold()
+    message = str(exc).casefold()
+    return (
+        "targetclosed" in name
+        or any(meldung in message for meldung in (
+            "target page, context or browser has been closed",
+            "target closed",
+            "browser has been closed",
+            "browser closed",
+            "page crashed",
+            "target crashed",
+            "connection closed",
+        ))
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -119,6 +142,31 @@ def _save_pdf(download, folder: Path, row: DownloadRow) -> Path:
         temporary.unlink(missing_ok=True)
 
 
+def _vorhandene_sitzungs_pdf(folder: Path, row: DownloadRow) -> Path | None:
+    """Nur eine gueltige PDF mit eindeutigem Sitzungs-Praefix wiederverwenden.
+
+    Der alte Downloader speichert bereits <Zeitpunkt>_<Quelle>_<PDF-Name>.
+    Eine Dateigroesse >0 oder ein Manifest allein ist kein Download-Beleg.
+    """
+    if not folder.is_dir() or folder.is_symlink():
+        return None
+    prefix = _safe_name(f"{row.timestamp}_{row.source}") + "_"
+    for pdf in sorted(folder.iterdir()):
+        if (
+            not pdf.is_file() or pdf.is_symlink()
+            or pdf.suffix.casefold() != ".pdf"
+            or not pdf.name.startswith(prefix)
+        ):
+            continue
+        try:
+            with pdf.open("rb") as datei:
+                if datei.read(5) == b"%PDF-":
+                    return pdf
+        except OSError:
+            continue
+    return None
+
+
 def _visible_rows(page) -> tuple[list[DownloadRow], bool]:
     """Identify usable icons from the actual Diagnosis Viewer DOM.
 
@@ -161,9 +209,18 @@ def _write_manifest(folder: Path, result: FinDownloadResult) -> None:
         "fehler": result.errors,
         "ohne_quicktest": result.no_quicktest_sessions,
     }
-    (folder / "abrufstatus.json").write_text(
-        json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8"
-    )
+    # Bei Stromausfall oder Edge-Absturz nie einen halb geschriebenen
+    # Checkpoint als gueltigen Status zuruecklassen.
+    with tempfile.NamedTemporaryFile(
+        mode="w", encoding="utf-8", dir=folder,
+        suffix=".partial", delete=False,
+    ) as stream:
+        temp = Path(stream.name)
+        json.dump(payload, stream, indent=2, ensure_ascii=False)
+    try:
+        temp.replace(folder / "abrufstatus.json")
+    finally:
+        temp.unlink(missing_ok=True)
 
 
 def read_last_attempt(folder: Path, fin: str) -> FinDownloadResult | None:
@@ -261,6 +318,29 @@ def lokal_vorhandene_pdf(
         status="Übersprungen (PDF bereits vorhanden)",
         last_attempt_at=alt.last_attempt_at if alt else "",
     )
+
+
+def _quicktest_fin_vollstaendig(ordner: Path, fin: str) -> FinDownloadResult | None:
+    """Nur nachweislich vollstaendige FINs ohne neue Edge-Anmeldung ueberspringen.
+
+    Bei einem frueheren Abruf mit 1/14 PDFs muss die FIN erneut durchsucht
+    werden. Die eigentlichen, bereits vorhandenen PDFs werden pro Sitzung
+    zugeordnet und nicht nochmals aus dem Portal geladen.
+    """
+    lokal = lokal_vorhandene_pdf(ordner, fin)
+    if lokal is None:
+        return None
+    alt = read_last_attempt(ordner, fin)
+    if alt is None or alt.available == 0:
+        # Rueckwaertskompatibilitaet fuer Altbestaende ohne Sitzungszaehler.
+        # Die Vollstaendigkeit dieser Altbestaende ist nicht beweisbar.
+        return lokal
+    if (
+        alt.status == "Erfolgreich"
+        and len(lokal.files) + len(alt.no_quicktest_sessions) >= alt.available
+    ):
+        return lokal
+    return None
 
 
 def recently_attempted(
@@ -396,25 +476,76 @@ class DiagnosisViewerDownloader:
             submitted["password"] = True
             progress("Anmeldung gesendet. Bitte PING ID auf dem Smartphone bestätigen …")
 
+    @staticmethod
+    def _fin_suchbereich(page):
+        """FIN-Suchfeld auf der Hauptseite oder in einem eingebetteten Frame finden.
+
+        Die Bereitschaft wird nicht allein aus der URL oder dem PING-ID-Dialog
+        abgeleitet. Fuer den anschliessenden Suchklick denselben Scope nutzen.
+        """
+        for scope in [page, *getattr(page, "frames", [])]:
+            try:
+                feld = scope.locator('input[name="finVin"]')
+                if feld.count() and feld.is_visible():
+                    return scope
+            except Exception as exc:
+                if _browser_verloren(exc):
+                    raise BrowserSessionLost(
+                        "Edge-Verbindung waehrend der SSO-Erkennung verloren."
+                    ) from exc
+                # Ein Frame kann gerade navigieren; die naechste Runde versucht es erneut.
+                continue
+        return None
+
     def _login(self, context, page, progress: Progress, cancel: Event):
         deadline = time.monotonic() + self.login_timeout_seconds
         clicked_sso = False
         submitted = {"user": False, "password": False}
+        viewer_aufgerufen: dict[int, float] = {}
+        viewer_neu_geladen: set[int] = set()
+        naechster_hinweis = time.monotonic() + 20
         progress("Edge: SSO öffnen. Benutzer-ID und Passwort werden bei Verfügbarkeit eingetragen.")
         while time.monotonic() < deadline:
             self._check_cancel(cancel)
-            for candidate in context.pages:
-                if candidate.is_closed():
-                    continue
+            try:
+                browser = getattr(context, "browser", None)
+                if browser is not None and not browser.is_connected():
+                    raise BrowserSessionLost(
+                        "Edge-Browser ist waehrend der SSO-Anmeldung abgestuerzt."
+                    )
+                candidates = list(context.pages)
+            except Exception as exc:
+                if _browser_verloren(exc):
+                    raise BrowserSessionLost("Edge-Verbindung waehrend der Anmeldung verloren.") from exc
+                raise
+            for candidate in candidates:
                 try:
-                    fin_field = candidate.locator('input[name="finVin"]')
-                    if (
-                        urlsplit(candidate.url).scheme == "https"
-                        and urlsplit(candidate.url).hostname == VIEWER_HOST
-                        and fin_field.count() and fin_field.is_visible()
-                    ):
-                        progress("PING ID abgeschlossen. Diagnosis Viewer ist bereit.")
-                        return candidate
+                    if candidate.is_closed():
+                        continue
+                    hostname = urlsplit(candidate.url).hostname
+                    if hostname == VIEWER_HOST:
+                        if self._fin_suchbereich(candidate) is not None:
+                            progress("PING ID abgeschlossen. Diagnosis Viewer ist bereit.")
+                            return candidate
+                        # Der authentifizierte Viewer kann nach einem Redirect ein
+                        # unvollstaendiges Suchformular zeigen. Maximal einmal
+                        # kontrolliert neu laden, niemals PING ID umgehen.
+                        identitaet = id(candidate)
+                        jetzt = time.monotonic()
+                        viewer_aufgerufen.setdefault(identitaet, jetzt)
+                        if (
+                            identitaet not in viewer_neu_geladen
+                            and jetzt - viewer_aufgerufen[identitaet] >= 15
+                        ):
+                            viewer_neu_geladen.add(identitaet)
+                            progress(
+                                "Diagnosis Viewer ist geöffnet, aber das FIN-Suchfeld "
+                                "fehlt noch. Die Viewer-Seite wird einmal neu geladen."
+                            )
+                            candidate.reload(
+                                wait_until="domcontentloaded", timeout=15000
+                            )
+                            continue
                     if self._is_login_host(candidate.url):
                         self._enter_credentials(candidate, submitted, progress, cancel)
                         continue
@@ -429,15 +560,28 @@ class DiagnosisViewerDownloader:
                                 clicked_sso = True
                                 progress("SSO gestartet. PING ID nach der Passwort-Anmeldung bestätigen.")
                                 break
-                except DownloadCancelled:
+                except (DownloadCancelled, BrowserSessionLost):
                     raise
-                except Exception:
-                    # Login redirects can invalidate the page during a polling cycle.
+                except Exception as exc:
+                    if _browser_verloren(exc):
+                        raise BrowserSessionLost(
+                            "Edge-Verbindung waehrend der SSO-Anmeldung verloren."
+                        ) from exc
+                    # Login-Redirects koennen waehrend der Abfrage navigieren.
                     continue
-            time.sleep(0.7)
+            if time.monotonic() >= naechster_hinweis:
+                progress(
+                    "SSO: warte auf das sichtbare FIN-Suchfeld im Diagnosis Viewer. "
+                    "Falls die Seite bereits offen ist, ihren Ladezustand prüfen."
+                )
+                naechster_hinweis = time.monotonic() + 20
+            # Auch waehrend der Wartezeit ist der Abbruch unmittelbar wirksam.
+            if cancel.wait(0.7):
+                self._check_cancel(cancel)
         raise TimeoutError(
-            "SSO-/PING-ID-Anmeldung nicht rechtzeitig abgeschlossen. "
-            "Bitte Benutzer-ID, Passwort und die PING-ID-Freigabe in Edge prüfen."
+            "SSO-/PING-ID-Anmeldung nicht rechtzeitig abgeschlossen oder "
+            "FIN-Suchfeld im Diagnosis Viewer nicht sichtbar. "
+            "Bitte die Browserseite und die PING-ID-Freigabe prüfen."
         )
 
     def _wait_results(self, page, cancel: Event, fin: str):
@@ -607,18 +751,33 @@ class DiagnosisViewerDownloader:
                 # Playwright dispatches on('download') while its event loop runs.
                 page.wait_for_timeout(max(1, int(min(0.25, remaining) * 1000)))
         finally:
-            page.remove_listener("download", on_download)
-            page.remove_listener("dialog", on_dialog)
+            # Playwright kann beim Prozessabsturz bereits abgekoppelt sein.
+            # Aufraeumfehler duerfen die eigentliche Absturzursache nicht verdecken.
+            for event, callback in (
+                ("download", on_download), ("dialog", on_dialog),
+            ):
+                try:
+                    page.remove_listener(event, callback)
+                except Exception:
+                    pass
             if observer_installed:
                 self._stop_no_quicktest_watcher(page)
 
     def _one_fin(self, context, page, fin: str, progress: Progress, cancel: Event) -> tuple[FinDownloadResult, object]:
+        # Bereits vorhandene PDFs werden in den neuen Status uebernommen.
+        # Ein Edge-Absturz darf keine erfolgreichen Sitzungen ausblenden.
+        vorhanden = lokal_vorhandene_pdf(self.output_dir, fin)
+        letzter_abruf = read_last_attempt(self.output_dir, fin)
         result = FinDownloadResult(
             fin=fin, status="Abruf gestartet",
+            files=list(vorhanden.files) if vorhanden is not None else [],
+            # Bei erneutem Edge-Absturz schon vor der Ergebnistabelle darf
+            # der vorherige Zaehler 1/14 nicht verloren gehen.
+            available=letzter_abruf.available if letzter_abruf is not None else 0,
             last_attempt_at=datetime.now(timezone.utc).isoformat(),
         )
         folder = self.output_dir / fin
-        _write_manifest(folder, result)  # last download ATTEMPT, not only success
+        _write_manifest(folder, result)
         try:
             self._check_cancel(cancel)
             progress(f"{fin}: Diagnosis Viewer öffnen …")
@@ -626,46 +785,74 @@ class DiagnosisViewerDownloader:
                 serielle_sso_anmeldung(status=progress, abbruch=cancel)
                 if self.serielle_sso else nullcontext()
             )
-            # Lock before navigation: page.goto can already start PING ID.
-            # Release immediately after authenticated page is confirmed.
             with anmeldung:
                 try:
                     self._pace(cancel)
-                    page.goto(search_url(fin, kurz_erlaubt=self.kurz_fin_erlaubt), wait_until="domcontentloaded", timeout=45000)
+                    page.goto(
+                        search_url(fin, kurz_erlaubt=self.kurz_fin_erlaubt),
+                        wait_until="domcontentloaded", timeout=45000,
+                    )
                 except DownloadCancelled:
                     raise
-                except Exception:
-                    # An interactive SSO redirect may exceed the navigation timeout.
-                    pass
+                except Exception as exc:
+                    if _browser_verloren(exc):
+                        raise BrowserSessionLost(
+                            "Edge-Verbindung beim Oeffnen des Diagnosis Viewers verloren."
+                        ) from exc
+                    # Eine legitime SSO-Weiterleitung kann die Navigation unterbrechen.
                 page = self._login(context, page, progress, cancel)
-            field = page.locator('input[name="finVin"]')
+            suchbereich = self._fin_suchbereich(page) or page
+            field = suchbereich.locator('input[name="finVin"]')
             self._pace(cancel)
             field.fill(fin)
-            # Required even when the FIN was already passed in the address.
-            search = page.get_by_role("button", name=re.compile(r"^(Search|Suchen)$", re.I))
+            search = suchbereich.get_by_role(
+                "button", name=re.compile(r"^(Search|Suchen)$", re.I),
+            )
             self._pace(cancel)
             search.click(timeout=15000)
             progress(f"{fin}: Ergebnisse werden geladen …")
-            self._pace(cancel)  # Give the asynchronous search time to refresh its table.
-            rows = self._wait_results(page, cancel, fin)
+            self._pace(cancel)
+            rows = self._wait_results(suchbereich, cancel, fin)
             result.available = len(rows)
+            _write_manifest(folder, result)
             if not rows:
                 result.status = "Keine Quicktests"
                 progress(f"{fin}: keine herunterladbaren Quicktests.")
                 return result, page
+            # Gleiche Zeitstempel und Quellen koennen vorkommen. Ohne eine
+            # eindeutige Sitzungsidentitaet nicht anhand des Dateinamens skippen.
+            doppelte = Counter((row.timestamp, row.source) for row in rows)
             for number, descriptor in enumerate(rows, 1):
                 self._check_cancel(cancel)
-                progress(f"{fin}: PDF {number}/{len(rows)} wird geladen …")
                 try:
-                    icon = page.locator("tbody tr").nth(descriptor.position).locator(
+                    key = (descriptor.timestamp, descriptor.source)
+                    vorhandene_pdf = (
+                        _vorhandene_sitzungs_pdf(folder, descriptor)
+                        if not self.retry_recent and doppelte[key] == 1
+                        else None
+                    )
+                    if vorhandene_pdf is not None:
+                        if vorhandene_pdf not in result.files:
+                            result.files.append(vorhandene_pdf)
+                        progress(
+                            f"{fin}: PDF {number}/{len(rows)} bereits lokal gespeichert – "
+                            "Sitzung übersprungen."
+                        )
+                        _write_manifest(folder, result)
+                        continue
+                    progress(f"{fin}: PDF {number}/{len(rows)} wird geladen …")
+                    icon = suchbereich.locator("tbody tr").nth(descriptor.position).locator(
                         "span.cursor-pointer:has(svg.lucide-file-down)"
                     )
                     downloaded = self._download_or_skip(page, icon.first, cancel)
-                    if downloaded.failure():
-                        raise RuntimeError(downloaded.failure())
+                    failure = downloaded.failure()
+                    if failure:
+                        raise RuntimeError(f"PDF-Download fehlgeschlagen: {failure}")
                     saved = _save_pdf(downloaded, folder, descriptor)
                     if saved not in result.files:
                         result.files.append(saved)
+                    # Checkpoint direkt nach jeder PDF, nicht erst nach der FIN.
+                    _write_manifest(folder, result)
                 except QuickTestDataUnavailable:
                     result.no_quicktest_sessions.append(
                         f"Sitzung {number} ({descriptor.timestamp})"
@@ -674,9 +861,14 @@ class DiagnosisViewerDownloader:
                         f"{fin}: Sitzung {number}/{len(rows)} – "
                         "keine QuickTest-Daten in S3, übersprungen."
                     )
-                except DownloadCancelled:
+                    _write_manifest(folder, result)
+                except (DownloadCancelled, BrowserSessionLost):
                     raise
-                except TimeoutError:
+                except TimeoutError as exc:
+                    if _browser_verloren(exc):
+                        raise BrowserSessionLost(
+                            "Edge-Verbindung beim QuickTest-Download verloren."
+                        ) from exc
                     result.errors.append(
                         f"Sitzung {number} ({descriptor.timestamp}): "
                         f"PDF-Timeout nach {self.pdf_timeout_seconds:g} Sekunden."
@@ -685,8 +877,17 @@ class DiagnosisViewerDownloader:
                         f"{fin}: Sitzung {number}/{len(rows)} – "
                         "PDF-Timeout, nächste Sitzung."
                     )
+                    _write_manifest(folder, result)
                 except Exception as exc:
-                    result.errors.append(f"Sitzung {number} ({descriptor.timestamp}): {exc}")
+                    if _browser_verloren(exc):
+                        raise BrowserSessionLost(
+                            f"PDF {number}/{len(rows)}: Edge-/Playwright-Verbindung verloren "
+                            f"({type(exc).__name__})."
+                        ) from exc
+                    result.errors.append(
+                        f"Sitzung {number} ({descriptor.timestamp}): {exc}"
+                    )
+                    _write_manifest(folder, result)
             result.status = (
                 "Erfolgreich" if result.files and not result.errors
                 else "Teilweise erfolgreich" if result.files
@@ -702,8 +903,13 @@ class DiagnosisViewerDownloader:
         except (DownloadCancelled, InterruptedError):
             result.status = "Abgebrochen"
             return result, page
+        except BrowserSessionLost as exc:
+            result.status = "Browser-Verbindung verloren"
+            result.errors.append(str(exc))
+            progress(f"{fin}: Edge-Verbindung verloren; weitere Sitzungen nicht angeklickt.")
+            return result, page
         except Exception as exc:
-            result.status = "Fehler"
+            result.status = "Browser-Verbindung verloren" if _browser_verloren(exc) else "Fehler"
             result.errors.append(str(exc))
             return result, page
         finally:
@@ -716,7 +922,7 @@ class DiagnosisViewerDownloader:
         progress: Progress | None = None,
         cancel: Event | None = None,
     ) -> list[FinDownloadResult]:
-        """CLI ueberspringt nur vorhandene PDFs; GUI kann 24-h-Policy behalten."""
+        """CLI-Resume pro PDF-Sitzung; GUI behaelt die 24-h-Sperre."""
         validated = parse_fins("\n".join(fins), kurz_erlaubt=self.kurz_fin_erlaubt)
         progress = progress or (lambda message: None)
         cancel = cancel or Event()
@@ -727,7 +933,7 @@ class DiagnosisViewerDownloader:
             if self.retry_recent:
                 previous = None
             elif self.nur_fehlende_pdfs:
-                previous = lokal_vorhandene_pdf(self.output_dir, fin)
+                previous = _quicktest_fin_vollstaendig(self.output_dir, fin)
             else:
                 previous = recently_attempted(self.output_dir, fin)
             if previous is None:
@@ -735,12 +941,12 @@ class DiagnosisViewerDownloader:
             else:
                 results_by_fin[fin] = previous
                 if self.nur_fehlende_pdfs:
-                    progress(f"{fin}: PDF im FIN-Ordner vorhanden – uebersprungen.")
+                    progress(f"{fin}: PDF im FIN-Ordner vorhanden und Abrufstand vollstaendig – uebersprungen.")
                 else:
                     progress(f"{fin}: letzter Abruf < 24 Stunden – übersprungen.")
         if not pending:
             progress(
-                "Alle FINs besitzen bereits PDFs im Ausgabeordner."
+                "Alle FINs sind laut lokalem Abrufstand bereits vollstaendig."
                 if self.nur_fehlende_pdfs
                 else "Alle FINs wurden innerhalb der letzten 24 Stunden bereits abgerufen."
             )
@@ -751,34 +957,84 @@ class DiagnosisViewerDownloader:
         except ImportError as exc:
             raise RuntimeError("Playwright fehlt. Bitte die App mit Browser-Unterstützung installieren.") from exc
         with sync_playwright() as playwright:
-            try:
-                context = playwright.chromium.launch_persistent_context(
-                    user_data_dir=str(self.profile_dir),
-                    channel="msedge",
-                    headless=False,
-                    accept_downloads=True,
-                    no_viewport=True,
-                )
-            except Exception as exc:
-                raise RuntimeError(
-                    "Microsoft Edge konnte nicht gestartet werden. "
-                    "Edge muss installiert sein und das NTF-Browserprofil darf nicht von "
-                    "einem zweiten Programm verwendet werden. " + str(exc)
-                ) from exc
+            def starte_edge():
+                try:
+                    return playwright.chromium.launch_persistent_context(
+                        user_data_dir=str(self.profile_dir),
+                        channel="msedge",
+                        headless=False,
+                        accept_downloads=True,
+                        no_viewport=True,
+                    )
+                except Exception as exc:
+                    raise RuntimeError(
+                        "Microsoft Edge konnte nicht gestartet werden. "
+                        "Edge muss installiert sein und das NTF-Browserprofil darf "
+                        "nicht von einem zweiten Programm verwendet werden. "
+                        + str(exc)
+                    ) from exc
+
+            context = starte_edge()
+            neustarts = 0
             try:
                 page = context.pages[0] if context.pages else context.new_page()
                 for fin in pending:
                     if cancel.is_set():
                         break
-                    result, page = self._one_fin(context, page, fin, progress, cancel)
+                    while True:
+                        result, page = self._one_fin(
+                            context, page, fin, progress, cancel,
+                        )
+                        if (
+                            result.status != "Browser-Verbindung verloren"
+                            or neustarts >= 1 or cancel.is_set()
+                        ):
+                            break
+                        # Nur ein automatischer Neustart je Lauf. Bei erneutem
+                        # Absturz NICHT 13 weitere Sitzungen anklicken.
+                        neustarts += 1
+                        progress(
+                            f"{fin}: Edge-Verbindung verloren. Einmaliger "
+                            "Browserneustart; bereits gespeicherte PDFs bleiben erhalten. "
+                            "PING ID ggf. erneut bestaetigen."
+                        )
+                        try:
+                            context.close()
+                        except Exception:
+                            pass
+                        try:
+                            time.sleep(1)
+                            context = starte_edge()
+                            page = context.pages[0] if context.pages else context.new_page()
+                        except Exception as exc:
+                            result.status = "Fehler"
+                            result.errors.append(
+                                f"Automatischer Edge-Neustart fehlgeschlagen: {exc}"
+                            )
+                            _write_manifest(self.output_dir / fin, result)
+                            progress(
+                                f"{fin}: Edge-Neustart fehlgeschlagen. "
+                                "Abrufstand gespeichert; spaeter fortsetzen."
+                            )
+                            break
                     results_by_fin[fin] = result
                     progress(
                         f"FIN-Fortschritt: {len(results_by_fin)}/{len(validated)} "
                         f"bearbeitet · zuletzt {fin}: {result.status}"
                     )
-                    if result.status == "Abgebrochen":
+                    if result.status in (
+                        "Abgebrochen", "Browser-Verbindung verloren",
+                    ):
+                        break
+                    if (
+                        result.status == "Fehler"
+                        and any("Edge-Neustart fehlgeschlagen" in e for e in result.errors)
+                    ):
                         break
             finally:
-                context.close()
-                self.password = ""  # Best effort: no credential retained between runs.
+                try:
+                    context.close()
+                except Exception:
+                    pass
+                self.password = ""
         return [results_by_fin[fin] for fin in validated if fin in results_by_fin]
