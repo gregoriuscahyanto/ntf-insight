@@ -321,9 +321,14 @@ class ScraperFenster(QWidget):
         self._prozesse[quelle] = prozess
         self._prozess = prozess
         self.quellen_status[quelle].setText("Startet · FIN-Fortschritt wird ermittelt")
+        qec_infos = (
+            f" · Benennung: {self._qec_benennung or 'Kühlmittelpumpe (Standard)'}"
+            f" · Anhänge: {optionen.get('anhaenge', 'referenz')}"
+            if quelle == "qec" else ""
+        )
         self.status_label.setText(
-            f"{QUELLEN_NAMEN[quelle]} läuft · {len(self._prozesse)}/"
-            f"{self.parallel_spin.value()} Quellen aktiv · "
+            f"{QUELLEN_NAMEN[quelle]}{qec_infos} läuft · "
+            f"{len(self._prozesse)}/{self.parallel_spin.value()} Quellen aktiv · "
             f"SSO-Abstand {self.sso_pause_spin.value()}s"
         )
         self._buttons_aktualisieren()
@@ -365,12 +370,13 @@ class ScraperFenster(QWidget):
             if not zeile:
                 continue
             # Einheitliches FIN-Format aus allen Quell-CLIs.
-            match = re.search(r"\bFIN(?:-Fortschritt)?\s*:?\s*(\d+)/(\d+)\b",
+            match = re.search(r"\b(?:FIN(?:-Fortschritt)?|Ziel)\s*:?\s*(\d+)/(\d+)\b",
                               zeile, flags=re.I)
             if match is None:
                 match = re.search(r"\[(\d+)/(\d+)\s+FIN\]", zeile)
             if lauf is not None and match is not None:
-                lauf["fortschritt"] = f"FIN {match.group(1)}/{match.group(2)} · "
+                einheit = "Ziel" if re.search(r"\bZiel\s+\d+/", zeile, re.I) else "FIN"
+                lauf["fortschritt"] = f"{einheit} {match.group(1)}/{match.group(2)} · "
             nachricht = self._zeile_bereinigen(zeile)
             if lauf is not None and not lauf["abbruch"]:
                 self.quellen_status[quelle].setText(
