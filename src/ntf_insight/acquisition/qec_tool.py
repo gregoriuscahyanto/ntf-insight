@@ -1526,7 +1526,7 @@ class QecDownloader:
             fertig = self._fertiges_ziel(target)
             if fertig is not None:
                 results_by_index[index] = fertig
-                progress(f"FIN {index}/{gesamt} bereits erledigt (Resume).")
+                progress(f"FIN {len(results_by_index)}/{gesamt} bereits erledigt (Resume).")
             else:
                 pending.append((index, target))
         if not pending:
@@ -1547,11 +1547,11 @@ class QecDownloader:
                 for index, target in pending:
                     if cancel.is_set():
                         break
-                    progress(f"FIN {index}/{gesamt} wird bearbeitet ...")
+                    progress(f"FIN {len(results_by_index) + 1}/{gesamt} wird bearbeitet ...")
                     result, page = self._one_target(context, page, target, progress, cancel)
                     results_by_index[index] = result
                     results.append(result)
-                    progress(f"FIN {index}/{gesamt} bearbeitet · Status: {result.status}.")
+                    progress(f"FIN {len(results_by_index)}/{gesamt} bearbeitet · Status: {result.status}.")
                     if result.status == "Abgebrochen":
                         break
             finally:
