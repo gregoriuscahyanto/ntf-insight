@@ -171,8 +171,21 @@ jobs:
           python -m pytest -q --maxfail=1 --tb=short tests/test_quicktest_json_cli.py tests/test_diagnosis_viewer_quicktests_cli.py tests/test_acquisition_batch_cli.py tests/test_diagnosis_viewer_downloader.py tests/test_quicktest_structure_v3.py tests/test_failed_quicktest_retry.py tests/test_quicktest_download_gui.py
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
+      # PR #89: QEC-Anhang-Timeouts, nachgeladene Popup-Frames und Live-GUI-Status.
+      # Wie andere fokussierte Gates: keine bekannte native Qt-Vollsuite-Blockade.
+      - name: Run focused QEC attachment and scraper GUI gate for PR #89
+        if: ${{ github.event_name == 'pull_request' && github.event.pull_request.number == 89 }}
+        shell: pwsh
+        run: |
+          python -m compileall -q src tests/test_qec_tool_downloader.py tests/test_scraper_gui.py
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python -m ruff check src tests ci
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python -m pytest -q --maxfail=1 --tb=short tests/test_qec_tool_downloader.py tests/test_qec_attachment_reference.py tests/test_qec_kurzfin.py tests/test_scraper_gui.py tests/test_scraper_optionen.py
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
       - name: Run full portable quality gate
-        if: ${{ github.event_name != 'pull_request' || (github.event.pull_request.number != 72 && github.event.pull_request.number != 73 && github.event.pull_request.number != 74 && github.event.pull_request.number != 75 && github.event.pull_request.number != 76 && github.event.pull_request.number != 77 && github.event.pull_request.number != 78 && github.event.pull_request.number != 79 && github.event.pull_request.number != 80 && github.event.pull_request.number != 82) }}
+        if: ${{ github.event_name != 'pull_request' || (github.event.pull_request.number != 72 && github.event.pull_request.number != 73 && github.event.pull_request.number != 74 && github.event.pull_request.number != 75 && github.event.pull_request.number != 76 && github.event.pull_request.number != 77 && github.event.pull_request.number != 78 && github.event.pull_request.number != 79 && github.event.pull_request.number != 80 && github.event.pull_request.number != 82 && github.event.pull_request.number != 89) }}
         run: python ci/quality_gate.py
 
       - name: Build wheel
