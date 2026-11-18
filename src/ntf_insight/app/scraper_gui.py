@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import sys
 from pathlib import Path
+from typing import Any, Mapping
 
 from PySide6.QtCore import QProcess, QProcessEnvironment, Qt
 from PySide6.QtGui import QCloseEvent, QFont
@@ -12,7 +13,6 @@ from PySide6.QtWidgets import (
     QApplication,
     QFileDialog,
     QGridLayout,
-    QInputDialog,
     QLabel,
     QMessageBox,
     QPushButton,
@@ -24,6 +24,8 @@ from ntf_insight.acquisition.beschaffung_cli import _befehl
 from ntf_insight.acquisition.output_paths import ausgabe_in_gruppe, sicherer_listenname
 from ntf_insight.app.fonts import resolve_fonts
 from ntf_insight.app.settings import AppPaths
+from ntf_insight.app.scraper_optionen import DATEI_AUSGABEN, extra_argumente
+from ntf_insight.app.dialogs.scraper_optionen_dialog import ScraperOptionenDialog
 
 
 # Feste CLI-Kennungen: keine freie Shell- oder Kommandoeingabe durch die GUI.
@@ -40,6 +42,7 @@ QUELLEN_NAMEN = dict(QUELLEN)
 
 def abruf_befehl(
     quelle: str, eingabe: Path, *, qec_benennung: str = "",
+    optionen: Mapping[str, Any] | None = None,
 ) -> tuple[list[str], Path]:
     """Direktaufruf der bestehenden Einzel-CLI, ohne Shell oder zweiten Wrapper-Prozess.
 
@@ -53,21 +56,28 @@ def abruf_befehl(
     if quelle != "qec" and qec_benennung.strip():
         raise ValueError("Ein Benennungsfilter ist nur bei QEC möglich.")
 
-    # Nur QEC erhält den optionalen Textfilter. Ohne ihn gilt wie bisher
-    # die Kühlmittelpumpen-Auswahl des QEC-Downloaders.
-    benennung = None
-    if quelle == "qec" and qec_benennung.strip():
-        from ntf_insight.acquisition.qec_tool import pruefe_benennung
-
-        benennung = pruefe_benennung(qec_benennung.strip())
+    werte = dict(optionen or {})
+    if qec_benennung.strip():
+        if "benennung" in werte and werte["benennung"] != qec_benennung.strip():
+            raise ValueError("QEC-Benennung wurde widersprüchlich angegeben.")
+        werte["benennung"] = qec_benennung.strip()
+    zusatz, eigener_ausgabeort = extra_argumente(quelle, werte)
     basis = AppPaths.default().data_dir / "abrufe" / sicherer_listenname(eingabe)
-    ziel = ausgabe_in_gruppe(basis, quelle)
-    befehl = _befehl(quelle, eingabe, ziel, manuell=False, benennung=benennung)
+    ziel = eigener_ausgabeort or ausgabe_in_gruppe(basis, quelle)
+    if ziel == eingabe:
+        raise ValueError("Eingabe- und Ausgabedatei dürfen nicht identisch sein.")
+    if werte.get("profil"):
+        profil = Path(str(werte["profil"])).expanduser().resolve()
+        zielordner = ziel.parent if quelle in DATEI_AUSGABEN else ziel
+        if profil == zielordner or profil in zielordner.parents or zielordner in profil.parents:
+            raise ValueError("Edge-Profil und Ausgabeordner müssen getrennt sein.")
+    befehl = _befehl(quelle, eingabe, ziel, manuell=False)
+    befehl.extend(zusatz)
     # Mit pythonw.exe gestartete Wheel-GUIs benoetigen fuer CLI-Stdout python.exe.
     python = Path(befehl[0])
     if os.name == "nt" and python.name.casefold() == "pythonw.exe":
         befehl[0] = str(python.with_name("python.exe"))
-    return befehl, basis
+    return befehl, eigener_ausgabeort or basis
 
 
 class ScraperFenster(QWidget):
@@ -85,7 +95,9 @@ class ScraperFenster(QWidget):
         self._ausgabeordner: Path | None = None
         self._prozessausgabe = ""
         self._abbruch = False
-        self._qec_benennung = ""  # Letzte Auswahl nur im aktuellen GUI-Fenster merken.
+        self._qec_benennung = ""  # Kompatibler Kurzstatus für den QEC-Suchbegriff.
+        self._optionen_je_quelle: dict[str, dict[str, Any]] = {}
+        self._aktive_optionen: dict[str, Any] = {}
 
         self.setStyleSheet("""
             QWidget#ScraperFenster { background: #f5f5f5; color: #171717; }
@@ -185,29 +197,24 @@ class ScraperFenster(QWidget):
         if self._datei is None:
             QMessageBox.information(self, "TXT-Datei fehlt", "Bitte zuerst eine TXT-Datei wählen.")
             return
-        qec_benennung = ""
-        if quelle == "qec":
-            qec_benennung, bestaetigt = QInputDialog.getText(
-                self,
-                "QEC · Suchbegriff festlegen",
-                "Benennung der QEC-Schadteile filtern:\n"
-                "z. B. DCDC, DCDC223 oder DCDC,DC/DC\n"
-                "Leer lassen = Standardfilter Kühlmittelpumpe",
-                text=self._qec_benennung,
-            )
-            if not bestaetigt:
-                return
-            qec_benennung = qec_benennung.strip()
+        dialog = ScraperOptionenDialog(
+            quelle, QUELLEN_NAMEN[quelle], self._optionen_je_quelle.get(quelle), self,
+        )
+        if not dialog.exec():
+            return
+        optionen = dialog.werte()
         try:
             befehl, basis = abruf_befehl(
-                quelle, self._datei, qec_benennung=qec_benennung,
+                quelle, self._datei, optionen=optionen,
             )
         except (OSError, ValueError) as exc:
             QMessageBox.warning(self, "Abruf nicht möglich", str(exc))
             return
 
+        self._optionen_je_quelle[quelle] = optionen
+        self._aktive_optionen = optionen
         if quelle == "qec":
-            self._qec_benennung = qec_benennung
+            self._qec_benennung = str(optionen.get("benennung", ""))
         self._aktive_quelle = quelle
         self._ausgabeordner = basis
         self._prozessausgabe = ""
@@ -227,6 +234,7 @@ class ScraperFenster(QWidget):
         self._buttons_aktualisieren(laeuft=True)
         suchfilter = (
             f" · Benennung: {self._qec_benennung or 'Kühlmittelpumpe (Standard)'}"
+            f" · Anhänge: {optionen.get('anhaenge', 'referenz')}"
             if quelle == "qec" else ""
         )
         self.status_label.setText(
