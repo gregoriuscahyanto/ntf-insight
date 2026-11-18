@@ -221,9 +221,18 @@ def _playwright_simulieren(monkeypatch):
 
         def __init__(self):
             self.closed = False
+            self.handlers = {}
+
+        def on(self, event, callback):
+            self.handlers[event] = callback
+
+        def trigger_close(self):
+            if "close" in self.handlers:
+                self.handlers["close"]()
 
         def close(self):
             self.closed = True
+            self.trigger_close()
 
     def launch_persistent_context(**_kwargs):
         ctx = Context()
@@ -361,3 +370,53 @@ def test_nach_browserabsturz_bleibt_bisheriger_sitzungszaehler_erhalten(
     assert status["verfuegbare_sitzungen"] == 14
     assert status["pdf_dateien"] == [pdf.name]
     assert _quicktest_fin_vollstaendig(tmp_path / "pdfs", FIN) is None
+
+
+
+def test_ueberraschendes_context_close_zeigt_letzte_pdf_phase(
+    tmp_path, monkeypatch,
+):
+    """CLI zeigt einen echten Kontextverlust, aber keine sensitiven Daten."""
+    contexts = _playwright_simulieren(monkeypatch)
+    downloader = DiagnosisViewerDownloader(
+        tmp_path / "pdfs", tmp_path / "edge",
+        nur_fehlende_pdfs=True,
+    )
+    fortschritt = []
+
+    def abgestuerzt(context, page, fin, progress, cancel):
+        context._ntf_phase = "PDF-Speichern"
+        context.trigger_close()
+        return FinDownloadResult(
+            fin=fin, status="Browser-Verbindung verloren",
+            errors=["synthetischer Kontextverlust"],
+        ), page
+
+    monkeypatch.setattr(downloader, "_one_fin", abgestuerzt)
+    result = downloader.run([FIN], progress=fortschritt.append)
+    assert result[0].status == "Browser-Verbindung verloren"
+    assert len(contexts) == 2  # bestehender einmaliger Wiederanlauf
+    schliessungen = [
+        x for x in fortschritt if "Edge-Kontext unerwartet beendet" in x
+    ]
+    assert len(schliessungen) == 2
+    assert all("PDF-Speichern" in x for x in schliessungen)
+    assert all("ntf-insight-edge-probe" not in x for x in schliessungen)
+    assert all(ctx.closed for ctx in contexts)
+
+
+def test_normales_context_close_nach_erfolgreicher_fin_erzeugt_keine_absturzmeldung(
+    tmp_path, monkeypatch,
+):
+    contexts = _playwright_simulieren(monkeypatch)
+    downloader = DiagnosisViewerDownloader(
+        tmp_path / "pdfs", tmp_path / "edge", nur_fehlende_pdfs=True,
+    )
+    monkeypatch.setattr(downloader, "_one_fin", lambda context, page, fin, progress, cancel: (
+        FinDownloadResult(fin=fin, status="Keine Quicktests"), page,
+    ))
+    fortschritt = []
+    result = downloader.run([FIN], progress=fortschritt.append)
+    assert result[0].status == "Keine Quicktests"
+    assert len(contexts) == 1 and contexts[0].closed
+    assert not any("unerwartet beendet" in x for x in fortschritt)
