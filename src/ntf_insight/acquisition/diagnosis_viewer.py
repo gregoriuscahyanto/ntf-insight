@@ -778,7 +778,7 @@ class DiagnosisViewerDownloader:
             if erste_popup_zeit is None:
                 erste_popup_zeit = time.monotonic()
             melden(
-                "QuickTest: PDF-Fenster erkannt; warte auf Download "
+                "QuickTest: Neues PDF-Fenster erkannt; warte auf Download "
                 "oder pruefe die PDF-Netzwerkantwort."
             )
             try:
@@ -862,7 +862,7 @@ class DiagnosisViewerDownloader:
                     if context is not None and _browser_verbunden(context):
                         raise ViewerTabClosed(
                             "Diagnosis-Viewer-Tab beim PDF-Klick geschlossen; "
-                            "Edge-Kontext nicht als geschlossen gemeldet."
+                            "Edge noch verbunden."
                         ) from exc
                     raise BrowserSessionLost(
                         "Edge-/Playwright-Kontext beim PDF-Klick beendet."
@@ -896,7 +896,7 @@ class DiagnosisViewerDownloader:
                         return gerettet
                     if popup_pages:
                         raise QuickTestPopupOhneDownload(
-                            "PDF-Vorschaufenster erkannt, aber weder Download "
+                            "PDF-Vorschaufenster erkannt, aber kein Download gestartet "
                             "noch gueltige PDF-Netzwerkantwort erhalten. "
                             "Edge-Einstellung 'PDF-Dateien immer herunterladen' "
                             "und Unternehmensrichtlinie pruefen."
