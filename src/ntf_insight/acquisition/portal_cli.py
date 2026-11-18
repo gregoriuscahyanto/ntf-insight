@@ -223,6 +223,8 @@ def tips_main(argv: list[str] | None = None) -> int:
         "XENTRY TIPS Writer: 17-stellige FINs oder numerische TIPS-Fallnummern "
         "(4-16 Ziffern) aus einer TXT laden; auch gemischte Listen."
     )
+    parser.add_argument("--erneut", action="store_true",
+                        help="Bereits vollstaendig gespeicherte TIPS-Faelle erneut abrufen")
     for option in parser._actions:
         if option.dest == "eingabe":
             option.help = (
@@ -245,7 +247,7 @@ def tips_main(argv: list[str] | None = None) -> int:
         )
         downloader = TipsWriterDownloader(
             ausgabe, profil,
-            serielle_sso=True,
+            serielle_sso=True, resume=not args.erneut,
             login_timeout_seconds=args.anmelde_timeout,
             user_id=login.user_id if login else "",
             password=login.password if login else "",
