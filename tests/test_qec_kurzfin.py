@@ -107,16 +107,119 @@ def test_qec_kurzfin_ambiguitaet_stoppt_vor_fallabruf(tmp_path):
     assert not result.snapshots and not result.files
 
 
-def test_qec_kurzfin_status_referenziert_bestaetigte_vollfin(tmp_path):
+def test_qec_kurzfin_status_nur_im_bestaetigten_vollvin_ordner(tmp_path):
     report = tmp_path / FULL / "ref_10001" / "qec.json"
     report.parent.mkdir(parents=True)
     report.write_text("{}", encoding="utf-8")
-    result = QecResult(SHORT, status="Erfolgreich", snapshots=[report])
+    result = QecResult(FULL, status="Erfolgreich", snapshots=[report], such_fin=SHORT)
+    _write_result(tmp_path / FULL, result)
+    status = json.loads(
+        (tmp_path / FULL / "abrufstatus.json").read_text(encoding="utf-8")
+    )
+    assert status["fin"] == FULL
+    assert status["such_fin"] == SHORT
+    assert status["bestaetigte_voll_fins"] == [FULL]
+    assert status["seiten"] == ["ref_10001/qec.json"]
+    assert status["pfade_relativ_zu"] == "fin_ordner"
+    assert not (tmp_path / SHORT).exists()
+
+
+def test_kurzfin_ohne_eindeutige_vollvin_schreibt_nur_suchstatus(tmp_path):
+    result = QecResult(SHORT, status="Keine passenden Schadteile", such_fin=SHORT)
     _write_result(tmp_path / SHORT, result)
     status = json.loads(
-        (tmp_path / SHORT / "abrufstatus.json").read_text(encoding="utf-8")
+        (tmp_path / f"qec_suchstatus_{SHORT}.json").read_text(encoding="utf-8")
     )
     assert status["fin"] == SHORT
-    assert status["bestaetigte_voll_fins"] == [FULL]
-    assert status["seiten"] == [f"{FULL}/ref_10001/qec.json"]
-    assert status["pfade_relativ_zu"] == "qec_basisordner"
+    assert status["such_fin"] == SHORT
+    assert status["bestaetigte_voll_fins"] == []
+    assert not (tmp_path / SHORT).exists()
+
+
+def test_kurzfin_suche_legt_bei_eindeutigem_treffer_nur_vollfin_ordner_an(tmp_path):
+    doc = _document(_row(FULL, "10001", "1001"))
+    target = QecTarget(SHORT)
+    evidence = inspect_search_results(doc, target, pump_only=False)
+    downloader = QecDownloader(
+        tmp_path, tmp_path / "profil", benennung="DCDC", click_delay_seconds=0,
+    )
+    page = object()
+    downloader._search = lambda *_args: (page, page, doc, evidence)
+
+    def speichere_fall(_ctx, current, _target, hit, result, _progress,
+                       _cancel, search_result=None):
+        assert hit.fin == FULL
+        assert search_result is not None
+        path = tmp_path / hit.fin / f"ref_{hit.reference}" / "qec.json"
+        path.parent.mkdir(parents=True)
+        path.write_text(json.dumps({"fin": hit.fin, "referenznummer": hit.reference}),
+                        encoding="utf-8")
+        result.references.append(hit.reference)
+        result.snapshots.append(path)
+        return current
+
+    downloader._one_hit = speichere_fall
+    result, _ = downloader._one_target(
+        None, page, target, lambda _message: None, Event(),
+    )
+    assert result.status == "Erfolgreich"
+    assert result.fin == FULL
+    assert result.such_fin == SHORT
+    assert not (tmp_path / SHORT).exists()
+    assert (tmp_path / FULL / "abrufstatus.json").is_file()
+    assert sorted(p.name for p in tmp_path.iterdir() if p.is_dir()) == [FULL]
+
+
+def test_kurzfin_ohne_treffer_legt_keinen_fahrzeugordner_an(tmp_path):
+    doc = _document(total=0)
+    target = QecTarget(SHORT)
+    evidence = inspect_search_results(doc, target, pump_only=False)
+    downloader = QecDownloader(tmp_path, tmp_path / "profil")
+    page = object()
+    downloader._search = lambda *_args: (page, page, doc, evidence)
+    result, _ = downloader._one_target(
+        None, page, target, lambda _message: None, Event(),
+    )
+    assert result.status == "Keine passenden Schadteile"
+    assert result.fin == SHORT
+    assert (tmp_path / f"qec_suchstatus_{SHORT}.json").is_file()
+    assert not (tmp_path / SHORT).exists()
+    assert not (tmp_path / FULL).exists()
+
+
+def test_kurzfin_mehrdeutig_wird_niemals_automatisch_vollvin(tmp_path):
+    doc = _document(
+        _row(FULL, "10001", "1001"),
+        _row(OTHER_WMI, "10002", "1002"),
+    )
+    target = QecTarget(SHORT)
+    evidence = inspect_search_results(doc, target, pump_only=False)
+    downloader = QecDownloader(tmp_path, tmp_path / "profil")
+    page = object()
+    downloader._search = lambda *_args: (page, page, doc, evidence)
+    result, _ = downloader._one_target(
+        None, page, target, lambda _message: None, Event(),
+    )
+    assert result.status == "Ergebnispruefung erforderlich"
+    assert result.fin == SHORT
+    assert (tmp_path / f"qec_suchstatus_{SHORT}.json").is_file()
+    assert not (tmp_path / SHORT).exists()
+    assert not (tmp_path / FULL).exists()
+    assert not (tmp_path / OTHER_WMI).exists()
+
+
+def test_kurzfin_mit_bestaetigter_vollvin_aber_ohne_pumpentreffer(tmp_path):
+    doc = _document(_row(FULL, "10001", "1001"))
+    target = QecTarget(SHORT)
+    evidence = inspect_search_results(doc, target, pump_only=True)
+    downloader = QecDownloader(tmp_path, tmp_path / "profil")  # Pumpenfilter
+    page = object()
+    downloader._search = lambda *_args: (page, page, doc, evidence)
+    result, _ = downloader._one_target(
+        None, page, target, lambda _message: None, Event(),
+    )
+    assert result.status == "Keine passenden Schadteile"
+    assert result.fin == FULL
+    assert (tmp_path / FULL / "abrufstatus.json").is_file()
+    assert not (tmp_path / SHORT).exists()
+
