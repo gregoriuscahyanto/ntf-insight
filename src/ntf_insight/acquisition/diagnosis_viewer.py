@@ -750,6 +750,7 @@ class DiagnosisViewerDownloader:
         notices: list[str] = []
         unexpected_dialog = [False]
         popup_pages: list[object] = []
+        popup_pdf_uebernommen = False
         versuchte_popup_urls: set[str] = set()
         erste_popup_zeit: float | None = None
         context = getattr(page, "context", None)
@@ -795,6 +796,7 @@ class DiagnosisViewerDownloader:
                 on_popup(candidate)
 
         def inline_pdf_uebernehmen():
+            nonlocal popup_pdf_uebernommen
             # 1. Tatsächlich gelieferte PDF-Antwort der gerade geklickten
             # Seite oder eines direkten Popup-Tabs bevorzugen.
             if pdf_antworten:
@@ -804,6 +806,7 @@ class DiagnosisViewerDownloader:
                         "QuickTest: PDF-Daten aus Browser-Netzwerkantwort "
                         "uebernommen; speichere Originaldatei."
                     )
+                    popup_pdf_uebernommen = True
                     return pdf
             # 2. Ausschliesslich den vom Klick bereits geoeffneten Popup-URL
             # mit der bestehenden SSO-Session laden. Externe Redirects,
@@ -824,6 +827,7 @@ class DiagnosisViewerDownloader:
                         "QuickTest: PDF aus bereits geoeffneter Viewer-Adresse "
                         "in angemeldeter Sitzung geladen."
                     )
+                    popup_pdf_uebernommen = True
                     return pdf
                 pdf = pdf_aus_popup_blob(page, popup_url, VIEWER_HOST)
                 if pdf is not None:
@@ -831,6 +835,7 @@ class DiagnosisViewerDownloader:
                         "QuickTest: Original-PDF aus Viewer-Vorschau "
                         "uebernommen."
                     )
+                    popup_pdf_uebernommen = True
                     return pdf
             return None
 
@@ -969,6 +974,16 @@ class DiagnosisViewerDownloader:
                     pass
             if observer_installed:
                 self._stop_no_quicktest_watcher(page)
+            if popup_pdf_uebernommen:
+                # Die Bytes sind bereits im Speicher, daher darf die
+                # Viewer-Vorschau geschlossen werden. Das verhindert
+                # 18 oder mehr offene PDF-Tabs pro Fahrzeug.
+                for popup in popup_pages:
+                    try:
+                        if not popup.is_closed():
+                            popup.close()
+                    except Exception:
+                        pass
 
     def _one_fin(self, context, page, fin: str, progress: Progress, cancel: Event) -> tuple[FinDownloadResult, object]:
         # Bereits vorhandene PDFs werden in den neuen Status uebernommen.
