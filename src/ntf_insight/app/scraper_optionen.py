@@ -150,7 +150,8 @@ def extra_argumente(quelle: str, optionen: Mapping[str, Any] | None = None) -> t
     pfade: dict[str, Path] = {}
     aktiv: set[str] = set()
     for spec in QUELLEN_OPTIONEN[quelle]:
-        value = werte.get(spec.name, spec.standard)
+        standard = False if spec.typ == "bool" else spec.standard
+        value = werte.get(spec.name, standard)
         if spec.typ == "bool":
             if type(value) is not bool:
                 raise ValueError(f"{spec.titel}: erwartet Ja oder Nein.")
