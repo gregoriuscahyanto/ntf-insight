@@ -936,7 +936,9 @@ class DiagnosisViewerDownloader:
                     icon = suchbereich.locator("tbody tr").nth(descriptor.position).locator(
                         "span.cursor-pointer:has(svg.lucide-file-down)"
                     )
-                    downloaded = self._download_or_skip(page, icon.first, cancel)
+                    downloaded = self._download_or_skip(
+                        page, icon.first, cancel, progress=progress,
+                    )
                     failure = downloaded.failure()
                     if failure:
                         raise RuntimeError(f"PDF-Download fehlgeschlagen: {failure}")
@@ -954,8 +956,16 @@ class DiagnosisViewerDownloader:
                         "keine QuickTest-Daten in S3, übersprungen."
                     )
                     _write_manifest(folder, result)
-                except (DownloadCancelled, BrowserSessionLost):
+                except (DownloadCancelled, BrowserSessionLost, ViewerTabClosed):
                     raise
+                except QuickTestPopupOhneDownload as exc:
+                    result.errors.append(f"PDF {number}/{len(rows)}: {exc}")
+                    result.status = "PDF-Fenster ohne Download"
+                    progress(
+                        f"{fin}: PDF {number}/{len(rows)}: Fenster ohne PDF-Download. "
+                        "FIN-Lauf unterbrochen; vorhandene PDFs bleiben erhalten."
+                    )
+                    return result, page
                 except TimeoutError as exc:
                     if _browser_verloren(exc):
                         raise BrowserSessionLost(
@@ -999,6 +1009,14 @@ class DiagnosisViewerDownloader:
             result.status = "Browser-Verbindung verloren"
             result.errors.append(str(exc))
             progress(f"{fin}: Edge-Verbindung verloren; weitere Sitzungen nicht angeklickt.")
+            return result, page
+        except ViewerTabClosed as exc:
+            result.status = "Viewer-Tab geschlossen"
+            result.errors.append(str(exc))
+            progress(
+                f"{fin}: Viewer-Tab geschlossen, aber Edge weiterhin verbunden. "
+                "Einmalige Tab-Wiederherstellung wird versucht."
+            )
             return result, page
         except Exception as exc:
             result.status = "Browser-Verbindung verloren" if _browser_verloren(exc) else "Fehler"
@@ -1081,13 +1099,23 @@ class DiagnosisViewerDownloader:
                             context, page, fin, progress, cancel,
                         )
                         if (
-                            result.status != "Browser-Verbindung verloren"
+                            result.status not in ("Browser-Verbindung verloren", "Viewer-Tab geschlossen")
                             or neustarts >= 1 or cancel.is_set()
                         ):
                             break
-                        # Nur ein automatischer Neustart je Lauf. Bei erneutem
-                        # Absturz NICHT 13 weitere Sitzungen anklicken.
+                        # Einmaliger Wiederanlauf, lokale Sitzungs-PDFs werden
+                        # ueber ihre Kennung weiterverwendet.
                         neustarts += 1
+                        if result.status == "Viewer-Tab geschlossen" and _browser_verbunden(context):
+                            progress(
+                                f"{fin}: Nur Viewer-Tab geschlossen; "
+                                "einmalig neues Tab oeffnen (kein Edge-Neustart)."
+                            )
+                            try:
+                                page = context.new_page()
+                                continue
+                            except Exception:
+                                pass
                         progress(
                             f"{fin}: Edge-Verbindung verloren. Einmaliger "
                             "Browserneustart; bereits gespeicherte PDFs bleiben erhalten. "
@@ -1119,6 +1147,7 @@ class DiagnosisViewerDownloader:
                     )
                     if result.status in (
                         "Abgebrochen", "Browser-Verbindung verloren",
+                        "Viewer-Tab geschlossen", "PDF-Fenster ohne Download",
                     ):
                         break
                     if (
