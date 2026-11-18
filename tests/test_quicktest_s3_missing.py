@@ -64,9 +64,12 @@ class FakePage:
         self.visible = stale_toast
         self.observed = False
         self.watching = False
-        self.handlers = {"download": [], "dialog": []}
+        self.handlers = {"download": [], "dialog": [], "popup": []}
         self.wait_count = 0
         self.dialog = None
+
+    def is_closed(self):
+        return False
 
     def on(self, event, callback):
         self.handlers[event].append(callback)
@@ -202,7 +205,7 @@ def test_one_fin_skips_s3_then_timeout_then_downloads_next_pdf(tmp_path, monkeyp
     ])
     attempted = []
 
-    def next_session(page, icon, cancel):
+    def next_session(page, icon, cancel, **_kwargs):
         attempted.append(len(attempted))
         if len(attempted) == 1:
             raise QuickTestDataUnavailable(NO_QUICKTEST_DATA_MESSAGE)
@@ -240,7 +243,7 @@ def test_one_fin_all_s3_missing_is_not_a_download_error(tmp_path, monkeypatch):
     monkeypatch.setattr(downloader, "_wait_results", lambda page, cancel, fin: [
         DownloadRow(0, "XD", "2026-10-13 11:00:00")
     ])
-    def missing(page, icon, cancel):
+    def missing(page, icon, cancel, **_kwargs):
         raise QuickTestDataUnavailable(NO_QUICKTEST_DATA_MESSAGE)
     monkeypatch.setattr(downloader, "_download_or_skip", missing)
     result, _ = downloader._one_fin(None, page, FIN, lambda message: None, Event())
