@@ -21,6 +21,12 @@ from threading import Event
 from typing import Callable
 from urllib.parse import quote, urlsplit
 
+from ntf_insight.acquisition.diagnosis_viewer_pdf import (
+    _beobachtete_pdf_antwort,
+    pdf_aus_browser_antworten,
+    pdf_aus_popup_blob,
+    pdf_aus_popup_url,
+)
 from ntf_insight.acquisition.fin_format import fin_passt_zu_anfrage, ist_gueltige_fin
 from ntf_insight.acquisition.sso_login_gate import serielle_sso_anmeldung
 
@@ -56,7 +62,11 @@ class QuickTestPopupOhneDownload(RuntimeError):
 def _browser_verbunden(context) -> bool:
     """Browser- statt Tab-Status pruefen, auch bei persistentem Edge-Profil."""
     try:
+        if getattr(context, "_ntf_context_geschlossen", False):
+            return False
         browser = getattr(context, "browser", None)
+        # Persistent Edge contexts besitzen haeufig kein Browser-Objekt.
+        # Ein registriertes close-Ereignis liefert hier den Zustand.
         return browser is None or bool(browser.is_connected())
     except Exception:
         return False
@@ -723,10 +733,12 @@ class DiagnosisViewerDownloader:
     def _download_or_skip(
         self, page, icon, cancel: Event, *, progress: Progress | None = None,
     ):
-        """PDF-Downloads im Viewer und in direkt erzeugten Popup-Tabs erkennen.
+        """PDF ueber Download-Event ODER beobachtete Inline-Netzwerkantwort sichern.
 
-        Nur vom geklickten Tab erzeugte neue Pages werden beobachtet;
-        bestehende SSO- und andere Diagnosetabs bleiben ausgeschlossen.
+        Der offizielle Edge-PDF-Viewer oeffnet eine Vorschau ohne
+        Playwright-Download. Vor dem Icon-Klick auf PDF-HTTP-Antworten lauschen,
+        damit auch die erste Antwort im Popup nicht verloren geht. Kein
+        direkter Request an unbekannte Hosts oder globale PDF-Downloads.
         """
         self._check_cancel(cancel)
         self._pace(cancel)
@@ -734,13 +746,22 @@ class DiagnosisViewerDownloader:
         initially_visible = self._no_quicktest_visible(page)
         observer_installed = self._watch_no_quicktest_message(page)
         downloads: list[object] = []
+        pdf_antworten: list[object] = []
         notices: list[str] = []
         unexpected_dialog = [False]
         popup_pages: list[object] = []
+        versuchte_popup_urls: set[str] = set()
+        erste_popup_zeit: float | None = None
         context = getattr(page, "context", None)
 
         def on_download(download) -> None:
             downloads.append(download)
+
+        def on_response(response) -> None:
+            # Noch NICHT response.body() im Eventhandler aufrufen:
+            # die Antwort kann gerade erst mit dem Streaming begonnen haben.
+            if _beobachtete_pdf_antwort(response) and len(pdf_antworten) < 8:
+                pdf_antworten.append(response)
 
         def on_dialog(dialog) -> None:
             if NO_QUICKTEST_DATA_MESSAGE.casefold() in dialog.message.casefold():
@@ -750,10 +771,16 @@ class DiagnosisViewerDownloader:
             dialog.dismiss()
 
         def on_popup(popup) -> None:
+            nonlocal erste_popup_zeit
             if popup in popup_pages:
                 return
             popup_pages.append(popup)
-            melden("QuickTest: Neues PDF-Fenster erkannt; Download wird dort beobachtet.")
+            if erste_popup_zeit is None:
+                erste_popup_zeit = time.monotonic()
+            melden(
+                "QuickTest: PDF-Fenster erkannt; warte auf Download "
+                "oder pruefe die PDF-Netzwerkantwort."
+            )
             try:
                 popup.on("download", on_download)
             except Exception:
@@ -767,19 +794,78 @@ class DiagnosisViewerDownloader:
             if opener is page:
                 on_popup(candidate)
 
+        def inline_pdf_uebernehmen():
+            # 1. Tatsächlich gelieferte PDF-Antwort der gerade geklickten
+            # Seite oder eines direkten Popup-Tabs bevorzugen.
+            if pdf_antworten:
+                pdf = pdf_aus_browser_antworten(pdf_antworten, page, popup_pages)
+                if pdf is not None:
+                    melden(
+                        "QuickTest: PDF-Daten aus Browser-Netzwerkantwort "
+                        "uebernommen; speichere Originaldatei."
+                    )
+                    return pdf
+            # 2. Ausschliesslich den vom Klick bereits geoeffneten Popup-URL
+            # mit der bestehenden SSO-Session laden. Externe Redirects,
+            # fremde Hosts und Login-HTML sind strikt ausgeschlossen.
+            for popup in popup_pages:
+                try:
+                    popup_url = popup.url
+                except Exception:
+                    continue
+                if not isinstance(popup_url, str) or not popup_url:
+                    continue
+                if popup_url in versuchte_popup_urls:
+                    continue
+                versuchte_popup_urls.add(popup_url)
+                pdf = pdf_aus_popup_url(context, popup_url, VIEWER_HOST)
+                if pdf is not None:
+                    melden(
+                        "QuickTest: PDF aus bereits geoeffneter Viewer-Adresse "
+                        "in angemeldeter Sitzung geladen."
+                    )
+                    return pdf
+                pdf = pdf_aus_popup_blob(page, popup_url, VIEWER_HOST)
+                if pdf is not None:
+                    melden(
+                        "QuickTest: Original-PDF aus Viewer-Vorschau "
+                        "uebernommen."
+                    )
+                    return pdf
+            return None
+
         page.on("download", on_download)
         page.on("dialog", on_dialog)
         page.on("popup", on_popup)
         if context is not None:
             context.on("page", on_context_page)
+            context.on("response", on_response)
         try:
             deadline = time.monotonic() + self.pdf_timeout_seconds
             try:
                 icon.click(timeout=min(15000, max(1, int(self.pdf_timeout_seconds * 1000))))
             except Exception as exc:
-                if _browser_verloren(exc) and context is not None and _browser_verbunden(context):
-                    raise ViewerTabClosed(
-                        "Diagnosis-Viewer-Tab beim PDF-Klick geschlossen; Edge noch verbunden."
+                # Beim Aufruf eines eingebetteten PDF-Viewers kann der Click
+                # durch eine Navigation/Tab-Schliessung abbrechen, obwohl die
+                # PDF-Antwort bereits geliefert wurde.
+                if downloads:
+                    return downloads[0]
+                if popup_pages or pdf_antworten:
+                    gerettet = inline_pdf_uebernehmen()
+                    if gerettet is not None:
+                        return gerettet
+                    melden(
+                        "QuickTest: PDF-Fenster geoeffnet, danach "
+                        "Browseraktion abgebrochen; keine gueltigen PDF-Bytes gefunden."
+                    )
+                if _browser_verloren(exc):
+                    if context is not None and _browser_verbunden(context):
+                        raise ViewerTabClosed(
+                            "Diagnosis-Viewer-Tab beim PDF-Klick geschlossen; "
+                            "Edge-Kontext nicht als geschlossen gemeldet."
+                        ) from exc
+                    raise BrowserSessionLost(
+                        "Edge-/Playwright-Kontext beim PDF-Klick beendet."
                     ) from exc
                 raise
             while True:
@@ -793,36 +879,66 @@ class DiagnosisViewerDownloader:
                 if not initially_visible and self._no_quicktest_visible(page):
                     raise QuickTestDataUnavailable(NO_QUICKTEST_DATA_MESSAGE)
                 if context is not None and not _browser_verbunden(context):
+                    # Nach unerwartetem Kontextende noch einen bereits
+                    # empfangenen PDF-Puffer versuchen (kein neuer Request).
+                    gerettet = pdf_aus_browser_antworten(
+                        pdf_antworten, page, popup_pages
+                    )
+                    if gerettet is not None:
+                        return gerettet
                     raise BrowserSessionLost(
                         "Die Edge-Verbindung ist waehrend des PDF-Downloads abgebrochen."
                     )
                 remaining = deadline - time.monotonic()
                 if remaining <= 0:
+                    gerettet = inline_pdf_uebernehmen()
+                    if gerettet is not None:
+                        return gerettet
                     if popup_pages:
                         raise QuickTestPopupOhneDownload(
-                            "Ein PDF-Fenster wurde geoeffnet, aber kein Download gestartet. "
-                            "Bitte Edge-Einstellung fuer das Herunterladen von PDFs pruefen."
+                            "PDF-Vorschaufenster erkannt, aber weder Download "
+                            "noch gueltige PDF-Netzwerkantwort erhalten. "
+                            "Edge-Einstellung 'PDF-Dateien immer herunterladen' "
+                            "und Unternehmensrichtlinie pruefen."
                         )
                     raise TimeoutError(
-                        f"Nach {self.pdf_timeout_seconds:g} Sekunden wurde kein "
-                        "PDF-Download gestartet."
+                        f"Nach {self.pdf_timeout_seconds:g} Sekunden wurde "
+                        "weder Download noch PDF-Netzwerkantwort erkannt."
                     )
+                # Bei PDF-Vorschauen erst kurz auf ein normales Download-Event
+                # warten, damit kein zweiter Request unnoetig ausgelöst wird.
+                popup_wartezeit = min(2.0, self.pdf_timeout_seconds / 3)
+                if (
+                    pdf_antworten or
+                    (erste_popup_zeit is not None
+                     and time.monotonic() - erste_popup_zeit >= popup_wartezeit)
+                ):
+                    gerettet = inline_pdf_uebernehmen()
+                    if gerettet is not None:
+                        return gerettet
                 try:
                     tick = page
                     if page.is_closed():
-                        tick = next((p for p in popup_pages if not p.is_closed()), None)
+                        tick = next(
+                            (p for p in popup_pages if not p.is_closed()), None
+                        )
                         if tick is None:
                             raise ViewerTabClosed(
-                                "Viewer-Tab geschlossen, kein aktives PDF-Fenster gefunden."
+                                "Diagnosis-Viewer-Tab geschlossen; "
+                                "kein aktives PDF-Fenster vorhanden."
                             )
-                    tick.wait_for_timeout(max(1, int(min(0.25, remaining) * 1000)))
+                    tick.wait_for_timeout(
+                        max(1, int(min(0.25, remaining) * 1000))
+                    )
                 except (ViewerTabClosed, BrowserSessionLost):
                     raise
                 except Exception as exc:
                     if _browser_verloren(exc):
+                        # Eine lokale Tab-Schliessung ist kein nachgewiesener
+                        # Verlust des gesamten Edge-Browsers.
                         if context is not None and _browser_verbunden(context):
                             raise ViewerTabClosed(
-                                "Viewer-Tab geschlossen; Edge ist weiterhin verbunden."
+                                "Diagnosis-Viewer-Tab beim PDF-Abruf geschlossen."
                             ) from exc
                         raise BrowserSessionLost(
                             "Edge-/Playwright-Verbindung beim PDF-Abruf verloren."
@@ -830,17 +946,21 @@ class DiagnosisViewerDownloader:
                     raise
         finally:
             for event, callback in (
-                ("download", on_download), ("dialog", on_dialog), ("popup", on_popup),
+                ("download", on_download), ("dialog", on_dialog),
+                ("popup", on_popup),
             ):
                 try:
                     page.remove_listener(event, callback)
                 except Exception:
                     pass
             if context is not None:
-                try:
-                    context.remove_listener("page", on_context_page)
-                except Exception:
-                    pass
+                for event, callback in (
+                    ("page", on_context_page), ("response", on_response),
+                ):
+                    try:
+                        context.remove_listener(event, callback)
+                    except Exception:
+                        pass
             for popup in popup_pages:
                 try:
                     popup.remove_listener("download", on_download)
@@ -1077,13 +1197,19 @@ class DiagnosisViewerDownloader:
         with sync_playwright() as playwright:
             def starte_edge():
                 try:
-                    return playwright.chromium.launch_persistent_context(
+                    context = playwright.chromium.launch_persistent_context(
                         user_data_dir=str(self.profile_dir),
                         channel="msedge",
                         headless=False,
                         accept_downloads=True,
                         no_viewport=True,
                     )
+                    context._ntf_context_geschlossen = False
+                    context.on(
+                        "close",
+                        lambda: setattr(context, "_ntf_context_geschlossen", True),
+                    )
+                    return context
                 except Exception as exc:
                     raise RuntimeError(
                         "Microsoft Edge konnte nicht gestartet werden. "
