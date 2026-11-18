@@ -40,7 +40,7 @@ erzeugt: Nur vorher definierte Flags werden als separate Prozessargumente überg
 | **QEC** | Benennungsfilter (`--benennung`), Sachnummer, `--alle-bauteile`, **Anhangmodus `referenz`/`alle`**, SSO-Timeout, eigener Profilordner, manueller Login, Ausgabeort |
 | **Diagnosis Viewer – QuickTests** | Erneut herunterladen, nur PDF (`--ohne-json`), SSO-Timeout, Profil, manueller Login, Ausgabeort |
 | **XENTRY TIPS Writer** | SSO-Timeout, Profil, manueller Login, Ausgabeort (Eingabe über den globalen TXT-Dialog) |
-| **Diagnosis Viewer – WEM** | Neue Sitzungen (`--aktualisieren`), erneut lesen, zusammenfassen, aufteilen, ohne Gesamt-JSON, nur Login, SSO-Tresor, Browser, vier Zeit-/Abstandsparameter, Profil, manueller Login, Ausgabeort |
+| **Diagnosis Viewer – WEM** | Neue Sitzungen (`--aktualisieren`), erneut lesen, zusammenfassen, aufteilen, ohne Gesamt-JSON, nur Login, SSO-Tresor, Browser, fünf Zeit-/Abstandsparameter, Profil, manueller Login, Ausgabeort |
 | **VeDoc – Fahrzeugcodes** | Erneut lesen, nur Login, Anmelde-/Ladezeit, Pause, Profil, manueller Login, Ausgabeort |
 | **VeDoc – Hardwarehistorie** | Objekt (z. B. `CPC3`), Attribut, nur Login, Browser, Schritt-/Login-/Historien-Timeout, alternative freigegebene URL, manueller Login, Ausgabeort |
 
