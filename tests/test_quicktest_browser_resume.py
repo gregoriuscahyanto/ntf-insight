@@ -137,7 +137,7 @@ def test_session_resume_verwendet_vorhandene_pdf_und_laedet_nur_fehlende(
     aufrufe = []
     monkeypatch.setattr(
         downloader, "_download_or_skip",
-        lambda page, icon, cancel: (aufrufe.append("download"), PdfDownload())[1],
+        lambda page, icon, cancel, **_kwargs: (aufrufe.append("download"), PdfDownload())[1],
     )
     meldungen = []
     result, _ = downloader._one_fin(
@@ -158,15 +158,20 @@ def test_verlorener_browser_stoppt_sofort_weitere_pdf_klicks(
     downloader, page = _one_fin_downloader(tmp_path, monkeypatch)
     klicks = []
 
-    def kaputt(page, icon, cancel):
+    def kaputt(page, icon, cancel, **_kwargs):
         klicks.append("PDF")
         raise RuntimeError(
             "Download.failure: Target page, context or browser has been closed"
         )
 
     monkeypatch.setattr(downloader, "_download_or_skip", kaputt)
+    # Der synthetische Kontext muss den tatsaechlich verlorenen Browser
+    # signalisieren, sonst ist 'Target closed' auch ein isolierter Tabverlust.
+    disconnected = SimpleNamespace(
+        browser=SimpleNamespace(is_connected=lambda: False),
+    )
     result, _ = downloader._one_fin(
-        SimpleNamespace(), page, FIN, lambda _m: None, Event(),
+        disconnected, page, FIN, lambda _m: None, Event(),
     )
     assert result.status == "Browser-Verbindung verloren"
     assert len(klicks) == 1

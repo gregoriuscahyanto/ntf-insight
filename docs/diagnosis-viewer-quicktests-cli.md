@@ -208,3 +208,46 @@ die GUI-Parallelität auf **1** stellen und prüfen, ob die Ursache
 danach noch auftritt. Keine internen PDFs, Cookies oder vollständigen
 FINs an GitHub oder CI übermitteln.
 
+
+## Inline-PDFs im Edge-Fenster (Download ohne Download-Event)
+
+Bei bestimmten Diagnosis-Viewer-Sitzungen oeffnet der PDF-Button einen neuen
+Edge-Tab mit der integrierten PDF-Vorschau. Ein solches Fenster bedeutet nicht,
+dass Playwright eine PDF-Datei heruntergeladen hat. Das kann erklaeren, warum
+ein Popup erkannt wird, aber PDF 1/N weiterhin fehlschlaegt.
+
+Der CLI-Downloader hat deshalb drei streng begrenzte Alternativen:
+
+1. **Normales Download-Ereignis:** unveraendert erste Wahl. Die Original-PDF
+   wird anhand ihres Dateikopfes geprueft und atomar gespeichert.
+2. **Beobachtete PDF-Netzwerkantwort:** Bereits beim Klick wird nur im aktuellen
+   Browserkontext auf PDF-Antworten gehoert. Eine Datei wird ausschliesslich
+   dem gerade angeklickten Viewer-Tab oder einem von ihm geoeffneten PDF-Tab
+   zugeordnet und nur mit nachgewiesenen PDF-Bytes uebernommen.
+3. **Bereits geoeffnete PDF-Vorschau:** Wenn kein Download-Ereignis erscheint,
+   kann die exakt im Popup geoeffnete HTTPS-Adresse einmalig nachgeladen
+   werden, sofern sie auf dem **gleichen verifizierten Diagnosis-Viewer-Host**
+   liegt. Auch ein vorhandenes Same-Origin-Blob kann lokal im Browser
+   ausgelesen werden. Andere Hosts, fremde Weiterleitungen, Skript-/Datei-
+   URLs und Login-HTML bleiben ausgeschlossen.
+
+Jede Variante durchlaeuft dieselbe Dateisignatur-, Groessen- und
+Sitzungs-Praefix-Pruefung. Es werden keine Cookies, Tokens oder
+Anhang-URLs in Logdateien geschrieben. Bereits gespeicherte QuickTests
+bleiben bei einem weiteren Resume erhalten.
+
+Die Meldung **PDF-Vorschaufenster erkannt, aber kein Download gestartet und
+keine gueltige PDF-Netzwerkantwort erhalten** bedeutet, dass selbst nach
+diesen Versuchen keine verifizierte Original-PDF vorlag. Dies ist
+**nicht automatisch ein SSO-Fehler** und darf niemals als erfolgreiche
+PDF-Speicherung markiert werden.
+
+In Edge im QuickTest-Scraper-Profil kann die Einstellung
+**PDF-Dateien immer herunterladen** unter
+edge://settings/content/pdfDocuments geprueft werden. Unternehmensrichtlinien
+gehen vor; die App aendert weder Browserrichtlinien noch den SSO-Status.
+Wenn auch mit aktivierter PDF-Download-Einstellung dieselbe erste Sitzung
+einen Tab- oder Prozessabsturz erzeugt, fuer eine Diagnose nur die
+**bereinigten Statusmeldungen und das Fehlerstadium** weitergeben,
+niemals vertrauliche PDF-Originale, Cookie-Werte, URLs mit Tokens oder FINs.
+
