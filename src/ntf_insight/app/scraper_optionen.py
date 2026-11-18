@@ -49,6 +49,8 @@ _COMMON = (MANUELL, AUSGABE)
 
 QUELLEN_OPTIONEN: dict[str, tuple[CliOption, ...]] = {
     "qec": (
+        CliOption("erneut", "QEC-FINs vollständig erneut durchsuchen", "bool",
+                  hilfe="Standard: abgeschlossene FINs mit identischem Filter fortsetzen."),
         CliOption("benennung", "Benennung enthält", "text",
                   hilfe="z. B. DCDC, DCDC223 oder DCDC,DC/DC (ODER). Leer = Pumpenfilter."),
         CliOption("sachnummer", "Exakte Sachnummer", "text",
@@ -66,7 +68,10 @@ QUELLEN_OPTIONEN: dict[str, tuple[CliOption, ...]] = {
                   hilfe="Auch ohne Suchbegriff andere Schadteile berücksichtigen."),
         LOGIN_TIMEOUT, PROFIL, *_COMMON,
     ),
-    "tips": (LOGIN_TIMEOUT, PROFIL, *_COMMON),
+    "tips": (
+        CliOption("erneut", "TIPS-FINs und Fälle erneut abrufen", "bool"),
+        LOGIN_TIMEOUT, PROFIL, *_COMMON,
+    ),
     "quicktests": (
         CliOption("erneut", "Vorhandene QuickTests erneut herunterladen", "bool"),
         CliOption("ohne-json", "Keine JSON-Konvertierung (nur PDF)", "bool"),
@@ -108,6 +113,7 @@ QUELLEN_OPTIONEN: dict[str, tuple[CliOption, ...]] = {
         PROFIL, *_COMMON,
     ),
     "dcdc223": (
+        CliOption("erneut", "Gespeicherte Hardwarehistorien erneut abfragen", "bool"),
         CliOption("objekt", "VeDoc-Objekt", "text", "DCDC223",
                   hilfe="Exakter Objektname, z. B. CPC3."),
         CliOption("attribut", "VeDoc-Attribut", "text", "Seriennummer",

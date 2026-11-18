@@ -542,6 +542,7 @@ def abrufen(args: argparse.Namespace) -> int:
     rest = [fin for fin in fins if fin not in ergebnisse]
     if not nur_login:
         print(f'{len(fins)} eindeutige FINs, davon {len(rest)} abzufragen.')
+        print(f'FIN {len(fins) - len(rest)}/{len(fins)} bereits erledigt (Resume).', flush=True)
         if not rest:
             persistieren()
             print(f'Alle FINs bereits vorhanden: {args.ausgabe}')
@@ -606,6 +607,7 @@ def abrufen(args: argparse.Namespace) -> int:
                     }
                 finally:
                     persistieren()  # Fortschritt nach *jeder* FIN sichern
+                    print(f'FIN {len(ergebnisse)}/{len(fins)} bearbeitet.', flush=True)
         finally:
             context.close()
 

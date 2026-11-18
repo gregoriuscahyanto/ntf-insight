@@ -651,6 +651,72 @@ def _schreibe_json(
     temporaer.replace(pfad)
 
 
+def _lade_erfolgreiche_historie(
+    pfad: Path, fins: list[str], *, objekt: str, attribut: str,
+) -> dict[str, Ergebnis]:
+    """Nur vollstaendige, passende FIN-Ergebnisse aus atomarem JSON laden."""
+    if not pfad.is_file():
+        return {}
+    try:
+        daten = json.loads(pfad.read_text(encoding="utf-8"))
+    except (OSError, ValueError, UnicodeError):
+        # Ein altes, beschaedigtes JSON darf den SSO-Versuch nicht blockieren.
+        # Vor dem ersten erfolgreichen Neuschreiben wird es gesichert.
+        return {}
+    if not isinstance(daten, dict) or daten.get("objekt") != objekt or daten.get("attribut") != attribut:
+        raise ValueError("Bestehende VeDoc-Historie passt nicht zu Objekt/Attribut.")
+    uebernommen: dict[str, Ergebnis] = {}
+    for item in daten.get("fahrzeuge", []):
+        if not isinstance(item, dict) or item.get("fin") not in fins:
+            continue
+        if item.get("status") != "gefunden":
+            continue  # Fehler, Mehrdeutigkeiten und fehlende Historien erneut pruefen.
+        try:
+            aenderungen = tuple(
+                SeriennummerAenderung(
+                    str(a["aenderungszeitpunkt"]),
+                    a.get("alter_wert"),
+                    a.get("neuer_wert"),
+                )
+                for a in item.get("aenderungen", [])
+            )
+            eintrag = Ergebnis(
+                fin=item["fin"], steuergeraet=objekt,
+                seriennummer=item.get("letzter_neuer_wert", item.get("seriennummer")),
+                status=item["status"], hinweis=item.get("hinweis", ""),
+                abgefragt_am_utc=item.get("abgefragt_am_utc", ""),
+                aenderungen=aenderungen, attribut=attribut,
+            )
+        except (TypeError, ValueError, KeyError, AttributeError):
+            continue
+        uebernommen[eintrag.fin] = eintrag
+    return uebernommen
+
+
+def _sichere_unlesbare_historie(pfad: Path) -> None:
+    """Vor dem Neuschreiben beschaedigte lokale Originaldaten als Backup erhalten."""
+    if pfad.is_symlink():
+        raise ValueError("VeDoc-Export darf kein symbolischer Link sein.")
+    if not pfad.is_file():
+        return
+    try:
+        json.loads(pfad.read_text(encoding="utf-8"))
+        return
+    except (OSError, ValueError, UnicodeError):
+        original = pfad.read_bytes()
+    hashteil = hashlib.sha256(original).hexdigest()[:12]
+    backup = pfad.with_name(f"{pfad.stem}.unlesbar_{hashteil}.bak")
+    if backup.exists():
+        if backup.read_bytes() != original:
+            raise ValueError("VeDoc-Backup mit abweichendem Inhalt vorhanden.")
+        return
+    temp = backup.with_name(backup.name + ".partial")
+    if temp.exists():
+        raise ValueError("VeDoc-Backup noch unvollstaendig; bitte pruefen.")
+    temp.write_bytes(original)
+    temp.replace(backup)
+
+
 def _tabelle_formatieren(ws, spalten: list[str], zeilen: list[list[str]]) -> None:
     ws.sheet_view.showGridLines = False
     ws.append(spalten)
@@ -739,6 +805,8 @@ def main(argv: list[str] | None = None, *, allgemeine_historie: bool = False) ->
                         help="SSO ohne automatisches Ausfuellen von Benutzername/Passwort")
     parser.add_argument("--nur-login", action="store_true",
                         help="Nur den SSO/PING-ID-Login testen, ohne FIN-Abfrage oder Export")
+    parser.add_argument("--erneut", action="store_true",
+                        help="Auch bereits erfolgreich gespeicherte FINs erneut abrufen")
     argumente = parser.parse_args(argv)
     try:
         argumente.objekt = pruefe_historienziel(argumente.objekt, feld="--objekt")
@@ -769,7 +837,25 @@ def main(argv: list[str] | None = None, *, allgemeine_historie: bool = False) ->
     dateistamm = _dateistamm(argumente.objekt, argumente.attribut)
     json_pfad = argumente.ausgabe / f"{dateistamm}.json"
     excel_pfad = argumente.ausgabe / f"{dateistamm}.xlsx"
-    ergebnisse: list[Ergebnis] = []
+    try:
+        fertig = (
+            {} if argumente.nur_login or argumente.erneut else
+            _lade_erfolgreiche_historie(
+                json_pfad, fins, objekt=argumente.objekt, attribut=argumente.attribut,
+            )
+        )
+    except (OSError, ValueError, TypeError) as exc:
+        parser.error(f"Vorhandener VeDoc-Checkpoint ist ungueltig: {exc}")
+    ergebnisse: list[Ergebnis] = [fertig[fin] for fin in fins if fin in fertig]
+    offen = [(index, fin) for index, fin in enumerate(fins, 1) if fin not in fertig]
+    if not argumente.nur_login:
+        print(f"FIN {len(fertig)}/{len(fins)} bereits erledigt (Resume).", flush=True)
+        if not offen:
+            _schreibe_excel(
+                excel_pfad, ergebnisse, objekt=argumente.objekt, attribut=argumente.attribut,
+            )
+            print("Alle FINs bereits vollstaendig vorhanden; keine neue SSO-Anmeldung.", flush=True)
+            return 0
     try:
         from playwright.sync_api import TimeoutError as PlaywrightTimeout, sync_playwright
 
@@ -813,7 +899,7 @@ def main(argv: list[str] | None = None, *, allgemeine_historie: bool = False) ->
                     print("SSO/PING ID erfolgreich: VeDoc ist erreichbar. Keine FIN abgefragt.", flush=True)
                 else:
                     _fahrzeugdaten_oeffnen(seite, argumente.timeout * 1000)
-                    for nummer, fin in enumerate(fins, 1):
+                    for _, fin in offen:
                         try:
                             ergebnis = _abfrage(
                                 seite, fin, argumente.timeout * 1000,
@@ -829,9 +915,11 @@ def main(argv: list[str] | None = None, *, allgemeine_historie: bool = False) ->
                             ergebnis = _ergebnis(fin, "fehler", hinweis="VeDoc-Abfrage fehlgeschlagen.",
                                                     objekt=argumente.objekt, attribut=argumente.attribut)
                         ergebnisse.append(ergebnis)
+                        ergebnisse.sort(key=lambda item: fins.index(item.fin))
+                        _sichere_unlesbare_historie(json_pfad)
                         _schreibe_json(json_pfad, ergebnisse, objekt=argumente.objekt,
                                         attribut=argumente.attribut)  # Zwischenstand nach jeder FIN.
-                        print(f"[{nummer}/{len(fins)}] {_gekuerzte_fin(fin)}: {ergebnis.status}")
+                        print(f"FIN {len(ergebnisse)}/{len(fins)} bearbeitet · {ergebnis.status}", flush=True)
             finally:
                 try:
                     kontext.close()  # Auch nach SSO-/Browserfehlern aufraeumen.

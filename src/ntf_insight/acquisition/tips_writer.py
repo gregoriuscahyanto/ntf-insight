@@ -348,12 +348,16 @@ class TipsWriterDownloader:
         download_timeout_ms: int = 90000,
         click_delay_seconds: float = 0.8,
         serielle_sso: bool = False,
+        resume: bool = True,
     ) -> None:
         self.output_dir = Path(output_dir)
         self.profile_dir = Path(profile_dir)
         self.user_id = user_id
         self.password = password
         self.serielle_sso = serielle_sso
+        self.resume = resume
+        self._sso_bereits_bestaetigt = False
+        self._sso_im_aktuellen_suchlauf = False
         self.login_timeout_seconds = login_timeout_seconds
         self.navigation_timeout_ms = navigation_timeout_ms
         self.download_timeout_ms = download_timeout_ms
@@ -427,6 +431,7 @@ class TipsWriterDownloader:
                         progress("TIPS: Suchmaske nach Anmeldung bereit.")
                         return page
                     if self._login_host(page.url):
+                        self._sso_im_aktuellen_suchlauf = True
                         self._sso(page, submitted, progress)
                 except TipsCancelled:
                     raise
@@ -504,9 +509,15 @@ class TipsWriterDownloader:
             if self.serielle_sso else nullcontext()
         )
         # Sperre vor dem Redirect aufnehmen, nach bestaetigter Sitzung freigeben.
-        with anmeldung:
+        self._sso_im_aktuellen_suchlauf = False
+        with anmeldung as phase:
+            if phase is not None:
+                phase.neue_anmeldung = not self._sso_bereits_bestaetigt
             page.goto(TIPS_START, wait_until="domcontentloaded", timeout=self.navigation_timeout_ms)
             page = self._wait_login(context, progress, cancel)
+            self._sso_bereits_bestaetigt = True
+            if phase is not None:
+                phase.neue_anmeldung |= self._sso_im_aktuellen_suchlauf
         self._consent(page, progress)
         self._pause(cancel)
         search = page.locator("tn-c-search input.xy-c-search-input")
@@ -756,6 +767,71 @@ class TipsWriterDownloader:
             _write_json(report_path, report)
         return report_path, files, warnings, errors, page
 
+    def _gespeicherter_fall(self, fin: str, fall: str) -> tuple[Path, list[Path]] | None:
+        """Nur vollstaendige TIPS-Faelle mit vorhandenen Dateien ueberspringen."""
+        if not _FIN.fullmatch(fin) or not _CASE_ID.fullmatch(fall):
+            return None
+        folder = self.output_dir / fin / f"fall_{fall}"
+        report = folder / "tips.json"
+        try:
+            daten = json.loads(report.read_text(encoding="utf-8"))
+            if (daten.get("fin") != fin or daten.get("fallnummer") != fall
+                    or daten.get("vollstaendige_reiter") is not True
+                    or daten.get("fehler") or daten.get("hinweise")):
+                return None
+            files = []
+            for eintrag in daten.get("dateien", []):
+                if not isinstance(eintrag, dict):
+                    return None
+                relative = eintrag.get("datei", "")
+                if not isinstance(relative, str) or not relative:
+                    return None
+                candidate = (folder / relative).resolve()
+                if not candidate.is_relative_to(folder.resolve()):
+                    return None
+                if not candidate.is_file() or candidate.stat().st_size != eintrag.get("bytes"):
+                    return None
+                files.append(candidate)
+            return report, files
+        except (OSError, ValueError, TypeError, AttributeError):
+            return None
+
+    def _fertiges_ziel(self, suchwert: str) -> TipsResult | None:
+        if not self.resume:
+            return None
+        ist_fin = bool(_FIN.fullmatch(suchwert))
+        path = (
+            self.output_dir / suchwert / "abrufstatus.json"
+            if ist_fin else self.output_dir / "_fallnummern" / f"fall_{suchwert}" / "abrufstatus.json"
+        )
+        try:
+            daten = json.loads(path.read_text(encoding="utf-8"))
+            if daten.get("status") != "Erfolgreich":
+                return None
+            fin = suchwert if ist_fin else daten.get("fin")
+            if not isinstance(fin, str) or not _FIN.fullmatch(fin):
+                return None
+            fallnummern = daten.get("fallnummern", []) if ist_fin else [suchwert]
+            if not isinstance(fallnummern, list) or not fallnummern:
+                return None
+            result = TipsResult(
+                fin, status="Erfolgreich", suchwert=suchwert,
+                suchtyp="fin" if ist_fin else "fallnummer",
+            )
+            for fall in fallnummern:
+                if not isinstance(fall, str):
+                    return None
+                found = self._gespeicherter_fall(fin, fall)
+                if found is None:
+                    return None
+                report, files = found
+                result.cases.append(fall)
+                result.reports.append(report)
+                result.files.extend(files)
+            return result
+        except (OSError, ValueError, TypeError, AttributeError):
+            return None
+
     def _one_fallnummer(
         self, context, page, fallnummer: str, progress: Progress, cancel: Event,
     ):
@@ -775,9 +851,15 @@ class TipsWriterDownloader:
             else:
                 hit = hits[0]
                 result.fin = hit.fin
-                report, files, warnings, errors, page = self._one_case(
-                    context, page, hit, progress, cancel,
-                )
+                fertig = self._gespeicherter_fall(hit.fin, hit.case_id) if self.resume else None
+                if fertig is not None:
+                    report, files = fertig
+                    warnings, errors = [], []
+                    progress(f"TIPS: Fall {hit.case_id} bereits vollstaendig (Resume).")
+                else:
+                    report, files, warnings, errors, page = self._one_case(
+                        context, page, hit, progress, cancel,
+                    )
                 result.cases.append(hit.case_id)
                 result.reports.append(report)
                 result.files.extend(files)
@@ -815,9 +897,15 @@ class TipsWriterDownloader:
                 for hit in hits:
                     self._check(cancel)
                     try:
-                        report, files, warnings, errors, page = self._one_case(
-                            context, page, hit, progress, cancel,
-                        )
+                        fertig = self._gespeicherter_fall(hit.fin, hit.case_id) if self.resume else None
+                        if fertig is not None:
+                            report, files = fertig
+                            warnings, errors = [], []
+                            progress(f"TIPS: Fall {hit.case_id} bereits erfasst (Resume).")
+                        else:
+                            report, files, warnings, errors, page = self._one_case(
+                                context, page, hit, progress, cancel,
+                            )
                         result.cases.append(hit.case_id)
                         result.reports.append(report)
                         result.files.extend(files)
@@ -855,6 +943,7 @@ class TipsWriterDownloader:
     def run(self, fins: list[str], *, progress: Progress | None = None,
             cancel: Event | None = None) -> list[TipsResult]:
         targets = parse_tips_queries("\n".join(fins))
+        zaehleinheit = "FIN" if all(_FIN.fullmatch(ziel) for ziel in targets) else "Ziel"
         progress = progress or (lambda _message: None)
         cancel = cancel or Event()
         self.output_dir.mkdir(parents=True, exist_ok=True)
@@ -863,7 +952,18 @@ class TipsWriterDownloader:
             from playwright.sync_api import sync_playwright
         except ImportError as exc:
             raise RuntimeError("Playwright fehlt. Bitte Browser-Unterstuetzung installieren.") from exc
-        results: list[TipsResult] = []
+        completed: dict[int, TipsResult] = {}
+        pending: list[tuple[int, str]] = []
+        for index, suchwert in enumerate(targets, 1):
+            vorher = self._fertiges_ziel(suchwert)
+            if vorher is not None:
+                completed[index] = vorher
+                progress(f"{zaehleinheit} {len(completed)}/{len(targets)} bereits erledigt (Resume).")
+            else:
+                pending.append((index, suchwert))
+        if not pending:
+            progress(f"TIPS: Alle {len(targets)} Suchziele vollstaendig gespeichert.")
+            return [completed[index] for index in sorted(completed)]
         with sync_playwright() as playwright:
             try:
                 context = playwright.chromium.launch_persistent_context(
@@ -878,9 +978,10 @@ class TipsWriterDownloader:
                 ) from exc
             try:
                 page = context.pages[0] if context.pages else context.new_page()
-                for suchwert in targets:
+                for index, suchwert in pending:
                     if cancel.is_set():
                         break
+                    progress(f"{zaehleinheit} {len(completed) + 1}/{len(targets)} wird bearbeitet ...")
                     if _FIN.fullmatch(suchwert):
                         result, page = self._one_fin(
                             context, page, suchwert, progress, cancel,
@@ -889,14 +990,13 @@ class TipsWriterDownloader:
                         result, page = self._one_fallnummer(
                             context, page, suchwert, progress, cancel,
                         )
-                    results.append(result)
+                    completed[index] = result
                     progress(
-                        f"TIPS-Fortschritt: {len(results)}/{len(targets)} "
-                        f"bearbeitet · zuletzt {suchwert}: {result.status}"
+                        f"{zaehleinheit} {len(completed)}/{len(targets)} bearbeitet · Status: {result.status}"
                     )
                     if result.status == "Abgebrochen":
                         break
             finally:
                 context.close()
                 self.password = ""
-        return results
+        return [completed[index] for index in sorted(completed)]

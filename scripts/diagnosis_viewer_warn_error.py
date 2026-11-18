@@ -490,6 +490,8 @@ class DiagnosisViewerScraper:
         self.missing_section_grace = missing_section_grace
         self.gesamtdatei_am_ende = gesamtdatei_am_ende
         self.serielle_sso = serielle_sso
+        self._sso_bereits_bestaetigt = False
+        self._sso_im_aktuellen_suchlauf = False
         self.stopped = False
 
     @staticmethod
@@ -521,6 +523,7 @@ class DiagnosisViewerScraper:
                                     clicked_sso = True
                                     break
                     elif host == LOGIN_HOST and urlsplit(page.url).scheme == "https":
+                        self._sso_im_aktuellen_suchlauf = True
                         cookie = page.locator("#c-s-bn")  # nur notwendige Cookies
                         if cookie.count() and cookie.is_visible():
                             self.taktung.pause()
@@ -556,9 +559,15 @@ class DiagnosisViewerScraper:
             serielle_sso_anmeldung(status=self.log)
             if self.serielle_sso else nullcontext()
         )
-        with anmeldung:
+        self._sso_im_aktuellen_suchlauf = False
+        with anmeldung as phase:
+            if phase is not None:
+                phase.neue_anmeldung = not self._sso_bereits_bestaetigt
             page.goto(search_url(fin), wait_until="domcontentloaded", timeout=45000)
             page = self._login(context)
+            self._sso_bereits_bestaetigt = True
+            if phase is not None:
+                phase.neue_anmeldung |= self._sso_im_aktuellen_suchlauf
         field = page.locator('input[name="finVin"]')
         self.taktung.pause()
         field.fill(fin)
@@ -833,6 +842,9 @@ class DiagnosisViewerScraper:
             if redo or refresh or state["fahrzeuge"].get(fin, {}).get("status") != "abgeschlossen"
         ]
         fortschritt = Restzeit(len(todo))
+        schon_erfasst = len(fins) - len(todo)
+        if not login_only:
+            self.log(f"FIN {schon_erfasst}/{len(fins)} bereits abgeschlossen (Resume).")
         if not todo and not login_only:
             self.log("Alle FINs bereits abgeschlossen. --aktualisieren prueft neue Sitzungen.")
             return 0
@@ -869,6 +881,7 @@ class DiagnosisViewerScraper:
                         existing["letzter_versuch_utc"] = utc_now()
                         existing["status"] = "in_bearbeitung"
                         speicher.fahrzeug_speichern(fin, existing)
+                        self.log(f"FIN {schon_erfasst + fin_index}/{len(fins)} wird bearbeitet | {fortschritt.text()}")
                         self.log(f"[{fin_index}/{len(todo)} FIN] {fin}: Sitzungen suchen | {fortschritt.text()}")
                         try:
                             start_suche = time.monotonic()
@@ -976,7 +989,7 @@ class DiagnosisViewerScraper:
                         finally:
                             speicher.fahrzeug_speichern(fin, existing)
                             fortschritt.fin_fertig()
-                        self.log(f"  FIN {fin}: {existing['status']} | {fortschritt.text()}")
+                        self.log(f"FIN {schon_erfasst + fin_index}/{len(fins)} bearbeitet · {existing['status']} | {fortschritt.text()}")
                 finally:
                     context.close()
                     self.password = ""
