@@ -164,7 +164,7 @@ def serielle_sso_anmeldung(
                 else:
                     time.sleep(0.35)
             frei_ab, zuletzt = _abstand_lesen(handle)
-            if pause and zuletzt != os.getpid():
+            if zuletzt != os.getpid():
                 warten = max(0.0, frei_ab - time.time())
                 if warten > 0:
                     melden(
