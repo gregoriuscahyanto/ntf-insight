@@ -251,3 +251,79 @@ einen Tab- oder Prozessabsturz erzeugt, fuer eine Diagnose nur die
 **bereinigten Statusmeldungen und das Fehlerstadium** weitergeben,
 niemals vertrauliche PDF-Originale, Cookie-Werte, URLs mit Tokens oder FINs.
 
+
+## Diagnose: Edge schliesst sich beim ersten PDF-Download
+
+Ein erkannter PDF-Popup-Tab beweist noch keinen abgeschlossenen Download.
+Wenn sich **der komplette Edge-/Playwright-Kontext beim PDF-Klick oder
+beim PDF-Speichern beendet**, kann auch ein nativer Edge-Absturz
+vorliegen. Insbesondere mit **wiederverwendeten persistenten
+Edge-Profilen** ist ein entsprechender Windows-/Edge-152-Fall
+dokumentiert (Playwright-Issue #42506, MicrosoftEdge/DevTools #461).
+Ein solches Problem kann auch ohne das interne Portal und ohne SSO
+auftreten. Das ist eine **moegliche Ursache**, keine Diagnose der
+lokalen Edge-Version.
+
+### 1. Isolierte lokale Probe (ohne Unternehmensdaten)
+
+Nach Installation der aktualisierten App in PowerShell:
+
+\`\`\`powershell
+ntf-insight-edge-probe
+\`\`\`
+
+Die Probe laedt eine **ausschliesslich synthetische PDF-Datei**
+von einer lokalen \`data:\`-Adresse herunter. Sie startet Microsoft Edge
+in **zwei separaten Python-Prozessen** mit einem **neuen Wegwerfprofil**,
+das beim zweiten Start wiederverwendet wird. Bei einem Fehler im
+zweiten Lauf testet sie zusaetzlich ein neues Kontrollprofil.
+Es wird **keine** FIN, Loginseite, PING ID oder sonstige Firmenadresse
+geoeffnet. Das bereits produktiv benutzte QuickTest-Edge-Profil und
+gespeicherte QuickTest-Originale werden nicht beruehrt.
+
+Die Statusausgabe enthaelt nur Phasen, Exitcodes und eine vorsichtige
+Interpretation; Browser-Cookies und PDF-/Portaldaten werden nicht
+erfasst. Ein Windows-Absturzcode wie \`3221225477\` kann auf einen
+nativen Edge-Absturz hinweisen. Bestehen beide Testlaeufe, bleibt
+ein **portal-/PDF-viewer-spezifisches** Problem moeglich.
+
+### 2. Ohne neue Version: frisches Edge-Profil fuer QuickTests testen
+
+In der Lightweight-App unter **QuickTests → Einstellungen → Eigener
+Edge-Profilordner** einen **neuen lokalen Ordnerpfad** eingeben
+(z. B. unter \`%LOCALAPPDATA%\\NTF-Insight\\edge-quicktests-test\`).
+Das Feld akzeptiert einen neuen, noch nicht existierenden Pfad.
+Nicht denselben Ordner wie bei QEC oder einem anderen laufenden Job
+verwenden. Ausgabeverzeichnis und FIN-/Resume-TXT unveraendert lassen.
+Die neue Edge-Sitzung benoetigt eine **erneute manuelle PING-ID-Freigabe**.
+Es werden keine bestehenden Edge-Profile, PDFs oder Checkpoints geloescht.
+
+Zunaechst nur **eine** Datenquelle parallel starten. Wenn bereits
+ein synthetischer Download mit frischem Profil abstuerzt, Edge-Version
+unter \`edge://settings/help\` sowie
+\`edge://policy\` durch die Unternehmens-IT pruefen lassen.
+Die PDF-Option unter \`edge://settings/content/pdfDocuments\`
+darf nur geaendert werden, wenn die Unternehmenseinstellungen dies
+erlauben. Sicherheitsrichtlinien nicht umgehen oder abschalten.
+
+### 3. Neue Browser-Phasen im Status
+
+Beim QuickTest-Absturz gibt der Downloader die letzte erkannte
+Phase aus, z. B. **PDF-Klick**, **PDF-Download erhalten** oder
+**PDF-Speichern**. Ein unerwartetes \`BrowserContext.close\`-Ereignis
+wird von einem normalen Programmende getrennt.
+Damit laesst sich unterscheiden, ob das Problem beim Laden des
+PDF-Viewers oder erst beim Speichern des Downloads entsteht.
+Der alte automatische Wiederanlauf kann einen nativen Edge-Fehler
+nicht beseitigen; die vorhandenen PDF-Dateien bleiben per Resume
+erhalten.
+
+**Datenschutz:** Bei einer Fehlermeldung vor dem Teilen immer die
+vollstaendige FIN, persoenliche Angaben, PDF-Inhalte und URLs mit
+Tokens entfernen. Nur Edge-Version, Phasenmeldung und Probe-Exitcodes
+werden fuer die technische Eingrenzung benoetigt.
+
+Weitere Referenzen:
+- https://github.com/microsoft/playwright/issues/42506
+- https://github.com/MicrosoftEdge/DevTools/issues/461
+

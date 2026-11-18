@@ -1002,6 +1002,8 @@ class DiagnosisViewerDownloader:
         _write_manifest(folder, result)
         try:
             self._check_cancel(cancel)
+            if context is not None:
+                context._ntf_phase = "Diagnosis Viewer"
             progress(f"{fin}: Diagnosis Viewer öffnen …")
             anmeldung = (
                 serielle_sso_anmeldung(status=progress, abbruch=cancel)
@@ -1025,6 +1027,8 @@ class DiagnosisViewerDownloader:
                             "Edge-Verbindung beim Oeffnen des Diagnosis Viewers verloren."
                         ) from exc
                     # Eine legitime SSO-Weiterleitung kann die Navigation unterbrechen.
+                if context is not None:
+                    context._ntf_phase = "SSO/PING-ID"
                 page = self._login(context, page, progress, cancel)
                 self._sso_bereits_bestaetigt = True
                 if phase is not None:
@@ -1041,6 +1045,8 @@ class DiagnosisViewerDownloader:
             progress(f"{fin}: Ergebnisse werden geladen …")
             self._pace(cancel)
             rows = self._wait_results(suchbereich, cancel, fin)
+            if context is not None:
+                context._ntf_phase = "PDF-Auswahl"
             result.available = len(rows)
             _write_manifest(folder, result)
             if not rows:
@@ -1072,13 +1078,21 @@ class DiagnosisViewerDownloader:
                     icon = suchbereich.locator("tbody tr").nth(descriptor.position).locator(
                         "span.cursor-pointer:has(svg.lucide-file-down)"
                     )
+                    if context is not None:
+                        context._ntf_phase = "PDF-Klick"
                     downloaded = self._download_or_skip(
                         page, icon.first, cancel, progress=progress,
                     )
+                    if context is not None:
+                        context._ntf_phase = "PDF-Download erhalten"
                     failure = downloaded.failure()
                     if failure:
                         raise RuntimeError(f"PDF-Download fehlgeschlagen: {failure}")
+                    if context is not None:
+                        context._ntf_phase = "PDF-Speichern"
                     saved = _save_pdf(downloaded, folder, descriptor)
+                    if context is not None:
+                        context._ntf_phase = "PDF gespeichert"
                     if saved not in result.files:
                         result.files.append(saved)
                     # Checkpoint direkt nach jeder PDF, nicht erst nach der FIN.
@@ -1149,7 +1163,12 @@ class DiagnosisViewerDownloader:
         except BrowserSessionLost as exc:
             result.status = "Browser-Verbindung verloren"
             result.errors.append(str(exc))
-            progress(f"{fin}: Edge-Verbindung verloren; weitere Sitzungen nicht angeklickt.")
+            phase = getattr(context, "_ntf_phase", "unbekannt")
+            progress(
+                f"{fin}: Edge-Verbindung verloren in Phase '{phase}'. "
+                "Keine weiteren PDF-Klicks. Mit ntf-insight-edge-probe "
+                "laesst sich ein Edge-Downloadabsturz ohne Portal testen."
+            )
             return result, page
         except ViewerTabClosed as exc:
             result.status = "Viewer-Tab geschlossen"
@@ -1221,11 +1240,20 @@ class DiagnosisViewerDownloader:
                         no_viewport=True,
                     )
                     context._ntf_context_geschlossen = False
+                    context._ntf_soll_schliessen = False
+                    context._ntf_phase = "Edge-Start"
+
+                    def bei_kontextende(*_args):
+                        context._ntf_context_geschlossen = True
+                        if not context._ntf_soll_schliessen:
+                            phase = getattr(context, "_ntf_phase", "unbekannt")
+                            progress(
+                                f"QuickTests: Edge-Kontext unerwartet beendet "
+                                f"(Phase: {phase})."
+                            )
+
                     if hasattr(context, "on"):
-                        context.on(
-                            "close",
-                            lambda: setattr(context, "_ntf_context_geschlossen", True),
-                        )
+                        context.on("close", bei_kontextende)
                     return context
                 except Exception as exc:
                     raise RuntimeError(
@@ -1270,6 +1298,7 @@ class DiagnosisViewerDownloader:
                             "PING ID ggf. erneut bestaetigen."
                         )
                         try:
+                            context._ntf_soll_schliessen = True
                             context.close()
                         except Exception:
                             pass
@@ -1305,6 +1334,7 @@ class DiagnosisViewerDownloader:
                         break
             finally:
                 try:
+                    context._ntf_soll_schliessen = True
                     context.close()
                 except Exception:
                     pass
