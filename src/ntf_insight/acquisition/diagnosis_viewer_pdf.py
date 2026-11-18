@@ -7,7 +7,6 @@ Nur nach echtem PDF-Dateikopf und beschraenkter Groesse wird gespeichert.
 from __future__ import annotations
 
 import base64
-import binascii
 from dataclasses import dataclass
 from pathlib import Path
 from urllib.parse import urlsplit
@@ -136,8 +135,15 @@ def pdf_aus_popup_url(context, popup_url: str, viewer_host: str) -> InlinePdfDow
         finally:
             dispose = getattr(response, "dispose", None)
             if callable(dispose):
-                dispose()
-    except (OSError, ValueError, TypeError, RuntimeError, AttributeError):
+                try:
+                    dispose()
+                except Exception:
+                    # Ein fehlgeschlagenes Dispose darf verifizierte Bytes
+                    # nicht nachtraeglich als fehlenden Download markieren.
+                    pass
+    except Exception:
+        # Der API-Fallback ist optional. Auch Playwright.Error erbt direkt
+        # von Exception und nicht von RuntimeError.
         return None
 
 
@@ -171,5 +177,6 @@ def pdf_aus_popup_blob(viewer_page, popup_url: str, viewer_host: str) -> InlineP
         if not isinstance(encoded, str) or len(encoded) > ((MAX_PDF_BYTES + 2) // 3) * 4:
             return None
         return _pdf_download_aus_bytes(base64.b64decode(encoded, validate=True))
-    except (binascii.Error, OSError, ValueError, TypeError, RuntimeError, AttributeError):
+    except Exception:
+        # Z. B. ungültige Blob-URL, geschlossenes Tab oder Playwright.Error.
         return None
