@@ -352,3 +352,68 @@ def test_gui_zeigt_zielzaehler_auch_bei_resume(monkeypatch, app, fin, tmp_path):
     assert fenster._prozesse == {}
     assert "Ziel 17/80" in fenster.quellen_status["tips"].text()
     fenster.close()
+
+
+def test_quicktests_sso_status_zeigt_verifizierte_anmeldung_statt_ping_aufforderung(app):
+    """Live-CLI-Ausgabe darf nach erkanntem FIN-Suchfeld nicht beim SSO-Prompt bleiben."""
+    class FakeProcess:
+        def __init__(self):
+            self.messages = [
+                "SSO wird im sichtbaren Microsoft Edge bearbeitet. PING ID bei "
+                "Aufforderung auf dem Smartphone bestaetigen.\n",
+                "PING ID abgeschlossen. Diagnosis Viewer ist bereit.\n",
+                "PING ID: Anmeldung erfolgreich; 45s Abstand bis zur naechsten.\n",
+                "PING ID: Anmelde-Sperre freigegeben; Datenabruf kann parallel laufen.\n",
+                "FIN-Fortschritt: 2/80 bearbeitet · zuletzt WDD12345678901234: Erfolgreich\n",
+                "Edge: SSO öffnen. Benutzer-ID und Passwort werden bei "
+                "Verfügbarkeit eingetragen.\n",
+                "SSO gestartet. PING ID nach der Passwort-Anmeldung bestätigen.\n",
+                "PING ID abgeschlossen. Diagnosis Viewer ist bereit.\n",
+            ]
+
+        def readAllStandardOutput(self):
+            return self.messages.pop(0).encode("utf-8")
+
+    fenster = gui.ScraperFenster()
+    fake = FakeProcess()
+    fenster._prozesse["quicktests"] = fake
+    fenster._laufstatus["quicktests"] = {
+        "ablage": None, "text": "", "rest": "", "abbruch": False,
+        "fortschritt": "", "anmeldung_bestaetigt": False,
+    }
+    try:
+        fenster._ausgabe_lesen("quicktests")
+        assert "PING ID" in fenster.quellen_status["quicktests"].text()
+        assert "Angemeldet" not in fenster.quellen_status["quicktests"].text()
+
+        fenster._ausgabe_lesen("quicktests")
+        bestaetigt = fenster.quellen_status["quicktests"].text()
+        assert "Angemeldet" in bestaetigt
+        assert "Diagnosis Viewer bereit" in bestaetigt
+        assert "bestätigen" not in bestaetigt.lower()
+        assert "Angemeldet" in fenster.status_label.text()
+
+        fenster._ausgabe_lesen("quicktests")
+        fenster._ausgabe_lesen("quicktests")
+        assert fenster.quellen_status["quicktests"].text() == bestaetigt
+
+        fenster._ausgabe_lesen("quicktests")
+        fortschritt = fenster.quellen_status["quicktests"].text()
+        assert "Angemeldet" in fortschritt
+        assert "FIN 2/80" in fortschritt
+        assert "WDD12345678901234" not in fortschritt
+
+        fenster._ausgabe_lesen("quicktests")
+        assert fenster.quellen_status["quicktests"].text() == fortschritt
+
+        fenster._ausgabe_lesen("quicktests")
+        erneut = fenster.quellen_status["quicktests"].text()
+        assert "Angemeldet" not in erneut
+        assert "PING ID" in erneut
+
+        fenster._ausgabe_lesen("quicktests")
+        assert "Angemeldet" in fenster.quellen_status["quicktests"].text()
+    finally:
+        fenster._prozesse.clear()
+        fenster._laufstatus.clear()
+        fenster.close()
