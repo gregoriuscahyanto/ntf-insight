@@ -677,7 +677,7 @@ def _lade_erfolgreiche_historie(
             )
             eintrag = Ergebnis(
                 fin=item["fin"], steuergeraet=objekt,
-                seriennummer=item.get("seriennummer"),
+                seriennummer=item.get("letzter_neuer_wert", item.get("seriennummer")),
                 status=item["status"], hinweis=item.get("hinweis", ""),
                 abgefragt_am_utc=item.get("abgefragt_am_utc", ""),
                 aenderungen=aenderungen, attribut=attribut,
