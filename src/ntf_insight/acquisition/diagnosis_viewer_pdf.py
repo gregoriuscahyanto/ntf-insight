@@ -7,7 +7,7 @@ Nur nach echtem PDF-Dateikopf und beschraenkter Groesse wird gespeichert.
 from __future__ import annotations
 
 import base64
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from urllib.parse import urlsplit
 
@@ -18,7 +18,7 @@ MAX_PDF_BYTES = 40 * 1024 * 1024
 class InlinePdfDownload:
     """Mit playwright.Download kompatible Bytes fuer _save_pdf()."""
 
-    daten: bytes
+    daten: bytes = field(repr=False)
     suggested_filename: str = "QuickTest.pdf"
 
     def __post_init__(self) -> None:
@@ -115,10 +115,10 @@ def pdf_aus_popup_url(context, popup_url: str, viewer_host: str) -> InlinePdfDow
     """
     if not _vertrauenswuerdige_pdf_url(popup_url, viewer_host):
         return None
-    request = getattr(context, "request", None)
-    if request is None:
-        return None
     try:
+        request = getattr(context, "request", None)
+        if request is None:
+            return None
         response = request.get(popup_url, timeout=12_000, max_redirects=0)
         try:
             if response.status != 200:
