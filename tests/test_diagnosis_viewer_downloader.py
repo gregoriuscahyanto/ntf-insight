@@ -703,6 +703,7 @@ def test_quicktest_pdf_popup_ohne_download_event_per_same_origin_get(
     viewer = _PdfPage(context)
     popup = _PdfPage(context, viewer)
     popup.url = "https://app.diagviewer.prod.gspp-eu.cloud.corpintra.net/quicktest.pdf"
+    popup.close = lambda: setattr(popup, "closed", True)
     calls = []
     pdf_bytes = b"%PDF-1.7\nProxy QuickTest"
     api_response = SimpleNamespace(
@@ -728,6 +729,7 @@ def test_quicktest_pdf_popup_ohne_download_event_per_same_origin_get(
     saved = _save_pdf(download, tmp_path / FIN, DownloadRow(0, "XD", "2026-11-18"))
     assert saved.read_bytes() == pdf_bytes
     assert calls == [(popup.url, 0)]
+    assert popup.closed  # Sonst sammeln sich pro FIN viele unnoetige PDF-Fenster an.
     assert any("angemeldeter Sitzung" in line for line in messages)
 
 
