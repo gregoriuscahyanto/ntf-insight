@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import sys
 import time
+from pathlib import Path
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
@@ -233,6 +234,8 @@ def test_alle_quellen_optionen_erzeugen_nur_erlaubte_cli_parameter(fin):
             assert schalter in argv
         assert "--benennung" not in argv
         assert "--anhaenge" not in argv
+        if quelle == "dcdc223":
+            assert Path(argv[argv.index("--ausgabe") + 1]).name == "vedoc_historie"
 
 
 def test_eigener_ausgabeort_nur_an_richtige_dateiart(fin, tmp_path):
