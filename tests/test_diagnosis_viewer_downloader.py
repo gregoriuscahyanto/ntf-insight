@@ -15,6 +15,7 @@ from ntf_insight.acquisition.diagnosis_viewer import (
     _save_pdf, _visible_rows, _write_manifest, parse_fins, search_url,
     DiagnosisViewerDownloader, DownloadCancelled, format_last_attempt,
     read_last_attempt, recently_attempted, scan_local_quicktests, lokal_vorhandene_pdf,
+    ViewerTabClosed, BrowserSessionLost, QuickTestPopupOhneDownload,
 )
 
 from ntf_insight.acquisition.credentials import (
@@ -525,3 +526,134 @@ def test_quicktest_ping_sperre_vor_portal_navigation_und_nicht_waehrend_download
         "sso-lock", "goto", "login", "sso-unlock",
         "fin-suchfeld", "search", "results",
     ]
+
+
+
+class _Events:
+    def __init__(self):
+        self.listeners = {}
+
+    def on(self, event, callback):
+        self.listeners.setdefault(event, []).append(callback)
+
+    def remove_listener(self, event, callback):
+        if callback in self.listeners.get(event, []):
+            self.listeners[event].remove(callback)
+
+    def emit(self, event, item):
+        for callback in list(self.listeners.get(event, [])):
+            callback(item)
+
+
+class _PdfContext(_Events):
+    def __init__(self):
+        super().__init__()
+        self.browser = SimpleNamespace(is_connected=lambda: True)
+
+
+class _PdfPage(_Events):
+    def __init__(self, context, opener=None):
+        super().__init__()
+        self.context = context
+        self._opener = opener
+        self.closed = False
+
+    def opener(self):
+        return self._opener
+
+    def is_closed(self):
+        return self.closed
+
+    def wait_for_timeout(self, ms):
+        time.sleep(ms / 1000)
+
+
+def _offline_download_dl(tmp_path, monkeypatch):
+    dl = DiagnosisViewerDownloader(
+        tmp_path, tmp_path / "profil", action_interval_seconds=0,
+        pdf_timeout_seconds=0.12,
+    )
+    monkeypatch.setattr(dl, "_watch_no_quicktest_message", lambda _: False)
+    monkeypatch.setattr(dl, "_no_quicktest_visible", lambda _: False)
+    monkeypatch.setattr(dl, "_no_quicktest_observed", lambda _: False)
+    return dl
+
+
+def test_popup_pdf_download_wird_im_neuen_tab_statt_nur_im_haupttab_erfasst(
+    tmp_path, monkeypatch,
+):
+    dl = _offline_download_dl(tmp_path, monkeypatch)
+    context = _PdfContext()
+    viewer = _PdfPage(context)
+    popup = _PdfPage(context, viewer)
+    download = FakeDownload(b"%PDF-1.7\nTest")
+    calls = []
+
+    class Icon:
+        def click(self, **_kwargs):
+            # Auch wenn context.page vor page.popup geliefert wird, darf
+            # der Popup-Download nur einmal erfasst werden.
+            context.emit("page", popup)
+            viewer.emit("popup", popup)
+            popup.emit("download", download)
+            calls.append("clicked")
+
+    result = dl._download_or_skip(
+        viewer, Icon(), Event(), progress=calls.append,
+    )
+    assert result is download
+    assert any("Neues PDF-Fenster" in msg for msg in calls)
+    assert len(popup.listeners["download"]) == 0
+    assert len(viewer.listeners["download"]) == 0
+    assert len(context.listeners["page"]) == 0
+    target = _save_pdf(result, tmp_path / FIN, DownloadRow(0, "XD", "2026-11-18"))
+    assert target.is_file()
+
+
+def test_popup_vorschau_ohne_download_wird_als_eigener_fehler_erkannt(
+    tmp_path, monkeypatch,
+):
+    dl = _offline_download_dl(tmp_path, monkeypatch)
+    context = _PdfContext()
+    viewer = _PdfPage(context)
+    popup = _PdfPage(context, viewer)
+
+    class Icon:
+        def click(self, **_kwargs):
+            viewer.emit("popup", popup)
+
+    with pytest.raises(QuickTestPopupOhneDownload, match="kein Download gestartet"):
+        dl._download_or_skip(viewer, Icon(), Event())
+    assert not viewer.listeners["popup"]
+    assert not popup.listeners["download"]
+
+
+def test_geschlossenes_viewer_tab_ist_nicht_zwangslaeufig_edge_absturz(
+    tmp_path, monkeypatch,
+):
+    dl = _offline_download_dl(tmp_path, monkeypatch)
+    viewer = _PdfPage(_PdfContext())
+
+    class Icon:
+        def click(self, **_kwargs):
+            viewer.closed = True
+            raise RuntimeError("Target page, context or browser has been closed")
+
+    with pytest.raises(ViewerTabClosed, match="Edge noch verbunden"):
+        dl._download_or_skip(viewer, Icon(), Event())
+
+
+def test_browser_disconnect_wird_weiterhin_als_echter_verbindungsverlust_erkannt(
+    tmp_path, monkeypatch,
+):
+    dl = _offline_download_dl(tmp_path, monkeypatch)
+    context = _PdfContext()
+    viewer = _PdfPage(context)
+    context.browser = SimpleNamespace(is_connected=lambda: False)
+
+    class Icon:
+        def click(self, **_kwargs):
+            pass
+
+    with pytest.raises(BrowserSessionLost, match="Edge-Verbindung"):
+        dl._download_or_skip(viewer, Icon(), Event())

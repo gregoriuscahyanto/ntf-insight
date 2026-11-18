@@ -172,3 +172,39 @@ die aktuell verwendete Python-Installation austauschen.
 Alle sechs Datenquellen koordinieren ihre SSO-Anmeldungen mit einer
 prozessuebergreifenden Sperre, auch aus getrennten Terminals. Jedes
 Tool verwendet weiterhin sein eigenes Edge-Profil und Ausgabeordner.
+
+
+## Fehler bei PDF-Klick und neuem Fenster
+
+Ein im Browser sichtbares PDF-Fenster ist noch kein gespeicherter
+QuickTest. Der Downloader lauscht jetzt auf Downloads **am ursprünglichen
+Diagnosis-Viewer-Tab und an neu geöffneten, von diesem Tab ausgelösten
+PDF-Fenstern**. Bereits vorhandene Browser-Tabs werden nicht als
+Belegquelle benutzt.
+
+Die Statusmeldungen unterscheiden drei Fälle:
+
+- **PDF gespeichert:** Die Datei wurde tatsächlich heruntergeladen,
+  als PDF validiert und im FIN-Ordner gespeichert.
+- **PDF-Fenster ohne Download:** Edge hat ein zusätzliches Fenster
+  geöffnet, aber innerhalb des Download-Timeouts kein Download-Ereignis
+  ausgelöst. Prüfen, ob Edge PDFs intern anzeigt statt sie
+  herunterzuladen. Der Downloader stoppt den aktuellen FIN-Lauf, um
+  nicht alle anderen QuickTest-Buttons sinnlos zu wiederholen.
+- **Viewer-Tab geschlossen, Browser noch verbunden:** Der Verlust
+  betrifft nur das Tab. Es wird **höchstens einmal** ein neues
+  Viewer-Tab geöffnet und die FIN erneut geprüft. Bereits gespeicherte
+  Sitzungs-PDFs werden weiterhin erkannt.
+- **Edge-Verbindung verloren:** Der Browser oder Playwright hat die
+  Verbindung tatsächlich verloren. Der vorhandene einmalige
+  Browser-Neustart bleibt aktiv; weitere Abfragen werden bei
+  wiederholtem Absturz gestoppt.
+
+QEC und QuickTests nutzen standardmäßig **verschiedene Edge-Profile**,
+und die gemeinsame SSO-Sperre koordiniert nur den PING-ID-Login.
+Ein Browserabsturz direkt nach dem PDF-Klick ist daher **kein Beleg**
+einer PING-ID-Kollision. Bei parallelen Browserproblemen testweise
+die GUI-Parallelität auf **1** stellen und prüfen, ob die Ursache
+danach noch auftritt. Keine internen PDFs, Cookies oder vollständigen
+FINs an GitHub oder CI übermitteln.
+
