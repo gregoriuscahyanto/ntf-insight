@@ -417,3 +417,53 @@ def test_quicktests_sso_status_zeigt_verifizierte_anmeldung_statt_ping_aufforder
         fenster._prozesse.clear()
         fenster._laufstatus.clear()
         fenster.close()
+
+
+def test_parallel_quellen_verwenden_getrennte_standard_edge_profile(tmp_path):
+    qec = gui._browserprofil("qec", {})
+    quicktests = gui._browserprofil("quicktests", {})
+    assert qec is not None
+    assert quicktests is not None
+    assert qec != quicktests
+    custom = tmp_path / "eigenes_profil"
+    assert gui._browserprofil("qec", {"profil": str(custom)}) == custom.resolve()
+
+
+def test_parallel_gleicher_edge_profilordner_wird_vor_cli_start_blockiert(
+    tmp_path, monkeypatch, app, fin,
+):
+    monkeypatch.setattr(ScraperOptionenDialog, "exec", lambda _dlg: QDialog.Accepted)
+    monkeypatch.setattr(
+        ScraperOptionenDialog, "werte",
+        lambda _dlg: {"profil": str(tmp_path / "shared-edge-profile")},
+    )
+    warnings = []
+    monkeypatch.setattr(
+        QMessageBox, "warning", lambda *_args: warnings.append(_args[-1]),
+    )
+    launch = []
+
+    def command(quelle, _datei, *, optionen):
+        launch.append(quelle)
+        return [
+            sys.executable, "-u", "-c", "import time; time.sleep(1.5)"
+        ], tmp_path / quelle
+
+    monkeypatch.setattr(gui, "abruf_befehl", command)
+    fenster = gui.ScraperFenster()
+    fenster._datei = fin
+    fenster._buttons_aktualisieren()
+    try:
+        fenster.quellen_buttons["qec"].click()
+        assert len(fenster._prozesse) == 1
+        fenster.quellen_buttons["quicktests"].click()
+        assert launch == ["qec"]
+        assert len(fenster._prozesse) == 1
+        assert warnings and "dasselbe Edge-Profil" in warnings[0]
+    finally:
+        fenster.alle_abbrechen()
+        deadline = time.monotonic() + 4
+        while fenster._prozesse and time.monotonic() < deadline:
+            app.processEvents()
+            time.sleep(0.01)
+        fenster.close()
