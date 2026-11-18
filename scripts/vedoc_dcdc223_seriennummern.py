@@ -831,7 +831,7 @@ def main(argv: list[str] | None = None, *, allgemeine_historie: bool = False) ->
                         ergebnisse.append(ergebnis)
                         _schreibe_json(json_pfad, ergebnisse, objekt=argumente.objekt,
                                         attribut=argumente.attribut)  # Zwischenstand nach jeder FIN.
-                        print(f"[{nummer}/{len(fins)}] {_gekuerzte_fin(fin)}: {ergebnis.status}")
+                        print(f"FIN {nummer}/{len(fins)} bearbeitet · {ergebnis.status}", flush=True)
             finally:
                 try:
                     kontext.close()  # Auch nach SSO-/Browserfehlern aufraeumen.
