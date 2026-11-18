@@ -27,6 +27,8 @@ from ntf_insight.acquisition.beschaffung_cli import _befehl
 from ntf_insight.acquisition.output_paths import ausgabe_in_gruppe, sicherer_listenname
 from ntf_insight.app.fonts import resolve_fonts
 from ntf_insight.app.settings import AppPaths
+from ntf_insight.acquisition.diagnosis_viewer_cli import STANDARD_PROFIL as QUICKTEST_PROFIL
+from ntf_insight.acquisition.portal_cli import QEC_PROFIL, TIPS_PROFIL
 from ntf_insight.app.scraper_optionen import DATEI_AUSGABEN, extra_argumente
 from ntf_insight.app.dialogs.scraper_optionen_dialog import ScraperOptionenDialog
 
@@ -87,6 +89,21 @@ def abruf_befehl(
     if os.name == "nt" and python.name.casefold() == "pythonw.exe":
         befehl[0] = str(python.with_name("python.exe"))
     return befehl, eigener_ausgabeort or basis
+
+
+_PROFILE_PRO_QUELLE = {
+    "qec": QEC_PROFIL,
+    "quicktests": QUICKTEST_PROFIL,
+    "tips": TIPS_PROFIL,
+    "wem": Path.home() / ".ntf-insight" / "edge-diagnosis-warnungen",
+    "sa-codes": Path.home() / ".ntf-insight" / "vedoc-edge-profile",
+}
+
+
+def _browserprofil(quelle: str, optionen: Mapping[str, Any]) -> Path | None:
+    """Tatsächlich verwendetes Profil, VeDoc-Historie nutzt eigenes Temp-Profil."""
+    pfad = optionen.get("profil") or _PROFILE_PRO_QUELLE.get(quelle)
+    return Path(pfad).expanduser().resolve() if pfad else None
 
 
 class ScraperFenster(QWidget):
@@ -283,6 +300,17 @@ class ScraperFenster(QWidget):
         if not dialog.exec():
             return
         optionen = dialog.werte()
+        profil = _browserprofil(quelle, optionen)
+        if profil is not None and any(
+            profil == aktiv.get("browserprofil")
+            for aktiv in self._laufstatus.values()
+        ):
+            QMessageBox.warning(
+                self, "Edge-Profil bereits in Benutzung",
+                "Zwei parallele Webscraper dürfen nicht dasselbe Edge-Profil benutzen. "
+                "Bitte für diese Quelle ein anderes Profil auswählen.",
+            )
+            return
         try:
             befehl, basis = abruf_befehl(quelle, self._datei, optionen=optionen)
         except (OSError, ValueError) as exc:
@@ -300,6 +328,7 @@ class ScraperFenster(QWidget):
         self._laufstatus[quelle] = {
             "ablage": basis, "text": "", "rest": "", "abbruch": False,
             "fortschritt": "", "anmeldung_bestaetigt": False,
+            "browserprofil": profil,
         }
         prozess = QProcess(self)
         prozess.setProcessChannelMode(QProcess.MergedChannels)
