@@ -184,8 +184,21 @@ jobs:
           python -m pytest -q --maxfail=1 --tb=short tests/test_qec_tool_downloader.py tests/test_qec_attachment_reference.py tests/test_qec_kurzfin.py tests/test_scraper_gui.py tests/test_scraper_optionen.py
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
+      # PR #90: Resume, parallele QProcesses und prozessuebergreifenden SSO-Abstand pruefen.
+      # Vollstaendige GUI-Suite kann auf main an einem nativen Qt-Dialog haengen.
+      - name: Run focused resume, SSO and lightweight GUI gate for PR #90
+        if: ${{ github.event_name == 'pull_request' && github.event.pull_request.number == 90 }}
+        shell: pwsh
+        run: |
+          python -m compileall -q src scripts tests/test_sso_login_gate.py tests/test_scraper_resume.py
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python -m ruff check src tests ci
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python -m pytest -q --maxfail=1 --tb=short tests/test_sso_login_gate.py tests/test_scraper_resume.py tests/test_scraper_gui.py tests/test_scraper_optionen.py tests/test_qec_tool_downloader.py tests/test_qec_attachment_reference.py tests/test_acquisition_portal_cli.py tests/test_tips_writer_downloader.py tests/test_vedoc_dcdc223_seriennummern.py tests/test_diagnosis_viewer_downloader.py tests/test_diagnosis_viewer_warn_error.py tests/test_vedoc_codes_scraper.py
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
       - name: Run full portable quality gate
-        if: ${{ github.event_name != 'pull_request' || (github.event.pull_request.number != 72 && github.event.pull_request.number != 73 && github.event.pull_request.number != 74 && github.event.pull_request.number != 75 && github.event.pull_request.number != 76 && github.event.pull_request.number != 77 && github.event.pull_request.number != 78 && github.event.pull_request.number != 79 && github.event.pull_request.number != 80 && github.event.pull_request.number != 82 && github.event.pull_request.number != 89) }}
+        if: ${{ github.event_name != 'pull_request' || (github.event.pull_request.number != 72 && github.event.pull_request.number != 73 && github.event.pull_request.number != 74 && github.event.pull_request.number != 75 && github.event.pull_request.number != 76 && github.event.pull_request.number != 77 && github.event.pull_request.number != 78 && github.event.pull_request.number != 79 && github.event.pull_request.number != 80 && github.event.pull_request.number != 82 && github.event.pull_request.number != 89 && github.event.pull_request.number != 90) }}
         run: python ci/quality_gate.py
 
       - name: Build wheel
