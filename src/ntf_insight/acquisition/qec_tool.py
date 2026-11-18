@@ -1564,10 +1564,15 @@ class QecDownloader:
             combined = by_fin.get(item.fin)
             if combined is None:
                 combined = QecResult(item.fin, status=item.status,
-                                     attempted_at=item.attempted_at)
+                                     attempted_at=item.attempted_at,
+                                     abruf_parameter=item.abruf_parameter)
                 by_fin[item.fin] = combined
             elif combined.status != item.status:
                 combined.status = "Teilweise erfolgreich"
+            if combined.abruf_parameter != item.abruf_parameter:
+                # Abweichende QEC-Teilabfragen duerfen nie als ein
+                # vollstaendiger FIN-Checkpoint uebersprungen werden.
+                combined.abruf_parameter = {}
             for attr in ("references", "files", "snapshots", "warnings", "errors"):
                 target_list = getattr(combined, attr)
                 for value in getattr(item, attr):
