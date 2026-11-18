@@ -47,6 +47,10 @@ def _pdf_download_aus_bytes(daten: bytes) -> InlinePdfDownload | None:
 def _beobachtete_pdf_antwort(response) -> bool:
     """Nur potentielle PDF-Datei-Antworten in den Kandidatenpuffer aufnehmen."""
     try:
+        # PDF-Reader nutzen gelegentlich HTTP-Range-Requests (206). Solche
+        # unvollstaendigen Teilantworten duerfen nicht als PDF gelten.
+        if int(getattr(response, "status", 200)) != 200:
+            return False
         headers = response.headers
         mime = headers.get("content-type", "").lower()
         disposition = headers.get("content-disposition", "").lower()
