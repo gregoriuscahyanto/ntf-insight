@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from pathlib import Path
-
 import pytest
 
 from ntf_insight.app.scraper_optionen import QUELLEN_OPTIONEN, extra_argumente
