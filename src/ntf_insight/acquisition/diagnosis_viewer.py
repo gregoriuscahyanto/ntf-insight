@@ -982,6 +982,11 @@ class DiagnosisViewerDownloader:
                     _write_manifest(folder, result)
                 except Exception as exc:
                     if _browser_verloren(exc):
+                        if _browser_verbunden(context):
+                            raise ViewerTabClosed(
+                                f"PDF {number}/{len(rows)}: Viewer-Tab geschlossen "
+                                f"({type(exc).__name__}), Edge bleibt verbunden."
+                            ) from exc
                         raise BrowserSessionLost(
                             f"PDF {number}/{len(rows)}: Edge-/Playwright-Verbindung verloren "
                             f"({type(exc).__name__})."
