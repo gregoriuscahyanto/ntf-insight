@@ -150,6 +150,24 @@ der Download QEC-interne Weiterleitungen, verwendet bei Bedarf
 einen Browser-Fallback und lehnt fremde Hosts sowie Login-HTML als
 Dateianhänge ab.
 
+## Verhalten bei QEC-Suchergebnissen
+
+- Die Servermeldung **„Die Abfrage ergab keinen Treffer“** gilt nach
+  bestaetigter FIN-Suche als **0 Treffer**; der Batch faehrt ohne
+  kompletten Navigationstimeout mit der naechsten FIN fort.
+- Bei **Treffern** wird zuerst die bestaetigte Ergebnisliste fuer die
+  Schadteilauswahl genutzt, ohne die erste Suche ein zweites Mal zu
+  starten. Die Detailansicht wird auch in QEC-Frames erkannt.
+- Die **QEC-Trefferzahl** ist nicht automatisch die Zahl passender
+  Kuehlmittelpumpen: Der Export prueft weiterhin die **vollstaendige
+  FIN**, die Bauteilbenennung und optionale Sachnummern/Referenzen.
+  Wenn QEC Treffer zeigt, aber kein Fall heruntergeladen wird,
+  gibt `abrufstatus.json` unter `suchdiagnose` an, wie viele
+  sichtbare Zeilen, volle FIN-Treffer und passende Bauteile vorlagen.
+- Scheitert das Oeffnen eines bestaetigten Treffers, wird die
+  Referenz als Fehler protokolliert, statt einen erfolgreichen
+  Download vorzutäuschen.
+
 ## Grenzen und Sicherheit
 
 - Der vollständige QEC-Liveablauf und tatsächliche Dateidownload
