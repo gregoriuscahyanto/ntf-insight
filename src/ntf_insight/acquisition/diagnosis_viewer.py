@@ -903,7 +903,8 @@ class DiagnosisViewerDownloader:
                         )
                     raise TimeoutError(
                         f"Nach {self.pdf_timeout_seconds:g} Sekunden wurde "
-                        "weder Download noch PDF-Netzwerkantwort erkannt."
+                        "kein PDF-Download gestartet und keine gueltige "
+                        "PDF-Netzwerkantwort erkannt."
                     )
                 # Bei PDF-Vorschauen erst kurz auf ein normales Download-Event
                 # warten, damit kein zweiter Request unnoetig ausgelöst wird.
