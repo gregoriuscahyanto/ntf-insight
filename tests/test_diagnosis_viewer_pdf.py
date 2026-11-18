@@ -70,6 +70,9 @@ def test_pdf_antwort_fremder_tabs_niemals_uebernehmen():
     assert pdf_aus_browser_antworten([antwort], viewer, [popup]) is None
     assert antwort.calls == 0
     assert not _beobachtete_pdf_antwort(PdfNetworkResponse(content_type="text/html"))
+    teilantwort = PdfNetworkResponse(page=popup)
+    teilantwort.status = 206
+    assert not _beobachtete_pdf_antwort(teilantwort)
     assert pdf_aus_browser_antworten(
         [PdfNetworkResponse(b"<html>Login</html>", page=popup)], viewer, [popup],
     ) is None
