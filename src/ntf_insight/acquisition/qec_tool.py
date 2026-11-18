@@ -1216,6 +1216,9 @@ class QecDownloader:
         folder = case_folder(self.output_dir, fin, reference)
         bericht = folder / "qec.json"
         try:
+            if (folder.is_symlink() or bericht.is_symlink()
+                    or (self.output_dir / fin).is_symlink()):
+                return None
             data = json.loads(bericht.read_text(encoding="utf-8"))
             if (data.get("fin") != fin or data.get("referenznummer") != reference
                     or data.get("benennung_suchfilter") != self.benennung
@@ -1237,67 +1240,125 @@ class QecDownloader:
                         or Path(dateiname).name != dateiname):
                     return None
                 datei = folder / "anhaenge" / dateiname
-                if not datei.is_file() or datei.stat().st_size == 0:
+                if (datei.is_symlink() or (folder / "anhaenge").is_symlink()
+                        or not datei.is_file() or datei.stat().st_size == 0):
                     return None
                 files.append(datei)
             return bericht, files
         except (OSError, ValueError, TypeError, AttributeError):
             return None
 
+    def _ergebnis_aus_checkpoint(
+        self, daten: dict, target: QecTarget, bestaetigte_fin: str, *,
+        legacy: bool = False,
+    ) -> QecResult | None:
+        """Alte und neue Manifestformate nur nach Vollstaendigkeitspruefung nutzen."""
+        erwartete_such_fin = target.fin
+        if (daten.get("fin") != (target.fin if legacy else bestaetigte_fin)
+                or (not legacy and daten.get("such_fin", daten.get("fin")) != erwartete_such_fin)
+                or daten.get("status") != "Erfolgreich"
+                or daten.get("hinweise") or daten.get("fehler")
+                or daten.get("abruf_parameter") != self._abruf_parameter(target)):
+            return None
+        refs = daten.get("referenzen", [])
+        if (not isinstance(refs, list) or not refs
+                or any(not isinstance(ref, str) or not re.fullmatch(r"[0-9]{1,14}", ref)
+                       for ref in refs)
+                or len(set(refs)) != len(refs)):
+            return None
+        ergebnis = QecResult(
+            bestaetigte_fin, status="Erfolgreich",
+            attempted_at=str(daten.get("stand_utc", "")),
+            abruf_parameter=self._abruf_parameter(target),
+            such_fin=target.fin,
+        )
+        for reference in refs:
+            gefunden = self._fertiger_bericht(bestaetigte_fin, reference)
+            if gefunden is None:
+                return None
+            bericht, anhaenge = gefunden
+            ergebnis.references.append(reference)
+            ergebnis.snapshots.append(bericht)
+            ergebnis.files.extend(anhaenge)
+        if legacy:
+            # Alte 14er-Manifeste referenzieren ihre Belege relativ zum
+            # QEC-Basisordner, waehrend das neue VIN-Manifest relativ
+            # zum einzigen Fahrzeugordner speichert.
+            if (daten.get("pfade_relativ_zu") != "qec_basisordner"
+                    or daten.get("bestaetigte_voll_fins") != [bestaetigte_fin]):
+                return None
+            alte_seiten = daten.get("seiten")
+            alte_anhaenge = daten.get("anhaenge")
+            if (not isinstance(alte_seiten, list) or not isinstance(alte_anhaenge, list)
+                    or set(alte_seiten) != {
+                        pfad.relative_to(self.output_dir).as_posix()
+                        for pfad in ergebnis.snapshots
+                    }
+                    or set(alte_anhaenge) != {
+                        pfad.relative_to(self.output_dir).as_posix()
+                        for pfad in ergebnis.files
+                    }):
+                return None
+        return ergebnis
+
     def _fertiges_ziel(self, target: QecTarget) -> QecResult | None:
-        """Nur eindeutig einer Voll-FIN zugeordnete, vollstaendige Faelle ueberspringen."""
+        """Legacy-14er-Checkpoints lesen; nur EINEN 17er-Fahrzeugordner beschreiben.
+
+        Alte, ggf. parallel laufende Quellen-/Statusdateien bleiben read-only.
+        Ein neuer Checkpoint wird nur dann angelegt, wenn alle Altfaelle
+        nachweislich vollstaendig sind und noch kein 17er-Manifest existiert.
+        """
         if not self.resume or target.reference:
             return None
         if len(target.fin) == 17:
-            bestaetigte_fin = target.fin
+            kandidaten = [target.fin]
         else:
-            # Die WMI niemals aus der Kurz-FIN erraten. Nur ein bereits zuvor
-            # unter derselben 14-stelligen Suche bestaetigter Export darf
-            # ohne neue Portalsuche wiederverwendet werden.
+            # Niemals die WMI erraten. Auch ohne VIN-Manifest gefundene
+            # Fahrzeugordner koennen zu einem laufenden Alt-Abruf gehoeren.
             try:
                 kandidaten = [
                     entry.name for entry in self.output_dir.iterdir()
                     if entry.is_dir() and not entry.is_symlink()
-                    and _FIN.fullmatch(entry.name)
-                    and entry.name[3:] == target.fin
-                    and (entry / "abrufstatus.json").is_file()
+                    and _FIN.fullmatch(entry.name) and entry.name[3:] == target.fin
                 ]
             except OSError:
                 return None
             if len(kandidaten) != 1:
                 return None
-            bestaetigte_fin = kandidaten[0]
-        pfad = self.output_dir / bestaetigte_fin / "abrufstatus.json"
+        bestaetigte_fin = kandidaten[0]
+        if not _FIN.fullmatch(bestaetigte_fin):
+            return None
+        voll_pfad = self.output_dir / bestaetigte_fin / "abrufstatus.json"
         try:
-            if pfad.is_symlink():
+            if voll_pfad.is_file() and not voll_pfad.is_symlink():
+                checkpoint = json.loads(voll_pfad.read_text(encoding="utf-8"))
+                if isinstance(checkpoint, dict):
+                    fertig = self._ergebnis_aus_checkpoint(
+                        checkpoint, target, bestaetigte_fin,
+                    )
+                    if fertig is not None:
+                        return fertig
+
+            if len(target.fin) != 14:
                 return None
-            checkpoint = json.loads(pfad.read_text(encoding="utf-8"))
-            if (checkpoint.get("fin") != bestaetigte_fin
-                    or checkpoint.get("such_fin", checkpoint.get("fin")) != target.fin
-                    or checkpoint.get("status") != "Erfolgreich"
-                    or checkpoint.get("abruf_parameter") != self._abruf_parameter(target)):
+            legacy_pfad = self.output_dir / target.fin / "abrufstatus.json"
+            if (not legacy_pfad.is_file() or legacy_pfad.is_symlink()
+                    or legacy_pfad.parent.is_symlink()):
                 return None
-            referenzen = checkpoint.get("referenzen", [])
-            if not isinstance(referenzen, list) or not referenzen:
+            legacy_daten = json.loads(legacy_pfad.read_text(encoding="utf-8"))
+            if not isinstance(legacy_daten, dict):
                 return None
-            ergebnis = QecResult(
-                bestaetigte_fin, status="Erfolgreich",
-                attempted_at=str(checkpoint.get("stand_utc", "")),
-                abruf_parameter=self._abruf_parameter(target),
-                such_fin=target.fin,
+            fertig = self._ergebnis_aus_checkpoint(
+                legacy_daten, target, bestaetigte_fin, legacy=True,
             )
-            for reference in referenzen:
-                if not isinstance(reference, str):
-                    return None
-                bereits = self._fertiger_bericht(bestaetigte_fin, reference)
-                if bereits is None:
-                    return None
-                bericht, anhaenge = bereits
-                ergebnis.references.append(reference)
-                ergebnis.snapshots.append(bericht)
-                ergebnis.files.extend(anhaenge)
-            return ergebnis
-        except (OSError, ValueError, TypeError, AttributeError):
+            if fertig is None:
+                return None
+            # Keine 14er-Dateien loeschen/verschieben. Ein bereits existierendes
+            # neues Manifest nicht mit aelteren Metadaten ueberschreiben.
+            if not voll_pfad.exists() and not voll_pfad.is_symlink():
+                _write_result(self.output_dir / bestaetigte_fin, fertig)
+            return fertig
+        except (OSError, UnicodeError, ValueError, TypeError, AttributeError):
             return None
 
     def _one_hit(self, context, page, target: QecTarget, hit: QecHit,
