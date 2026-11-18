@@ -45,6 +45,23 @@ class BrowserSessionLost(RuntimeError):
     """Die Edge-/Playwright-Verbindung wurde unerwartet getrennt."""
 
 
+class ViewerTabClosed(RuntimeError):
+    """Nur das Viewer-Tab wurde geschlossen; Edge ist weiterhin verbunden."""
+
+
+class QuickTestPopupOhneDownload(RuntimeError):
+    """Ein PDF-Fenster wurde geoeffnet, ohne einen Download zu starten."""
+
+
+def _browser_verbunden(context) -> bool:
+    """Browser- statt Tab-Status pruefen, auch bei persistentem Edge-Profil."""
+    try:
+        browser = getattr(context, "browser", None)
+        return browser is None or bool(browser.is_connected())
+    except Exception:
+        return False
+
+
 def _browser_verloren(exc: Exception) -> bool:
     """Playwright schliesst Tab, Kontext und Browser mit aehnlichen Meldungen."""
     name = type(exc).__name__.casefold()
@@ -703,20 +720,24 @@ class DiagnosisViewerDownloader:
         except Exception:
             pass
 
-    def _download_or_skip(self, page, icon, cancel: Event):
-        """Wait for a download or the S3 no-data notice, within 60s by default.
+    def _download_or_skip(
+        self, page, icon, cancel: Event, *, progress: Progress | None = None,
+    ):
+        """PDF-Downloads im Viewer und in direkt erzeugten Popup-Tabs erkennen.
 
-        Playwright's expect_download() cannot observe a new in-page error while
-        waiting. The event-driven loop can skip quickly instead of waiting until
-        the timeout when the site explicitly reports no QuickTest.
+        Nur vom geklickten Tab erzeugte neue Pages werden beobachtet;
+        bestehende SSO- und andere Diagnosetabs bleiben ausgeschlossen.
         """
         self._check_cancel(cancel)
         self._pace(cancel)
+        melden = progress or (lambda _: None)
         initially_visible = self._no_quicktest_visible(page)
         observer_installed = self._watch_no_quicktest_message(page)
         downloads: list[object] = []
         notices: list[str] = []
         unexpected_dialog = [False]
+        popup_pages: list[object] = []
+        context = getattr(page, "context", None)
 
         def on_download(download) -> None:
             downloads.append(download)
@@ -726,15 +747,41 @@ class DiagnosisViewerDownloader:
                 notices.append(NO_QUICKTEST_DATA_MESSAGE)
             else:
                 unexpected_dialog[0] = True
-            # Registered dialog handlers must close native dialogs to unblock
-            # subsequent browser actions. An unknown dialog is reported.
             dialog.dismiss()
+
+        def on_popup(popup) -> None:
+            if popup in popup_pages:
+                return
+            popup_pages.append(popup)
+            melden("QuickTest: Neues PDF-Fenster erkannt; Download wird dort beobachtet.")
+            try:
+                popup.on("download", on_download)
+            except Exception:
+                pass
+
+        def on_context_page(candidate) -> None:
+            try:
+                opener = candidate.opener()
+            except Exception:
+                return
+            if opener is page:
+                on_popup(candidate)
 
         page.on("download", on_download)
         page.on("dialog", on_dialog)
+        page.on("popup", on_popup)
+        if context is not None:
+            context.on("page", on_context_page)
         try:
             deadline = time.monotonic() + self.pdf_timeout_seconds
-            icon.click(timeout=min(15000, max(1, int(self.pdf_timeout_seconds * 1000))))
+            try:
+                icon.click(timeout=min(15000, max(1, int(self.pdf_timeout_seconds * 1000))))
+            except Exception as exc:
+                if _browser_verloren(exc) and context is not None and _browser_verbunden(context):
+                    raise ViewerTabClosed(
+                        "Diagnosis-Viewer-Tab beim PDF-Klick geschlossen; Edge noch verbunden."
+                    ) from exc
+                raise
             while True:
                 self._check_cancel(cancel)
                 if downloads:
@@ -745,22 +792,58 @@ class DiagnosisViewerDownloader:
                     raise RuntimeError("Unerwartetes Dialogfenster beim PDF-Abruf.")
                 if not initially_visible and self._no_quicktest_visible(page):
                     raise QuickTestDataUnavailable(NO_QUICKTEST_DATA_MESSAGE)
+                if context is not None and not _browser_verbunden(context):
+                    raise BrowserSessionLost(
+                        "Die Edge-Verbindung ist waehrend des PDF-Downloads abgebrochen."
+                    )
                 remaining = deadline - time.monotonic()
                 if remaining <= 0:
+                    if popup_pages:
+                        raise QuickTestPopupOhneDownload(
+                            "Ein PDF-Fenster wurde geoeffnet, aber kein Download gestartet. "
+                            "Bitte Edge-Einstellung fuer das Herunterladen von PDFs pruefen."
+                        )
                     raise TimeoutError(
                         f"Nach {self.pdf_timeout_seconds:g} Sekunden wurde kein "
                         "PDF-Download gestartet."
                     )
-                # Playwright dispatches on('download') while its event loop runs.
-                page.wait_for_timeout(max(1, int(min(0.25, remaining) * 1000)))
+                try:
+                    tick = page
+                    if page.is_closed():
+                        tick = next((p for p in popup_pages if not p.is_closed()), None)
+                        if tick is None:
+                            raise ViewerTabClosed(
+                                "Viewer-Tab geschlossen, kein aktives PDF-Fenster gefunden."
+                            )
+                    tick.wait_for_timeout(max(1, int(min(0.25, remaining) * 1000)))
+                except (ViewerTabClosed, BrowserSessionLost):
+                    raise
+                except Exception as exc:
+                    if _browser_verloren(exc):
+                        if context is not None and _browser_verbunden(context):
+                            raise ViewerTabClosed(
+                                "Viewer-Tab geschlossen; Edge ist weiterhin verbunden."
+                            ) from exc
+                        raise BrowserSessionLost(
+                            "Edge-/Playwright-Verbindung beim PDF-Abruf verloren."
+                        ) from exc
+                    raise
         finally:
-            # Playwright kann beim Prozessabsturz bereits abgekoppelt sein.
-            # Aufraeumfehler duerfen die eigentliche Absturzursache nicht verdecken.
             for event, callback in (
-                ("download", on_download), ("dialog", on_dialog),
+                ("download", on_download), ("dialog", on_dialog), ("popup", on_popup),
             ):
                 try:
                     page.remove_listener(event, callback)
+                except Exception:
+                    pass
+            if context is not None:
+                try:
+                    context.remove_listener("page", on_context_page)
+                except Exception:
+                    pass
+            for popup in popup_pages:
+                try:
+                    popup.remove_listener("download", on_download)
                 except Exception:
                     pass
             if observer_installed:
