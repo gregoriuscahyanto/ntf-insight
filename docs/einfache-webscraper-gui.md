@@ -84,7 +84,7 @@ Keine realen FINs, Berichte, Browserprofile oder Zugangsdaten in GitHub speicher
 
 ```powershell
 python -m pip install -e ".[dev]"
-python -m pytest -q tests/test_scraper_gui.py
+python -m pytest -q tests/test_scraper_gui.py tests/test_scraper_optionen.py
 ```
 
 Die Tests überprüfen Dialoge und lokale CLI-Befehlsübergabe, nicht das echte
