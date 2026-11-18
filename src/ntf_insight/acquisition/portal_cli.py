@@ -170,6 +170,8 @@ def qec_main(argv: list[str] | None = None) -> int:
     parser.add_argument("--anhaenge", choices=("referenz", "alle"), default="referenz",
                         help="referenz: nur Referenz im Dateinamen (Standard); "
                              "alle: alle im Fall-Popup sichtbaren Anhaenge, Zuordnung ungeprueft")
+    parser.add_argument("--erneut", action="store_true",
+                        help="Auch vollstaendig gespeicherte QEC-FINs erneut durchsuchen")
     args = parser.parse_args(argv)
     try:
         if args.ausgabe is None:
@@ -201,6 +203,7 @@ def qec_main(argv: list[str] | None = None) -> int:
             benennung=args.benennung,
             serielle_sso=True,
             attachment_policy=args.anhaenge,
+            resume=not args.erneut,
             click_delay_seconds=0.85,
         )
         ergebnisse = downloader.run(ziele, progress=lambda m: print(m, flush=True))
