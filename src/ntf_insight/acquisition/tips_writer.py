@@ -354,6 +354,8 @@ class TipsWriterDownloader:
         self.user_id = user_id
         self.password = password
         self.serielle_sso = serielle_sso
+        self._sso_bereits_bestaetigt = False
+        self._sso_im_aktuellen_suchlauf = False
         self.login_timeout_seconds = login_timeout_seconds
         self.navigation_timeout_ms = navigation_timeout_ms
         self.download_timeout_ms = download_timeout_ms
@@ -427,6 +429,7 @@ class TipsWriterDownloader:
                         progress("TIPS: Suchmaske nach Anmeldung bereit.")
                         return page
                     if self._login_host(page.url):
+                        self._sso_im_aktuellen_suchlauf = True
                         self._sso(page, submitted, progress)
                 except TipsCancelled:
                     raise
@@ -504,9 +507,15 @@ class TipsWriterDownloader:
             if self.serielle_sso else nullcontext()
         )
         # Sperre vor dem Redirect aufnehmen, nach bestaetigter Sitzung freigeben.
-        with anmeldung:
+        self._sso_im_aktuellen_suchlauf = False
+        with anmeldung as phase:
+            if phase is not None:
+                phase.neue_anmeldung = not self._sso_bereits_bestaetigt
             page.goto(TIPS_START, wait_until="domcontentloaded", timeout=self.navigation_timeout_ms)
             page = self._wait_login(context, progress, cancel)
+            self._sso_bereits_bestaetigt = True
+            if phase is not None:
+                phase.neue_anmeldung |= self._sso_im_aktuellen_suchlauf
         self._consent(page, progress)
         self._pause(cancel)
         search = page.locator("tn-c-search input.xy-c-search-input")
