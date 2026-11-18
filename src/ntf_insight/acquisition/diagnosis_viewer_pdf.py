@@ -50,10 +50,11 @@ def _beobachtete_pdf_antwort(response) -> bool:
         headers = response.headers
         mime = headers.get("content-type", "").lower()
         disposition = headers.get("content-disposition", "").lower()
-        url_path = urlsplit(response.url).path.lower()
         return (
             "application/pdf" in mime
-            or "application/octet-stream" in mime and url_path.endswith(".pdf")
+            or "application/x-pdf" in mime
+            or "application/octet-stream" in mime
+            or "binary/octet-stream" in mime
             or ".pdf" in disposition and "attachment" in disposition
         )
     except (AttributeError, TypeError, ValueError):
@@ -123,10 +124,9 @@ def pdf_aus_popup_url(context, popup_url: str, viewer_host: str) -> InlinePdfDow
             if response.status != 200:
                 return None
             headers = response.headers
-            if not (
-                "application/pdf" in headers.get("content-type", "").lower()
-                or "application/octet-stream" in headers.get("content-type", "").lower()
-            ):
+            mime = headers.get("content-type", "").lower()
+            if "text/html" in mime or "application/json" in mime:
+                # Auch bei HTTP 200 niemals die SSO-Seite als PDF behandeln.
                 return None
             length = headers.get("content-length")
             if length is not None and int(length) > MAX_PDF_BYTES:
