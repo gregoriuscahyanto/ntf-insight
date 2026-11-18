@@ -833,3 +833,130 @@ def test_qec_download_waehlt_nur_keywordpassende_referenzen(tmp_path):
     )
     assert result.status == "Erfolgreich"
     assert selected == ["900000625"]
+
+
+def test_wortlaut_kein_treffer_wird_ohne_timeout_akzeptiert():
+    """QEC zeigt auch 'Die Abfrage ergab keinen Treffer' statt '0 Treffer'."""
+    target = QecTarget(FIN)
+    document = _search_html(rows=[], total=0).replace(
+        '<div class="messageGreen">0 Treffer</div>',
+        '<div class="messageRed">Die Abfrage ergab keinen Treffer.</div>',
+    )
+    diagnostic = inspect_search_results(document, target)
+    assert diagnostic["bestaetigt"] is True
+    assert diagnostic["qec_trefferzahl"] == 0
+    assert diagnostic["sichtbare_zeilen"] == 0
+    # Ohne vom Server reflektierte FIN-Suchfelder keine falsche Nullmeldung.
+    unconfirmed = document.replace('value="123"', 'value=""')
+    assert inspect_search_results(unconfirmed, target)["bestaetigt"] is False
+
+
+def test_kein_treffer_aus_script_ist_keine_serverantwort():
+    document = _search_html(rows=[], total=1).replace("1 Treffer", "Bitte warten")
+    document = document.replace(
+        "</body>",
+        "<script>const help = 'Die Abfrage ergab keinen Treffer';</script></body>",
+    )
+    diagnostic = inspect_search_results(document, QecTarget(FIN))
+    assert diagnostic["bestaetigt"] is False
+    assert diagnostic["qec_trefferzahl"] is None
+
+
+def test_kein_treffer_text_beendet_result_wait_sofort():
+    page = FakeQecPage()
+    page.state = "search"
+    page.url = "https://qect.mo360cp.i.mercedes-benz.com/qec-access/schadteileSearchlist.qec"
+    text = _search_html(rows=[], total=0).replace(
+        '<div class="messageGreen">0 Treffer</div>',
+        '<p>Die Abfrage ergab keinen Treffer.</p>',
+    )
+    page.content = lambda: text
+    downloader = QecDownloader(
+        Path("/tmp/qec"), Path("/tmp/profil"), navigation_timeout_ms=100,
+    )
+    messages = []
+    _page, _scope, _html, evidence = downloader._wait_search_results(
+        SimpleNamespace(pages=[page]), QecTarget(FIN), messages.append, Event(),
+    )
+    assert evidence["bestaetigt"] is True
+    assert evidence["qec_trefferzahl"] == 0
+    assert any("Suchantwort bestaetigt" in message for message in messages)
+
+
+def test_erster_treffer_verwendet_bereits_gepruefte_antwort(tmp_path):
+    """Keine zweite Suche vor dem ersten Fall; weitere Referenzen separat suchen."""
+    target = QecTarget(FIN)
+    document = _search_html(rows=[
+        _row("900000601", identifier="6001"),
+        _row("900000602", identifier="6002"),
+    ], total=2)
+    evidence = inspect_search_results(document, target)
+    page = object()
+    downloader = QecDownloader(tmp_path, tmp_path / "profil")
+    suchen = []
+    erhaltene_suchen = []
+
+    def suche(*args):
+        suchen.append("suche")
+        return page, page, document, evidence
+
+    def fall(_ctx, current, _target, hit, result, _log, _cancel, search_result=None):
+        erhaltene_suchen.append(search_result)
+        result.references.append(hit.reference)
+        return current
+
+    downloader._search = suche
+    downloader._one_hit = fall
+    result, _ = downloader._one_target(
+        SimpleNamespace(), page, target, lambda _: None, Event(),
+    )
+    assert len(suchen) == 1
+    assert erhaltene_suchen == [(page, page, document, evidence), None]
+    assert result.references == ["900000601", "900000602"]
+    assert result.status == "Erfolgreich"
+
+
+def test_detailansicht_im_child_frame_wird_gefunden():
+    """Nur den tatsächlichen QEC-Detail-Frame fuer Reiter nutzen."""
+    class Locator:
+        def __init__(self, found):
+            self.found = found
+
+        def count(self):
+            return int(self.found)
+
+        @property
+        def first(self):
+            return self
+
+        def is_visible(self):
+            return self.found
+
+    class Scope:
+        def __init__(self, detail):
+            self.detail = detail
+
+        def get_by_text(self, text, *, exact):
+            return Locator(
+                self.detail and (text == "Schadteilmonitor" or text in QEC_SECTIONS)
+            )
+
+    class Page(Scope):
+        url = "https://qect.mo360cp.i.mercedes-benz.com/qec-access/schadteilMonitor.qec"
+
+        def __init__(self):
+            super().__init__(False)
+            self.main_frame = None
+            self.frames = [Scope(True)]
+
+        def is_closed(self):
+            return False
+
+    page = Page()
+    log = []
+    current_page, scope = QecDownloader(
+        Path("/tmp/qec"), Path("/tmp/profil"), navigation_timeout_ms=100,
+    )._wait_detail_scope(SimpleNamespace(pages=[page]), page, log.append, Event())
+    assert current_page is page
+    assert scope is page.frames[0]
+    assert any("Schadteilmonitor" in text for text in log)
