@@ -454,3 +454,28 @@ Siehe auch [QuickTest-GUI](diagnosis-viewer-quicktest-abruf.md),
 [QuickTest-CLI](diagnosis-viewer-quicktests-cli.md),
 [VeDoc-Codes](vedoc-codes-abruf.md) und
 [WEM-CLI](diagnosis-viewer-warn-error-standalone.md).
+
+## Fortsetzen und SSO-Abstand
+
+Die CLI-Datenquellen prüfen vorliegende lokale Export-/Statusdateien.
+**QEC und TIPS** überspringen vollständig gespeicherte FINs/Fälle
+(Standard); mit `--erneut` werden sie erneut abgefragt.
+**VeDoc-Hardwarehistorie** liest vorhandene, erfolgreich bestätigte
+FINs aus der JSON und setzt die offene Liste fort (mit `--erneut`
+wird komplett neu abgefragt). QuickTests, WEM und VeDoc-Fahrzeugcodes
+haben ihre eigenen bestehenden Resume-/Wiederholungsmechanismen.
+
+Alle sechs Quellen teilen sich eine prozessübergreifende SSO-Sperre.
+Der Default-Abstand nach einer **erfolgreichen Anmeldung** beträgt 45 s.
+In PowerShell kann für einen CLI-Lauf der Abstand zwischen 0 und
+60 Sekunden gesetzt werden, z. B.:
+
+```powershell
+$env:NTF_SSO_PAUSE_S = "45"
+ntf-insight-beschaffung --eingabe "FIN-Liste.txt" --quellen qec,quicktests --parallel 2 --benennung DCDC --anhaenge alle
+```
+
+Die Lightweight-GUI bietet 30–60 Sekunden an. Die Pause wird nach
+erneuter Nutzung einer bereits erfolgreichen Anmeldung nicht künstlich
+pro FIN verlängert. Das Lock verhindert gleichzeitige PING-ID-Anmeldungen,
+nicht parallele Datenabfragen aus authentifizierten getrennten Quellen.
