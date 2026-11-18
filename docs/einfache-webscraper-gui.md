@@ -107,3 +107,68 @@ python -m pytest -q tests/test_scraper_gui.py tests/test_scraper_optionen.py
 
 Die Tests überprüfen Dialoge und lokale CLI-Befehlsübergabe, nicht das echte
 QEC-/TIPS-/VeDoc-Portal. Live-Abnahmen müssen auf einem berechtigten Arbeitsplatz erfolgen.
+
+## Resume nach Abbruch
+
+Die bereits gespeicherten Dateien und Checkpoints bleiben im lokalen Ausgabeordner.
+Nach einem Abbruch die **gleiche FIN-/Fallliste** und den **gleichen Ausgabeordner**
+erneut wählen und die Datenquelle wieder starten. Es werden grundsätzlich nur
+nachweislich abgeschlossene Einheiten übersprungen:
+
+- **QEC** prüft den FIN-Checkpoint, die dokumentierten Schadteilreferenzen,
+  alle fünf Berichtsreiter, vorhandene Anhänge sowie **Benennung, Sachnummer
+  und Anhangmodus**. Fehlende oder unvollständige Referenzen werden erneut
+  verarbeitet. Alter Fallinhalt wird nicht als neu heruntergeladen ausgegeben.
+- **QuickTests** prüft PDF-Sitzungen und fehlende Dateien, statt eine bloße
+  24-Stunden-Frist als erfolgreichen Abschluss anzusehen.
+- **TIPS Writer** verwendet vollständig gespeicherte Fall-/FIN-Checkpoints;
+  unvollständige Fälle werden neu abgefragt.
+- **WEM** speichert einzelne Diagnosesitzungen und setzt mit der nächsten
+  unvollständigen FIN fort.
+- **VeDoc-Fahrzeugcodes** schreibt nach jeder FIN und überspringt erfolgreich
+  abgeschlossene FINs.
+- **VeDoc-Hardwarehistorie** übernimmt erfolgreich bestätigte Historien aus
+  der bestehenden JSON und ergänzt nur offene FINs; XLSX wird wiederhergestellt.
+
+**Nicht nachgewiesene Vollständigkeit wird nicht übersprungen.** Ein
+Abbruch mitten im Dateidownload lässt den letzten Fall oder die letzte
+Sitzung eventuell unvollständig; dieser Teil wird beim Neustart geprüft.
+Die Optionen **Erneut abrufen** in QEC, QuickTests, TIPS und VeDoc deaktivieren
+das Überspringen bereits abgeschlossener Ergebnisse. In WEM/VeDoc-Fahrzeugcodes
+existieren eigene Wiederholungsoptionen.
+
+## FIN-Fortschritt und paralleler Abruf
+
+In der Lightweight-GUI lassen sich **1 bis 6 unterschiedliche Datenquellen**
+parallel starten (**Standard: 2**). Ein erneuter Start derselben Quelle ist
+während ihres laufenden Prozesses gesperrt. Die FINs **innerhalb** einer Quelle
+werden weiterhin nacheinander abgefragt; dadurch bleiben Portal-Sitzung und
+lokale Checkpoints eindeutig. Jeder aktive Quellen-Button zeigt einen eigenen
+FIN-Fortschritt, z. B. **FIN 2/80** (bei gemischten TIPS-Listen **Ziel 2/80**).
+Bereits erledigte FINs zählen mit.
+
+Über **Stop** kann eine einzelne Quelle beendet werden; mit **Alle laufenden
+Abrufe abbrechen** werden alle Quellen beendet. Laufende Teildateien und
+bisherige Berichte bleiben lokal erhalten. Wechsel der FIN-Liste und der
+Parallelitäts-/SSO-Einstellungen ist während des Abrufs gesperrt.
+
+### SSO-/PING-ID-Sperre
+
+Auch bei parallelen Downloadern startet **nur eine SSO-/PING-ID-Anmeldung
+gleichzeitig**. Nach erfolgreicher Anmeldung eines Quellenprozesses sperrt
+die gemeinsame Betriebssystem-Dateisperre die nächste Anmeldung zusätzlich
+für **45 Sekunden (Standard)**, einstellbar auf **30–60 Sekunden**.
+Andere Quellen dürfen währenddessen nach ihrer erfolgten Anmeldung
+**parallel Daten abrufen**. Die Pause gilt für neue Anmeldungen und wird
+**nicht nach jeder bereits authentifizierten FIN** neu gestartet.
+
+Die Sperrdatei liegt unter
+`%USERPROFILE%\.ntf-insight\sso-anmeldung.lock` und enthält nur
+Zeitstempel und Prozess-ID, **keine PING-ID-Nummern, Anmeldeinformationen
+oder FINs**. PING-ID-Bestätigungen erfolgen weiterhin ausschließlich durch
+berechtigte Nutzer in Edge bzw. der offiziellen Anmeldung.
+
+**Grenze:** Zwei separate Lightweight-App-Instanzen können dieselbe Quelle
+starten und um das gleiche Edge-Profil konkurrieren. Nur eine Instanz der App
+verwenden; die Oberfläche verhindert Mehrfachstarts je Quelle innerhalb
+ihres Fensters.
