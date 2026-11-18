@@ -92,7 +92,7 @@ def test_tips_resume_kompletter_fall_ohne_browser(tmp_path):
     messages = []
     result = dl.run([FIN], progress=messages.append)
     assert result[0].reports == [report]
-    assert "Ziel 1/1 bereits erledigt (Resume)." in messages
+    assert "FIN 1/1 bereits erledigt (Resume)." in messages
 
 
 def test_vedoc_historie_resume_nur_erfolgreiche_objektgleiche_fins(tmp_path):
