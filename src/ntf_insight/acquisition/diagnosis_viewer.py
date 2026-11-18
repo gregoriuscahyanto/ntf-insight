@@ -401,6 +401,8 @@ class DiagnosisViewerDownloader:
         self.kurz_fin_erlaubt = kurz_fin_erlaubt
         self.nur_fehlende_pdfs = nur_fehlende_pdfs
         self.serielle_sso = serielle_sso
+        self._sso_bereits_bestaetigt = False
+        self._sso_im_aktuellen_suchlauf = False
         # Fixed, conservative pacing to limit request rate and avoid overloading the service.
         self.action_interval_seconds = max(0.0, float(action_interval_seconds))
         self._last_action_at: float | None = None
@@ -547,6 +549,7 @@ class DiagnosisViewerDownloader:
                             )
                             continue
                     if self._is_login_host(candidate.url):
+                        self._sso_im_aktuellen_suchlauf = True
                         self._enter_credentials(candidate, submitted, progress, cancel)
                         continue
                     if not clicked_sso:
@@ -785,7 +788,10 @@ class DiagnosisViewerDownloader:
                 serielle_sso_anmeldung(status=progress, abbruch=cancel)
                 if self.serielle_sso else nullcontext()
             )
-            with anmeldung:
+            self._sso_im_aktuellen_suchlauf = False
+            with anmeldung as phase:
+                if phase is not None:
+                    phase.neue_anmeldung = not self._sso_bereits_bestaetigt
                 try:
                     self._pace(cancel)
                     page.goto(
@@ -801,6 +807,9 @@ class DiagnosisViewerDownloader:
                         ) from exc
                     # Eine legitime SSO-Weiterleitung kann die Navigation unterbrechen.
                 page = self._login(context, page, progress, cancel)
+                self._sso_bereits_bestaetigt = True
+                if phase is not None:
+                    phase.neue_anmeldung |= self._sso_im_aktuellen_suchlauf
             suchbereich = self._fin_suchbereich(page) or page
             field = suchbereich.locator('input[name="finVin"]')
             self._pace(cancel)
