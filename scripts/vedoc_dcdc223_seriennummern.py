@@ -889,7 +889,7 @@ def main(argv: list[str] | None = None, *, allgemeine_historie: bool = False) ->
                         ergebnisse.sort(key=lambda item: fins.index(item.fin))
                         _schreibe_json(json_pfad, ergebnisse, objekt=argumente.objekt,
                                         attribut=argumente.attribut)  # Zwischenstand nach jeder FIN.
-                        print(f"FIN {nummer}/{len(fins)} bearbeitet · {ergebnis.status}", flush=True)
+                        print(f"FIN {len(ergebnisse)}/{len(fins)} bearbeitet · {ergebnis.status}", flush=True)
             finally:
                 try:
                     kontext.close()  # Auch nach SSO-/Browserfehlern aufraeumen.
