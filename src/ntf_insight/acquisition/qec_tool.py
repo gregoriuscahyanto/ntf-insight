@@ -611,6 +611,8 @@ class QecDownloader:
         self.attachment_policy = attachment_policy
         self.benennung = pruefe_benennung(benennung) if benennung else ""
         self.serielle_sso = serielle_sso
+        self._sso_bereits_bestaetigt = False
+        self._sso_im_aktuellen_suchlauf = False
         self.user_id = user_id
         self.password = password
         self.click_delay_seconds = min(4.0, max(0.0, float(click_delay_seconds)))
@@ -697,6 +699,7 @@ class QecDownloader:
                         progress("QEC: Anmeldung abgeschlossen; Schadteilsuche wird geoeffnet.")
                         return candidate
                     if self._is_sso_page(candidate.url):
+                        self._sso_im_aktuellen_suchlauf = True
                         self._enter_credentials(candidate, submitted, progress)
                 except QecCancelled:
                     raise
@@ -789,13 +792,19 @@ class QecDownloader:
             serielle_sso_anmeldung(status=progress, abbruch=cancel)
             if self.serielle_sso else nullcontext()
         )
-        with anmeldung:
+        self._sso_im_aktuellen_suchlauf = False
+        with anmeldung as phase:
+            if phase is not None:
+                phase.neue_anmeldung = not self._sso_bereits_bestaetigt
             try:
                 page.goto(QEC_START, wait_until="domcontentloaded", timeout=self.navigation_timeout_ms)
             except Exception:
                 # Interactive SSO may interrupt the initial navigation.
                 progress("QEC: Weiterleitung zur Anmeldung; warte auf QEC-Hauptansicht ...")
             page = self._wait_for_login(context, progress, cancel)
+            self._sso_bereits_bestaetigt = True
+            if phase is not None:
+                phase.neue_anmeldung |= self._sso_im_aktuellen_suchlauf
         self._pause(cancel)
 
         nav = None
