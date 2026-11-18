@@ -1,7 +1,6 @@
 """Synthetische Tests fuer QEC-Kurz-FIN und sichere Voll-FIN-Zuordnung."""
 
 import json
-from pathlib import Path
 from threading import Event
 
 import pytest

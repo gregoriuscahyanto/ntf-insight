@@ -249,3 +249,27 @@ def test_eigener_ausgabeort_nur_an_richtige_dateiart(fin, tmp_path):
         gui.abruf_befehl("qec", fin, optionen={
             "ausgabe": str(tmp_path / "out"), "profil": str(tmp_path),
         })
+
+
+def test_gui_zeigt_laufende_qec_anhangmeldungen_ohne_fertigmeldung(app):
+    """Die CLI darf nicht still im Hintergrund arbeiten, bis alles beendet ist."""
+    class FakeProcess:
+        def __init__(self):
+            self.chunks = [
+                "QEC: Anhangfenster geoeffnet; ",
+                "2 QEC-Dateilinks erkannt\n",
+            ]
+
+        def readAllStandardOutput(self):
+            return self.chunks.pop(0).encode("utf-8")
+
+    fenster = gui.ScraperFenster()
+    fenster._aktive_quelle = "qec"
+    fenster._prozess = FakeProcess()
+    fenster._ausgabe_lesen()
+    assert "Dateilinks erkannt" not in fenster.status_label.text()
+    fenster._ausgabe_lesen()
+    assert "2 QEC-Dateilinks erkannt" in fenster.status_label.text()
+    assert "abgeschlossen" not in fenster.status_label.text()
+    fenster._prozess = None
+    fenster.close()

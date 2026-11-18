@@ -311,7 +311,12 @@ def parse_attachment_urls(document: str) -> list[tuple[str, str]]:
     urls: list[tuple[str, str]] = []
     ids: set[str] = set()
     for anchor in root.xpath("//a[contains(@href, 'displayPruefberichtFile.qec')]"):
-        url = _qec_url(anchor.get("href", ""), expected_path="displayPruefberichtFile.qec")
+        try:
+            url = _qec_url(anchor.get("href", ""), expected_path="displayPruefberichtFile.qec")
+        except ValueError:
+            # Ein ungueltiger/abgelaufener Link darf andere sichere
+            # Dateilinks im selben Popup nicht unbrauchbar machen.
+            continue
         ids_in_url = parse_qs(urlsplit(url).query).get("attachmentId", [])
         if len(ids_in_url) != 1 or not re.fullmatch(r"\d+", ids_in_url[0]):
             continue
@@ -348,7 +353,10 @@ def parse_attachment_listing(document: str) -> list[dict[str, str]]:
     items: list[dict[str, str]] = []
     seen: set[str] = set()
     for anchor in root.xpath("//a[contains(@href, 'displayPruefberichtFile.qec')]"):
-        url = _qec_url(anchor.get("href", ""), expected_path="displayPruefberichtFile.qec")
+        try:
+            url = _qec_url(anchor.get("href", ""), expected_path="displayPruefberichtFile.qec")
+        except ValueError:
+            continue
         ids = parse_qs(urlsplit(url).query).get("attachmentId", [])
         if len(ids) != 1 or not ids[0].isdigit() or ids[0] in seen:
             continue
@@ -860,8 +868,10 @@ class QecDownloader:
         incorrectly rejecting the QEC download endpoint after a 302 redirect.
         """
         referer = _qec_url(popup.url)
+        # Bei einer haengenden QEC-Antwort nicht 90s pro Datei blockieren.
+        # Der Browser-Fallback versucht anschliessend denselben Link.
         response = context.request.get(
-            url, timeout=self.attachment_timeout_ms,
+            url, timeout=min(self.attachment_timeout_ms, 25_000),
             headers={"Referer": referer},
         )
         _validate_attachment_response_url(response.url)
@@ -873,9 +883,10 @@ class QecDownloader:
         return _store_attachment(folder, attachment_id, headers, response.body())
 
     def _download_attachment_browser(self, popup, attachment_id: str,
-                                     url: str, folder: Path) -> Path:
-        """Fallback: click the actual authenticated QEC link in visible Edge."""
-        links = popup.locator('a[href*="displayPruefberichtFile.qec"]')
+                                     url: str, folder: Path,
+                                     content_scope=None) -> Path:
+        """Fallback: click the authenticated QEC link, also from a child frame."""
+        links = (content_scope or popup).locator('a[href*="displayPruefberichtFile.qec"]')
         chosen = None
         for index in range(links.count()):
             link = links.nth(index)
@@ -908,6 +919,34 @@ class QecDownloader:
         finally:
             temporary.unlink(missing_ok=True)
 
+    def _popup_links(self, popup):
+        """Dateilinks in Popup und QEC-Unterframes einsammeln und deduplizieren.
+
+        Das DOM kann nach DOMContentLoaded noch per Ajax befuellt werden.
+        Externe Frames werden nicht gelesen, fremde URLs nicht geladen.
+        """
+        links: list[tuple[str, str]] = []
+        metadaten: dict[str, dict] = {}
+        scopes: dict[str, object] = {}
+        for scope in self._scopes(popup):
+            try:
+                scope_url = getattr(scope, "url", popup.url)
+                if not self._is_qec_page(scope_url):
+                    continue
+                html = scope.content()
+                gefunden = parse_attachment_urls(html)
+                liste = parse_attachment_listing(html)
+            except Exception:
+                # Frames koennen waehrend des Ladens verschwinden.
+                continue
+            for item in liste:
+                metadaten.setdefault(item["anhang_id"], item)
+            for identifier, url in gefunden:
+                if identifier not in scopes:
+                    scopes[identifier] = scope
+                    links.append((identifier, url))
+        return links, metadaten, scopes
+
     def _save_popups(self, context, page, folder: Path, result: QecResult,
                      progress: Progress, cancel: Event,
                      inventory: dict[str, dict], *,
@@ -917,10 +956,15 @@ class QecDownloader:
         buttons = (content_scope or page).locator(
             'input[type="button"][value="Dateianhänge"], button:has-text("Dateianhänge")'
         )
-        for index in range(buttons.count()):
+        anzahl_buttons = buttons.count()
+        for index in range(anzahl_buttons):
             self._check_cancel(cancel)
             if not buttons.nth(index).is_visible():
                 continue
+            progress(
+                f"{result.fin}: Referenz {reference}: "
+                f"Dateianhaenge-Popup {index + 1}/{anzahl_buttons} wird geoeffnet ..."
+            )
             self._pause(cancel)
             try:
                 with page.expect_popup(timeout=12000) as popup_event:
@@ -930,10 +974,28 @@ class QecDownloader:
                     popup.wait_for_load_state("domcontentloaded", timeout=15000)
                     self._pause(cancel)
                     original_url = _qec_url(popup.url)
-                    document = popup.content()
-                    attachments = parse_attachment_urls(document)
-                    listing = parse_attachment_listing(document)
-                    listed_by_id = {item["anhang_id"]: item for item in listing}
+                    progress(
+                        f"{result.fin}: Referenz {reference}: "
+                        "Anhangfenster geoeffnet; Dateiliste wird gelesen ..."
+                    )
+                    # DOMContentLoaded garantiert nicht, dass die asynchrone
+                    # Datei-Tabelle bereits geladen ist. Nur kurz nachpruefen.
+                    deadline = time.monotonic() + 6
+                    attachments: list[tuple[str, str]] = []
+                    listed_by_id: dict[str, dict] = {}
+                    link_scopes: dict[str, object] = {}
+                    while True:
+                        self._check_cancel(cancel)
+                        attachments, listed_by_id, link_scopes = self._popup_links(popup)
+                        if attachments or time.monotonic() >= deadline:
+                            break
+                        if cancel.wait(0.4):
+                            raise QecCancelled("Abruf durch Benutzer beendet.")
+                    progress(
+                        f"{result.fin}: Referenz {reference}: "
+                        f"{len(attachments)} QEC-Dateilink(s) erkannt "
+                        f"(Anhangmodus: {self.attachment_policy})."
+                    )
                     # The popup can expose files belonging to other references.
                     # "alle" is an explicit evidence-collection choice, NOT proof
                     # that each visible attachment belongs to this QEC case.
@@ -980,7 +1042,19 @@ class QecDownloader:
                                 "ohne Dateinamen-Referenzbeleg: geladen, Zuordnung spaeter pruefen."
                             )
                     if not attachments:
-                        result.warnings.append("Anhang-Fenster ohne erkennbare Dateien.")
+                        hinweis = (
+                            f"{reference}: Im Anhangfenster keine QEC-Dateilinks erkannt. "
+                            "Pruefen, ob Dateien sichtbar sind, die Tabelle spaeter laedt "
+                            "oder andere Linktypen verwendet."
+                        )
+                        result.warnings.append(hinweis)
+                        progress(f"{result.fin}: {hinweis}")
+                    elif not selected:
+                        progress(
+                            f"{result.fin}: Referenz {reference}: Alle {len(attachments)} "
+                            "sichtbaren Anhaenge vom Referenzfilter ausgeschlossen. "
+                            "Bei Bedarf 'alle' im QEC-Popup waehlen."
+                        )
                     for number, (attachment_id, url) in enumerate(selected, 1):
                         self._check_cancel(cancel)
                         progress(
@@ -999,17 +1073,32 @@ class QecDownloader:
                             continue
                         try:
                             try:
+                                progress(
+                                    f"{result.fin}: Referenz {reference}: Anhang {number}/"
+                                    f"{len(selected)}: QEC-Datei wird angefragt (max. 25s) ..."
+                                )
                                 path = self._download_attachment_api(
                                     context, popup, attachment_id, url, folder,
                                 )
                             except Exception as api_error:
-                                progress(f"{result.fin}: Anhang {attachment_id}, QEC-Antwort; "
-                                         "Download direkt ueber Edge versuchen …")
+                                progress(
+                                    f"{result.fin}: Referenz {reference}: Anhang {number}/"
+                                    f"{len(selected)}: QEC-Antwort nicht nutzbar "
+                                    f"({type(api_error).__name__}); versuche Edge-Download ..."
+                                )
                                 self._pause(cancel)
                                 try:
-                                    path = self._download_attachment_browser(
-                                        popup, attachment_id, url, folder,
-                                    )
+                                    # Ein Dateilink kann im eingebetteten Popup-Frame liegen.
+                                    scope = link_scopes.get(attachment_id)
+                                    if scope is None or scope is popup:
+                                        path = self._download_attachment_browser(
+                                            popup, attachment_id, url, folder,
+                                        )
+                                    else:
+                                        path = self._download_attachment_browser(
+                                            popup, attachment_id, url, folder,
+                                            content_scope=scope,
+                                        )
                                 except Exception as edge_error:
                                     raise RuntimeError(
                                         "API-Antwort nicht als Datei verwendbar "
@@ -1032,17 +1121,30 @@ class QecDownloader:
                             entry.pop("fehler", None)
                             if path not in result.files:
                                 result.files.append(path)
+                            progress(
+                                f"{result.fin}: Referenz {reference}: "
+                                f"Anhang {number}/{len(selected)} gespeichert."
+                            )
                         except QecCancelled:
                             raise
                         except Exception as exc:
                             entry.update(status="Fehler", fehler=str(exc))
                             result.errors.append(f"Anhang {attachment_id}: {exc}")
+                            progress(
+                                f"{result.fin}: Referenz {reference}: "
+                                f"Anhang {number}/{len(selected)} fehlgeschlagen "
+                                f"({type(exc).__name__})."
+                            )
                 finally:
                     popup.close()
             except QecCancelled:
                 raise
             except Exception as exc:
                 result.errors.append(f"Dateianhaenge-Popup {index + 1}: {exc}")
+                progress(
+                    f"{result.fin}: Referenz {reference}: Dateianhaenge-Popup "
+                    f"{index + 1} fehlgeschlagen ({type(exc).__name__})."
+                )
 
     def _wait_detail_scope(self, context, page, progress: Progress, cancel: Event):
         """Auf den Schadteilmonitor warten, auch wenn QEC ihn im Frame oeffnet."""

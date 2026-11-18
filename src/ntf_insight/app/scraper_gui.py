@@ -100,6 +100,7 @@ class ScraperFenster(QWidget):
         self._aktive_quelle = ""
         self._ausgabeordner: Path | None = None
         self._prozessausgabe = ""
+        self._ausgabe_rest = ""
         self._abbruch = False
         self._qec_benennung = ""  # Kompatibler Kurzstatus für den QEC-Suchbegriff.
         self._optionen_je_quelle: dict[str, dict[str, Any]] = {}
@@ -224,6 +225,7 @@ class ScraperFenster(QWidget):
         self._aktive_quelle = quelle
         self._ausgabeordner = basis
         self._prozessausgabe = ""
+        self._ausgabe_rest = ""
         self._abbruch = False
         prozess = QProcess(self)
         prozess.setProcessChannelMode(QProcess.MergedChannels)
@@ -255,6 +257,18 @@ class ScraperFenster(QWidget):
         text = bytes(self._prozess.readAllStandardOutput()).decode("utf-8", errors="replace")
         # Nur im Arbeitsspeicher und begrenzt; keine vertraulichen FINs in Logdateien.
         self._prozessausgabe = (self._prozessausgabe + text)[-4000:]
+        # Die bisherige GUI las stdout nur ein, zeigte jedoch nie den
+        # Fortschritt: Bei QEC-Anhaengen sah das wie ein Stillstand aus.
+        self._ausgabe_rest += text
+        zeilen = self._ausgabe_rest.split("\n")
+        self._ausgabe_rest = zeilen.pop()[-500:]
+        if not self._abbruch:
+            for zeile in reversed(zeilen):
+                zeile = " ".join(zeile.split())
+                if zeile:
+                    quelle = QUELLEN_NAMEN.get(self._aktive_quelle, self._aktive_quelle)
+                    self.status_label.setText(f"{quelle} · {zeile[-320:]}")
+                    break
 
     def abruf_abbrechen(self) -> None:
         if self._prozess is None:
