@@ -900,8 +900,8 @@ class TipsWriterDownloader:
                         )
                     results.append(result)
                     progress(
-                        f"TIPS-Fortschritt: {len(results)}/{len(targets)} "
-                        f"bearbeitet · zuletzt {suchwert}: {result.status}"
+                        f"Ziel {len(results)}/{len(targets)} bearbeitet · "
+                        f"Status: {result.status}"
                     )
                     if result.status == "Abgebrochen":
                         break
