@@ -150,6 +150,32 @@ der Download QEC-interne Weiterleitungen, verwendet bei Bedarf
 einen Browser-Fallback und lehnt fremde Hosts sowie Login-HTML als
 Dateianhänge ab.
 
+## Einheitlicher Fahrzeugordner bei Kurz-FIN
+
+Bei einer QEC-Suche mit **14-stelliger Kurz-FIN** wird kein eigener
+Kurz-FIN-Fahrzeugordner mehr erstellt. Erst wenn die QEC-Trefferliste
+vollständig geprüft ist und **genau eine 17-stellige VIN** bestätigt,
+werden Befundungsberichte, Anhänge und `abrufstatus.json` ausschließlich
+unter **`<QEC-Ausgabe>/<17-stellige-VIN>/`** gespeichert.
+
+Der Status enthält zusätzlich `such_fin` mit der ursprünglichen
+14-stelligen Eingabe. **Resume** prüft den vollständigen VIN-Ordner,
+exakte Suchparameter, alle fünf Reiter und vorhandene Dateianhänge;
+bei mehrdeutigen VIN-Ordnern wird niemals stillschweigend zugeordnet.
+
+Wenn keine Voll-VIN bestätigt werden kann (0 Treffer, mehrdeutig,
+unvollständige Trefferliste oder Navigationsfehler), wird nur die Datei
+`<QEC-Ausgabe>/qec_suchstatus_<14-stellige-FIN>.json` geschrieben,
+**kein** Fahrzeugordner angelegt. Eine WMI wird nicht erraten.
+
+Bereits existierende alte Kurz-FIN-Ordner werden aus Sicherheits- und
+Nachvollziehbarkeitsgründen **nicht automatisch gelöscht oder verschoben**.
+Für einen vollständig bereinigten Altbestand bitte die Inhalte anhand
+der `fin`/`such_fin` und Referenznummern prüfen, bevor etwas manuell
+archiviert wird. Andere Quellen verwenden ihre bisherigen strikt
+validierten VIN-/JSON-Ablagen; die Änderung betrifft die doppelte
+QEC-Fahrzeugordner-Erstellung.
+
 ## Verhalten bei QEC-Suchergebnissen
 
 - Die Servermeldung **„Die Abfrage ergab keinen Treffer“** gilt nach
