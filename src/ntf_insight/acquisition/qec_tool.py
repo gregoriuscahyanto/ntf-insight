@@ -246,6 +246,15 @@ def inspect_search_results(
             reported = int(match.group(1))
             break
     rows = len(root.xpath("//a[contains(@href, 'schadteilSelektieren.qec')]"))
+    if reported is None and rows == 0:
+        # Einige QEC-Versionen schreiben keine numerische Trefferzahl,
+        # sondern diesen expliziten Negativbefund in den Ergebnisbereich.
+        text = " ".join(root.xpath(
+            "//body//text()[not(ancestor::script) and not(ancestor::style)]"
+        ))
+        if re.search(r"Die\s+Abfrage\s+ergab\s+keinen\s+Treffer", text, re.I):
+            reported = 0
+    # Auch der Negativbefund gilt nur mit serverseitig bestaetigten FIN-Filtern.
     ready = confirmed_filters and (rows > 0 or reported == 0)
     # Never interpret *unconfirmed* UI as a zero-result search.
     if not ready:
@@ -761,7 +770,7 @@ class QecDownloader:
         raise TimeoutError(
             "QEC-Suchantwort nach 'Filtern' nicht bestaetigt. "
             "Die Serverantwort muss BR und Endnummer sowie Ergebniszeilen "
-            "oder '0 Treffer' enthalten. " + details
+            "oder einen expliziten Hinweis auf keine Treffer enthalten. " + details
         )
 
     def _search(self, context, page, target: QecTarget, progress: Progress, cancel: Event):
@@ -902,9 +911,12 @@ class QecDownloader:
     def _save_popups(self, context, page, folder: Path, result: QecResult,
                      progress: Progress, cancel: Event,
                      inventory: dict[str, dict], *,
-                     reference: str) -> None:
+                     reference: str, content_scope=None) -> None:
         """Strict reference match by default; optional all popup files as unverified evidence."""
-        buttons = page.locator('input[type="button"][value="Dateianhänge"], button:has-text("Dateianhänge")')
+        # Der Button kann in einem QEC-Frame liegen, das Popup gehoert zur Page.
+        buttons = (content_scope or page).locator(
+            'input[type="button"][value="Dateianhänge"], button:has-text("Dateianhänge")'
+        )
         for index in range(buttons.count()):
             self._check_cancel(cancel)
             if not buttons.nth(index).is_visible():
@@ -1032,11 +1044,47 @@ class QecDownloader:
             except Exception as exc:
                 result.errors.append(f"Dateianhaenge-Popup {index + 1}: {exc}")
 
-    def _one_hit(self, context, page, target: QecTarget, hit: QecHit,
-                 result: QecResult, progress: Progress, cancel: Event):
-        page, result_scope, result_html, evidence = self._search(
-            context, page, target, progress, cancel
+    def _wait_detail_scope(self, context, page, progress: Progress, cancel: Event):
+        """Auf den Schadteilmonitor warten, auch wenn QEC ihn im Frame oeffnet."""
+        deadline = time.monotonic() + self.navigation_timeout_ms / 1000
+        while time.monotonic() < deadline:
+            self._check_cancel(cancel)
+            for candidate in reversed(getattr(context, "pages", ()) or (page,)):
+                if getattr(candidate, "is_closed", lambda: False)():
+                    continue
+                url = getattr(candidate, "url", None)
+                if url is not None and not self._is_qec_page(url):
+                    continue
+                for scope in self._scopes(candidate):
+                    try:
+                        monitor = scope.get_by_text("Schadteilmonitor", exact=False)
+                        tabs = any(
+                            scope.get_by_text(name, exact=True).count()
+                            for name in QEC_SECTIONS[:2]
+                        )
+                        if monitor.count() and monitor.first.is_visible() and tabs:
+                            progress("QEC: Schadteilmonitor geoeffnet; Berichtsreiter werden gelesen.")
+                            return candidate, scope
+                    except Exception:
+                        # Waehrend der Navigation koennen Frames kurz verschwinden.
+                        continue
+            time.sleep(0.3)
+        raise TimeoutError(
+            "QEC-Treffer konnte nicht im Schadteilmonitor geoeffnet werden "
+            "(Detailansicht oder Reiter nicht sichtbar)."
         )
+
+    def _one_hit(self, context, page, target: QecTarget, hit: QecHit,
+                 result: QecResult, progress: Progress, cancel: Event,
+                 search_result=None):
+        # Die bereits gepruefte Suchantwort fuer den ersten Treffer verwenden.
+        # Erst nach Verlassen der Trefferliste fuer weitere Faelle neu suchen.
+        if search_result is None:
+            page, result_scope, result_html, evidence = self._search(
+                context, page, target, progress, cancel
+            )
+        else:
+            page, result_scope, result_html, evidence = search_result
         pruefe_kurzfin_treffer(result_html, target, evidence)
         # Selection is by exact QEC ID from a verified full-FIN and reference match.
         hits = parse_search_hits(
@@ -1054,9 +1102,7 @@ class QecDownloader:
             timeout=self.navigation_timeout_ms
         )
         self._pause(cancel)
-        page.get_by_text("Schadteilmonitor", exact=False).first.wait_for(
-            timeout=self.navigation_timeout_ms
-        )
+        page, detail_scope = self._wait_detail_scope(context, page, progress, cancel)
         reference_folder = case_folder(self.output_dir, hit.fin, hit.reference)
         report_path = reference_folder / "qec.json"
         inventory: dict[str, dict] = {}
@@ -1087,10 +1133,10 @@ class QecDownloader:
             for section in QEC_SECTIONS:
                 self._check_cancel(cancel)
                 progress(f"{target.fin}: {hit.reference} – {section} …")
-                if not self._click_section(page, section, cancel):
+                if not self._click_section(detail_scope, section, cancel):
                     result.warnings.append(f"{hit.reference}: Reiter {section} nicht gefunden.")
                     continue
-                data = _snapshot_data(page, section, hit)
+                data = _snapshot_data(detail_scope, section, hit)
                 signature = (data["sichtbarer_text"], str(data["felder"]))
                 if signature == previous_signature:
                     result.warnings.append(
@@ -1099,10 +1145,13 @@ class QecDownloader:
                     )
                 previous_signature = signature
                 sections.append(data)
+                extra = (
+                    {"content_scope": detail_scope} if detail_scope is not page else {}
+                )
                 self._save_popups(
                     context, page, reference_folder / "anhaenge",
                     result, progress, cancel, inventory,
-                    reference=hit.reference,
+                    reference=hit.reference, **extra,
                 )
         finally:
             # Keep missing previously captured tabs, marked as *older* evidence.
@@ -1189,8 +1238,13 @@ class QecDownloader:
                 else:
                     result.status = "Keine passenden Schadteile"
                     result.warnings.append(
-                        "QEC-Suche bestaetigt, aber kein eindeutiger FIN- / "
-                        "Pumpen- / Sachnummer-Treffer. Suchdiagnose im abrufstatus.json pruefen."
+                        "QEC-Suche bestaetigt: "
+                        f"{reported if reported is not None else 'unbekannt'} QEC-Treffer, "
+                        f"{evidence['fin_identisch']} exakte FIN, "
+                        f"{evidence['pumpen']} Pumpen und "
+                        f"{evidence['sachnummer']} passende Bauteile. "
+                        "Kein eindeutig zuordenbarer Schadteilfall. "
+                        "Suchdiagnose im abrufstatus.json pruefen."
                     )
                 progress(
                     f"{target.fin}: {result.status}. "
@@ -1203,15 +1257,23 @@ class QecDownloader:
                     "Es sind moeglicherweise weitere Ergebnisseiten vorhanden; "
                     "bisher nur die sichtbaren QEC-Zeilen geprueft."
                 )
+            erste_suche = (page, _result_scope, result_html, evidence)
             for index, hit in enumerate(hits, 1):
                 self._check_cancel(cancel)
                 progress(f"{target.fin}: Schadteil {index}/{len(hits)} – {hit.reference} …")
                 try:
-                    page = self._one_hit(context, page, target, hit, result, progress, cancel)
+                    page = self._one_hit(
+                        context, page, target, hit, result, progress, cancel,
+                        erste_suche if index == 1 else None,
+                    )
                 except QecCancelled:
                     raise
                 except Exception as exc:
                     result.errors.append(f"Referenz {hit.reference}: {exc}")
+                    progress(
+                        f"{target.fin}: Referenz {hit.reference} konnte nicht geladen "
+                        f"werden ({type(exc).__name__})."
+                    )
             result.status = "Erfolgreich" if not (result.errors or result.warnings) else (
                 "Teilweise erfolgreich" if result.snapshots or result.files else "Fehler"
             )
