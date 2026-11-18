@@ -80,6 +80,7 @@ class QecResult:
     attempted_at: str = ""
     search_diagnostics: dict[str, int | bool | None] = field(default_factory=dict)
     abruf_parameter: dict[str, str | bool] = field(default_factory=dict)
+    such_fin: str = ""  # Originale 14- oder 17-stellige Suchanfrage.
 
 
 def pruefe_sachnummer(value: str) -> str:
@@ -508,22 +509,33 @@ def _write_json(target: Path, payload: dict) -> None:
 
 
 def _write_result(folder: Path, result: QecResult) -> None:
-    # 14-stellige Suchanfragen besitzen einen eigenen Abrufstatus; die
-    # heruntergeladenen Schadteilfaelle liegen unter der bestaetigten Voll-FIN.
-    basis = folder.parent if len(result.fin) == 14 else folder
+    """Pro bestaetigter Voll-FIN ein Fahrzeugordner, keine Kurz-FIN-Duplikate.
+
+    Ohne bestaetigte 17-stellige FIN kein Fahrzeugverzeichnis erfinden:
+    der reine Suchstatus liegt direkt in der QEC-Ausgabegruppe.
+    """
+    kurz = len(result.fin) == 14
+    basis = folder.parent if kurz else folder
+    status_pfad = (
+        basis / f"qec_suchstatus_{result.fin}.json"
+        if kurz else folder / "abrufstatus.json"
+    )
 
     def relative(path: Path) -> str:
         return path.relative_to(basis).as_posix()
 
-    bestaetigte = sorted({
-        path.relative_to(folder.parent).parts[0]
-        for path in [*result.files, *result.snapshots]
-        if path.is_relative_to(folder.parent)
-        and _FIN.fullmatch(path.relative_to(folder.parent).parts[0])
-    })
-    _write_json(folder / "abrufstatus.json", {
+    bestaetigte = (
+        sorted({
+            path.relative_to(basis).parts[0]
+            for path in [*result.files, *result.snapshots]
+            if path.is_relative_to(basis)
+            and _FIN.fullmatch(path.relative_to(basis).parts[0])
+        }) if kurz else [result.fin]
+    )
+    _write_json(status_pfad, {
         "fin": result.fin,
-        "pfade_relativ_zu": "qec_basisordner" if len(result.fin) == 14 else "fin_ordner",
+        "such_fin": result.such_fin or result.fin,
+        "pfade_relativ_zu": "qec_basisordner" if kurz else "fin_ordner",
         "bestaetigte_voll_fins": bestaetigte,
         "stand_utc": result.attempted_at,
         "status": result.status,
@@ -1233,13 +1245,35 @@ class QecDownloader:
             return None
 
     def _fertiges_ziel(self, target: QecTarget) -> QecResult | None:
-        """FIN-Checkpoint nur bei identischen Filtern und gesicherten Berichten fortsetzen."""
-        if not self.resume or target.reference or len(target.fin) != 17:
+        """Nur eindeutig einer Voll-FIN zugeordnete, vollstaendige Faelle ueberspringen."""
+        if not self.resume or target.reference:
             return None
-        pfad = self.output_dir / target.fin / "abrufstatus.json"
+        if len(target.fin) == 17:
+            bestaetigte_fin = target.fin
+        else:
+            # Die WMI niemals aus der Kurz-FIN erraten. Nur ein bereits zuvor
+            # unter derselben 14-stelligen Suche bestaetigter Export darf
+            # ohne neue Portalsuche wiederverwendet werden.
+            try:
+                kandidaten = [
+                    entry.name for entry in self.output_dir.iterdir()
+                    if entry.is_dir() and not entry.is_symlink()
+                    and _FIN.fullmatch(entry.name)
+                    and entry.name[3:] == target.fin
+                    and (entry / "abrufstatus.json").is_file()
+                ]
+            except OSError:
+                return None
+            if len(kandidaten) != 1:
+                return None
+            bestaetigte_fin = kandidaten[0]
+        pfad = self.output_dir / bestaetigte_fin / "abrufstatus.json"
         try:
+            if pfad.is_symlink():
+                return None
             checkpoint = json.loads(pfad.read_text(encoding="utf-8"))
-            if (checkpoint.get("fin") != target.fin
+            if (checkpoint.get("fin") != bestaetigte_fin
+                    or checkpoint.get("such_fin", checkpoint.get("fin")) != target.fin
                     or checkpoint.get("status") != "Erfolgreich"
                     or checkpoint.get("abruf_parameter") != self._abruf_parameter(target)):
                 return None
@@ -1247,14 +1281,15 @@ class QecDownloader:
             if not isinstance(referenzen, list) or not referenzen:
                 return None
             ergebnis = QecResult(
-                target.fin, status="Erfolgreich",
+                bestaetigte_fin, status="Erfolgreich",
                 attempted_at=str(checkpoint.get("stand_utc", "")),
                 abruf_parameter=self._abruf_parameter(target),
+                such_fin=target.fin,
             )
             for reference in referenzen:
                 if not isinstance(reference, str):
                     return None
-                bereits = self._fertiger_bericht(target.fin, reference)
+                bereits = self._fertiger_bericht(bestaetigte_fin, reference)
                 if bereits is None:
                     return None
                 bericht, anhaenge = bereits
@@ -1399,9 +1434,13 @@ class QecDownloader:
             fin=target.fin, status="Abruf gestartet",
             attempted_at=datetime.now(timezone.utc).isoformat(),
             abruf_parameter=self._abruf_parameter(target),
+            such_fin=target.fin,
         )
         root = self.output_dir / target.fin
-        _write_result(root, result)
+        # Bei 14-stelliger Suche noch keinen Fahrzeugordner anlegen.
+        # Erst nach eindeutig bestaetigter Voll-FIN darf er entstehen.
+        if len(target.fin) == 17:
+            _write_result(root, result)
         try:
             page, _result_scope, result_html, evidence = self._search(
                 context, page, target, progress, cancel,
@@ -1413,6 +1452,22 @@ class QecDownloader:
                 result.status = "Ergebnispruefung erforderlich"
                 result.errors.append(str(exc))
                 return result, page
+            if len(target.fin) == 14:
+                # Alle eindeutigen FIN-Treffer pruefen, *bevor* Pumpen-,
+                # Benennungs- und Sachnummerfilter angewendet werden.
+                # Auch bei gefilterten 0 Schadteilen ist die Voll-FIN bekannt.
+                voll_fins = {
+                    item.fin for item in parse_search_hits(
+                        result_html, target.fin, pump_only=False,
+                    )
+                }
+                if len(voll_fins) == 1:
+                    result.fin = next(iter(voll_fins))
+                    root = self.output_dir / result.fin
+                    progress(
+                        f"{target.fin}: Voll-FIN {result.fin} bestaetigt; "
+                        "nur ein Fahrzeugordner wird verwendet."
+                    )
             hits = parse_search_hits(
                 result_html, target.fin, part_number=target.part_number,
                 pump_only=self.pump_only and not bool(target.part_number or self.benennung),
@@ -1565,7 +1620,8 @@ class QecDownloader:
             if combined is None:
                 combined = QecResult(item.fin, status=item.status,
                                      attempted_at=item.attempted_at,
-                                     abruf_parameter=item.abruf_parameter)
+                                     abruf_parameter=item.abruf_parameter,
+                                     such_fin=item.such_fin)
                 by_fin[item.fin] = combined
             elif combined.status != item.status:
                 combined.status = "Teilweise erfolgreich"
@@ -1573,6 +1629,10 @@ class QecDownloader:
                 # Abweichende QEC-Teilabfragen duerfen nie als ein
                 # vollstaendiger FIN-Checkpoint uebersprungen werden.
                 combined.abruf_parameter = {}
+            if combined.such_fin != item.such_fin:
+                # Gemischte Kurz-/Voll-FIN-Suchen: eindeutig im gemeinsamen
+                # Voll-FIN-Ordner, aber Resume erst nach neuer Pruefung.
+                combined.such_fin = ""
             for attr in ("references", "files", "snapshots", "warnings", "errors"):
                 target_list = getattr(combined, attr)
                 for value in getattr(item, attr):
