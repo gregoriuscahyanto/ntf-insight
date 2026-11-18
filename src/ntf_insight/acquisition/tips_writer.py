@@ -943,6 +943,7 @@ class TipsWriterDownloader:
     def run(self, fins: list[str], *, progress: Progress | None = None,
             cancel: Event | None = None) -> list[TipsResult]:
         targets = parse_tips_queries("\n".join(fins))
+        zaehleinheit = "FIN" if all(_FIN.fullmatch(ziel) for ziel in targets) else "Ziel"
         progress = progress or (lambda _message: None)
         cancel = cancel or Event()
         self.output_dir.mkdir(parents=True, exist_ok=True)
@@ -957,7 +958,7 @@ class TipsWriterDownloader:
             vorher = self._fertiges_ziel(suchwert)
             if vorher is not None:
                 completed[index] = vorher
-                progress(f"Ziel {index}/{len(targets)} bereits erledigt (Resume).")
+                progress(f"{zaehleinheit} {index}/{len(targets)} bereits erledigt (Resume).")
             else:
                 pending.append((index, suchwert))
         if not pending:
@@ -980,7 +981,7 @@ class TipsWriterDownloader:
                 for index, suchwert in pending:
                     if cancel.is_set():
                         break
-                    progress(f"Ziel {index}/{len(targets)} wird bearbeitet ...")
+                    progress(f"{zaehleinheit} {index}/{len(targets)} wird bearbeitet ...")
                     if _FIN.fullmatch(suchwert):
                         result, page = self._one_fin(
                             context, page, suchwert, progress, cancel,
@@ -991,7 +992,7 @@ class TipsWriterDownloader:
                         )
                     completed[index] = result
                     progress(
-                        f"Ziel {index}/{len(targets)} bearbeitet · Status: {result.status}"
+                        f"{zaehleinheit} {index}/{len(targets)} bearbeitet · Status: {result.status}"
                     )
                     if result.status == "Abgebrochen":
                         break
