@@ -49,6 +49,8 @@ _COMMON = (MANUELL, AUSGABE)
 
 QUELLEN_OPTIONEN: dict[str, tuple[CliOption, ...]] = {
     "qec": (
+        CliOption("erneut", "QEC-FINs vollständig erneut durchsuchen", "bool",
+                  hilfe="Standard: abgeschlossene FINs mit identischem Filter fortsetzen."),
         CliOption("benennung", "Benennung enthält", "text",
                   hilfe="z. B. DCDC, DCDC223 oder DCDC,DC/DC (ODER). Leer = Pumpenfilter."),
         CliOption("sachnummer", "Exakte Sachnummer", "text",
