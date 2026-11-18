@@ -657,7 +657,12 @@ def _lade_erfolgreiche_historie(
     """Nur vollstaendige, passende FIN-Ergebnisse aus atomarem JSON laden."""
     if not pfad.is_file():
         return {}
-    daten = json.loads(pfad.read_text(encoding="utf-8"))
+    try:
+        daten = json.loads(pfad.read_text(encoding="utf-8"))
+    except (OSError, ValueError, UnicodeError):
+        # Ein altes, beschaedigtes JSON darf den SSO-Versuch nicht blockieren.
+        # Vor dem ersten erfolgreichen Neuschreiben wird es gesichert.
+        return {}
     if not isinstance(daten, dict) or daten.get("objekt") != objekt or daten.get("attribut") != attribut:
         raise ValueError("Bestehende VeDoc-Historie passt nicht zu Objekt/Attribut.")
     uebernommen: dict[str, Ergebnis] = {}
@@ -686,6 +691,30 @@ def _lade_erfolgreiche_historie(
             continue
         uebernommen[eintrag.fin] = eintrag
     return uebernommen
+
+
+def _sichere_unlesbare_historie(pfad: Path) -> None:
+    """Vor dem Neuschreiben beschaedigte lokale Originaldaten als Backup erhalten."""
+    if pfad.is_symlink():
+        raise ValueError("VeDoc-Export darf kein symbolischer Link sein.")
+    if not pfad.is_file():
+        return
+    try:
+        json.loads(pfad.read_text(encoding="utf-8"))
+        return
+    except (OSError, ValueError, UnicodeError):
+        original = pfad.read_bytes()
+    hashteil = hashlib.sha256(original).hexdigest()[:12]
+    backup = pfad.with_name(f"{pfad.stem}.unlesbar_{hashteil}.bak")
+    if backup.exists():
+        if backup.read_bytes() != original:
+            raise ValueError("VeDoc-Backup mit abweichendem Inhalt vorhanden.")
+        return
+    temp = backup.with_name(backup.name + ".partial")
+    if temp.exists():
+        raise ValueError("VeDoc-Backup noch unvollstaendig; bitte pruefen.")
+    temp.write_bytes(original)
+    temp.replace(backup)
 
 
 def _tabelle_formatieren(ws, spalten: list[str], zeilen: list[list[str]]) -> None:
@@ -887,6 +916,7 @@ def main(argv: list[str] | None = None, *, allgemeine_historie: bool = False) ->
                                                     objekt=argumente.objekt, attribut=argumente.attribut)
                         ergebnisse.append(ergebnis)
                         ergebnisse.sort(key=lambda item: fins.index(item.fin))
+                        _sichere_unlesbare_historie(json_pfad)
                         _schreibe_json(json_pfad, ergebnisse, objekt=argumente.objekt,
                                         attribut=argumente.attribut)  # Zwischenstand nach jeder FIN.
                         print(f"FIN {len(ergebnisse)}/{len(fins)} bearbeitet · {ergebnis.status}", flush=True)
