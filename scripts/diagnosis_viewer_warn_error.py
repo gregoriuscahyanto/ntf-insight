@@ -842,6 +842,9 @@ class DiagnosisViewerScraper:
             if redo or refresh or state["fahrzeuge"].get(fin, {}).get("status") != "abgeschlossen"
         ]
         fortschritt = Restzeit(len(todo))
+        schon_erfasst = len(fins) - len(todo)
+        if not login_only:
+            self.log(f"FIN {schon_erfasst}/{len(fins)} bereits abgeschlossen (Resume).")
         if not todo and not login_only:
             self.log("Alle FINs bereits abgeschlossen. --aktualisieren prueft neue Sitzungen.")
             return 0
@@ -878,6 +881,7 @@ class DiagnosisViewerScraper:
                         existing["letzter_versuch_utc"] = utc_now()
                         existing["status"] = "in_bearbeitung"
                         speicher.fahrzeug_speichern(fin, existing)
+                        self.log(f"FIN {schon_erfasst + fin_index}/{len(fins)} wird bearbeitet | {fortschritt.text()}")
                         self.log(f"[{fin_index}/{len(todo)} FIN] {fin}: Sitzungen suchen | {fortschritt.text()}")
                         try:
                             start_suche = time.monotonic()
@@ -985,7 +989,7 @@ class DiagnosisViewerScraper:
                         finally:
                             speicher.fahrzeug_speichern(fin, existing)
                             fortschritt.fin_fertig()
-                        self.log(f"  FIN {fin}: {existing['status']} | {fortschritt.text()}")
+                        self.log(f"FIN {schon_erfasst + fin_index}/{len(fins)} bearbeitet · {existing['status']} | {fortschritt.text()}")
                 finally:
                     context.close()
                     self.password = ""
