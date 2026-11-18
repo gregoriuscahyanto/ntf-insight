@@ -960,3 +960,191 @@ def test_detailansicht_im_child_frame_wird_gefunden():
     assert current_page is page
     assert scope is page.frames[0]
     assert any("Schadteilmonitor" in text for text in log)
+
+
+def test_qec_anhaenge_ignorieren_einen_ungueltigen_link_ohne_andere_zu_verlieren():
+    """Ein kaputter/off-domain Link darf sichere sichtbare Dokumente nicht blockieren."""
+    document = """<html><table>
+      <tr><td><a href="https://evil.invalid/displayPruefberichtFile.qec?attachmentId=111">extern</a></td></tr>
+      <tr><td><a href="displayPruefberichtFile.qec?attachmentId=222">222</a></td>
+          <td>900000625_Beleg.pdf</td></tr>
+    </table></html>"""
+    assert [key for key, _ in parse_attachment_urls(document)] == ["222"]
+    assert [entry["anhang_id"] for entry in parse_attachment_listing(document)] == ["222"]
+
+
+def test_qec_api_anhaenge_haben_begrenzte_erste_wartezeit(tmp_path):
+    """Bei haengendem Endpunkt den Edge-Fallback nicht 90 Sekunden hinausschieben."""
+    from types import SimpleNamespace
+
+    class Request:
+        timeout = None
+
+        def get(self, _url, *, timeout, **_kwargs):
+            self.timeout = timeout
+            return SimpleNamespace(
+                url="https://qect.mo360cp.i.mercedes-benz.com/qec-access/download.qec",
+                ok=True, status=200,
+                headers={"content-type": "application/pdf",
+                         "content-disposition": 'attachment; filename="bericht.pdf"'},
+                body=lambda: b"%PDF-1.7\nBeleg",
+            )
+
+    request = Request()
+    popup = SimpleNamespace(
+        url="https://qect.mo360cp.i.mercedes-benz.com/qec-access/listAttachments.qec"
+    )
+    downloader = QecDownloader(tmp_path, tmp_path / "profil", attachment_timeout_ms=90000)
+    url = popup.url.replace("listAttachments.qec",
+                            "displayPruefberichtFile.qec?attachmentId=222")
+    path = downloader._download_attachment_api(
+        SimpleNamespace(request=request), popup, "222", url, tmp_path
+    )
+    assert request.timeout == 25000
+    assert path.is_file()
+
+
+def test_qec_popup_mit_verzoegerter_tabelle_im_child_frame_laed_anhaenge(tmp_path):
+    """Nach DOMContentLoaded dynamisch gefuellte QEC-Unterframes erkennen."""
+    from threading import Event
+    from types import SimpleNamespace
+
+    popup_url = "https://qect.mo360cp.i.mercedes-benz.com/qec-access/listAttachments.qec"
+    leeres_dokument = "<html><body><p>Dateiliste wird geladen</p></body></html>"
+    datei_dokument = """<html><table>
+      <tr><td><a href="displayPruefberichtFile.qec?attachmentId=313">313</a></td>
+          <td>900000625_Lieferantenbericht.pdf</td></tr>
+    </table></html>"""
+
+    class Frame:
+        url = popup_url
+        calls = 0
+
+        def content(self):
+            self.calls += 1
+            return leeres_dokument if self.calls == 1 else datei_dokument
+
+    frame = Frame()
+
+    class Popup:
+        url = popup_url
+        main_frame = None
+        frames = [frame]
+
+        def wait_for_load_state(self, *_args, **_kwargs):
+            return None
+
+        def content(self):
+            return leeres_dokument
+
+        def close(self):
+            return None
+
+    class Clickable:
+        def is_visible(self):
+            return True
+
+        def click(self, **_kwargs):
+            return None
+
+    class PopupButton:
+        def count(self):
+            return 1
+
+        def nth(self, _idx):
+            return Clickable()
+
+    class PopupEvent:
+        def __enter__(self):
+            return SimpleNamespace(value=Popup())
+
+        def __exit__(self, *_args):
+            return False
+
+    class Page:
+        def locator(self, _selector):
+            return PopupButton()
+
+        def expect_popup(self, **_kwargs):
+            return PopupEvent()
+
+    dl = QecDownloader(tmp_path, tmp_path / "profil",
+                       attachment_policy="alle", click_delay_seconds=0)
+    angefragt = []
+
+    def api(_context, _popup, attachment_id, _url, folder):
+        angefragt.append(attachment_id)
+        return _store_attachment(
+            folder, attachment_id,
+            {"content-disposition": 'attachment; filename="lieferantenbericht.pdf"'},
+            b"%PDF-1.7\nEin Beleg",
+        )
+
+    dl._download_attachment_api = api
+    results = QecResult(FIN)
+    status = []
+    inventar = {}
+    dl._save_popups(
+        SimpleNamespace(), Page(), tmp_path / "anhaenge", results,
+        status.append, Event(), inventar, reference="900000625",
+    )
+    assert frame.calls >= 2
+    assert angefragt == ["313"]
+    assert len(results.files) == 1
+    assert inventar["313"]["status"] == "Gespeichert"
+    assert any("1 QEC-Dateilink" in meldung for meldung in status)
+    assert any("Anhang 1/1 gespeichert" in meldung for meldung in status)
+
+
+def test_browser_fallback_kann_link_im_unterframe_auswaehlen(tmp_path):
+    from types import SimpleNamespace
+
+    url = ("https://qect.mo360cp.i.mercedes-benz.com/qec-access/"
+           "displayPruefberichtFile.qec?attachmentId=313")
+
+    class Link:
+        def get_attribute(self, _name):
+            return url
+
+        def click(self, **_kwargs):
+            return None
+
+    class Links:
+        def count(self):
+            return 1
+
+        def nth(self, _index):
+            return Link()
+
+    class Frame:
+        def locator(self, _selector):
+            return Links()
+
+    class Download:
+        suggested_filename = "lieferantenbericht.pdf"
+
+        def failure(self):
+            return None
+
+        def save_as(self, path):
+            Path(path).write_bytes(b"%PDF-1.7\nTest")
+
+    class DownloadEvent:
+        def __enter__(self):
+            return SimpleNamespace(value=Download())
+
+        def __exit__(self, *_args):
+            return False
+
+    class Popup:
+        def locator(self, _selector):
+            raise AssertionError("Link liegt nur im QEC-Frame")
+
+        def expect_download(self, **_kwargs):
+            return DownloadEvent()
+
+    saved = QecDownloader(tmp_path, tmp_path / "profil")._download_attachment_browser(
+        Popup(), "313", url, tmp_path, content_scope=Frame(),
+    )
+    assert saved.name == "313_lieferantenbericht.pdf"
+    assert saved.read_bytes().startswith(b"%PDF-")
