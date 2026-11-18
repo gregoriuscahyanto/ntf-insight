@@ -79,6 +79,7 @@ class QecResult:
     errors: list[str] = field(default_factory=list)
     attempted_at: str = ""
     search_diagnostics: dict[str, int | bool | None] = field(default_factory=dict)
+    abruf_parameter: dict[str, str | bool] = field(default_factory=dict)
 
 
 def pruefe_sachnummer(value: str) -> str:
@@ -532,6 +533,7 @@ def _write_result(folder: Path, result: QecResult) -> None:
         "hinweise": result.warnings,
         "fehler": result.errors,
         "suchdiagnose": result.search_diagnostics,
+        "abruf_parameter": result.abruf_parameter,
     })
 
 
@@ -599,7 +601,7 @@ class QecDownloader:
                  attachment_policy: str = "referenz",
                  benennung: str = "", serielle_sso: bool = False,
                  user_id: str = "", password: str = "",
-                 click_delay_seconds: float = 0.65) -> None:
+                 click_delay_seconds: float = 0.65, resume: bool = True) -> None:
         self.output_dir = Path(output_dir)
         self.profile_dir = Path(profile_dir)
         self.login_timeout_seconds = login_timeout_seconds
@@ -611,6 +613,7 @@ class QecDownloader:
         self.attachment_policy = attachment_policy
         self.benennung = pruefe_benennung(benennung) if benennung else ""
         self.serielle_sso = serielle_sso
+        self.resume = resume
         self._sso_bereits_bestaetigt = False
         self._sso_im_aktuellen_suchlauf = False
         self.user_id = user_id
@@ -1185,6 +1188,83 @@ class QecDownloader:
             "(Detailansicht oder Reiter nicht sichtbar)."
         )
 
+    def _abruf_parameter(self, target: QecTarget) -> dict[str, str | bool]:
+        return {
+            "sachnummer": target.part_number,
+            "referenz": target.reference,
+            "benennung": self.benennung,
+            "pump_only": self.pump_only,
+            "anhaenge": self.attachment_policy,
+        }
+
+    def _fertiger_bericht(self, fin: str, reference: str) -> tuple[Path, list[Path]] | None:
+        """Nur vollstaendige, quellgepruefte Falldaten duerfen beim Resume uebersprungen werden."""
+        if not re.fullmatch(r"[0-9]{1,14}", reference):
+            return None
+        folder = case_folder(self.output_dir, fin, reference)
+        bericht = folder / "qec.json"
+        try:
+            data = json.loads(bericht.read_text(encoding="utf-8"))
+            if (data.get("fin") != fin or data.get("referenznummer") != reference
+                    or data.get("benennung_suchfilter") != self.benennung
+                    or data.get("anhang_downloadmodus") != self.attachment_policy
+                    or data.get("vollstaendige_reiter") is not True
+                    or data.get("fehler") or data.get("hinweise")):
+                return None
+            abschnitte = data.get("abschnitte", [])
+            if {x.get("bereich") for x in abschnitte if isinstance(x, dict)} != set(QEC_SECTIONS):
+                return None
+            files = []
+            for anhang in data.get("anhaenge", []):
+                if not isinstance(anhang, dict) or anhang.get("status") not in {
+                    "Gespeichert", "Bereits vorhanden",
+                }:
+                    return None
+                dateiname = anhang.get("datei")
+                if (not isinstance(dateiname, str) or not dateiname
+                        or Path(dateiname).name != dateiname):
+                    return None
+                datei = folder / "anhaenge" / dateiname
+                if not datei.is_file() or datei.stat().st_size == 0:
+                    return None
+                files.append(datei)
+            return bericht, files
+        except (OSError, ValueError, TypeError, AttributeError):
+            return None
+
+    def _fertiges_ziel(self, target: QecTarget) -> QecResult | None:
+        """FIN-Checkpoint nur bei identischen Filtern und gesicherten Berichten fortsetzen."""
+        if not self.resume or target.reference or len(target.fin) != 17:
+            return None
+        pfad = self.output_dir / target.fin / "abrufstatus.json"
+        try:
+            checkpoint = json.loads(pfad.read_text(encoding="utf-8"))
+            if (checkpoint.get("fin") != target.fin
+                    or checkpoint.get("status") != "Erfolgreich"
+                    or checkpoint.get("abruf_parameter") != self._abruf_parameter(target)):
+                return None
+            referenzen = checkpoint.get("referenzen", [])
+            if not isinstance(referenzen, list) or not referenzen:
+                return None
+            ergebnis = QecResult(
+                target.fin, status="Erfolgreich",
+                attempted_at=str(checkpoint.get("stand_utc", "")),
+                abruf_parameter=self._abruf_parameter(target),
+            )
+            for reference in referenzen:
+                if not isinstance(reference, str):
+                    return None
+                bereits = self._fertiger_bericht(target.fin, reference)
+                if bereits is None:
+                    return None
+                bericht, anhaenge = bereits
+                ergebnis.references.append(reference)
+                ergebnis.snapshots.append(bericht)
+                ergebnis.files.extend(anhaenge)
+            return ergebnis
+        except (OSError, ValueError, TypeError, AttributeError):
+            return None
+
     def _one_hit(self, context, page, target: QecTarget, hit: QecHit,
                  result: QecResult, progress: Progress, cancel: Event,
                  search_result=None):
@@ -1315,8 +1395,11 @@ class QecDownloader:
 
     def _one_target(self, context, page, target: QecTarget, progress: Progress,
                     cancel: Event) -> tuple[QecResult, object]:
-        result = QecResult(fin=target.fin, status="Abruf gestartet",
-                           attempted_at=datetime.now(timezone.utc).isoformat())
+        result = QecResult(
+            fin=target.fin, status="Abruf gestartet",
+            attempted_at=datetime.now(timezone.utc).isoformat(),
+            abruf_parameter=self._abruf_parameter(target),
+        )
         root = self.output_dir / target.fin
         _write_result(root, result)
         try:
@@ -1371,6 +1454,18 @@ class QecDownloader:
             erste_suche = (page, _result_scope, result_html, evidence)
             for index, hit in enumerate(hits, 1):
                 self._check_cancel(cancel)
+                if self.resume:
+                    gespeichert = self._fertiger_bericht(hit.fin, hit.reference)
+                    if gespeichert is not None:
+                        bericht, anhaenge = gespeichert
+                        result.references.append(hit.reference)
+                        result.snapshots.append(bericht)
+                        result.files.extend(anhaenge)
+                        progress(
+                            f"{target.fin}: Referenz {hit.reference} bereits vollstaendig "
+                            "gespeichert; uebersprungen (Resume)."
+                        )
+                        continue
                 progress(f"{target.fin}: Schadteil {index}/{len(hits)} – {hit.reference} …")
                 try:
                     page = self._one_hit(
@@ -1424,6 +1519,19 @@ class QecDownloader:
             from playwright.sync_api import sync_playwright
         except ImportError as exc:
             raise RuntimeError("Playwright fehlt. Bitte Browser-Unterstuetzung installieren.") from exc
+        results_by_index: dict[int, QecResult] = {}
+        pending: list[tuple[int, QecTarget]] = []
+        gesamt = len(validated)
+        for index, target in enumerate(validated, 1):
+            fertig = self._fertiges_ziel(target)
+            if fertig is not None:
+                results_by_index[index] = fertig
+                progress(f"FIN {index}/{gesamt} bereits erledigt (Resume).")
+            else:
+                pending.append((index, target))
+        if not pending:
+            progress(f"QEC: Alle {gesamt} FIN-Ziele bereits vollstaendig vorhanden.")
+            return [results_by_index[i] for i in sorted(results_by_index)]
         results: list[QecResult] = []
         with sync_playwright() as playwright:
             try:
@@ -1436,11 +1544,14 @@ class QecDownloader:
                                    "Bitte Edge/Profilbelegung pruefen.") from exc
             try:
                 page = context.pages[0] if context.pages else context.new_page()
-                for target in validated:
+                for index, target in pending:
                     if cancel.is_set():
                         break
+                    progress(f"FIN {index}/{gesamt} wird bearbeitet ...")
                     result, page = self._one_target(context, page, target, progress, cancel)
+                    results_by_index[index] = result
                     results.append(result)
+                    progress(f"FIN {index}/{gesamt} bearbeitet · Status: {result.status}.")
                     if result.status == "Abgebrochen":
                         break
             finally:
@@ -1466,4 +1577,4 @@ class QecDownloader:
             combined.attempted_at = item.attempted_at
         for fin, combined in by_fin.items():
             _write_result(self.output_dir / fin, combined)
-        return results
+        return [results_by_index[i] for i in sorted(results_by_index)]
