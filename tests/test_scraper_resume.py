@@ -135,3 +135,57 @@ def test_vedoc_resume_bewahrt_unlesbare_vorherige_json(tmp_path):
     assert len(backups) == 1
     assert backups[0].read_bytes() == b"altes-json"
     assert datei.read_bytes() == b"altes-json"
+
+
+def test_qec_kurzfin_resume_nutzt_ausschliesslich_bestaetigten_vollvin_ordner(tmp_path):
+    """Dieselbe 14-stellige Suche startet keinen Browser und keinen Kurz-FIN-Ordner."""
+    kurz = FIN[3:]
+    target = QecTarget(kurz)
+    dl = QecDownloader(
+        tmp_path, tmp_path / "profil", benennung="DCDC",
+        attachment_policy="alle", resume=True,
+    )
+    folder = case_folder(tmp_path, FIN, REF)
+    folder.mkdir(parents=True)
+    anhang = folder / "anhaenge" / "313_beleg.pdf"
+    anhang.parent.mkdir()
+    anhang.write_bytes(b"%PDF-1.7\nTest")
+    report = folder / "qec.json"
+    report.write_text(json.dumps({
+        "fin": FIN, "referenznummer": REF, "anhang_downloadmodus": "alle",
+        "benennung_suchfilter": "DCDC", "vollstaendige_reiter": True,
+        "abschnitte": [{"bereich": name} for name in QEC_SECTIONS],
+        "anhaenge": [{"anhang_id": "313", "datei": anhang.name, "status": "Gespeichert"}],
+        "hinweise": [], "fehler": [],
+    }), encoding="utf-8")
+    _write_result(tmp_path / FIN, QecResult(
+        fin=FIN, such_fin=kurz, status="Erfolgreich", references=[REF],
+        files=[anhang], snapshots=[report],
+        attempted_at="2026-11-18T10:00:00+00:00",
+        abruf_parameter=dl._abruf_parameter(target),
+    ))
+    assert not (tmp_path / kurz).exists()
+    meldungen = []
+    results = dl.run([target], progress=meldungen.append)
+    assert [x.fin for x in results] == [FIN]
+    assert "FIN 1/1 bereits erledigt (Resume)." in meldungen
+    assert not (tmp_path / kurz).exists()
+    assert (tmp_path / FIN / "abrufstatus.json").is_file()
+
+
+def test_qec_kurzfin_resume_verweigert_mehrdeutige_vin_ordner(tmp_path):
+    kurz = FIN[3:]
+    ziel = QecTarget(kurz)
+    dl = QecDownloader(
+        tmp_path, tmp_path / "profil", benennung="DCDC",
+        attachment_policy="alle", resume=True,
+    )
+    for wmi in ("WDD", "WDC"):
+        (tmp_path / (wmi + kurz)).mkdir()
+        (tmp_path / (wmi + kurz) / "abrufstatus.json").write_text(
+            json.dumps({
+                "fin": wmi + kurz, "such_fin": kurz, "status": "Erfolgreich",
+                "abruf_parameter": dl._abruf_parameter(ziel), "referenzen": [REF],
+            }), encoding="utf-8",
+        )
+    assert dl._fertiges_ziel(ziel) is None
