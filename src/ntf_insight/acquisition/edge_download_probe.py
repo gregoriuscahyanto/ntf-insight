@@ -41,7 +41,7 @@ def _child(profile: Path, output: Path) -> int:
             )
             deliberate_close = False
 
-            def context_closed() -> None:
+            def context_closed(*_args) -> None:
                 if not deliberate_close:
                     print("PHASE Unerwartetes-Kontextende", flush=True)
 
