@@ -80,6 +80,24 @@ Der Zugriff auf interne Portale erfordert weiterhin Microsoft Edge bzw.
 den ausgewählten Browser, Unternehmenszugang und die nötigen Berechtigungen.
 Keine realen FINs, Berichte, Browserprofile oder Zugangsdaten in GitHub speichern.
 
+## QEC-Anhangfenster und Statusanzeige
+
+Waehlt man `QEC` und `Anhaenge: alle`, werden alle **erkannten**
+Links aus dem jeweiligen QEC-Fall-Popup geladen; ein fremder Dateiname
+bleibt als nicht referenzbestaetigt markiert. Die CLI-Meldungen erscheinen
+waehrend des Abrufs direkt unten im Fenster, unter anderem:
+
+- `Anhangfenster geoeffnet; Dateiliste wird gelesen`
+- `N QEC-Dateilink(s) erkannt (Anhangmodus: alle)`
+- `QEC-Datei wird angefragt (max. 25s)`
+- `versuche Edge-Download`, `gespeichert` oder `fehlgeschlagen`
+
+Auch QEC-Unterframes und kurz nachgeladene Tabellen werden geprueft.
+Bei **0 erkannten Links trotz sichtbarer Dateien** ist die konkrete
+QEC-Linkstruktur zu pruefen; es werden keine fremden/ungeprueften
+Webadressen abgerufen. Fehler und Hinweise werden weiterhin lokal
+in `qec.json` je Schadteilfall dokumentiert.
+
 ## Regressionstests (ohne Unternehmenszugang)
 
 ```powershell
