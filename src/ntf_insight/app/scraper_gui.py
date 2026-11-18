@@ -63,7 +63,13 @@ def abruf_befehl(
         werte["benennung"] = qec_benennung.strip()
     zusatz, eigener_ausgabeort = extra_argumente(quelle, werte)
     basis = AppPaths.default().data_dir / "abrufe" / sicherer_listenname(eingabe)
-    ziel = eigener_ausgabeort or ausgabe_in_gruppe(basis, quelle)
+    # Fuer frei waehlbare Hardwareobjekte einen neutralen VeDoc-Ordner nutzen.
+    historie_anders = quelle == "dcdc223" and (
+        str(werte.get("objekt") or "DCDC223") != "DCDC223"
+        or str(werte.get("attribut") or "Seriennummer") != "Seriennummer"
+    )
+    zielquelle = "vedoc-historie" if historie_anders else quelle
+    ziel = eigener_ausgabeort or ausgabe_in_gruppe(basis, zielquelle)
     if ziel == eingabe:
         raise ValueError("Eingabe- und Ausgabedatei dürfen nicht identisch sein.")
     if werte.get("profil"):
