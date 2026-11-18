@@ -897,7 +897,7 @@ class DiagnosisViewerDownloader:
                     if popup_pages:
                         raise QuickTestPopupOhneDownload(
                             "PDF-Vorschaufenster erkannt, aber kein Download gestartet "
-                            "noch gueltige PDF-Netzwerkantwort erhalten. "
+                            "und keine gueltige PDF-Netzwerkantwort erhalten. "
                             "Edge-Einstellung 'PDF-Dateien immer herunterladen' "
                             "und Unternehmensrichtlinie pruefen."
                         )
@@ -1205,10 +1205,11 @@ class DiagnosisViewerDownloader:
                         no_viewport=True,
                     )
                     context._ntf_context_geschlossen = False
-                    context.on(
-                        "close",
-                        lambda: setattr(context, "_ntf_context_geschlossen", True),
-                    )
+                    if hasattr(context, "on"):
+                        context.on(
+                            "close",
+                            lambda: setattr(context, "_ntf_context_geschlossen", True),
+                        )
                     return context
                 except Exception as exc:
                     raise RuntimeError(
