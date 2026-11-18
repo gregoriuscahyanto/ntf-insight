@@ -168,6 +168,31 @@ Dateianhänge ab.
   Referenz als Fehler protokolliert, statt einen erfolgreichen
   Download vorzutäuschen.
 
+## Diagnose bei haengendem Anhang-Popup
+
+Die QEC-Downloadlogik zeigt im Fortschritt nun die Popup-Phase, die
+Anzahl erkannter QEC-Dateilinks, den direkten Downloadversuch,
+gegebenenfalls den Edge-Fallback und das Speichern oder Fehlschlagen
+jedes Anhangs. Der erste direkte API-Versuch ist auf **25 Sekunden**
+begrenzt, bevor der vorhandene Browser-Fallback greift.
+Nach `domcontentloaded` wird die Anhangliste kurz erneut geprueft,
+auch in QEC-Unterframes, weil sie verzoegert geladen werden kann.
+
+Wenn das Fenster Dateien zeigt, aber **0 QEC-Dateilinks** erkannt
+werden, kann die QEC-Version andere Linktypen als
+`displayPruefberichtFile.qec?attachmentId=...` benutzen. In diesem
+Fall nicht blind fremde URLs herunterladen: Eine berechtigte Person
+soll die Linkstruktur (ohne FINs, Passwoerter und vertrauliche Berichte)
+fuer einen gezielten Selector-Fix pruefen. Das lokale `qec.json`
+enthaelt `hinweise` bzw. `fehler` und die jeweiligen
+Anhang-Statuswerte; es werden keine aktiven HTML-Seiten als Diagnoselog
+gespeichert.
+
+**Wichtig:** `--anhaenge alle` steuert nur die Auswahl **erkannter**
+Links. Es behebt kein fehlgeschlagenes Laden oder keine unbekannte
+Linkstruktur. Die exakte FIN-Pruefung und die Kennzeichnung von
+nicht bestaetigten Anhang-Referenzen bleiben unveraendert.
+
 ## Grenzen und Sicherheit
 
 - Der vollständige QEC-Liveablauf und tatsächliche Dateidownload
