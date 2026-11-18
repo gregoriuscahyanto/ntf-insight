@@ -9,7 +9,7 @@ import time
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 import pytest
-from PySide6.QtWidgets import QApplication, QFileDialog, QMessageBox
+from PySide6.QtWidgets import QApplication, QFileDialog, QInputDialog, QMessageBox
 
 from ntf_insight.app import scraper_gui as gui
 
@@ -60,8 +60,9 @@ def test_button_startet_cli_ohne_fenster_zu_blockieren(
 ):
     fin = tmp_path / "fins.txt"
     fin.write_text("WDD12345678901234\n", encoding="utf-8")
+    monkeypatch.setattr(QInputDialog, "getText", lambda *args, **kwargs: ("DCDC", True))
     monkeypatch.setattr(
-        gui, "abruf_befehl", lambda *_: (
+        gui, "abruf_befehl", lambda *_, **_kwargs: (
             [sys.executable, "-u", "-c", f"print('Synthetischer Lauf'); raise SystemExit({exitcode})"],
             tmp_path / "ausgabe",
         ),
@@ -88,4 +89,78 @@ def test_button_startet_cli_ohne_fenster_zu_blockieren(
         assert warnungen and "Synthetischer Lauf" in warnungen[0]
     else:
         assert "abgeschlossen" in fenster.status_label.text()
+    fenster.close()
+
+
+@pytest.mark.parametrize("suchbegriff", ["DCDC", "DCDC223", "DCDC,DC/DC"])
+def test_qec_suchbegriff_wird_als_cli_parameter_uebergeben(
+    tmp_path, suchbegriff,
+):
+    datei = tmp_path / "FIN-Liste.txt"
+    datei.write_text("WDD12345678901234\n", encoding="utf-8")
+    argv, _ = gui.abruf_befehl("qec", datei, qec_benennung=suchbegriff)
+    assert argv[argv.index("--benennung") + 1] == suchbegriff
+    assert argv.count("--benennung") == 1
+
+
+def test_qec_standard_und_andere_quellen_bleiben_unveraendert(tmp_path):
+    datei = tmp_path / "FIN-Liste.txt"
+    datei.write_text("WDD12345678901234\n", encoding="utf-8")
+    qec, _ = gui.abruf_befehl("qec", datei, qec_benennung="")
+    quicktests, _ = gui.abruf_befehl("quicktests", datei)
+    assert "--benennung" not in qec
+    assert "--benennung" not in quicktests
+    with pytest.raises(ValueError, match="nur bei QEC"):
+        gui.abruf_befehl("quicktests", datei, qec_benennung="DCDC")
+    with pytest.raises(ValueError, match="Benennung"):
+        gui.abruf_befehl("qec", datei, qec_benennung="DCDC;ungültig")
+
+
+def test_abgebrochener_qec_dialog_startet_keinen_scraper(tmp_path, monkeypatch, app):
+    fin = tmp_path / "FIN-Liste.txt"
+    fin.write_text("WDD12345678901234\n", encoding="utf-8")
+    monkeypatch.setattr(QInputDialog, "getText", lambda *args, **kwargs: ("DCDC", False))
+    fenster = gui.ScraperFenster()
+    fenster._datei = fin
+    fenster._buttons_aktualisieren(laeuft=False)
+    fenster.quellen_buttons["qec"].click()
+    assert fenster._prozess is None
+    assert fenster._qec_benennung == ""
+    assert fenster.quellen_buttons["qec"].isEnabled()
+    fenster.close()
+
+
+def test_qec_gui_fragt_benennung_ab_und_merkt_letzte_auswahl(
+    tmp_path, monkeypatch, app,
+):
+    fin = tmp_path / "FIN-Liste.txt"
+    fin.write_text("WDD12345678901234\n", encoding="utf-8")
+    eingaben = []
+
+    def dialog(*args, **kwargs):
+        eingaben.append(kwargs.get("text"))
+        return "DCDC", True
+
+    monkeypatch.setattr(QInputDialog, "getText", dialog)
+    befehle = []
+
+    def befehl(quelle, datei, *, qec_benennung):
+        befehle.append((quelle, datei, qec_benennung))
+        return [sys.executable, "-u", "-c", "print('Synthetischer QEC-Test')"], tmp_path
+
+    monkeypatch.setattr(gui, "abruf_befehl", befehl)
+    fenster = gui.ScraperFenster()
+    fenster._datei = fin
+    fenster._buttons_aktualisieren(laeuft=False)
+    fenster.quellen_buttons["qec"].click()
+    assert eingaben == [""]
+    assert befehle == [("qec", fin, "DCDC")]
+    assert "Benennung: DCDC" in fenster.status_label.text()
+
+    deadline = time.monotonic() + 5
+    while fenster._prozess is not None and time.monotonic() < deadline:
+        app.processEvents()
+        time.sleep(0.01)
+    assert fenster._prozess is None
+    assert fenster._qec_benennung == "DCDC"
     fenster.close()
