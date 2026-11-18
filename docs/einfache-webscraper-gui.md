@@ -80,6 +80,22 @@ Der Zugriff auf interne Portale erfordert weiterhin Microsoft Edge bzw.
 den ausgewählten Browser, Unternehmenszugang und die nötigen Berechtigungen.
 Keine realen FINs, Berichte, Browserprofile oder Zugangsdaten in GitHub speichern.
 
+## QEC: Nur ein Ordner pro bestätigtem Fahrzeug
+
+Wenn die TXT-Datei eine 14-stellige Kurz-FIN enthält, arbeitet QEC
+weiterhin mit deren Baureihe/Endnummer. **Gespeichert wird aber nur unter
+der eindeutig bestätigten 17-stelligen VIN**, zum Beispiel
+`<TXT-Name>/qec/<17-stellige-VIN>/ref_<QEC-Referenz>/`.
+`abrufstatus.json` liegt im selben vollständigen VIN-Ordner und
+enthält `such_fin` als ursprünglich abgefragte Kurz-FIN.
+Bei 0 Treffern oder mehrdeutiger Zuordnung wird nur
+`qec_suchstatus_<14-stellige-FIN>.json` direkt im QEC-Ausgabeordner
+gespeichert, kein zweiter Fahrzeugordner erzeugt.
+
+**Resume** verwendet die bestätigte Voll-VIN. Alte 14-stellige
+Exportordner werden nicht automatisch gelöscht; sie können nach
+sorgfältigem Vergleich der Referenzen manuell archiviert werden.
+
 ## QEC-Anhangfenster und Statusanzeige
 
 Waehlt man `QEC` und `Anhaenge: alle`, werden alle **erkannten**
