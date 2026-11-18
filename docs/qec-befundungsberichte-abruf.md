@@ -150,6 +150,51 @@ der Download QEC-interne Weiterleitungen, verwendet bei Bedarf
 einen Browser-Fallback und lehnt fremde Hosts sowie Login-HTML als
 Dateianhänge ab.
 
+## Einheitlicher Fahrzeugordner bei Kurz-FIN
+
+Bei einer QEC-Suche mit **14-stelliger Kurz-FIN** wird kein eigener
+Kurz-FIN-Fahrzeugordner mehr erstellt. Erst wenn die QEC-Trefferliste
+vollständig geprüft ist und **genau eine 17-stellige VIN** bestätigt,
+werden Befundungsberichte, Anhänge und `abrufstatus.json` ausschließlich
+unter **`<QEC-Ausgabe>/<17-stellige-VIN>/`** gespeichert.
+
+Der Status enthält zusätzlich `such_fin` mit der ursprünglichen
+14-stelligen Eingabe. **Resume** prüft den vollständigen VIN-Ordner,
+exakte Suchparameter, alle fünf Reiter und vorhandene Dateianhänge;
+bei mehrdeutigen VIN-Ordnern wird niemals stillschweigend zugeordnet.
+
+Wenn keine Voll-VIN bestätigt werden kann (0 Treffer, mehrdeutig,
+unvollständige Trefferliste oder Navigationsfehler), wird nur die Datei
+`<QEC-Ausgabe>/qec_suchstatus_<14-stellige-FIN>.json` geschrieben,
+**kein** Fahrzeugordner angelegt. Eine WMI wird nicht erraten.
+
+**Rückwärtskompatibles Resume:** Läuft noch ein alter QEC-Prozess,
+diesen zuerst vollständig beenden, bevor die neue Version gestartet wird.
+Bei einer erneuten Suche nach derselben 14-stelligen FIN prüft der
+Downloader sowohl das neue Voll-VIN-Manifest als auch das alte
+`<Kurz-FIN>/abrufstatus.json`. Das alte Manifest wird **nur dann**
+für ein direktes Resume verwendet, wenn der dokumentierte Erfolg, die
+eindeutige vollständige VIN, die Abfrageparameter, QEC-Referenzen,
+Berichtsreiter sowie alle zuvor gespeicherten Anhänge übereinstimmen.
+Fehlt einer dieser Nachweise oder wurde der alte Prozess mitten in
+einem Fall beendet, wird die Suche neu geöffnet. Bereits nachweislich
+vollständige Falldateien im 17er-Ordner bleiben dabei erhalten und
+werden beim Einzelfall-Resume wiederverwendet.
+
+Ein alter, gültiger Kurz-FIN-Checkpoint darf einen neuen Status im
+vollständigen VIN-Ordner ergänzen, **wenn dort noch keiner vorhanden
+ist**. Ein bestehender neuer VIN-Checkpoint wird niemals durch alte
+Metadaten überschrieben. Die ursprünglichen 14-stelligen
+Statusordner bleiben read-only; Dateien werden weder verschoben
+noch gelöscht. Das alte Format funktioniert damit weiterhin,
+ohne dass die neue Version zusätzliche Kurz-FIN-Ordner erzeugt.
+
+Für einen vollständig bereinigten Altbestand bitte die Inhalte anhand
+der `fin`/`such_fin` und Referenznummern prüfen, bevor etwas manuell
+archiviert wird. Andere Quellen verwenden ihre bisherigen strikt
+validierten VIN-/JSON-Ablagen; die Änderung betrifft die doppelte
+QEC-Fahrzeugordner-Erstellung.
+
 ## Verhalten bei QEC-Suchergebnissen
 
 - Die Servermeldung **„Die Abfrage ergab keinen Treffer“** gilt nach
