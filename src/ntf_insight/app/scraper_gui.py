@@ -35,7 +35,7 @@ QUELLEN: tuple[tuple[str, str], ...] = (
     ("tips", "XENTRY · TIPS Writer"),
     ("wem", "Diagnosis Viewer · WEM"),
     ("sa-codes", "VeDoc · Fahrzeugcodes"),
-    ("dcdc223", "VeDoc · Hardwarehistorie (DCDC223)"),
+    ("dcdc223", "VeDoc · Hardwarehistorie"),
 )
 QUELLEN_NAMEN = dict(QUELLEN)
 
