@@ -958,7 +958,7 @@ class TipsWriterDownloader:
             vorher = self._fertiges_ziel(suchwert)
             if vorher is not None:
                 completed[index] = vorher
-                progress(f"{zaehleinheit} {index}/{len(targets)} bereits erledigt (Resume).")
+                progress(f"{zaehleinheit} {len(completed)}/{len(targets)} bereits erledigt (Resume).")
             else:
                 pending.append((index, suchwert))
         if not pending:
@@ -981,7 +981,7 @@ class TipsWriterDownloader:
                 for index, suchwert in pending:
                     if cancel.is_set():
                         break
-                    progress(f"{zaehleinheit} {index}/{len(targets)} wird bearbeitet ...")
+                    progress(f"{zaehleinheit} {len(completed) + 1}/{len(targets)} wird bearbeitet ...")
                     if _FIN.fullmatch(suchwert):
                         result, page = self._one_fin(
                             context, page, suchwert, progress, cancel,
@@ -992,7 +992,7 @@ class TipsWriterDownloader:
                         )
                     completed[index] = result
                     progress(
-                        f"{zaehleinheit} {index}/{len(targets)} bearbeitet · Status: {result.status}"
+                        f"{zaehleinheit} {len(completed)}/{len(targets)} bearbeitet · Status: {result.status}"
                     )
                     if result.status == "Abgebrochen":
                         break
