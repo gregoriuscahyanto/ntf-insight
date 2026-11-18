@@ -657,3 +657,145 @@ def test_browser_disconnect_wird_weiterhin_als_echter_verbindungsverlust_erkannt
 
     with pytest.raises(BrowserSessionLost, match="Edge-Verbindung"):
         dl._download_or_skip(viewer, Icon(), Event())
+
+
+
+def test_quicktest_pdf_popup_inline_antwort_schon_vor_popup_event_erfasst(
+    tmp_path, monkeypatch,
+):
+    """Fruehe PDF-Response ist schon da, bevor Playwright das Popup meldet."""
+    dl = _offline_download_dl(tmp_path, monkeypatch)
+    context = _PdfContext()
+    viewer = _PdfPage(context)
+    popup = _PdfPage(context, viewer)
+    content = b"%PDF-1.7\nInline-QuickTest synthetisch"
+    url = "https://app.diagviewer.prod.gspp-eu.cloud.corpintra.net/file/quicktest.pdf"
+    response = SimpleNamespace(
+        url=url, headers={"content-type": "application/pdf"},
+        request=SimpleNamespace(frame=SimpleNamespace(page=popup)),
+        body=lambda: content,
+    )
+    messages = []
+
+    class Icon:
+        def click(self, **_kwargs):
+            context.emit("response", response)  # Antwort vor Popup-Event
+            context.emit("page", popup)
+            viewer.emit("popup", popup)
+
+    download = dl._download_or_skip(
+        viewer, Icon(), Event(), progress=messages.append,
+    )
+    assert download.suggested_filename == "QuickTest.pdf"
+    assert download.failure() is None
+    target = _save_pdf(download, tmp_path / FIN, DownloadRow(0, "XD", "2026-11-18"))
+    assert target.read_bytes() == content
+    assert any("Browser-Netzwerkantwort" in line for line in messages)
+    assert context.listeners["response"] == []
+
+
+def test_quicktest_pdf_popup_ohne_download_event_per_same_origin_get(
+    tmp_path, monkeypatch,
+):
+    """Offizieller Edge-PDF-Viewer zeigt nur Vorschau, aber gleiche URL liefert PDF."""
+    dl = _offline_download_dl(tmp_path, monkeypatch)
+    context = _PdfContext()
+    viewer = _PdfPage(context)
+    popup = _PdfPage(context, viewer)
+    popup.url = "https://app.diagviewer.prod.gspp-eu.cloud.corpintra.net/quicktest.pdf"
+    calls = []
+    pdf_bytes = b"%PDF-1.7\nProxy QuickTest"
+    api_response = SimpleNamespace(
+        status=200, headers={"content-type": "application/pdf"},
+        body=lambda: pdf_bytes,
+    )
+
+    class Request:
+        def get(self, url, *, timeout, max_redirects):
+            calls.append((url, max_redirects))
+            return api_response
+
+    context.request = Request()
+
+    class Icon:
+        def click(self, **_kwargs):
+            viewer.emit("popup", popup)
+
+    messages = []
+    download = dl._download_or_skip(
+        viewer, Icon(), Event(), progress=messages.append,
+    )
+    saved = _save_pdf(download, tmp_path / FIN, DownloadRow(0, "XD", "2026-11-18"))
+    assert saved.read_bytes() == pdf_bytes
+    assert calls == [(popup.url, 0)]
+    assert any("angemeldeter Sitzung" in line for line in messages)
+
+
+def test_quicktest_popup_mit_pdf_antwort_wird_trotz_abgebrochenem_click_gerettet(
+    tmp_path, monkeypatch,
+):
+    """Eine schliessende PDF-Vorschau darf bereits vorhandene Nutzdaten nicht verwerfen."""
+    dl = _offline_download_dl(tmp_path, monkeypatch)
+    context = _PdfContext()
+    viewer = _PdfPage(context)
+    popup = _PdfPage(context, viewer)
+    content = b"%PDF-1.7\nSchon im Netzwerk angekommen"
+    response = SimpleNamespace(
+        url="https://app.diagviewer.prod.gspp-eu.cloud.corpintra.net/file.pdf",
+        headers={"content-type": "application/pdf"},
+        request=SimpleNamespace(frame=SimpleNamespace(page=popup)),
+        body=lambda: content,
+    )
+
+    class Icon:
+        def click(self, **_kwargs):
+            context.emit("response", response)
+            viewer.emit("popup", popup)
+            raise RuntimeError("Target page, context or browser has been closed")
+
+    download = dl._download_or_skip(viewer, Icon(), Event())
+    assert download.failure() is None
+    assert _save_pdf(
+        download, tmp_path / FIN, DownloadRow(0, "XD", "2026-11-18"),
+    ).read_bytes() == content
+
+
+def test_popup_html_aus_login_redirect_wird_nicht_als_pdf_gespeichert(
+    tmp_path, monkeypatch,
+):
+    dl = _offline_download_dl(tmp_path, monkeypatch)
+    context = _PdfContext()
+    viewer = _PdfPage(context)
+    popup = _PdfPage(context, viewer)
+    popup.url = "https://app.diagviewer.prod.gspp-eu.cloud.corpintra.net/report"
+    response = SimpleNamespace(
+        status=200, headers={"content-type": "text/html"},
+        body=lambda: b"<html>Login</html>",
+    )
+    context.request = SimpleNamespace(get=lambda *a, **kw: response)
+
+    class Icon:
+        def click(self, **_kwargs):
+            viewer.emit("popup", popup)
+
+    with pytest.raises(QuickTestPopupOhneDownload, match="kein Download gestartet"):
+        dl._download_or_skip(viewer, Icon(), Event())
+
+
+def test_persistenter_edge_context_close_event_ist_echter_verbindungsverlust(
+    tmp_path, monkeypatch,
+):
+    """BrowserContext.browser ist bei launch_persistent_context haeufig None."""
+    dl = _offline_download_dl(tmp_path, monkeypatch)
+    context = _PdfContext()
+    context.browser = None
+    context._ntf_context_geschlossen = False
+    viewer = _PdfPage(context)
+
+    class Icon:
+        def click(self, **_kwargs):
+            context._ntf_context_geschlossen = True
+            raise RuntimeError("Target page, context or browser has been closed")
+
+    with pytest.raises(BrowserSessionLost, match="Kontext"):
+        dl._download_or_skip(viewer, Icon(), Event())
