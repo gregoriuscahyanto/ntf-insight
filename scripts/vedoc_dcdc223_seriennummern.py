@@ -870,7 +870,7 @@ def main(argv: list[str] | None = None, *, allgemeine_historie: bool = False) ->
                     print("SSO/PING ID erfolgreich: VeDoc ist erreichbar. Keine FIN abgefragt.", flush=True)
                 else:
                     _fahrzeugdaten_oeffnen(seite, argumente.timeout * 1000)
-                    for nummer, fin in offen:
+                    for _, fin in offen:
                         try:
                             ergebnis = _abfrage(
                                 seite, fin, argumente.timeout * 1000,
