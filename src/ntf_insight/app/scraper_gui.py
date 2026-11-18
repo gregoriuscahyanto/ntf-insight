@@ -298,7 +298,8 @@ class ScraperFenster(QWidget):
         self._ausgabe_rest = ""
         self._abbruch = False
         self._laufstatus[quelle] = {
-            "ablage": basis, "text": "", "rest": "", "abbruch": False, "fortschritt": "",
+            "ablage": basis, "text": "", "rest": "", "abbruch": False,
+            "fortschritt": "", "anmeldung_bestaetigt": False,
         }
         prozess = QProcess(self)
         prozess.setProcessChannelMode(QProcess.MergedChannels)
@@ -378,12 +379,40 @@ class ScraperFenster(QWidget):
                 einheit = "Ziel" if re.search(r"\bZiel\s+\d+/", zeile, re.I) else "FIN"
                 lauf["fortschritt"] = f"{einheit} {match.group(1)}/{match.group(2)} · "
             nachricht = self._zeile_bereinigen(zeile)
+            if lauf is not None and quelle == "quicktests":
+                # Nur das vom Downloader sichtbar gepruefte FIN-Suchfeld
+                # bestaetigt den erfolgreichen Login, nicht die Browser-URL
+                # oder das Ende des PING-ID-Dialogs allein.
+                if "PING ID abgeschlossen. Diagnosis Viewer ist bereit." in zeile:
+                    lauf["anmeldung_bestaetigt"] = True
+                    nachricht = "Anmeldung erfolgreich · Diagnosis Viewer bereit"
+                elif (
+                    "SSO gestartet. PING ID" in zeile
+                    or "Anmeldung gesendet. Bitte PING ID" in zeile
+                ):
+                    # Bei einer spaeteren Neuanmeldung (z. B. Session abgelaufen)
+                    # nicht faelschlich weiter 'Angemeldet' anzeigen.
+                    lauf["anmeldung_bestaetigt"] = False
+                elif lauf["anmeldung_bestaetigt"] and (
+                    "PING ID: Anmeldung erfolgreich;" in zeile
+                    or "PING ID: Anmelde-Sperre freigegeben;" in zeile
+                    or "Edge: SSO öffnen." in zeile
+                ):
+                    # Lock-/Navigationshinweise werden nach dem verifizierten
+                    # Login nicht als neue PING-ID-Aufforderung dargestellt.
+                    continue
             if lauf is not None and not lauf["abbruch"]:
+                praefix = (
+                    "Angemeldet · "
+                    if quelle == "quicktests" and lauf["anmeldung_bestaetigt"]
+                    else ""
+                )
                 self.quellen_status[quelle].setText(
-                    (lauf["fortschritt"] + nachricht)[-355:]
+                    (praefix + lauf["fortschritt"] + nachricht)[-355:]
                 )
                 self.status_label.setText(
-                    f"{QUELLEN_NAMEN[quelle]} · {lauf['fortschritt']}{nachricht}"
+                    f"{QUELLEN_NAMEN[quelle]} · {praefix}"
+                    f"{lauf['fortschritt']}{nachricht}"
                 )
             elif lauf is None and not self._abbruch:
                 name = QUELLEN_NAMEN.get(self._aktive_quelle, self._aktive_quelle)
