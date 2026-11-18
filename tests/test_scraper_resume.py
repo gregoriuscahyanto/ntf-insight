@@ -11,7 +11,8 @@ from ntf_insight.acquisition.qec_tool import (
 )
 from ntf_insight.acquisition.tips_writer import TIPS_SECTIONS, TipsWriterDownloader
 from scripts.vedoc_dcdc223_seriennummern import (
-    Ergebnis, _lade_erfolgreiche_historie, _schreibe_json, main as historie_main,
+    Ergebnis, _lade_erfolgreiche_historie, _schreibe_json,
+    _sichere_unlesbare_historie, main as historie_main,
 )
 
 
@@ -119,3 +120,18 @@ def test_vedoc_historie_komplettes_resume_ohne_browser(tmp_path):
     )
     assert historie_main(["--eingabe", str(eingabe), "--ausgabe", str(tmp_path)]) == 0
     assert (tmp_path / "dcdc223_seriennummern.xlsx").is_file()
+
+
+def test_vedoc_resume_bewahrt_unlesbare_vorherige_json(tmp_path):
+    datei = tmp_path / "dcdc223_seriennummern.json"
+    datei.write_bytes(b"altes-json")
+    loaded = _lade_erfolgreiche_historie(
+        datei, [FIN], objekt="DCDC223", attribut="Seriennummer",
+    )
+    assert loaded == {}
+    assert datei.read_bytes() == b"altes-json"
+    _sichere_unlesbare_historie(datei)
+    backups = list(tmp_path.glob("dcdc223_seriennummern.unlesbar_*.bak"))
+    assert len(backups) == 1
+    assert backups[0].read_bytes() == b"altes-json"
+    assert datei.read_bytes() == b"altes-json"
