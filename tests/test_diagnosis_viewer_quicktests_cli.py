@@ -75,7 +75,7 @@ def test_standardpfad_und_automatischer_login_aus_gui_tresor(tmp_path, monkeypat
     assert cli.main(["--eingabe", str(_eingabe(tmp_path))]) == 0
     ausgabe, profil, kwargs = aufrufe[0]
     assert ausgabe == (tmp_path / "data/processed/fins/diagnosis_viewer_quicktests").resolve()
-    assert profil == cli.STANDARD_PROFIL.resolve()
+    assert profil is None  # Ohne Eingabe: Browser erzeugt pro Edge-Start ein Temp-Profil.
     assert kwargs["user_id"] == "beispiel-id"
     assert kwargs["password"] == "test-passwort"
     assert kwargs["login_timeout_seconds"] == 300
@@ -83,6 +83,7 @@ def test_standardpfad_und_automatischer_login_aus_gui_tresor(tmp_path, monkeypat
     assert aufrufe[1] == [FIN, FIN_ZWEI]
     ausgabe_text = capsys.readouterr().out
     assert "PING ID" in ausgabe_text
+    assert "Frisches Edge-Profil automatisch" in ausgabe_text
     assert "test-passwort" not in ausgabe_text
 
 
