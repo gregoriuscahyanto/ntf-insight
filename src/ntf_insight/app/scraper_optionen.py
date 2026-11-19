@@ -36,6 +36,12 @@ PROFIL = CliOption(
     "profil", "Eigener Edge-Profilordner", "directory",
     hilfe="Optional. Ein separates Browserprofil; niemals im Downloadordner speichern.",
 )
+QUICKTEST_PROFIL = CliOption(
+    "profil", "Bestehendes Edge-Profil (optional)", "directory",
+    hilfe="Standard: Bei jedem QuickTest-Abruf und Edge-Neustart automatisch "
+          "ein neues Profil. Hier nichts eingeben. Nur fuer erfahrene Nutzer, "
+          "die bewusst ein festes Profil wiederverwenden moechten.",
+)
 LOGIN_TIMEOUT = CliOption(
     "anmelde-timeout", "Wartezeit für SSO/PING-ID (Sek.)", "int", 300,
     minimum=30, maximum=900,
@@ -75,7 +81,7 @@ QUELLEN_OPTIONEN: dict[str, tuple[CliOption, ...]] = {
     "quicktests": (
         CliOption("erneut", "Vorhandene QuickTests erneut herunterladen", "bool"),
         CliOption("ohne-json", "Keine JSON-Konvertierung (nur PDF)", "bool"),
-        LOGIN_TIMEOUT, PROFIL, *_COMMON,
+        LOGIN_TIMEOUT, QUICKTEST_PROFIL, *_COMMON,
     ),
     "wem": (
         CliOption("aktualisieren", "Nach neuen Sitzungen suchen", "bool"),
