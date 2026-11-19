@@ -251,3 +251,43 @@ einen Tab- oder Prozessabsturz erzeugt, fuer eine Diagnose nur die
 **bereinigten Statusmeldungen und das Fehlerstadium** weitergeben,
 niemals vertrauliche PDF-Originale, Cookie-Werte, URLs mit Tokens oder FINs.
 
+
+## Automatisch frisches Edge-Profil bei jedem QuickTest-Start
+
+**Standard ab dieser Version:** Fuer QuickTests ist keine Eingabe eines
+Edge-Profilpfades mehr notwendig. Bei jeder neuen QuickTest-Ausfuehrung
+legt die App **automatisch** ein eigenes temporaeres Edge-Profil an.
+Wird der Edge-Browser waehrend desselben Laufs einmalig neugestartet,
+erhaelt auch dieser Wiederanlauf ein **weiteres, neues Profil**.
+Innerhalb eines funktionierenden Browserlaufs werden die FINs seriell
+mit demselben angemeldeten Browser abgefragt; es ist also keine
+PING-ID pro FIN erforderlich.
+
+Das **Ausgabeverzeichnis** fuer die QuickTest-PDFs und die
+\`abrufstatus.json\` pro FIN wird dadurch **nicht geaendert**. Bereits
+abgeschlossene PDFs bleiben im bisherigen Ordner und werden mit Resume
+gefunden. Die alten Edge-Profile werden weder neu verwendet noch
+geloescht. Eine neue SSO-/PING-ID-Bestaetigung ist beim Start
+des neuen Temp-Profils jedoch notwendig.
+
+Die temporaeren Profile liegen im lokalen Betriebssystem-Temp-Ordner,
+**nicht** im Datenabrufordner oder im Git-Repository. Beim regulären
+Programmende versucht die Anwendung, die eigenen Temp-Profile zu
+bereinigen. Falls ein abgestuerzter Edge-Prozess unter Windows Dateien
+noch gesperrt haelt oder der Nutzer den Prozess hart beendet, koennen
+Reste im Temp-Ordner verbleiben; alte Nutzerprofile werden niemals
+automatisch geloescht.
+
+In der GUI das Feld **Bestehendes Edge-Profil (optional)** einfach
+**leer lassen** (Standard). Nur Nutzer, die absichtlich ein
+**festes** Profil wiederverwenden wollen, tragen dort einen Pfad ein.
+In der CLI funktioniert dies analog:
+
+\`\`\`powershell
+ntf-insight-quicktests --eingabe "FIN-Liste.txt"
+\`\`\`
+
+Ohne \`--profil\` verwendet die CLI automatische neue Profile.
+\`--profil "C:\\...\\MeinProfil"\` ist weiterhin als bewusster
+Experten-Override verfuegbar. Andere Webscraper und deren
+Browser-Profile sind von dieser QuickTest-Aenderung nicht betroffen.
