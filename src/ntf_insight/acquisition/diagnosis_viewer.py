@@ -13,6 +13,7 @@ from collections import Counter
 from contextlib import nullcontext
 import re
 import tempfile
+from contextlib import ExitStack
 import time
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
@@ -404,7 +405,7 @@ class DiagnosisViewerDownloader:
     def __init__(
         self,
         output_dir: Path,
-        profile_dir: Path,
+        profile_dir: Path | None,
         *,
         login_timeout_seconds: int = 240,
         result_timeout_seconds: int = 60,
@@ -418,7 +419,9 @@ class DiagnosisViewerDownloader:
         serielle_sso: bool = False,
     ) -> None:
         self.output_dir = Path(output_dir)
-        self.profile_dir = Path(profile_dir)
+        # None: bei JEDEM Edge-Start (auch nach einem Browserabsturz)
+        # ein neues, isoliertes Temp-Profil anlegen.
+        self.profile_dir = Path(profile_dir) if profile_dir is not None else None
         self.login_timeout_seconds = login_timeout_seconds
         self.result_timeout_seconds = result_timeout_seconds
         self.pdf_timeout_seconds = pdf_timeout_seconds
@@ -1202,7 +1205,9 @@ class DiagnosisViewerDownloader:
                 else "Alle FINs wurden innerhalb der letzten 24 Stunden bereits abgerufen."
             )
             return [results_by_fin[fin] for fin in validated]
-        self.profile_dir.mkdir(parents=True, exist_ok=True)
+        if self.profile_dir is not None:
+            # Bewusst angegebene Profile bleiben als Experten-Option erhalten.
+            self.profile_dir.mkdir(parents=True, exist_ok=True)
         try:
             from playwright.sync_api import sync_playwright
         except ImportError as exc:
@@ -1210,11 +1215,28 @@ class DiagnosisViewerDownloader:
         progress(
             f"FIN {len(results_by_fin)}/{len(validated)} bereits erledigt (Resume)."
         )
-        with sync_playwright() as playwright:
+        # Erst Playwright, danach die Temp-Profile schliessen: bei einem
+        # regulären Lauf verbleiben keine Browser-Sitzungsdaten.
+        # Unter Windows können abgestürzte Edge-Prozesse Temp-Dateien noch
+        # sperren; dann werden nur diese eigenen Wegwerfdateien belassen,
+        # niemals bereits vorhandene Profile oder FIN-Downloadordner gelöscht.
+        with ExitStack() as profil_lauf, sync_playwright() as playwright:
             def starte_edge():
+                profil = self.profile_dir
+                if profil is None:
+                    profil = Path(profil_lauf.enter_context(
+                        tempfile.TemporaryDirectory(
+                            prefix="ntf-quicktests-edge-",
+                            ignore_cleanup_errors=True,
+                        )
+                    ))
+                    progress(
+                        "QuickTests: Neues, separates Edge-Profil automatisch "
+                        "erstellt (auch nach Browser-Neustart)."
+                    )
                 try:
                     context = playwright.chromium.launch_persistent_context(
-                        user_data_dir=str(self.profile_dir),
+                        user_data_dir=str(profil),
                         channel="msedge",
                         headless=False,
                         accept_downloads=True,
@@ -1230,8 +1252,8 @@ class DiagnosisViewerDownloader:
                 except Exception as exc:
                     raise RuntimeError(
                         "Microsoft Edge konnte nicht gestartet werden. "
-                        "Edge muss installiert sein und das NTF-Browserprofil darf "
-                        "nicht von einem zweiten Programm verwendet werden. "
+                        "Edge muss installiert sein und der gewählte Profilordner "
+                        "darf nicht von einem zweiten Programm verwendet werden. "
                         + str(exc)
                     ) from exc
 
