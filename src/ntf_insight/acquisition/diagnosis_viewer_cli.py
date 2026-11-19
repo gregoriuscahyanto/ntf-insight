@@ -22,6 +22,8 @@ from ntf_insight.acquisition.diagnosis_viewer import (
 )
 
 STANDARD_AUSGABE = Path("data/processed/diagnosis_viewer_quicktests")
+# Legacy-Konstante fuer explizite bestehende Profile; ohne --profil werden
+# ab jetzt automatisch frische, temporaere Edge-Profile verwendet.
 STANDARD_PROFIL = Path.home() / ".ntf-insight" / "edge-diagnosis-viewer-cli-profile"
 
 
@@ -42,8 +44,10 @@ def erstelle_parser() -> argparse.ArgumentParser:
                         help="TXT-Datei mit 14-stelligen Mercedes-Kurz-FINs oder 17-stelligen FINs")
     parser.add_argument("--ausgabe", type=Path, default=None,
                         help="Zielordner (Standard: data/processed/<TXT-Name>/diagnosis_viewer_quicktests)")
-    parser.add_argument("--profil", type=Path, default=STANDARD_PROFIL,
-                        help="Separates lokales Edge-Profil fuer die CLI")
+    parser.add_argument("--profil", type=Path, default=None,
+                        help="Optionales festes Edge-Profil (Expertenmodus). "
+                             "Standard: bei JEDEM Edge-Start automatisch ein frisches "
+                             "Wegwerfprofil, auch nach Browser-Absturz.")
     parser.add_argument("--erneut", action="store_true",
                         help="Auch FINs mit bereits gespeicherter PDF erneut herunterladen")
     parser.add_argument("--ohne-json", action="store_true",
@@ -119,7 +123,7 @@ def main(argv: list[str] | None = None) -> int:
         fins = lade_fins(args.eingabe)
         ausgabe = (args.ausgabe if args.ausgabe is not None
                    else standard_ausgabe(args.eingabe, "quicktests")).expanduser().resolve()
-        profil = args.profil.expanduser().resolve()
+        profil = args.profil.expanduser().resolve() if args.profil is not None else None
         if ausgabe.is_file():
             raise ValueError("--ausgabe muss ein Verzeichnis sein, keine Datei.")
         # Nur belegbar vollstaendige FINs vermeiden eine neue SSO-Anmeldung.
@@ -129,6 +133,13 @@ def main(argv: list[str] | None = None) -> int:
         )
         login = None if alles_aktuell else _anmeldedaten(args)
         print(f"{len(fins)} FIN(s) | Ausgabe: {ausgabe}", flush=True)
+        if profil is None and not alles_aktuell:
+            print(
+                "QuickTests: Frisches Edge-Profil automatisch bei jedem "
+                "Browserstart (kein Pfad erforderlich). "
+                "SSO/PING-ID muss erneut bestaetigt werden.",
+                flush=True,
+            )
         print("SSO wird im sichtbaren Microsoft Edge bearbeitet. "
               "PING ID bei Aufforderung auf dem Smartphone bestaetigen.", flush=True)
         downloader = DiagnosisViewerDownloader(
