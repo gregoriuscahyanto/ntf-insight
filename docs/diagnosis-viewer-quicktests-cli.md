@@ -264,7 +264,7 @@ mit demselben angemeldeten Browser abgefragt; es ist also keine
 PING-ID pro FIN erforderlich.
 
 Das **Ausgabeverzeichnis** fuer die QuickTest-PDFs und die
-\`abrufstatus.json\` pro FIN wird dadurch **nicht geaendert**. Bereits
+`abrufstatus.json` pro FIN wird dadurch **nicht geaendert**. Bereits
 abgeschlossene PDFs bleiben im bisherigen Ordner und werden mit Resume
 gefunden. Die alten Edge-Profile werden weder neu verwendet noch
 geloescht. Eine neue SSO-/PING-ID-Bestaetigung ist beim Start
@@ -283,11 +283,11 @@ In der GUI das Feld **Bestehendes Edge-Profil (optional)** einfach
 **festes** Profil wiederverwenden wollen, tragen dort einen Pfad ein.
 In der CLI funktioniert dies analog:
 
-\`\`\`powershell
+```powershell
 ntf-insight-quicktests --eingabe "FIN-Liste.txt"
-\`\`\`
+```
 
-Ohne \`--profil\` verwendet die CLI automatische neue Profile.
-\`--profil "C:\\...\\MeinProfil"\` ist weiterhin als bewusster
+Ohne `--profil` verwendet die CLI automatische neue Profile.
+`--profil "C:\\...\\MeinProfil"` ist weiterhin als bewusster
 Experten-Override verfuegbar. Andere Webscraper und deren
 Browser-Profile sind von dieser QuickTest-Aenderung nicht betroffen.
