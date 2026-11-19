@@ -27,7 +27,6 @@ from ntf_insight.acquisition.beschaffung_cli import _befehl
 from ntf_insight.acquisition.output_paths import ausgabe_in_gruppe, sicherer_listenname
 from ntf_insight.app.fonts import resolve_fonts
 from ntf_insight.app.settings import AppPaths
-from ntf_insight.acquisition.diagnosis_viewer_cli import STANDARD_PROFIL as QUICKTEST_PROFIL
 from ntf_insight.acquisition.portal_cli import QEC_PROFIL, TIPS_PROFIL
 from ntf_insight.app.scraper_optionen import DATEI_AUSGABEN, extra_argumente
 from ntf_insight.app.dialogs.scraper_optionen_dialog import ScraperOptionenDialog
@@ -93,7 +92,6 @@ def abruf_befehl(
 
 _PROFILE_PRO_QUELLE = {
     "qec": QEC_PROFIL,
-    "quicktests": QUICKTEST_PROFIL,
     "tips": TIPS_PROFIL,
     "wem": Path.home() / ".ntf-insight" / "edge-diagnosis-warnungen",
     "sa-codes": Path.home() / ".ntf-insight" / "vedoc-edge-profile",
@@ -101,7 +99,12 @@ _PROFILE_PRO_QUELLE = {
 
 
 def _browserprofil(quelle: str, optionen: Mapping[str, Any]) -> Path | None:
-    """Tatsächlich verwendetes Profil, VeDoc-Historie nutzt eigenes Temp-Profil."""
+    """Nur feste Browserprofile auf Kollision pruefen.
+
+    QuickTests verwenden ohne explizites --profil automatisch neue,
+    separate Temp-Profile bei jedem Edge-Start und nach Wiederanlauf.
+    VeDoc-Historie nutzt ebenfalls ein eigenes Temp-Profil.
+    """
     pfad = optionen.get("profil") or _PROFILE_PRO_QUELLE.get(quelle)
     return Path(pfad).expanduser().resolve() if pfad else None
 
