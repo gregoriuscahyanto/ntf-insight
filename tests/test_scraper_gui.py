@@ -423,10 +423,17 @@ def test_parallel_quellen_verwenden_getrennte_standard_edge_profile(tmp_path):
     qec = gui._browserprofil("qec", {})
     quicktests = gui._browserprofil("quicktests", {})
     assert qec is not None
-    assert quicktests is not None
-    assert qec != quicktests
+    assert quicktests is None  # Automatisch frisches, eindeutig eigenes Profil.
     custom = tmp_path / "eigenes_profil"
     assert gui._browserprofil("qec", {"profil": str(custom)}) == custom.resolve()
+    assert gui._browserprofil("quicktests", {"profil": str(custom)}) == custom.resolve()
+
+
+def test_quicktest_popup_verlangt_keine_profileingabe(app):
+    dialog = ScraperOptionenDialog("quicktests", gui.QUELLEN_NAMEN["quicktests"])
+    assert dialog.werte()["profil"] == ""
+    assert "automatisch" in dialog.felder["profil"].toolTip()
+    dialog.close()
 
 
 def test_parallel_gleicher_edge_profilordner_wird_vor_cli_start_blockiert(
